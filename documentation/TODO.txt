@@ -1,0 +1,21 @@
+Hardware:
+  Apply Fixes to all boards:
+     Remove R11
+     Bridge Rx/Tx to GPS
+     Add LoRa Antenna
+
+Firmware:
+   Base Code
+      POST
+      Temp Sensor Tie-In
+      IMU Driver
+      GPS Driver
+
+
+   Basic
+     Own Thread. (How do we handle debug messages? Dump into file?)
+     Hook up Location Services
+     Hook up Sync pulse
+     Push RAM into PSRAM?
+     Add Temp Sensor Support
+     

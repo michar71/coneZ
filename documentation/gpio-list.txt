@@ -1,0 +1,63 @@
+ConeZ PCB v0.1
+ESP32-S3-MINI-1 module (8MB SPI flash)
+Pin map
+
+GPIO		Function
+
+0		BOOT/USR switch
+1		ADC: 
+2		ADC: 
+3			...do not use, pullup to 3.3V...
+
+4		PSRAM CE
+5		PSRAM MISO
+6		PSRAM SCK
+7		PSRAM MOSI
+
+8		LoRa NSS
+9		LoRa SCK
+10		LoRa MOSI
+11		LoRa MISO
+12		LoRa RST
+13		LoRa BUSY
+14		LoRa IRQ (DIO1)
+
+15		Hartmann Standard Connector 1
+16		Hartmann Standard Connector 2
+
+17		I2C SDA
+18		I2C SCL
+
+19		USB N
+20		USB P
+
+21		Solar PWM
+
+33		Power switch status
+34		Power switch off (assert high to power board off)
+
+35		RGB LED signal 4
+36		RGB LED signal 3
+37		RGB LED signal 2
+38		RGB LED signal 1
+
+40		LED
+41		IMU INT (MPU-6500)
+42		GPS PPS (1Hz time reference)
+
+43		Serial
+44		Serial
+
+47		Load MOSFET (enables 12V to LOAD terminals and RGB LED terminals)
+48		Audio PWM
+
+
+I2C devices
+-----------
+Enumerating I2C devices:
+  I2C device @ 0x48		TMP102A temp sensor
+  I2C device @ 0x68		MPU-6500 IMU
+
+
+
+
