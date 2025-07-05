@@ -1,5 +1,7 @@
+
 #include <Arduino.h>
 #include <Wire.h>
+#include "main.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ElegantOTA.h>
@@ -12,34 +14,15 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include <HardwareSerial.h>
-
 #include <RadioLib.h>
 
 
-// Misc GPIO pins
-#define LED_PIN 40
-
-
-// I2C pins
-#define I2C_SDA_PIN   17
-#define I2C_SCL_PIN   18
+//I2C speed
 #define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal
-
 
 // Serial
 HardwareSerial GPSSerial(0);
 
-
-// Pin mapping for SX1262 on Heltec LoRa32 v3
-#define LORA_PIN_CS     8
-#define LORA_PIN_DIO1   14
-#define LORA_PIN_RST    12
-#define LORA_PIN_BUSY   13
-
-#define LORA_NSS        8
-#define LORA_SCK        9
-#define LORA_MOSI       10
-#define LORA_MISO       11
 
 SPIClass spiLoRa( HSPI );
 SPISettings spiLoRaSettings( 1000000, MSBFIRST, SPI_MODE0 );
@@ -61,7 +44,6 @@ SX1268 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BU
 #define DOWNSTREAM_PREAMBLE     8               // 8 preamble symbols
 #define DOWNSTREAM_TXPOWER      5               // Transmit power
 #define LORA_SYNC_WORD          0x1424
-
 
 
 #ifndef BUILD_VERSION
@@ -451,6 +433,55 @@ void IRAM_ATTR lora_rxdone( void )
   lora_rxdone_flag = true;
 }
 
+//LED Stuff
+void blink_leds(CRGB col)
+{
+    leds1[0] = CRGB::Black;
+    //Set LED's
+    FastLED.show();
+    delay(300);
+    leds1[0] = col;
+    //Set LED's
+    FastLED.show();
+    delay(500);
+    leds1[0] = CRGB::Black;
+    //Set LED's
+    FastLED.show();
+    delay(300);      
+}
+
+void color_leds(int ch, CRGB col)
+{
+    switch (ch)
+    {
+      default:
+      case 1:
+        for (int ii=0;ii<NUM_LEDS1;ii++)
+        {
+          leds1[ii] = col;    
+        }
+        break;
+      case 2:
+        for (int ii=0;ii<NUM_LEDS2;ii++)
+        {
+          leds2[ii] = col;    
+        }
+        break;
+      case 3:
+        for (int ii=0;ii<NUM_LEDS3;ii++)
+        {
+          leds3[ii] = col;    
+        }
+        break;
+      case 4:
+        for (int ii=0;ii<NUM_LEDS4;ii++)
+        {
+          leds4[ii] = col;    
+        }
+        break;
+      }                  
+    FastLED.show();
+}
 
 void setup()
 {
@@ -469,6 +500,13 @@ void setup()
   Serial.begin( 115200 );
   Serial.println();
   Serial.println( "Starting...\n" );
+
+  //Setup RGB leds so we can also signal stuff there...
+  FastLED.addLeds<WS2812B, RGB1_PIN, RGB>(leds1, NUM_LEDS1);
+  FastLED.addLeds<WS2812B, RGB2_PIN, RGB>(leds2, NUM_LEDS2);
+  FastLED.addLeds<WS2812B, RGB2_PIN, RGB>(leds3, NUM_LEDS3);
+  FastLED.addLeds<WS2812B, RGB2_PIN, RGB>(leds4, NUM_LEDS4);
+  blink_leds(CRGB::Red);
 
 
   dump_partitions();
