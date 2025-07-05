@@ -6,11 +6,9 @@
 // Misc GPIO pins
 #define LED_PIN 40
 
-
 // I2C pins
 #define I2C_SDA_PIN   17
 #define I2C_SCL_PIN   18
-
 
 // Pin mapping for SX1262 on Heltec LoRa32 v3
 #define LORA_PIN_CS     8
@@ -58,11 +56,10 @@
 //Other
 #define IMU_INT_PIN     37
 
-
-#define NUM_LEDS1 32
-#define NUM_LEDS2 32
-#define NUM_LEDS3 32
-#define NUM_LEDS4 32
+#define NUM_LEDS1 12
+#define NUM_LEDS2 12
+#define NUM_LEDS3 12
+#define NUM_LEDS4 12
 
 CRGB leds1[NUM_LEDS1];
 CRGB leds2[NUM_LEDS2];

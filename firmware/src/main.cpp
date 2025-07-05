@@ -16,6 +16,12 @@
 #include <HardwareSerial.h>
 #include <RadioLib.h>
 
+#define FSLINK LittleFS
+#include "commands.h"
+
+
+//Define File Systewm Type
+
 
 //I2C speed
 #define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal
@@ -331,15 +337,15 @@ void init_LittleFS()
   Serial.println("---- LittleFS ----");
 
 
-  if (!LittleFS.begin(true)) {
+  if (!FSLINK.begin(true)) {
     Serial.println("Failed to mount LittleFS, even after formatting.");
     return;
   }
 
   Serial.println("LittleFS mounted successfully.");
 
-  size_t total = LittleFS.totalBytes();
-  size_t used = LittleFS.usedBytes();
+  size_t total = FSLINK.totalBytes();
+  size_t used = FSLINK.usedBytes();
 
   Serial.println("LittleFS Stats:");
   Serial.printf("  Total bytes : %u\n", total);
@@ -502,18 +508,21 @@ void setup()
   Serial.println( "Starting...\n" );
 
   //Setup RGB leds so we can also signal stuff there...
-  FastLED.addLeds<WS2812B, RGB1_PIN, RGB>(leds1, NUM_LEDS1);
-  FastLED.addLeds<WS2812B, RGB2_PIN, RGB>(leds2, NUM_LEDS2);
-  FastLED.addLeds<WS2812B, RGB2_PIN, RGB>(leds3, NUM_LEDS3);
-  FastLED.addLeds<WS2812B, RGB2_PIN, RGB>(leds4, NUM_LEDS4);
+  FastLED.addLeds<WS2811, RGB1_PIN, RGB>(leds1, NUM_LEDS1);
+  FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds2, NUM_LEDS2);
+  FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds3, NUM_LEDS3);
+  FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds4, NUM_LEDS4);
   blink_leds(CRGB::Red);
+  //NOTE: Don't use FastLED functions outside the setup routine in the main program.
+  //At the end of Setup we create the badsic interpreter task who will handle all LED access 
+  //through fastLED afterwards to avoid any thred collisions.
 
 
   dump_partitions();
   //dump_nvs();
   print_nvs_stats();
   init_LittleFS();
-  list_dir( LittleFS, "/" );
+  list_dir( FSLINK, "/" );
 
 
   // I2C
@@ -565,8 +574,6 @@ void setup()
   {
     Serial.printf( "Failed to set LoRa to receive mode, status=%d\n", status );
   }
-  
-
 
   Serial.print( "\nConnecting to wifi..." );
 
@@ -592,6 +599,11 @@ void setup()
 
   GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin
                   44 /*RX0*/, 43 /*TX0*/ );
+
+  //Init command Line interpreter
+  init_commands(&Serial);
+  
+  //Start Thread for Basic interpreter/FastLED here
 }
 
 
@@ -690,6 +702,9 @@ void lora_rx( void )
 void loop()
 {
   server.handleClient();
+
+  //Run Shell commands
+  run_commands();
 
   // put your main code here, to run repeatedly:
   Serial.print( "." );
