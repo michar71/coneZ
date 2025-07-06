@@ -2,57 +2,60 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include <SimpleSerialShell.h>
+#include "basic_wrapper.h"
+
+extern Stream* OutputStream;
 
 //Serial/Telnet Shell comamnds
 
 void renameFile(fs::FS &fs, const char *path1, const char *path2) 
 {
-    Serial.printf("Renaming file %s to %s\r\n", path1, path2);
+    OutputStream->printf("Renaming file %s to %s\r\n", path1, path2);
     if (fs.rename(path1, path2)) {
-      Serial.println("- file renamed");
+      OutputStream->println("- file renamed");
     } else {
-      Serial.println("- rename failed");
+      OutputStream->println("- rename failed");
     }
   }
   
   void deleteFile(fs::FS &fs, const char *path) 
   {
-    Serial.printf("Deleting file: %s\r\n", path);
+    OutputStream->printf("Deleting file: %s\r\n", path);
     if (fs.remove(path)) {
-      Serial.println("- file deleted");
+      OutputStream->println("- file deleted");
     } else {
-      Serial.println("- delete failed");
+      OutputStream->println("- delete failed");
     }
   }
 
 
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels) 
 {
-  Serial.printf("Listing directory: %s\r\n", dirname);
+  OutputStream->printf("Listing directory: %s\r\n", dirname);
 
   File root = fs.open(dirname);
   if (!root) {
-    Serial.println("- failed to open directory");
+    OutputStream->println("- failed to open directory");
     return;
   }
   if (!root.isDirectory()) {
-    Serial.println(" - not a directory");
+    OutputStream->println(" - not a directory");
     return;
   }
 
   File file = root.openNextFile();
   while (file) {
     if (file.isDirectory()) {
-      Serial.print("  DIR : ");
-      Serial.println(file.name());
+      OutputStream->print("  DIR : ");
+      OutputStream->println(file.name());
       if (levels) {
         listDir(fs, file.path(), levels - 1);
       }
     } else {
-      Serial.print("  FILE: ");
-      Serial.print(file.name());
-      Serial.print("\tSIZE: ");
-      Serial.println(file.size());
+      OutputStream->print("  FILE: ");
+      OutputStream->print(file.name());
+      OutputStream->print("\tSIZE: ");
+      OutputStream->println(file.size());
     }
     file = root.openNextFile();
   }
@@ -60,38 +63,39 @@ void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
 
 void readFile(fs::FS &fs, const char *path) 
 {
-    Serial.printf("Listing file: %s\r\n", path);
-    Serial.println();
+    OutputStream->printf("Listing file: %s\r\n", path);
+    OutputStream->println();
   
     File file = fs.open(path);
     if (!file || file.isDirectory()) 
     {
-      Serial.println("- failed to open file for reading");
+      OutputStream->println("- failed to open file for reading");
       return;
     }
   
     while (file.available()) 
     {
-      Serial.write(file.read());
+      OutputStream->write(file.read());
     }
     file.close();
   }
   
-  void writeFile(fs::FS &fs, const char *path, const char *message) {
-    Serial.printf("Writing file: %s\r\n", path);
+  void writeFile(fs::FS &fs, const char *path, const char *message) 
+  {
+    OutputStream->printf("Writing file: %s\r\n", path);
   
     File file = fs.open(path, FILE_WRITE);
     if (!file) {
-      Serial.println("- failed to open file for writing");
+      OutputStream->println("- failed to open file for writing");
       return;
     }
     if (file.print(message)) 
     {
-      Serial.println("- file written");
+      OutputStream->println("- file written");
     } 
     else 
     {
-      Serial.println("- write failed");
+      OutputStream->println("- write failed");
     }
     file.close();
   }
@@ -101,15 +105,15 @@ Commands
 */
 int test(int argc, char **argv) 
 {
-  Serial.println("Test function called");
-  Serial.print(argc);
-  Serial.println(" Arguments");
+  OutputStream->println("Test function called");
+  OutputStream->print(argc);
+  OutputStream->println(" Arguments");
   for (int ii=0;ii<argc;ii++)
   {
-    Serial.print("Argument ");
-    Serial.print(ii);
-    Serial.print(" : ");
-    Serial.println(argv[ii]);
+    OutputStream->print("Argument ");
+    OutputStream->print(ii);
+    OutputStream->print(" : ");
+    OutputStream->println(argv[ii]);
   }  
   return 0;
 };
@@ -118,7 +122,7 @@ int delFile(int argc, char **argv)
 {
     if (argc != 2)
     {
-        Serial.println("Wrong argument count");
+        OutputStream->println("Wrong argument count");
         return 1;
     }
     deleteFile(FSLINK,argv[1]);
@@ -129,7 +133,7 @@ int renFile(int argc, char **argv)
 {
     if (argc != 3)
     {
-        Serial.println("Wrong argument count");
+        OutputStream->println("Wrong argument count");
         return 1;
     }
     renameFile(FSLINK,argv[1], argv[2]);
@@ -140,12 +144,12 @@ int listFile(int argc, char **argv)
 {
     if (argc != 2)
     {
-        Serial.println("Wrong argument count");
+        OutputStream->println("Wrong argument count");
         return 1;
     }
 
     readFile(FSLINK,argv[1]); 
-    Serial.printf("");
+    OutputStream->printf("");
     return 0;
 }
 
@@ -153,7 +157,7 @@ int listDir(int argc, char **argv)
 {
     if (argc != 1)
     {
-        Serial.println("Wrong argument count");
+        OutputStream->println("Wrong argument count");
         return 1;
     }
     listDir(FSLINK,"/",1); 
@@ -164,7 +168,7 @@ int loadFile(int argc, char **argv)
 {
     if (argc != 2)
     {
-        Serial.println("Wrong argument count");
+        OutputStream->println("Wrong argument count");
         return 1;       
     }
     else
@@ -174,24 +178,24 @@ int loadFile(int argc, char **argv)
         char line[256];
         char inchar;
         bool isDone = false;
-        Serial.print("Ready for file. Press CTRL+Z to end transmission and save file");
-        Serial.println(argv[1]);
+        OutputStream->print("Ready for file. Press CTRL+Z to end transmission and save file");
+        OutputStream->println(argv[1]);
         //Flush serial buffer
-        Serial.flush();
+        OutputStream->flush();
         //create file
         File file = FSLINK.open(argv[1], FILE_WRITE);
         if (!file) 
         {
-            Serial.println("- failed to open file for writing");
+            OutputStream->println("- failed to open file for writing");
             return 1;
         }
 
         do
         {
             //Get one character from serial port
-            if (Serial.available())
+            if (OutputStream->available())
             {
-                inchar = Serial.read();
+                inchar = OutputStream->read();
                 //Check if its a break character
                 if (inchar == 0x1A) 
                 {
@@ -205,9 +209,9 @@ int loadFile(int argc, char **argv)
                     charcount++;
                     if (charcount>254)
                     {
-                        Serial.print("Line ");
-                        Serial.print(linecount+1);
-                        Serial.println(" too long");
+                        OutputStream->print("Line ");
+                        OutputStream->print(linecount+1);
+                        OutputStream->println(" too long");
                         break;
                     }
                     if (inchar == '\n')
@@ -218,7 +222,7 @@ int loadFile(int argc, char **argv)
                         } 
                         else 
                         {
-                          Serial.println("Write Error");
+                          OutputStream->println("Write Error");
                           file.close();
                           return 1;
                         }
@@ -236,8 +240,22 @@ int loadFile(int argc, char **argv)
         //close file
         file.close();
 
-        Serial.print(linecount);
-        Serial.println(" Lines written to file");
+        OutputStream->print(linecount);
+        OutputStream->println(" Lines written to file");
+        return 0;
+    }
+}
+
+int runBasic(int argc, char **argv) 
+{
+    if (argc != 1)
+    {
+        OutputStream->println("Wrong argument count");
+        return 1;       
+    }
+    else
+    {
+        set_basic_program(OutputStream,argv[1]);
         return 0;
     }
 }
@@ -255,6 +273,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("ren"), renFile);
     shell.addCommand(F("del"), delFile);
     shell.addCommand(F("load"), loadFile);   
+    shell.addCommand(F("run"), runBasic);
     
     //System commands
 

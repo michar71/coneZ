@@ -16,12 +16,17 @@
 #include <HardwareSerial.h>
 #include <RadioLib.h>
 #include <esp_wifi.h>
+#include <TelnetStream2.h>
+#include "basic_wrapper.h"
+
+
+//#define USE_TELNET
+
 
 #define FSLINK LittleFS
 #include "commands.h"
 
-
-//Define File Systewm Type
+Stream *OutputStream = NULL;
 
 
 //I2C speed
@@ -357,7 +362,8 @@ void init_LittleFS()
 }
 
 
-void list_dir(fs::FS &fs, const char *dirname, uint8_t levels = 1) {
+void list_dir(fs::FS &fs, const char *dirname, uint8_t levels = 1) 
+{
   Serial.printf("Listing directory: %s\n", dirname);
 
   File root = fs.open(dirname);
@@ -506,8 +512,9 @@ void setup()
 
 
   Serial.begin( 115200 );
-  Serial.println();
-  Serial.println( "Starting...\n" );
+  OutputStream = &Serial;
+  OutputStream->println();
+  OutputStream->println( "Starting...\n" );
 
 
   // Turn on LOAD FET
@@ -546,7 +553,7 @@ void setup()
   spiLoRa.begin( LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS );
 
   // Fire up the LoRa radio.
-  Serial.print( "\nInit LoRa... " );
+  OutputStream->print( "\nInit LoRa... " );
 
   radio.setTCXO( 1.8, 5000 );
   radio.setDio2AsRfSwitch();
@@ -556,15 +563,15 @@ void setup()
 
   if( status != RADIOLIB_ERR_NONE )
   {
-    Serial.print( "Failed, status=" );
-    Serial.println( status );
+    OutputStream->print( "Failed, status=" );
+    OutputStream->println( status );
 
     //while( 1 )
     //  delay( 1 );   // Dead in the water
     blinkloop( 3 );
   }
 
-  Serial.print( "OK\n" );
+  OutputStream->print( "OK\n" );
 
   // Set misc LoRa parameters.
   //radio.setSyncWord( 0xDE, 0xAD );
@@ -580,14 +587,14 @@ void setup()
 
   if( status == RADIOLIB_ERR_NONE )
   {
-    Serial.print( "LoRa set to receive mode.\n" );
+    OutputStream->print( "LoRa set to receive mode.\n" );
   }
   else
   {
-    Serial.printf( "Failed to set LoRa to receive mode, status=%d\n", status );
+    OutputStream->printf( "Failed to set LoRa to receive mode, status=%d\n", status );
   }
 
-  Serial.print( "\nConnecting to wifi..." );
+  OutputStream->print( "\nConnecting to wifi..." );
   
 
   // Generate ConeZ-nnnn DHCP hostname from last 2 octets of MAC address.
@@ -601,20 +608,20 @@ void setup()
 
   WiFi.setHostname( hostname );              // must precede WiFi.begin()
 
-  Serial.print( "Hostname: " );
-  Serial.println( hostname );
+  OutputStream->print( "Hostname: " );
+  OutputStream->println( hostname );
 
   WiFi.begin( wifi_ssid, wifi_psk );
 
   while( WiFi.status() != WL_CONNECTED )
   {
     delay( 500 );
-    Serial.print( "." );
+    OutputStream->print( "." );
   }
 
-  Serial.println( " Connected");
-  Serial.print( "IP address: " );
-  Serial.println( WiFi.localIP() );
+  OutputStream->println( " Connected");
+  OutputStream->print( "IP address: " );
+  OutputStream->println( WiFi.localIP() );
 
   server.on( "/", http_root );
   server.on( "/reboot", http_reboot );
@@ -623,14 +630,19 @@ void setup()
   ElegantOTA.begin( &server );
   server.begin();
 
-
   GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin
                   44 /*RX0*/, 43 /*TX0*/ );
 
+  //At this point switch comms over to telnet
+  TelnetStream2.begin();
+#ifdef USE_TELNET
+  OutputStream = &TelnetStream2;
+#endif
   //Init command Line interpreter
-  init_commands(&Serial);
+  init_commands(OutputStream);
   
   //Start Thread for Basic interpreter/FastLED here
+  setup_basic();
 }
 
 
@@ -643,11 +655,11 @@ void hexdump( uint8_t *buf, int len )
 
   for( i = 0; i < len; ++i )
   {
-    Serial.print( buf[ i ], HEX );
-    Serial.print( " " );
+    OutputStream->print( buf[ i ], HEX );
+    OutputStream->print( " " );
   }
 
-  Serial.print( "\n" );
+  OutputStream->print( "\n" );
 }
 
 
@@ -664,27 +676,40 @@ void lora_rx( void )
 
   lora_rxdone_flag = false;
 
-  Serial.print( "\nWe have RX flag!\n" );
-  Serial.print( "radio.available = " );
-  Serial.println( radio.available() );
-  Serial.print( "radio.getRSSI = " );
-  Serial.println( radio.getRSSI() );
-  Serial.print( "radio.getSNR = " );
-  Serial.println( radio.getSNR() );
-  Serial.print( "radio.getPacketLength = " );
-  Serial.println( radio.getPacketLength() );
+  OutputStream->print( "\nWe have RX flag!\n" );
+  OutputStream->print( "radio.available = " );
+  OutputStream->println( radio.available() );
+  OutputStream->print( "radio.getRSSI = " );
+  OutputStream->println( radio.getRSSI() );
+  OutputStream->print( "radio.getSNR = " );
+  OutputStream->println( radio.getSNR() );
+  OutputStream->print( "radio.getPacketLength = " );
+  OutputStream->println( radio.getPacketLength() );
   
   String str;
   int16_t state = radio.readData( str );
 
   if( state == RADIOLIB_ERR_NONE )
   {
-    Serial.print( "Packet: " );
-    Serial.println( str );
+    OutputStream->print( "Packet: " );
+    OutputStream->println( str );
     hexdump( (uint8_t*)str.c_str(), str.length() );
   }
 
-  Serial.print( "\n" );
+  OutputStream->print( "\n" );
+}
+
+void check_serial(void)
+{
+  //We check for any incoming serial data
+  //If there is data we switch all data from telnet 
+  //to the USB serial port 
+
+  if (Serial.available())
+  {
+    OutputStream = &Serial;
+    init_commands(OutputStream);
+  }
 }
 
 
@@ -710,6 +735,8 @@ void loop()
 
   // Check for LoRa packets
   lora_rx();
+
+  check_serial();
 
   //dump_i2c( Wire );
 
