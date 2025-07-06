@@ -15,6 +15,7 @@
 #include <FS.h>
 #include <HardwareSerial.h>
 #include <RadioLib.h>
+#include <esp_wifi.h>
 
 #define FSLINK LittleFS
 #include "commands.h"
@@ -66,6 +67,7 @@ SX1268 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BU
 const char *wifi_ssid = "RN-ConeZ";
 const char *wifi_psk = "conezconez";
 WebServer server(80);
+static char hostname[17];
 
 
 String html_escape( const char* str )
@@ -507,6 +509,16 @@ void setup()
   Serial.println();
   Serial.println( "Starting...\n" );
 
+
+  // Turn on LOAD FET
+  pinMode( LOAD_ON_PIN, OUTPUT );
+  digitalWrite( LOAD_ON_PIN, HIGH );
+
+  // Turn on solar FET
+  pinMode( SOLAR_PWM_PIN, OUTPUT );
+  digitalWrite( SOLAR_PWM_PIN, HIGH );
+
+
   //Setup RGB leds so we can also signal stuff there...
   FastLED.addLeds<WS2811, RGB1_PIN, RGB>(leds1, NUM_LEDS1);
   FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds2, NUM_LEDS2);
@@ -576,6 +588,21 @@ void setup()
   }
 
   Serial.print( "\nConnecting to wifi..." );
+  
+
+  // Generate ConeZ-nnnn DHCP hostname from last 2 octets of MAC address.
+  WiFi.mode( WIFI_STA );
+
+  uint8_t mac[6];
+  esp_read_mac( mac, ESP_MAC_WIFI_STA );
+
+  //char hostname[16];                       // "ConeZ-" + 4 hex + NUL
+  sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
+
+  WiFi.setHostname( hostname );              // must precede WiFi.begin()
+
+  Serial.print( "Hostname: " );
+  Serial.println( hostname );
 
   WiFi.begin( wifi_ssid, wifi_psk );
 
@@ -624,44 +651,6 @@ void hexdump( uint8_t *buf, int len )
 }
 
 
-void lora_rx_bak( void )
-{
-  unsigned int len;
-  uint8_t buf[256];
-  int status;
-  float RSSI;
-  float SNR;
-
-  if( radio.available() )
-  {
-    len = radio.getPacketLength();
-
-    Serial.printf( "LoRa RX - Len=%u - ", len );
-
-    // Max of 256 bytes.
-    if( len > 256 )
-      len = 256;
-
-    status = radio.readData( buf, len );
-
-    if( status == RADIOLIB_ERR_NONE )
-    {
-        RSSI = radio.getRSSI();
-        SNR = radio.getSNR();
-
-      Serial.printf( "RSSI=%.1f dBm - SNR=%.1f dB\n", len );
-      hexdump( buf, len );
-    }
-    else
-    {
-      Serial.print( "Failed to read RX packet\n" );
-    }
-
-    Serial.print( "\n" );
-  }
-}
-
-
 void lora_rx( void )
 {
   unsigned int len;
@@ -707,12 +696,17 @@ void loop()
   run_commands();
 
   // put your main code here, to run repeatedly:
-  Serial.print( "." );
+  //Serial.print( "." );
   //Serial.print( lora_rxdone_flag );
-  delay( 1000 );
-  digitalWrite( LED_PIN, HIGH );
-  delay( 1000 );
-  digitalWrite( LED_PIN, LOW );
+  //delay( 1000 );
+  //digitalWrite( LED_PIN, HIGH );
+  //delay( 1000 );
+  //digitalWrite( LED_PIN, LOW );
+
+  if( millis() % 500 > 250 )
+    digitalWrite( LED_PIN, HIGH );
+  else
+    digitalWrite( LED_PIN, LOW );
 
   // Check for LoRa packets
   lora_rx();
