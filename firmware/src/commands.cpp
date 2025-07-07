@@ -284,3 +284,8 @@ void run_commands(void)
 {
     shell.executeIfInput();
 }
+
+void setCLIEcho(bool echo)
+{
+  shell.setEcho(echo);
+}

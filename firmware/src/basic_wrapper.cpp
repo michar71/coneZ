@@ -15,8 +15,10 @@ SemaphoreHandle_t basic_Mutex;
 char exec_code[256] = {0};
 char next_code[256] = {0};
 
-void basic_thread( void * parameter )
+void basic_task_fun( void * parameter )
 {
+    BOutputStream->println("BASIC Task Created on core ");
+    BOutputStream->println(xPortGetCoreID());
     for(;;)
     {
         if (exec_code[0] != 0)
@@ -67,6 +69,6 @@ void setup_basic()
     //Set Callback Functions
 
     //Start Own Thread
-    xTaskCreatePinnedToCore(basic_thread, "Task2", 10000, NULL, 1, &basic_task, 1);
+    xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 10000, NULL, 1, &basic_task, 0);
 }
 

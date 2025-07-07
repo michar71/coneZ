@@ -20,7 +20,7 @@
 #include "basic_wrapper.h"
 
 
-//#define USE_TELNET
+#define USE_TELNET
 
 
 #define FSLINK LittleFS
@@ -393,7 +393,7 @@ void dump_i2c( TwoWire &bus )
   int found = 0;
 
   Serial.print( "\nEnumerating I2C devices:\n" );
-
+  bus.setTimeOut(50);
   for( uint8_t addr = 1; addr < 0x7F; ++addr )
   {
     bus.beginTransmission( addr );
@@ -405,9 +405,8 @@ void dump_i2c( TwoWire &bus )
       ++found;
     }
     else
-    if( err == 4 )
     {
-      Serial.printf( "  Unknown I2C error @ 0x%02X\n", addr );
+        Serial.printf( "  I2C error %d @ 0x%02X\n", err,addr );
     }
   }
 
@@ -497,6 +496,74 @@ void color_leds(int ch, CRGB col)
     FastLED.show();
 }
 
+
+void hexdump( uint8_t *buf, int len )
+{
+  int i;
+
+  if( len < 1 )
+    return;
+
+  for( i = 0; i < len; ++i )
+  {
+    OutputStream->print( buf[ i ], HEX );
+    OutputStream->print( " " );
+  }
+
+  OutputStream->print( "\n" );
+}
+
+
+void lora_rx( void )
+{
+  unsigned int len;
+  uint8_t buf[256];
+  int status;
+  float RSSI;
+  float SNR;
+
+  if( !lora_rxdone_flag )
+    return;
+
+  lora_rxdone_flag = false;
+
+  OutputStream->print( "\nWe have RX flag!\n" );
+  OutputStream->print( "radio.available = " );
+  OutputStream->println( radio.available() );
+  OutputStream->print( "radio.getRSSI = " );
+  OutputStream->println( radio.getRSSI() );
+  OutputStream->print( "radio.getSNR = " );
+  OutputStream->println( radio.getSNR() );
+  OutputStream->print( "radio.getPacketLength = " );
+  OutputStream->println( radio.getPacketLength() );
+  
+  String str;
+  int16_t state = radio.readData( str );
+
+  if( state == RADIOLIB_ERR_NONE )
+  {
+    OutputStream->print( "Packet: " );
+    OutputStream->println( str );
+    hexdump( (uint8_t*)str.c_str(), str.length() );
+  }
+
+  OutputStream->print( "\n" );
+}
+
+void check_serial(void)
+{
+  //We check for any incoming serial data
+  //If there is data we switch all data from telnet 
+  //to the USB serial port 
+
+  if (Serial.available())
+  {
+    OutputStream = &Serial;
+    setCLIEcho(true);
+    init_commands(OutputStream);
+  }
+}
+
 void setup()
 {
   // Give some time to reconnect USB CDC serial console.
@@ -512,6 +579,13 @@ void setup()
 
 
   Serial.begin( 115200 );
+
+  //WAIT FOR SERIAL USB PORT TO CONNECXT BEOFRE CONTINUING
+  while (!Serial) {
+    ; // do nothing
+  }
+
+
   OutputStream = &Serial;
   OutputStream->println();
   OutputStream->println( "Starting...\n" );
@@ -635,81 +709,19 @@ void setup()
 
   //At this point switch comms over to telnet
   TelnetStream2.begin();
+  OutputStream->println( "Telnet Initalized");
+  OutputStream->println( "CLI active");
 #ifdef USE_TELNET
+  OutputStream->println( "CLI now via Telnet. Press any key to return to Serial");
+  setCLIEcho(false);
   OutputStream = &TelnetStream2;
 #endif
   //Init command Line interpreter
   init_commands(OutputStream);
+
   
   //Start Thread for Basic interpreter/FastLED here
-  setup_basic();
-}
-
-
-void hexdump( uint8_t *buf, int len )
-{
-  int i;
-
-  if( len < 1 )
-    return;
-
-  for( i = 0; i < len; ++i )
-  {
-    OutputStream->print( buf[ i ], HEX );
-    OutputStream->print( " " );
-  }
-
-  OutputStream->print( "\n" );
-}
-
-
-void lora_rx( void )
-{
-  unsigned int len;
-  uint8_t buf[256];
-  int status;
-  float RSSI;
-  float SNR;
-
-  if( !lora_rxdone_flag )
-    return;
-
-  lora_rxdone_flag = false;
-
-  OutputStream->print( "\nWe have RX flag!\n" );
-  OutputStream->print( "radio.available = " );
-  OutputStream->println( radio.available() );
-  OutputStream->print( "radio.getRSSI = " );
-  OutputStream->println( radio.getRSSI() );
-  OutputStream->print( "radio.getSNR = " );
-  OutputStream->println( radio.getSNR() );
-  OutputStream->print( "radio.getPacketLength = " );
-  OutputStream->println( radio.getPacketLength() );
-  
-  String str;
-  int16_t state = radio.readData( str );
-
-  if( state == RADIOLIB_ERR_NONE )
-  {
-    OutputStream->print( "Packet: " );
-    OutputStream->println( str );
-    hexdump( (uint8_t*)str.c_str(), str.length() );
-  }
-
-  OutputStream->print( "\n" );
-}
-
-void check_serial(void)
-{
-  //We check for any incoming serial data
-  //If there is data we switch all data from telnet 
-  //to the USB serial port 
-
-  if (Serial.available())
-  {
-    OutputStream = &Serial;
-    init_commands(OutputStream);
-  }
+  //setup_basic();
 }
 
 
@@ -738,9 +750,7 @@ void loop()
 
   check_serial();
 
-  //dump_i2c( Wire );
-
-  while( GPSSerial.available() )
-    Serial.write( GPSSerial.read() );
+  //while( GPSSerial.available() )
+  //  Serial.write( GPSSerial.read() );
 }
 

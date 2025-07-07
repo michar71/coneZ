@@ -27,13 +27,14 @@ LOCKTIME()        -> Stores the current time
 WAITIME(ms)       -> x mS minus the time that has passed since LOCKTIME was called. This allows to have consistent timing/delays even if scripts take some (even variable) time to execute for each frame.
 DONE int RANDOM(int min, int max)
 DONE int VERSION()  -> Retrun basic version number
+int FLAG(int ID) -> Check one of up to 8 flags from the host-process. Can be a number or 1/0 for true/false.
 int WAITFOR(int event , int cond, int val, int timeout)
 
 event = 0 -> Sync Pulse
     cond = 0 = all sync pulses, 1 = specific sync pulse ID
     val = 0 for all sync pulses or number ID of sync pulse to wait for
     timeout -> Timeout in ms, 0 = wait forever
-    ret = 0 = timerout, 1 = event received
+    ret = 0 = timerout, 1 = event received    
 
 
 event = 1 -> Digital Pin Change
