@@ -603,8 +603,8 @@ void setup()
   //Setup RGB leds so we can also signal stuff there...
   FastLED.addLeds<WS2811, RGB1_PIN, RGB>(leds1, NUM_LEDS1);
   FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds2, NUM_LEDS2);
-  FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds3, NUM_LEDS3);
-  FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds4, NUM_LEDS4);
+  FastLED.addLeds<WS2811, RGB3_PIN, RGB>(leds3, NUM_LEDS3);
+  FastLED.addLeds<WS2811, RGB4_PIN, RGB>(leds4, NUM_LEDS4);
   blink_leds(CRGB::Red);
   //NOTE: Don't use FastLED functions outside the setup routine in the main program.
   //At the end of Setup we create the badsic interpreter task who will handle all LED access 
