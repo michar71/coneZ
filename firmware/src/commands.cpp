@@ -248,14 +248,16 @@ int loadFile(int argc, char **argv)
 
 int runBasic(int argc, char **argv) 
 {
-    if (argc != 1)
+    if (argc != 2)
     {
         OutputStream->println("Wrong argument count");
         return 1;       
     }
     else
     {
+        OutputStream->println("STBT");
         set_basic_program(OutputStream,argv[1]);
+        OutputStream->println("RFBT");        
         return 0;
     }
 }
