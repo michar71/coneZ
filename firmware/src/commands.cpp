@@ -255,9 +255,8 @@ int runBasic(int argc, char **argv)
     }
     else
     {
-        OutputStream->println("STBT");
-        set_basic_program(OutputStream,argv[1]);
-        OutputStream->println("RFBT");        
+        if (false == set_basic_program(OutputStream,argv[1]))
+          OutputStream->println("BASSIC code already running");        
         return 0;
     }
 }

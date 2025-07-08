@@ -13,6 +13,7 @@
 #endif
 
 Stream *OS = NULL;
+char strbuf[256];
 
 //Set defaults if not defined somewhere else
 #ifndef FSLINK
@@ -85,8 +86,18 @@ void initbasic(Stream* out, int comp)
 	registerhook(); 
 
 }
-void bad(char *msg) { OS->printf("ERROR %d: %s\n", lnum, msg); globalerror = 1; }
-void err(char *msg) { OS->printf("ERROR %d: %s\n",lmap[pc-prg-1],msg); globalerror = 2; }
+void bad(char *msg) 
+{ 
+	sprintf(strbuf,"ERROR %d: %s\n", lnum, msg);
+	OS->print(strbuf);
+	globalerror = 1; 
+}
+void err(char *msg) 
+{ 
+	sprintf(strbuf,"ERROR %d: %s\n",lmap[pc-prg-1],msg);
+	OS->print(strbuf);
+	globalerror = 2; 
+}
 
 void freedim() { int i; for (i=0; i<nvar; i++) if (mode[i]==VARMODE_DIM) free((Val*)value[i]); }
 void emit(int opcode()) { lmap[cpc]=lnum; prg[cpc++]=opcode; }
@@ -99,13 +110,29 @@ int RESUME_() { pc=opc? opc:pc; opc=pc; cpc=ipc; STEP; }
 int NUMBER_() { *--sp=PCV; STEP; }
 int LOAD_() { *--sp=value[PCV]; STEP; }
 int STORE_() { value[PCV]=*sp++; STEP; }
-void ECHO_() { OS->printf("%d\n",*sp++); }
+void ECHO_() 
+{ 
+	sprintf(strbuf,"%d\n",*sp++); 
+	OS->print(strbuf);
+}
 int FORMAT_() { char *f; Val n=PCV, *ap=(sp+=n)-1;
 	for (f=stab + *sp++; *f; f++)
-		if (*f=='%') OS->printf("%d", (int)*ap--);
-	else if (*f=='$') OS->printf("%s", (char*)*ap--);
-	else OS->print(*f);
-	OS->print('\n'); STEP;
+		if (*f=='%') 
+		{
+			sprintf(strbuf,"%d", (int)*ap--);
+			OS->print(strbuf);
+		}
+	else if (*f=='$') 
+	{
+		sprintf(strbuf,"%s", (char*)*ap--);
+		OS->print(strbuf);
+	}
+	else 
+	{
+		OS->print(*f);
+	}
+	OS->println(); 
+	STEP;
 }
 int ADD_() { A+=B; sp++; STEP; };
 int SUBS_() { A-=B; sp++; STEP; };
@@ -397,7 +424,11 @@ int interp(char* filen)
 		for (;;) 
 		{
 			yield();
-			if (filen==NULL) OS->printf("%d> ",lnum+1);
+			if (filen==NULL)
+			{ 
+				OS->print(lnum+1);
+				OS->println("> ");
+			}
 			if (filen!=NULL)
 			{
 				len  = file.readBytesUntil('\n', lp=lbuf,sizeof lbuf);

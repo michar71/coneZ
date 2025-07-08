@@ -5,6 +5,6 @@
 
 
 void setup_basic();
-void set_basic_program(Stream *output,char* prog);
+bool set_basic_program(Stream *output,char* prog);
 
 #endif

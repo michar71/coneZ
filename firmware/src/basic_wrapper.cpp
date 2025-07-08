@@ -12,7 +12,6 @@ Stream* BOutputStream = NULL;
 
 TaskHandle_t basic_task;
 SemaphoreHandle_t basic_mutex;
-char exec_code[256] = {0};
 char next_code[256] = {0};
 
 void basic_task_fun( void * parameter )
@@ -23,17 +22,13 @@ void basic_task_fun( void * parameter )
         {
             if (next_code[0] != 0)
             {
-                strcpy(exec_code,next_code);
-                next_code[0] = 0;
-                xSemaphoreGive(basic_mutex);
-
                 //Execute program
                 BOutputStream->print("RUNNING ");
-                BOutputStream->print(exec_code);
+                BOutputStream->print(next_code);
                 BOutputStream->print(" ON CORE ");
                 BOutputStream->println(xPortGetCoreID());
                 initbasic(BOutputStream,1);      
-                int res = interp(exec_code);
+                int res = interp(next_code);
                 if (res != 0)
                 {
                     BOutputStream->print("Error Exit Code: ");
@@ -44,21 +39,24 @@ void basic_task_fun( void * parameter )
                     BOutputStream->println("DONE");
                 }
                 //Reset Exec Code
-                exec_code[0] = 0;
+                next_code[0] = 0;
             }
         }
+        xSemaphoreGive(basic_mutex);
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 
-void set_basic_program(Stream *output,char* prog)
+bool set_basic_program(Stream *output,char* prog)
 {
     if (xSemaphoreTake(basic_mutex, 1000) == pdTRUE) 
     {
         BOutputStream = output;
         strcpy(next_code,prog);
         xSemaphoreGive(basic_mutex);
+        return true;
     }
+    return false;
 }
 
 void setup_basic()
