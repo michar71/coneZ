@@ -24,6 +24,8 @@
 
 #define USE_TELNET
 
+//#define WAIT_FOR_USB_SERIAL
+
 
 #define FSLINK LittleFS
 #include "commands.h"
@@ -219,9 +221,11 @@ void setup()
   Serial.begin( 115200 );
 
   //WAIT FOR SERIAL USB PORT TO CONNECXT BEOFRE CONTINUING
-  while (!Serial) {
-    ; // do nothing
-  }
+  #ifdef WAIT_FOR_USB_SERIAL
+    while (!Serial) {
+      ; // do nothing
+    }
+  #endif
 
 
   OutputStream = &Serial;
@@ -266,7 +270,7 @@ void setup()
 
   // Fire up GPS UART.
   gps_setup();
-  
+
 
   OutputStream->print( "\nConnecting to wifi..." );
   
