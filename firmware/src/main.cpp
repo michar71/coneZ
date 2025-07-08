@@ -304,6 +304,10 @@ void setup()
   OutputStream->println( "Telnet Initalized");
   OutputStream->println( "CLI active");
 
+  //Start Thread for Basic interpreter/FastLED here
+  setup_basic();
+  OutputStream->println( "BASIC task active");
+
 #ifdef USE_TELNET
   OutputStream->println( "CLI now via Telnet. Press any key to return to Serial");
   setCLIEcho(false);
@@ -311,10 +315,6 @@ void setup()
 #endif
   //Init command Line interpreter
   init_commands(OutputStream);
-
-  
-  //Start Thread for Basic interpreter/FastLED here
-  //setup_basic();
 }
 
 
