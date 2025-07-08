@@ -24,7 +24,7 @@
 
 #define USE_TELNET
 
-//#define WAIT_FOR_USB_SERIAL
+#define WAIT_FOR_USB_SERIAL
 
 
 #define FSLINK LittleFS
@@ -40,8 +40,10 @@ CRGB leds4[NUM_LEDS4];
 
 
 // Debug message config
-uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_LORA_RAW | 
-                 DEBUG_MSG_GPS | DEBUG_MSG_GPS_RAW;
+//uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_LORA_RAW | 
+//                 DEBUG_MSG_GPS | DEBUG_MSG_GPS_RAW;
+
+uint32_t debug = 0;
 
 //I2C speed
 #define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal
@@ -156,13 +158,15 @@ void blink_leds(CRGB col)
     delay(300);      
 }
 
-void color_leds(int ch, CRGB col)
+void color_leds(int ch, int cnt, CRGB col)
 {
+    if (cnt > NUM_LEDS1)
+      cnt = NUM_LEDS1;
     switch (ch)
     {
       default:
       case 1:
-        for (int ii=0;ii<NUM_LEDS1;ii++)
+        for (int ii=0;ii<cnt;ii++)
         {
           leds1[ii] = col;    
         }
@@ -206,8 +210,7 @@ void check_serial(void)
 
 void setup()
 {
-  // Give some time to reconnect USB CDC serial console.
-  delay( 5000 );
+  delay(5000);
 
   // LED pin
   pinMode( LED_PIN, OUTPUT );
@@ -243,11 +246,20 @@ void setup()
 
 
   //Setup RGB leds so we can also signal stuff there...
-  FastLED.addLeds<WS2811, RGB1_PIN, RGB>(leds1, NUM_LEDS1);
-  FastLED.addLeds<WS2811, RGB2_PIN, RGB>(leds2, NUM_LEDS2);
-  FastLED.addLeds<WS2811, RGB3_PIN, RGB>(leds3, NUM_LEDS3);
-  FastLED.addLeds<WS2811, RGB4_PIN, RGB>(leds4, NUM_LEDS4);
-  blink_leds(CRGB::Red);
+  FastLED.addLeds<WS2811, RGB1_PIN, BRG>(leds1, NUM_LEDS1);
+  FastLED.addLeds<WS2811, RGB2_PIN, BRG>(leds2, NUM_LEDS2);
+  FastLED.addLeds<WS2811, RGB3_PIN, BRG>(leds3, NUM_LEDS3);
+  FastLED.addLeds<WS2811, RGB4_PIN, BRG>(leds4, NUM_LEDS4);
+
+
+    color_leds(1,4,CRGB::Red);
+    delay(500);
+    color_leds(1,4,CRGB::Green);
+    delay(500);
+    color_leds(1,4,CRGB::Blue);
+    delay(500);
+    color_leds(1,4,CRGB::Black);
+  
   //NOTE: Don't use FastLED functions outside the setup routine in the main program.
   //At the end of Setup we create the BASIC interpreter task who will handle all LED access 
   //through fastLED afterwards to avoid any thread collisions.
