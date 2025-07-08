@@ -116,7 +116,7 @@ void lora_rx( void )
 
     if( state == RADIOLIB_ERR_NONE )
     {
-        if( debug & DEBUG_MSG_LORA )
+        if( debug & DEBUG_MSG_LORA_RAW )
         {
             OutputStream->print( "Packet: " );
             OutputStream->println( str );

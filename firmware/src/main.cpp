@@ -19,6 +19,7 @@
 #include "lora.h"
 #include "fwupdate.h"
 #include "http.h"
+#include "gps.h"
 
 
 #define USE_TELNET
@@ -37,7 +38,8 @@ CRGB leds4[NUM_LEDS4];
 
 
 // Debug message config
-uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_GPS;
+uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_LORA_RAW | 
+                 DEBUG_MSG_GPS | DEBUG_MSG_GPS_RAW;
 
 //I2C speed
 #define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal
@@ -243,8 +245,8 @@ void setup()
   FastLED.addLeds<WS2811, RGB4_PIN, RGB>(leds4, NUM_LEDS4);
   blink_leds(CRGB::Red);
   //NOTE: Don't use FastLED functions outside the setup routine in the main program.
-  //At the end of Setup we create the badsic interpreter task who will handle all LED access 
-  //through fastLED afterwards to avoid any thred collisions.
+  //At the end of Setup we create the BASIC interpreter task who will handle all LED access 
+  //through fastLED afterwards to avoid any thread collisions.
 
 
   dump_partitions();
@@ -262,6 +264,9 @@ void setup()
   // Fire up the LoRa radio.
   lora_setup();
 
+  // Fire up GPS UART.
+  gps_setup();
+  
 
   OutputStream->print( "\nConnecting to wifi..." );
   
@@ -338,7 +343,6 @@ void loop()
 
   check_serial();
 
-  //while( GPSSerial.available() )
-  //  Serial.write( GPSSerial.read() );
+  // Process GPS messages
+  gps_loop();
 }
-
