@@ -6,6 +6,12 @@
 
 #define VERSION 1
 
+// LED buffers
+extern CRGB leds1[NUM_LEDS1];
+extern CRGB leds2[NUM_LEDS2];
+extern CRGB leds3[NUM_LEDS3];
+extern CRGB leds4[NUM_LEDS4];
+
 /*
 Functions:
 =========

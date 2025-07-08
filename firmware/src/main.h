@@ -61,9 +61,4 @@
 #define NUM_LEDS3 12
 #define NUM_LEDS4 12
 
-CRGB leds1[NUM_LEDS1];
-CRGB leds2[NUM_LEDS2];
-CRGB leds3[NUM_LEDS3];
-CRGB leds4[NUM_LEDS4];
-
 #endif
