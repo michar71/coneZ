@@ -4,17 +4,19 @@
 #include "main.h"
 #include "util.h"
 
+
 // Default LoRa parameters
 #define DOWNSTREAM_FREQUENCY    431.250         // 431.250MHz
 #define DOWNSTREAM_BANDWIDTH    500.0           // 500kHz
 #define DOWNSTREAM_SF           9               // SF7...SF12
-#define DOWNSTREAM_CR           5               // 4/6 coding rate
+#define DOWNSTREAM_CR           6               // 4/6 coding rate
 #define DOWNSTREAM_PREAMBLE     8               // 8 preamble symbols
 #define DOWNSTREAM_TXPOWER      5               // Transmit power
 #define LORA_SYNC_WORD          0x1424          // LoRa private sync word
 
 #define LORA_SPI_FREQ           1000000
 
+extern uint32_t debug;
 
 SPIClass spiLoRa( HSPI );
 SPISettings spiLoRaSettings( LORA_SPI_FREQ, MSBFIRST, SPI_MODE0 );
@@ -85,36 +87,41 @@ int lora_setup( void )
 
 void lora_rx( void )
 {
-  unsigned int len;
-  uint8_t buf[256];
-  int status;
-  float RSSI;
-  float SNR;
+    unsigned int len;
+    uint8_t buf[256];
+    int status;
+    float RSSI;
+    float SNR;
 
-  if( !lora_rxdone_flag )
-    return;
+    if( !lora_rxdone_flag )
+        return;
 
-  lora_rxdone_flag = false;
+    lora_rxdone_flag = false;
 
-  OutputStream->print( "\nWe have RX flag!\n" );
-  OutputStream->print( "radio.available = " );
-  OutputStream->println( radio.available() );
-  OutputStream->print( "radio.getRSSI = " );
-  OutputStream->println( radio.getRSSI() );
-  OutputStream->print( "radio.getSNR = " );
-  OutputStream->println( radio.getSNR() );
-  OutputStream->print( "radio.getPacketLength = " );
-  OutputStream->println( radio.getPacketLength() );
-  
-  String str;
-  int16_t state = radio.readData( str );
+    if( debug & DEBUG_MSG_LORA )
+    {
+        OutputStream->print( "\nWe have RX flag!\n" );
+        OutputStream->print( "radio.available = " );
+        OutputStream->println( radio.available() );
+        OutputStream->print( "radio.getRSSI = " );
+        OutputStream->println( radio.getRSSI() );
+        OutputStream->print( "radio.getSNR = " );
+        OutputStream->println( radio.getSNR() );
+        OutputStream->print( "radio.getPacketLength = " );
+        OutputStream->println( radio.getPacketLength() );
+    }
+        
+    String str;
+    int16_t state = radio.readData( str );
 
-  if( state == RADIOLIB_ERR_NONE )
-  {
-    OutputStream->print( "Packet: " );
-    OutputStream->println( str );
-    hexdump( (uint8_t*)str.c_str(), str.length() );
-  }
-
-  OutputStream->print( "\n" );
+    if( state == RADIOLIB_ERR_NONE )
+    {
+        if( debug & DEBUG_MSG_LORA )
+        {
+            OutputStream->print( "Packet: " );
+            OutputStream->println( str );
+            hexdump( (uint8_t*)str.c_str(), str.length() );
+            OutputStream->print( "\n" );
+        }
+    }
 }

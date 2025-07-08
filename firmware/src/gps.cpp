@@ -3,6 +3,7 @@
 #include "main.h"
 #include "gps.h"
 
+extern uint32_t debug;
 
 // Serial
 HardwareSerial GPSSerial(0);

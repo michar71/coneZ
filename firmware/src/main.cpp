@@ -36,6 +36,9 @@ CRGB leds3[NUM_LEDS3];
 CRGB leds4[NUM_LEDS4];
 
 
+// Debug message config
+uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_GPS;
+
 //I2C speed
 #define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal
 
