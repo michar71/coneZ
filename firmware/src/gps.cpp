@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
+#include <TinyGPSPlus.h>
 #include "main.h"
 #include "gps.h"
 
@@ -15,6 +16,7 @@ bool gps_pos_valid = false;
 bool gps_time_valid = false;
 uint32_t gps_time = 0;
 
+TinyGPSPlus gps;
 
 // Serial
 HardwareSerial GPSSerial(0);
@@ -36,6 +38,19 @@ int gps_loop()
         unsigned char ch = GPSSerial.read();
 
         if( debug & DEBUG_MSG_GPS_RAW )     OutputStream->write( ch );
+
+        gps.encode( ch );
+    }
+
+    if( gps.location.isUpdated() )
+    {
+        if( debug & DEBUG_MSG_GPS )
+            OutputStream->println( "<GPS> Update available" );
+
+        if( gps.time.isValid() )
+        {
+            if( debug & DEBUG_MSG_GPS )     OutputStream->println( "<GPS> Time valid" );
+        }
     }
 
     return 0;
