@@ -63,9 +63,9 @@
 #define DEBUG_MSG_GPS_RAW   0x00080000
 
 // LED counts per output
-#define NUM_LEDS1 12
-#define NUM_LEDS2 12
-#define NUM_LEDS3 12
-#define NUM_LEDS4 12
+#define NUM_LEDS1 50
+#define NUM_LEDS2 1
+#define NUM_LEDS3 1
+#define NUM_LEDS4 1
 
 #endif

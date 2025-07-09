@@ -256,7 +256,21 @@ int runBasic(int argc, char **argv)
     else
     {
         if (false == set_basic_program(OutputStream,argv[1]))
-          OutputStream->println("BASSIC code already running");        
+          OutputStream->println("BASIC code already running");        
+        return 0;
+    }
+}
+
+int stopBasic(int argc, char **argv) 
+{
+    if (argc != 1)
+    {
+        OutputStream->println("Wrong argument count");
+        return 1;       
+    }
+    else
+    {
+        set_basic_param(0,1);      
         return 0;
     }
 }
@@ -275,6 +289,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("del"), delFile);
     shell.addCommand(F("load"), loadFile);   
     shell.addCommand(F("run"), runBasic);
+    shell.addCommand(F("stop"), stopBasic);
     
     //System commands
 

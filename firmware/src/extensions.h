@@ -42,7 +42,6 @@ event = 0 -> Sync Pulse
     timeout -> Timeout in ms, 0 = wait forever
     ret = 0 = timerout, 1 = event received    
 
-
 event = 1 -> Digital Pin Change
     cond = 0 = low to high, 1 = high to low
     val = pin number
@@ -64,13 +63,24 @@ event = 3 -> Analog Pin Change from larger then TH to smaller then TH
 
     ret = 0 = timerout, 1 = event received
 
-event = 3 -> wait for system timer to reach a specific value
+event = 4 -> wait for system timer to reach a specific value
     cond = 0 = millisec, 1 = sec, 2 = min, 3 = hours
     val = value to wait for
     timeout = timeout in ms, 0 = wait forever   
 
     ret = 0 = timerout, 1 = event received    
 
+event = 5 -> wait for GPS PPS Pulse
+    cond = 0 = low, 1 = high, 2 = transition from low to high, 3 = transition from high to low
+    val = 0
+    timeout -> Timeout in ms, 0 = wait forever
+    ret = 0 = timerout, 1 = event received, -1 = no GPS Signal  
+
+event = 0 -> wait for Param to reach a specific state
+    cond = paramID
+    val = Value we are waiting for/comparing too
+    timeout -> Timeout in ms, 0 = wait forever
+    ret = 0 = timerout, 1 = event received   
 
 Hardware:
 uint8 READANALOG(int ch)
@@ -189,7 +199,11 @@ CallbackSYNCFunction SYNC_Func = NULL;
 #define EVENT_ANALOG_DOWN 3
 #define EVENT_TIMER 4
 
-
+//int PARAM_function (int paramID)
+//Returns the value of the parameter paramID. Return 0 if parasmID does not exist...
+//paramID 0 should be used to termiante a program if set to 1 if its in a loop.
+typedef int (*CallbackPARAMFunction)(int);
+CallbackPARAMFunction PARAM_Func = NULL;
 
 //Gamma-Table LUT
 const uint8_t  gamma8[] = {
@@ -271,6 +285,7 @@ const uint8_t  gamma8[] = {
 
 #define VERSION_T "VERSION"
 #define WAITFOR_T "WAITFOR"
+#define GETPARAM_T "GETPARAM"
 
 //-------------------------------------
 //Real HW dependecies.... We can ifdef this with stubs or PC functions for testing on other platform
@@ -1742,6 +1757,21 @@ int BRIGHT_()
     }
 }
 
+int GETPARAM_()
+{
+    int val = *sp;  //Pull value from Stack and rewind stack
+    if (PARAM_Func == NULL)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;  
+    }
+    if (val < 0)
+        val = 0;
+    val = PARAM_Func(val);
+    *sp=val; //Push back to to the stack
+    STEP;
+}
+
 int WAITFOR_()
 {
     int timeout = (int)*sp++;
@@ -2215,6 +2245,15 @@ int funhook_(char *msg, int n)
         }
         emit(WAITFOR_);STEP;
     }  
+    if (!strcmp(msg,GETPARAM_T))
+    {
+        if (n!=1) 
+        {
+            bad((char*)"GETPARAM: 1 ARGUMENT REQUIRED");
+            return 0;
+        }
+        emit(GETPARAM_);STEP;
+    }      
     //If we reach here we did not find a matching function                   
     else	
 		return 0;
@@ -2247,4 +2286,9 @@ void register_sync_callback(CallbackSYNCFunction func)
     SYNC_Func = func;    
 }
 
+//PARAM Callback provides access to external parameters
+void register_param_callback(CallbackPARAMFunction func)
+{
+    PARAM_Func = func;    
+}
 #endif
