@@ -9,10 +9,13 @@ extern Stream *OutputStream;
 extern uint32_t debug;
 
 // Stuff we're exporting
-float gps_lat = 39.0;
-float gps_lon = -119.0;
-float gps_alt = 3900;
+float gps_lat = 40.76;
+float gps_lon = -119.19;
 bool gps_pos_valid = false;
+
+float gps_alt = 1234;       // Altitude is in meters
+bool gps_alt_valid = false;
+
 bool gps_time_valid = false;
 uint32_t gps_time = 0;
 
@@ -44,12 +47,29 @@ int gps_loop()
 
     if( gps.location.isUpdated() )
     {
+        gps_lat = gps.location.lat();
+        gps_lon = gps.location.lng();
+        gps_pos_valid = gps.location.isValid();
+
+        gps_alt = gps.altitude.meters();
+        gps_alt_valid = gps.altitude.isValid();
+
         if( debug & DEBUG_MSG_GPS )
-            OutputStream->println( "<GPS> Update available" );
+        {
+            OutputStream->print( "<GPS> Update available: " );
+            OutputStream->printf( "Valid=%u  Lat=%0.6f  Lon=%0.6f  Alt=%u", (int) gps_pos_valid, gps_lat, gps_lon, gps_alt );
+            OutputStream->print( "\n" );
+        }
+
 
         if( gps.time.isValid() )
         {
-            if( debug & DEBUG_MSG_GPS )     OutputStream->println( "<GPS> Time valid" );
+            if( debug & DEBUG_MSG_GPS )
+            {
+                OutputStream->print( "<GPS> Time valid: " );
+                OutputStream->printf( "date=%u  time=%u", gps.date.value(), gps.time.value() );
+                OutputStream->print( "\n" );
+            }
         }
     }
 

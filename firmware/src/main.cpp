@@ -45,7 +45,7 @@ CRGB leds4[NUM_LEDS4];
 //uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_LORA_RAW | 
 //                 DEBUG_MSG_GPS | DEBUG_MSG_GPS_RAW;
 
-uint32_t debug = 0 /*DEBUG_MSG_GPS*/;
+uint32_t debug = 0;
 
 //I2C speed
 #define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal

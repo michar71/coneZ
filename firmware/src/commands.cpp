@@ -3,8 +3,11 @@
 #include <FS.h>
 #include <SimpleSerialShell.h>
 #include "basic_wrapper.h"
+#include "main.h"
 
 extern Stream* OutputStream;
+extern uint32_t debug;
+
 
 //Serial/Telnet Shell comamnds
 
@@ -117,6 +120,62 @@ int test(int argc, char **argv)
   }  
   return 0;
 };
+
+
+int cmd_debug( int argc, char **argv )
+{
+    uint32_t mask_to_set;
+
+    // If no args, show current debug message config.
+    if( argc < 2 )
+    {
+        OutputStream->printf( "Current debug mask: %08x\n", debug );
+
+        OutputStream->printf( " - gps:      %s\n", debug & DEBUG_MSG_GPS ? "on" : "off" );
+        OutputStream->printf( " - gps_raw:  %s\n", debug & DEBUG_MSG_GPS_RAW ? "on" : "off" );
+        OutputStream->printf( " - lora:     %s\n", debug & DEBUG_MSG_LORA ? "on" : "off" );
+        OutputStream->printf( " - lora_raw: %s\n", debug & DEBUG_MSG_LORA_RAW ? "on" : "off" );
+
+        return 0;
+    }
+
+    if( !strcasecmp( argv[1], "off" ) )
+    {
+        debug = 0;
+        OutputStream->print( "Debug mask set to 0\n" );
+        return 0;
+    }
+
+    if( !strcasecmp( argv[1], "gps" ) )
+        mask_to_set = DEBUG_MSG_GPS;
+    else
+    if( !strcasecmp( argv[1], "gps_raw" ) )
+        mask_to_set = DEBUG_MSG_GPS_RAW;
+    else
+    if( !strcasecmp( argv[1], "lora" ) )
+        mask_to_set = DEBUG_MSG_LORA;
+    else
+    if( !strcasecmp( argv[1], "lora_raw" ) )
+        mask_to_set = DEBUG_MSG_LORA_RAW;
+    else
+    {
+        OutputStream->printf( "Debug name \"%s\"not recognized.\n", argv[1] );
+        return 1;
+    }
+
+    if( argc == 2 )
+        debug |= mask_to_set;
+
+    if( argc >= 3 )
+    {
+        if( !strcasecmp( argv[2], "off" ) )
+            debug &= ~mask_to_set;
+        else
+            debug |= mask_to_set;
+    }
+    
+    return 0;
+}
 
 int delFile(int argc, char **argv) 
 {
@@ -283,7 +342,8 @@ void init_commands(Stream *dev)
     shell.addCommand(F("test"), test);
 
     //file Sydstem commands
-    shell.addCommand(F("dir"), listDir);    
+    shell.addCommand(F("dir"), listDir);
+    shell.addCommand(F("debug"), cmd_debug );
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("ren"), renFile);
     shell.addCommand(F("del"), delFile);
