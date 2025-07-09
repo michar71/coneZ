@@ -25,6 +25,7 @@
 #define USE_TELNET
 
 #define WAIT_FOR_USB_SERIAL
+#define WAIT_FOR_USB_SERIAL_TIMEOUT 10    // Seconds
 
 
 #define FSLINK LittleFS
@@ -225,8 +226,14 @@ void setup()
 
   //WAIT FOR SERIAL USB PORT TO CONNECXT BEOFRE CONTINUING
   #ifdef WAIT_FOR_USB_SERIAL
-    while (!Serial) {
-      ; // do nothing
+    unsigned long t_start = millis();
+
+    while (!Serial)
+    {
+      #ifdef WAIT_FOR_USB_SERIAL_TIMEOUT
+        if( millis() - t_start > WAIT_FOR_USB_SERIAL_TIMEOUT * 1000 )
+          break;
+      #endif
     }
   #endif
 
