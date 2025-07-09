@@ -20,6 +20,7 @@
 #include "fwupdate.h"
 #include "http.h"
 #include "gps.h"
+#include "basic_wrapper.h"
 
 
 #define USE_TELNET
@@ -209,6 +210,25 @@ void check_serial(void)
   }
 }
 
+void basic_autoexec(void)
+{
+    //Hmm... Maybe this should actually happen in setup?
+  static bool startup = true;  
+  if (startup)
+  {
+    startup = false;
+    if (FSLINK.exists((char*)"/startup.bas"))
+    {
+        OutputStream->print("startup.bas found. Executing...");
+        set_basic_program(OutputStream,"/startup.bas");
+    }
+    else
+    {
+      OutputStream->print("No startup.bas");
+    }
+  }
+}
+
 void setup()
 {
   delay(5000);
@@ -347,6 +367,9 @@ void loop()
 
   //Run Shell commands
   run_commands();
+
+  //Check for startup.bas and if it exist run it once
+  basic_autoexec();
 
   // put your main code here, to run repeatedly:
   //Serial.print( "." );
