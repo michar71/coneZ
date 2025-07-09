@@ -13,7 +13,6 @@
 #endif
 
 Stream *OS = NULL;
-char strbuf[256];
 
 //Set defaults if not defined somewhere else
 #ifndef FSLINK
@@ -88,14 +87,12 @@ void initbasic(Stream* out, int comp)
 }
 void bad(char *msg) 
 { 
-	sprintf(strbuf,"ERROR %d: %s\n", lnum, msg);
-	OS->print(strbuf);
+	OS->printf("ERROR %d: %s\n", lnum, msg);
 	globalerror = 1; 
 }
 void err(char *msg) 
 { 
-	sprintf(strbuf,"ERROR %d: %s\n",lmap[pc-prg-1],msg);
-	OS->print(strbuf);
+	OS->printf("ERROR %d: %s\n",lmap[pc-prg-1],msg);
 	globalerror = 2; 
 }
 
@@ -112,20 +109,20 @@ int LOAD_() { *--sp=value[PCV]; STEP; }
 int STORE_() { value[PCV]=*sp++; STEP; }
 void ECHO_() 
 { 
-	sprintf(strbuf,"%d\n",*sp++); 
-	OS->print(strbuf);
+	OS->printf("%d\n",*sp++); 
 }
-int FORMAT_() { char *f; Val n=PCV, *ap=(sp+=n)-1;
+int FORMAT_() 
+{ 
+	char *f; 
+	Val n=PCV, *ap=(sp+=n)-1;
 	for (f=stab + *sp++; *f; f++)
 		if (*f=='%') 
 		{
-			sprintf(strbuf,"%d", (int)*ap--);
-			OS->print(strbuf);
+			OS->printf("%d", (int)*ap--);
 		}
 	else if (*f=='$') 
 	{
-		sprintf(strbuf,"%s", (char*)*ap--);
-		OS->print(strbuf);
+		OS->printf("%s", (char*)*ap--);
 	}
 	else 
 	{
@@ -465,7 +462,7 @@ int interp(char* filen)
 		OS->println(" Bytes");
 		ipc=cpc+1, compile=0, file.close(), filen=NULL; /* DONE COMPILING */
 		emit((int (*)())BYE_);							/* RUN PROGRAM */
-		DRIVER;  										/* MOVE PROGRAM FORWARD */				
+		DRIVER;  										/* MOVE PROGRAM FORWARD */			
 		//Handle Errors
 		if ((error=check_error(filen)) > -1) return error; 
 	}

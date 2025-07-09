@@ -699,7 +699,7 @@ int LUTSIZE_()
 int PRINTS_() 
 { 
     //Output the string on the Run-time Stack and return for next command.
-	puts((char*)*sp++); 
+	OS->println((char*)*sp++); 
     STEP; 
 }
 
