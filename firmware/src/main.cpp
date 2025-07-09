@@ -28,6 +28,7 @@
 #define WAIT_FOR_USB_SERIAL
 #define WAIT_FOR_USB_SERIAL_TIMEOUT 10    // Seconds
 
+#define WIFI_TIMEOUT 20                   // Seconds
 
 #define FSLINK LittleFS
 #include "commands.h"
@@ -242,27 +243,6 @@ void setup()
   digitalWrite( LED_PIN, LOW );
 
 
-  Serial.begin( 115200 );
-
-  //WAIT FOR SERIAL USB PORT TO CONNECXT BEOFRE CONTINUING
-  #ifdef WAIT_FOR_USB_SERIAL
-    unsigned long t_start = millis();
-
-    while (!Serial)
-    {
-      #ifdef WAIT_FOR_USB_SERIAL_TIMEOUT
-        if( millis() - t_start > WAIT_FOR_USB_SERIAL_TIMEOUT * 1000 )
-          break;
-      #endif
-    }
-  #endif
-
-
-  OutputStream = &Serial;
-  OutputStream->println();
-  OutputStream->println( "Starting...\n" );
-
-
   // Turn on LOAD FET
   pinMode( LOAD_ON_PIN, OUTPUT );
   digitalWrite( LOAD_ON_PIN, HIGH );
@@ -271,6 +251,8 @@ void setup()
   pinMode( SOLAR_PWM_PIN, OUTPUT );
   digitalWrite( SOLAR_PWM_PIN, HIGH );
 
+
+  delay( 250 );
 
   //Setup RGB leds so we can also signal stuff there...
   FastLED.addLeds<WS2811, RGB1_PIN, BRG>(leds1, NUM_LEDS1);
@@ -290,6 +272,27 @@ void setup()
   //NOTE: Don't use FastLED functions outside the setup routine in the main program.
   //At the end of Setup we create the BASIC interpreter task who will handle all LED access 
   //through fastLED afterwards to avoid any thread collisions.
+
+
+  Serial.begin( 115200 );
+
+  //WAIT FOR SERIAL USB PORT TO CONNECXT BEOFRE CONTINUING
+  #ifdef WAIT_FOR_USB_SERIAL
+    unsigned long t_start = millis();
+
+    while (!Serial)
+    {
+      #ifdef WAIT_FOR_USB_SERIAL_TIMEOUT
+        if( millis() - t_start > WAIT_FOR_USB_SERIAL_TIMEOUT * 1000 )
+          break;
+      #endif
+    }
+  #endif
+
+
+  OutputStream = &Serial;
+  OutputStream->println();
+  OutputStream->println( "Starting...\n" );
 
 
   dump_partitions();
@@ -330,16 +333,24 @@ void setup()
 
   WiFi.begin( wifi_ssid, wifi_psk );
 
-  while( WiFi.status() != WL_CONNECTED )
+  unsigned long t_wifi_start = millis();
+
+  while( WiFi.status() != WL_CONNECTED && millis() - t_wifi_start < WIFI_TIMEOUT * 1000 )
   {
     delay( 500 );
     OutputStream->print( "." );
   }
 
-  OutputStream->println( " Connected");
-  OutputStream->print( "IP address: " );
-  OutputStream->println( WiFi.localIP() );
+  if( WiFi.status() == WL_CONNECTED )
+  {
+    OutputStream->println( " Connected");
+    OutputStream->print( "IP address: " );
+    OutputStream->println( WiFi.localIP() );
+  }
+  else
+    OutputStream->println( " WiFi timed out" );
 
+    
   http_setup();
 
   //At this point switch comms over to telnet

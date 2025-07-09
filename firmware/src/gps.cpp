@@ -57,7 +57,7 @@ int gps_loop()
         if( debug & DEBUG_MSG_GPS )
         {
             OutputStream->print( "<GPS> Update available: " );
-            OutputStream->printf( "Valid=%u  Lat=%0.6f  Lon=%0.6f  Alt=%u", (int) gps_pos_valid, gps_lat, gps_lon, gps_alt );
+            OutputStream->printf( "Valid=%u  Lat=%0.6f  Lon=%0.6f  Alt=%dm", (int) gps_pos_valid, gps_lat, gps_lon, (int) gps_alt );
             OutputStream->print( "\n" );
         }
 
