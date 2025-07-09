@@ -35,7 +35,7 @@ int gps_loop()
     {
         unsigned char ch = GPSSerial.read();
 
-        if( debug & DEBUG_MSG_GPS_RAW )     OutputStream->write( GPSSerial.read() );
+        if( debug & DEBUG_MSG_GPS_RAW )     OutputStream->write( ch );
     }
 
     return 0;
