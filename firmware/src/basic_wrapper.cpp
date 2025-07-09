@@ -8,11 +8,38 @@
 #define REAL_ESP32_HW
 #include "basic.h"
 
+#define MAX_PARAMS 16
+
 Stream* BOutputStream = NULL;
 
 TaskHandle_t basic_task;
 SemaphoreHandle_t basic_mutex;
 char next_code[256] = {0};
+int params[MAX_PARAMS];
+
+void set_basic_param(uint8_t paramID, int val)
+{
+  if (paramID > MAX_PARAMS-1)
+     paramID = MAX_PARAMS-1;
+
+  //This is probably atomic....   
+  params[paramID] = val;
+}
+
+int get_basic_param(int paramID)
+{
+      if (paramID > MAX_PARAMS-1)
+     paramID = MAX_PARAMS-1;
+
+  //This is probably atomic....   
+  return params[paramID];
+}
+
+void reset_params(void)
+{
+    for (int ii=0;ii<MAX_PARAMS;ii++)
+        params[ii] = 0;
+}
 
 void basic_task_fun( void * parameter )
 {
@@ -27,6 +54,7 @@ void basic_task_fun( void * parameter )
                 BOutputStream->print(next_code);
                 BOutputStream->print(" ON CORE ");
                 BOutputStream->println(xPortGetCoreID());
+                reset_params();
                 initbasic(BOutputStream,1);      
                 int res = interp(next_code);
                 if (res != 0)
@@ -59,9 +87,12 @@ bool set_basic_program(Stream *output,char* prog)
     return false;
 }
 
+
+
 void setup_basic()
 {
     //Set Callback Functions
+    register_param_callback(get_basic_param);
 
     //Start Own Thread
    basic_mutex = xSemaphoreCreateMutex();    
