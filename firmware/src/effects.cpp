@@ -67,8 +67,6 @@ void SOS_effect(void)
         color_leds(1, 50, CRGB::Black);
         delay(25);
         color_leds(1, 50, CRGB::Black);
-        //Wait for 1 sec so we don't do it twice...
-        //delay(3000);
       }
 }
 
@@ -142,7 +140,63 @@ void SOS_effect2(void)
         delay(25);
         color_leds(1, 50, col );
         delay( 25 );
-        //Wait for 1 sec so we don't do it twice...
-        //delay(3000);
+      }
+}
+
+//Set cones up in a circle around camp
+//Each cone determines its angle in deg in relationship to base
+//Each cone picks its color based on 360 deg mapped to 255 hue
+//all cones sinc on 5 seconds rollover
+//each cone determines its offset in deg * 10 in ms 
+void CIRCLE_effect(void)
+{
+    CRGB col;
+
+    //Get Lat/Lon/Time
+    float lat = get_lat();
+    float lon = get_lon();
+    int sec = get_sec();
+    static int prev_sec = 0;
+    static int offset_cnt = 0;
+
+    float origin_lat = 40.762173;
+    float origin_lon = -119.193672;
+
+    //Calulate Offset From Equator/0-meridian in Meters
+    float lat_m;
+    float lon_m;
+    float lat_o_m;
+    float lon_o_m;
+    float deg;
+
+    //Calulate distance from Origin
+    latlon_to_meters(lat, lon,&lat_m,&lon_m);
+    latlon_to_meters(origin_lat, origin_lon,&lat_o_m,&lon_o_m);
+    GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);
+    deg = res.bearing_deg;
+    int offset_ms = (int)(deg * 10);
+
+    Serial.print("Deg: ");
+    Serial.println(deg);
+
+    //Wait for sec to roll over Mod 10;
+    if (sec != prev_sec && sec%5 == 0)
+    {
+        prev_sec = sec;
+
+        //Wait Offset MS
+        delay((int)round(offset_ms));
+        OutputStream->print("PING - sec = ");
+        OutputStream->println( sec );
+      
+        int hue = (int)map(deg,0,259,0,255);
+        hue = hue + offset_cnt;
+        hue  = hue % 255;
+
+        CRGB col;
+        col.setHSV(hue,255,255);
+        color_leds(1, 50, col);
+        delay (20);
+        offset_cnt = offset_cnt + 20;
       }
 }
