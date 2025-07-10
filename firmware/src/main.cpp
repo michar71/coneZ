@@ -398,6 +398,7 @@ void setup()
   OutputStream->println( "CLI active");
 
   //Start Thread for Basic interpreter/FastLED here
+  //setup_basic();
   //OutputStream->println( "BASIC task active");
 
 #ifdef USE_TELNET
