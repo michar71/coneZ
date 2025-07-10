@@ -230,10 +230,18 @@ void basic_autoexec(void)
   }
 }
 
+void buzzer(int freq, int vol)
+{
+  //ledcSetup(0, freq, 8);
+  //ledcAttachPin(BUZZER_PIN, 0);
+  //ledcWrite(0, vol);
+  analogWriteResolution(8);
+  analogWriteFrequency(freq);
+  analogWrite(BUZZER_PIN,vol);
+}
 
 void setup()
 {
-  delay( 250 );
 
   // Turn on LOAD FET
   pinMode( LOAD_ON_PIN, OUTPUT );
@@ -268,6 +276,9 @@ void setup()
 
   delay(1000);
 
+  //Buzzer Setup
+  pinMode( BUZZER_PIN, OUTPUT );
+
   // LED pin
   pinMode( LED_PIN, OUTPUT );
   digitalWrite( LED_PIN, LOW );
@@ -275,19 +286,6 @@ void setup()
   digitalWrite( LED_PIN, HIGH );
   delay( 500 );
   digitalWrite( LED_PIN, LOW );
-
-
-  // Turn on LOAD FET
-  pinMode( LOAD_ON_PIN, OUTPUT );
-  digitalWrite( LOAD_ON_PIN, HIGH );
-
-  // Turn on solar FET
-  pinMode( SOLAR_PWM_PIN, OUTPUT );
-  digitalWrite( SOLAR_PWM_PIN, HIGH );
-
-
-  delay( 250 );
-
 
 
   Serial.begin( 115200 );
@@ -304,6 +302,16 @@ void setup()
       #endif
     }
   #endif
+
+  /*
+  for (int ii=1100;ii<30000;ii=ii+1000)
+  {
+    Serial.print("Freq:");
+    Serial.println(ii);
+    buzzer(ii,255);
+    delay(500);
+  }
+  */ 
 
 
   OutputStream = &Serial;
@@ -375,8 +383,8 @@ void setup()
   OutputStream->println( "CLI active");
 
   //Start Thread for Basic interpreter/FastLED here
-  setup_basic();
-  OutputStream->println( "BASIC task active");
+  //setup_basic();
+  //OutputStream->println( "BASIC task active");
 
 #ifdef USE_TELNET
   OutputStream->println( "CLI now via Telnet. Press any key to return to Serial");
@@ -388,12 +396,152 @@ void setup()
 }
 
 
+//------------------------
+//Location-based Functions
+//------------------------
+
+#define EARTH_RADIUS_METERS 6378137.0
+
+// Converts latitude and longitude (in degrees) into x/y offsets (in meters)
+// from the Equator and Prime Meridian.
+// x = east-west offset (longitude), y = north-south offset (latitude)
+void latlon_to_meters(float latitude_deg, float longitude_deg,
+                      float *x_offset_meters, float *y_offset_meters) {
+    // Convert latitude to radians for cosine calculation
+    double lat_rad = latitude_deg * (M_PI / 180.0);
+
+    // North-south offset from equator (meters)
+    *y_offset_meters = EARTH_RADIUS_METERS * (M_PI / 180.0) * latitude_deg;
+
+    // East-west offset from Prime Meridian (meters), adjusted by latitude
+    *x_offset_meters = EARTH_RADIUS_METERS * cos(lat_rad) * (M_PI / 180.0) * longitude_deg;
+}
+
+// Structure to hold result
+typedef struct {
+    float distance;   // Distance in meters
+    float bearing_deg;  // Bearing in degrees
+} GeoResult;
+
+
+//For large distsnces this is the correct formula
+GeoResult calculate_geo(float lat1, float lon1, float lat2, float lon2) {
+    GeoResult result;
+
+    // Convert degrees to radians
+    float lat1_rad = lat1 * DEG_TO_RAD;
+    float lat2_rad = lat2 * DEG_TO_RAD;
+    float delta_lat = (lat2 - lat1) * DEG_TO_RAD;
+    float delta_lon = (lon2 - lon1) * DEG_TO_RAD;
+
+    // Haversine formula for distance
+    float a = sinf(delta_lat / 2.0f) * sinf(delta_lat / 2.0f) +
+              cosf(lat1_rad) * cosf(lat2_rad) *
+              sinf(delta_lon / 2.0f) * sinf(delta_lon / 2.0f);
+    float c = 2.0f * atanf(sqrtf(a) / sqrtf(1.0f - a));
+    result.distance = EARTH_RADIUS_METERS * c;
+
+    // Formula for initial bearing
+    float y = sinf(delta_lon) * cosf(lat2_rad);
+    float x = cosf(lat1_rad) * sinf(lat2_rad) -
+              sinf(lat1_rad) * cosf(lat2_rad) * cosf(delta_lon);
+    float bearing_rad = atan2f(y, x);
+    float bearing_deg = bearing_rad * RAD_TO_DEG;
+
+    // Normalize to 0–360
+    if (bearing_deg < 0.0f) {
+        bearing_deg += 360.0f;
+    }
+    result.bearing_deg = bearing_deg;
+
+    return result;
+}
+
+//For small distances or flat-earthers this is totally fine (Ignoring that earth is a sphere)
+GeoResult xy_to_polar(float x1, float y1, float x2, float y2) 
+{
+    GeoResult result;
+
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+
+    result.distance = sqrtf(dx * dx + dy * dy);
+    float angle_rad = atan2f(dy, dx);
+    float angle_deg = angle_rad * (180.0f / 3.14159265f);
+
+    // Normalize to 0–360 degrees
+    if (angle_deg < 0.0f)
+        angle_deg += 360.0f;
+
+    result.bearing_deg = angle_deg;
+    return result;
+}
+
+void SOS_effect(void)
+{
+    //Get Lat/Lon/Time
+    float lat = get_lat();
+    float lon = get_lon();
+    int sec = get_sec();
+
+    float origin_lat = 40.762173;
+    float origin_lon = -119.193672;
+
+    //Calulate Offset From Equator/0-meridian in Meters
+    float lat_m;
+    float lon_m;
+    float lat_o_m;
+    float lon_o_m;
+    float dist_meters;
+
+    //Calulate distance from Origin
+    latlon_to_meters(lat, lon,&lat_m,&lon_m);
+    latlon_to_meters(origin_lat, origin_lon,&lat_o_m,&lon_o_m);
+    GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);
+    dist_meters = res.distance;
+
+    Serial.print("Dist: ");
+    Serial.println(dist_meters);
+
+    //calulate offset in MS wth speed ofd sound being 343m/s
+    float sos_ms = 343.0;
+    
+    float offset_ms = dist_meters / sos_ms * 1000;
+    Serial.print("Offset ");
+    Serial.println(offset_ms);
+
+    //Wait for sec to roll over Mod 10;
+    if (sec%10 == 0)
+    {
+        //Wait Offset MS
+        delay((int)round(offset_ms));
+        Serial.println("PING");
+        //Flash Light
+        for (int ii = 255; ii>0; ii=ii-32)
+        {
+          CRGB col;
+          col.r = ii;
+          col.g = ii;
+          col.b = ii;
+          color_leds(1, 50, col);
+          delay (20);
+        }
+        color_leds(1, 50, CRGB::Black);
+        //Wait for 1 sec so we don't do it twice...
+        delay(1000);
+      }
+}
+
+
 void loop()
 {
   http_loop();
 
-  //Run Shell commands
+  //Run Shell commands and check serial port. Protected bymutex.
+  take_terminal();
   run_commands();
+  check_serial();
+  give_terminal();
 
   //Check for startup.bas and if it exist run it once
   basic_autoexec();
@@ -414,8 +562,9 @@ void loop()
   // Check for LoRa packets
   lora_rx();
 
-  check_serial();
-
   // Process GPS messages
   gps_loop();
+
+  //RUN Speed-Of-SOuind Effect
+  SOS_effect();
 }

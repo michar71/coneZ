@@ -120,7 +120,8 @@ bool SimpleSerialShell::executeIfInput(void)
     if (bufferReady) {
         didSomething = true;
         execute();
-	print(F("> ")); // provide command prompt feedback
+    if (shellConnection)
+	    shellConnection->print(F("> ")); // provide command prompt feedback
     }
 
     return didSomething;
@@ -144,7 +145,9 @@ bool SimpleSerialShell::prepInput(void)
     bool moreData = true;
 
     do {
-        int c = read();
+        int c = -1;
+        if (shellConnection)
+            c  = shellConnection->read();
         switch (c)
         {
             case -1: // No character present; don't do anything.
@@ -158,20 +161,25 @@ bool SimpleSerialShell::prepInput(void)
             case '\b':  // CTRL(H) backspace
                 // Destructive backspace: remove last character
                 if (inptr > 0) {
-                    print(F("\b \b"));  // remove char in raw UI
+                    if (shellConnection)
+                        shellConnection->print(F("\b \b"));  // remove char in raw UI
                     linebuffer[--inptr] = 0;
                 }
                 break;
 
             case 0x12: //CTRL('R')
                 //Ctrl-R retypes the line
-                print(F("\r\n"));
-                print(linebuffer);
+                if (shellConnection)
+                {
+                    shellConnection->print(F("\r\n"));
+                    shellConnection->print(linebuffer);
+                }
                 break;
 
             case 0x15: //CTRL('U')
                 //Ctrl-U deletes the entire line and starts over.
-                println(F("XXX"));
+                if (shellConnection)
+                    shellConnection->println(F("XXX"));
                 resetBuffer();
                 break;
 
@@ -181,7 +189,8 @@ bool SimpleSerialShell::prepInput(void)
             case '\r':  //CTRL('M') carriage return (or "Enter" key)
                 // raw input only sends "return" for the keypress
                 // line is complete
-                println();     // Echo newline too.
+                if (shellConnection)
+                    shellConnection->println();     // Echo newline too.
                 bufferReady = true;
                 break;
 
@@ -194,7 +203,10 @@ bool SimpleSerialShell::prepInput(void)
                 // Otherwise, echo the character and append it to the buffer
                 linebuffer[inptr++] = c;
                 if (echoEnabled)
-                    write(c);
+                {
+                    if (shellConnection)
+                        shellConnection->write(c);
+                }
                 if (inptr >= SIMPLE_SERIAL_SHELL_BUFSIZE-1) {
                     bufferReady = true; // flush to avoid overflow
                 }
@@ -233,7 +245,8 @@ int SimpleSerialShell::execute(void)
     if (!commandName)
     {
         // empty line; no arguments found.
-        println(F("OK"));
+        if (shellConnection)
+           shellConnection->println(F("OK"));
         resetBuffer();
         return EXIT_SUCCESS;
     }
@@ -264,9 +277,12 @@ int SimpleSerialShell::execute(int argc, char **argv)
             return m_lastErrNo;
         }
     }
-    print(F("\""));
-    print(argv[0]);
-    print(F("\": "));
+    if (shellConnection )
+    {
+           shellConnection->print(F("\""));
+           shellConnection->print(argv[0]);
+           shellConnection->print(F("\": "));
+    }
 
     return report(F("command not found"), -1);
 }
@@ -283,10 +299,15 @@ int SimpleSerialShell::report(const __FlashStringHelper * constMsg, int errorCod
     if (errorCode != EXIT_SUCCESS)
     {
         String message(constMsg);
-        print(errorCode);
-        if (message[0] != '\0') {
-            print(F(": "));
-            println(message);
+        if (shellConnection )
+            shellConnection->print(errorCode);
+        if (message[0] != '\0') 
+        {
+            if (shellConnection )
+            {
+                shellConnection->print(F(": "));
+                shellConnection->println(message);
+            }
         }
     }
     resetBuffer();

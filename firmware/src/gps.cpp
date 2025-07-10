@@ -75,3 +75,18 @@ int gps_loop()
 
     return 0;
 }
+
+float get_lat(void)
+{
+    return gps_lat;
+}
+
+float get_lon(void)
+{
+    return gps_lon;
+}
+
+int get_sec(void)
+{
+    return gps.time.second();
+}
