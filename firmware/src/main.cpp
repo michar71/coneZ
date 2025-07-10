@@ -535,6 +535,8 @@ void SOS_effect(void)
           delay (20);
         }
         color_leds(1, 50, CRGB::Black);
+        delay(25);
+        color_leds(1, 50, CRGB::Black);
         //Wait for 1 sec so we don't do it twice...
         //delay(3000);
       }
