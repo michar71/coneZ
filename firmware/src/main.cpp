@@ -230,7 +230,6 @@ void basic_autoexec(void)
   }
 }
 
-
 void buzzer(int freq, int vol)
 {
   //ledcSetup(0, freq, 8);
@@ -243,7 +242,6 @@ void buzzer(int freq, int vol)
 
 void setup()
 {
-  delay( 250 );
 
   // Turn on LOAD FET
   pinMode( LOAD_ON_PIN, OUTPUT );
@@ -288,19 +286,6 @@ void setup()
   digitalWrite( LED_PIN, HIGH );
   delay( 500 );
   digitalWrite( LED_PIN, LOW );
-
-
-  // Turn on LOAD FET
-  pinMode( LOAD_ON_PIN, OUTPUT );
-  digitalWrite( LOAD_ON_PIN, HIGH );
-
-  // Turn on solar FET
-  pinMode( SOLAR_PWM_PIN, OUTPUT );
-  digitalWrite( SOLAR_PWM_PIN, HIGH );
-
-
-  delay( 250 );
-
 
 
   Serial.begin( 115200 );
