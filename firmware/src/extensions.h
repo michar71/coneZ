@@ -375,10 +375,10 @@ void latlon_to_meters(float latitude_deg, float longitude_deg,
 }
 
 // Structure to hold result
-typedef struct {
-    float distance;   // Distance in meters
-    float bearing_deg;  // Bearing in degrees
-} GeoResult;
+//typedef struct {
+//    float distance;   // Distance in meters
+//    float bearing_deg;  // Bearing in degrees
+//} GeoResult;
 
 
 //For large distsnces this is the correct formula
