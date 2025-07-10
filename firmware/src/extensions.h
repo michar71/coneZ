@@ -415,7 +415,8 @@ GeoResult calculate_geo(float lat1, float lon1, float lat2, float lon2) {
 }
 
 //For small distances or flat-earthers this is totally fine (Ignoring that earth is a sphere)
-GeoResult xy_to_polar(float x1, float y1, float x2, float y2) {
+GeoResult xy_to_polar(float x1, float y1, float x2, float y2) 
+{
     GeoResult result;
 
     float dx = x2 - x1;
