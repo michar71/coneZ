@@ -26,9 +26,9 @@
 #define USE_TELNET
 
 #define WAIT_FOR_USB_SERIAL
-#define WAIT_FOR_USB_SERIAL_TIMEOUT 10    // Seconds
+#define WAIT_FOR_USB_SERIAL_TIMEOUT 15    // Seconds
 
-#define WIFI_TIMEOUT 20                   // Seconds
+#define WIFI_TIMEOUT                30    // Seconds
 
 #define FSLINK LittleFS
 #include "commands.h"
@@ -230,9 +230,43 @@ void basic_autoexec(void)
   }
 }
 
+
 void setup()
 {
-  delay(5000);
+  delay( 250 );
+
+  // Turn on LOAD FET
+  pinMode( LOAD_ON_PIN, OUTPUT );
+  digitalWrite( LOAD_ON_PIN, HIGH );
+
+  // Turn on solar FET
+  pinMode( SOLAR_PWM_PIN, OUTPUT );
+  digitalWrite( SOLAR_PWM_PIN, HIGH );
+
+  delay( 250 );
+
+
+  //Setup RGB leds so we can also signal stuff there...
+  FastLED.addLeds<WS2811, RGB1_PIN, BRG>(leds1, NUM_LEDS1);
+  FastLED.addLeds<WS2811, RGB2_PIN, BRG>(leds2, NUM_LEDS2);
+  FastLED.addLeds<WS2811, RGB3_PIN, BRG>(leds3, NUM_LEDS3);
+  FastLED.addLeds<WS2811, RGB4_PIN, BRG>(leds4, NUM_LEDS4);
+
+
+    color_leds(1,4,CRGB::Red);
+    delay(500);
+    color_leds(1,4,CRGB::Green);
+    delay(500);
+    color_leds(1,4,CRGB::Blue);
+    delay(500);
+    color_leds(1,4,CRGB::Black);
+  
+  //NOTE: Don't use FastLED functions outside the setup routine in the main program.
+  //At the end of Setup we create the BASIC interpreter task who will handle all LED access 
+  //through fastLED afterwards to avoid any thread collisions.
+
+
+  delay(1000);
 
   // LED pin
   pinMode( LED_PIN, OUTPUT );
@@ -254,24 +288,6 @@ void setup()
 
   delay( 250 );
 
-  //Setup RGB leds so we can also signal stuff there...
-  FastLED.addLeds<WS2811, RGB1_PIN, BRG>(leds1, NUM_LEDS1);
-  FastLED.addLeds<WS2811, RGB2_PIN, BRG>(leds2, NUM_LEDS2);
-  FastLED.addLeds<WS2811, RGB3_PIN, BRG>(leds3, NUM_LEDS3);
-  FastLED.addLeds<WS2811, RGB4_PIN, BRG>(leds4, NUM_LEDS4);
-
-
-    color_leds(1,4,CRGB::Red);
-    delay(500);
-    color_leds(1,4,CRGB::Green);
-    delay(500);
-    color_leds(1,4,CRGB::Blue);
-    delay(500);
-    color_leds(1,4,CRGB::Black);
-  
-  //NOTE: Don't use FastLED functions outside the setup routine in the main program.
-  //At the end of Setup we create the BASIC interpreter task who will handle all LED access 
-  //through fastLED afterwards to avoid any thread collisions.
 
 
   Serial.begin( 115200 );
@@ -350,7 +366,7 @@ void setup()
   else
     OutputStream->println( " WiFi timed out" );
 
-    
+
   http_setup();
 
   //At this point switch comms over to telnet
