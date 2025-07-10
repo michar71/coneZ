@@ -483,6 +483,7 @@ void SOS_effect(void)
     float lat = get_lat();
     float lon = get_lon();
     int sec = get_sec();
+    static int prev_sec = 0;
 
     float origin_lat = 40.762173;
     float origin_lon = -119.193672;
@@ -507,15 +508,22 @@ void SOS_effect(void)
     float sos_ms = 343.0;
     
     float offset_ms = dist_meters / sos_ms * 1000;
-    Serial.print("Offset ");
-    Serial.println(offset_ms);
+    OutputStream->print("Offset ");
+    OutputStream->println(offset_ms);
+
+    OutputStream->print("sec = ");
+    OutputStream->println( sec );
 
     //Wait for sec to roll over Mod 10;
-    if (sec%10 == 0)
+    if (sec != prev_sec && sec%10 == 0)
     {
+        prev_sec = sec;
+
         //Wait Offset MS
         delay((int)round(offset_ms));
-        Serial.println("PING");
+        OutputStream->print("PING - sec = ");
+        OutputStream->println( sec );
+      
         //Flash Light
         for (int ii = 255; ii>0; ii=ii-32)
         {
@@ -528,7 +536,7 @@ void SOS_effect(void)
         }
         color_leds(1, 50, CRGB::Black);
         //Wait for 1 sec so we don't do it twice...
-        delay(1000);
+        //delay(3000);
       }
 }
 
@@ -538,13 +546,13 @@ void loop()
   http_loop();
 
   //Run Shell commands and check serial port. Protected bymutex.
-  take_terminal();
+  //take_terminal();
   run_commands();
   check_serial();
-  give_terminal();
+  //give_terminal();
 
   //Check for startup.bas and if it exist run it once
-  basic_autoexec();
+  //basic_autoexec();
 
   // put your main code here, to run repeatedly:
   //Serial.print( "." );
