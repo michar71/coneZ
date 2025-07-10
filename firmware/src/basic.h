@@ -68,6 +68,17 @@ char *stabp;														/* STRING TABLE POINTER*/
 #define PCV	((Val)*pc++)						/* GET IMMEDIATE */
 #define STEP	return 1						/* CONTINUE RUNNING */
 #define DRIVER	while (((*pc++)()) && (globalerror == 0))	/* RUN PROGRAM. BAIL ON ERROR*/
+
+/*
+void DRIVER()
+{
+	while (((*pc++)()) && (globalerror == 0))
+	{
+		esp_task_wdt_reset();
+	}
+}
+*/
+
 #define LOC(N) value[sub[v][N+2]]				/* SUBROUTINE LOCAL */
 
 
@@ -87,12 +98,16 @@ void initbasic(Stream* out, int comp)
 }
 void bad(char *msg) 
 { 
+	take_terminal();
 	OS->printf("ERROR %d: %s\n", lnum, msg);
+	give_terminal();
 	globalerror = 1; 
 }
 void err(char *msg) 
 { 
+	take_terminal();
 	OS->printf("ERROR %d: %s\n",lmap[pc-prg-1],msg);
+	give_terminal();
 	globalerror = 2; 
 }
 
@@ -109,12 +124,15 @@ int LOAD_() { *--sp=value[PCV]; STEP; }
 int STORE_() { value[PCV]=*sp++; STEP; }
 void ECHO_() 
 { 
+	take_terminal();
 	OS->printf("%d\n",*sp++); 
+	give_terminal();
 }
 int FORMAT_() 
 { 
 	char *f; 
 	Val n=PCV, *ap=(sp+=n)-1;
+	take_terminal();
 	for (f=stab + *sp++; *f; f++)
 		if (*f=='%') 
 		{
@@ -129,6 +147,7 @@ int FORMAT_()
 		OS->print(*f);
 	}
 	OS->println(); 
+	give_terminal();
 	STEP;
 }
 int ADD_() { A+=B; sp++; STEP; };
@@ -375,7 +394,7 @@ void stmt()
 	case GT:		expr(); emit((int (*)())ECHO_); break;
 	default:		if (tok) bad((char*)"BAD STATEMENT");
 	}
-	if (!want(0))		bad((char*)"TOKENS AFTER STATEMENT");
+	if (!want(0)) bad((char*)"TOKENS AFTER STATEMENT");
 }
 
 int check_error(char* filen)
@@ -417,14 +436,17 @@ int interp(char* filen)
 	}
 	for (;;) 
 	{
+		esp_task_wdt_reset();
 		globalerror=0;
 		for (;;) 
 		{
-			yield();
+			esp_task_wdt_reset();
 			if (filen==NULL)
 			{ 
+				take_terminal();
 				OS->print(lnum+1);
 				OS->println("> ");
+				give_terminal();
 			}
 			if (filen!=NULL)
 			{
@@ -437,7 +459,11 @@ int interp(char* filen)
 			else
 			{
 				do
+				{
+					take_terminal();
 					len  = OS->readBytesUntil('\n', lp=lbuf,sizeof lbuf);
+					give_terminal();
+				}
 				while (len == 0);
 				lbuf[len] = 0;
 				lp = lbuf;
@@ -457,9 +483,11 @@ int interp(char* filen)
 			//Handle Errors
 			if ((error=check_error(filen)) > -1) return error; 
 		}
+		take_terminal();
 		OS->print("Compiled Size:");
 		OS->print(cpc * 4);
 		OS->println(" Bytes");
+		give_terminal();
 		ipc=cpc+1, compile=0, file.close(), filen=NULL; /* DONE COMPILING */
 		emit((int (*)())BYE_);							/* RUN PROGRAM */
 		DRIVER;  										/* MOVE PROGRAM FORWARD */			

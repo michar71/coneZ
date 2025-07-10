@@ -231,6 +231,16 @@ void basic_autoexec(void)
 }
 
 
+void buzzer(int freq, int vol)
+{
+  //ledcSetup(0, freq, 8);
+  //ledcAttachPin(BUZZER_PIN, 0);
+  //ledcWrite(0, vol);
+  analogWriteResolution(8);
+  analogWriteFrequency(freq);
+  analogWrite(BUZZER_PIN,vol);
+}
+
 void setup()
 {
   delay( 250 );
@@ -268,6 +278,9 @@ void setup()
 
   delay(1000);
 
+  //Buzzer Setup
+  pinMode( BUZZER_PIN, OUTPUT );
+
   // LED pin
   pinMode( LED_PIN, OUTPUT );
   digitalWrite( LED_PIN, LOW );
@@ -304,6 +317,16 @@ void setup()
       #endif
     }
   #endif
+
+  /*
+  for (int ii=1100;ii<30000;ii=ii+1000)
+  {
+    Serial.print("Freq:");
+    Serial.println(ii);
+    buzzer(ii,255);
+    delay(500);
+  }
+  */ 
 
 
   OutputStream = &Serial;
@@ -375,8 +398,7 @@ void setup()
   OutputStream->println( "CLI active");
 
   //Start Thread for Basic interpreter/FastLED here
-  setup_basic();
-  OutputStream->println( "BASIC task active");
+  //OutputStream->println( "BASIC task active");
 
 #ifdef USE_TELNET
   OutputStream->println( "CLI now via Telnet. Press any key to return to Serial");
@@ -392,8 +414,11 @@ void loop()
 {
   http_loop();
 
-  //Run Shell commands
+  //Run Shell commands and check serial port. Protected bymutex.
+  take_terminal();
   run_commands();
+  check_serial();
+  give_terminal();
 
   //Check for startup.bas and if it exist run it once
   basic_autoexec();
@@ -414,7 +439,7 @@ void loop()
   // Check for LoRa packets
   lora_rx();
 
-  check_serial();
+
 
   // Process GPS messages
   gps_loop();
