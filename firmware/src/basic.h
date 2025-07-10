@@ -67,7 +67,6 @@ char *stabp;														/* STRING TABLE POINTER*/
 #define B	sp[0]								/* RIGHT OPERAND */
 #define PCV	((Val)*pc++)						/* GET IMMEDIATE */
 #define STEP	return 1						/* CONTINUE RUNNING */
-
 #define DRIVER	while (((*pc++)()) && (globalerror == 0))	/* RUN PROGRAM. BAIL ON ERROR*/
 
 /*
