@@ -430,5 +430,6 @@ void loop()
   gps_loop();
 
   //RUN Speed-Of-SOuind Effect
+  //CIRCLE_effect();
   SOS_effect2();
 }
