@@ -189,7 +189,7 @@ void SOS_effect2(void)
     OutputStream->println( sec );
 
     //Wait for sec to roll over Mod 10;
-    if (sec != prev_sec && sec%5 == 0)
+    if (sec != prev_sec && sec%2 == 0)
     {
         prev_sec = sec;
 
@@ -211,7 +211,7 @@ void SOS_effect2(void)
 
         // Baseline green glow
         col.r = 0;
-        col.g = 5;
+        col.g = 2;
         col.b = 0;
         color_leds(1, 50, col );
         delay(25);
@@ -257,7 +257,7 @@ void CIRCLE_effect(void)
     Serial.println(deg);
 
     //Wait for sec to roll over Mod 10;
-    if (sec != prev_sec && sec%5 == 0)
+    if (sec != prev_sec /*&& sec%2 == 0*/ )
     {
         prev_sec = sec;
 
@@ -266,14 +266,15 @@ void CIRCLE_effect(void)
         OutputStream->print("PING - sec = ");
         OutputStream->println( sec );
       
-        int hue = (int)map(deg,0,259,0,255);
-        hue = hue + offset_cnt;
+        int hue = (int)map(deg,0,360,0,255);
+        //hue = hue + offset_cnt;
+        hue = hue + map( get_sec(), 0, 59, 0, 255 );
         hue  = hue % 255;
 
         CRGB col;
         col.setHSV(hue,255,255);
         color_leds(1, 50, col);
         delay (20);
-        offset_cnt = offset_cnt + 20;
+        //offset_cnt = offset_cnt + 5;
       }
 }
