@@ -27,7 +27,7 @@ String html_escape( const char* str )
         else escaped += *str;
         str++;
     }
-    
+ 
     return escaped;
 }
 

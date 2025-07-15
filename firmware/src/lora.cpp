@@ -3,6 +3,7 @@
 #include <RadioLib.h>
 #include "main.h"
 #include "util.h"
+#include "printManager.h"
 
 
 // Default LoRa parameters
@@ -16,14 +17,9 @@
 
 #define LORA_SPI_FREQ           1000000
 
-extern uint32_t debug;
-
 SPIClass spiLoRa( HSPI );
 SPISettings spiLoRaSettings( LORA_SPI_FREQ, MSBFIRST, SPI_MODE0 );
 SX1268 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
-
-// External variables
-extern Stream *OutputStream;
 
 
 // IRQ handler for LoRa RX
@@ -37,7 +33,7 @@ void IRAM_ATTR lora_rxdone( void )
 
 int lora_setup( void )
 {
-  OutputStream->print( "\nInit LoRa... " );
+  Serial.println("Init LoRa... ");
 
   spiLoRa.begin( LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS );
 
@@ -50,15 +46,15 @@ int lora_setup( void )
 
   if( status != RADIOLIB_ERR_NONE )
   {
-    OutputStream->print( "Failed, status=" );
-    OutputStream->println( status );
+     Serial.print( "Failed, status=" );
+     Serial.println( status );
 
     //while( 1 )
     //  delay( 1 );   // Dead in the water
     blinkloop( 3 );
   }
 
-  OutputStream->print( "OK\n" );
+   Serial.println( "OK" );
 
   // Set misc LoRa parameters.
   //radio.setSyncWord( 0xDE, 0xAD );
@@ -74,11 +70,11 @@ int lora_setup( void )
 
   if( status == RADIOLIB_ERR_NONE )
   {
-    OutputStream->print( "LoRa set to receive mode.\n" );
+     Serial.println( "LoRa set to receive mode." );
   }
   else
   {
-    OutputStream->printf( "Failed to set LoRa to receive mode, status=%d\n", status );
+     Serial.printf( "Failed to set LoRa to receive mode, status=%d", status );
   }
 
   return 0;
@@ -98,30 +94,21 @@ void lora_rx( void )
 
     lora_rxdone_flag = false;
 
-    if( debug & DEBUG_MSG_LORA )
-    {
-        OutputStream->print( "\nWe have RX flag!\n" );
-        OutputStream->print( "radio.available = " );
-        OutputStream->println( radio.available() );
-        OutputStream->print( "radio.getRSSI = " );
-        OutputStream->println( radio.getRSSI() );
-        OutputStream->print( "radio.getSNR = " );
-        OutputStream->println( radio.getSNR() );
-        OutputStream->print( "radio.getPacketLength = " );
-        OutputStream->println( radio.getPacketLength() );
-    }
+    printfnl(SOURCE_LORA, "\nWe have RX flag!\n" );
+    printfnl(SOURCE_LORA, "radio.available = %d\n", radio.available() );
+    printfnl(SOURCE_LORA, "radio.getRSSI = %f\n" , radio.getRSSI() );
+    printfnl(SOURCE_LORA, "radio.getSNR = %f\n" ,radio.getSNR() );
+    printfnl(SOURCE_LORA,  "radio.getPacketLength = %d\n" ,radio.getPacketLength() );
+
         
     String str;
     int16_t state = radio.readData( str );
 
+    
     if( state == RADIOLIB_ERR_NONE )
     {
-        if( debug & DEBUG_MSG_LORA_RAW )
-        {
-            OutputStream->print( "Packet: " );
-            OutputStream->println( str );
-            hexdump( (uint8_t*)str.c_str(), str.length() );
-            OutputStream->print( "\n" );
-        }
+            printfnl(SOURCE_LORA, "Packet: %s\n",str.c_str() );
+            //hexdump( (uint8_t*)str.c_str(), str.length() );
     }
+    
 }

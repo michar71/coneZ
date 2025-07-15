@@ -22,19 +22,18 @@
 #include "gps.h"
 #include "basic_wrapper.h"
 #include "effects.h"
-
+#include "printManager.h"
 
 #define USE_TELNET
 
 #define WAIT_FOR_USB_SERIAL
 #define WAIT_FOR_USB_SERIAL_TIMEOUT 15    // Seconds
 
-#define WIFI_TIMEOUT                30    // Seconds
+#define WIFI_TIMEOUT                10    // Seconds
 
 #define FSLINK LittleFS
 #include "commands.h"
 
-Stream *OutputStream = NULL;
 
 // LED buffers
 CRGB leds1[NUM_LEDS1];
@@ -206,9 +205,9 @@ void check_serial(void)
 
   if (Serial.available())
   {
-    OutputStream = &Serial;
+    setStream(&Serial);
     setCLIEcho(true);
-    init_commands(OutputStream);
+    init_commands(getStream());
   }
 }
 
@@ -221,12 +220,12 @@ void basic_autoexec(void)
     startup = false;
     if (FSLINK.exists((char*)"/startup.bas"))
     {
-        OutputStream->print("startup.bas found. Executing...");
-        set_basic_program(OutputStream,"/startup.bas");
+        printfnl(SOURCE_SYSTEM,"startup.bas found. Executing...\n");
+        set_basic_program("/startup.bas");
     }
     else
     {
-      OutputStream->print("No startup.bas");
+      printfnl(SOURCE_SYSTEM,"No startup.bas\n");
     }
   }
 }
@@ -304,20 +303,20 @@ void setup()
     }
   #endif
 
-  /*
-  for (int ii=1100;ii<30000;ii=ii+1000)
+  
+  for (int ii=1100;ii<13100;ii=ii+1000)
   {
     Serial.print("Freq:");
     Serial.println(ii);
-    buzzer(ii,255);
-    delay(500);
+    buzzer(ii,128);
+    delay(100);
   }
-  */ 
+  buzzer(20000,0);
+   
 
 
-  OutputStream = &Serial;
-  OutputStream->println();
-  OutputStream->println( "Starting...\n" );
+  Serial.println();
+  Serial.println( "Starting...\n" );
 
 
   dump_partitions();
@@ -339,7 +338,7 @@ void setup()
   gps_setup();
 
 
-  OutputStream->print( "\nConnecting to wifi..." );
+  Serial.println( "\nConnecting to wifi..." );
   
 
   // Generate ConeZ-nnnn DHCP hostname from last 2 octets of MAC address.
@@ -348,13 +347,13 @@ void setup()
   uint8_t mac[6];
   esp_read_mac( mac, ESP_MAC_WIFI_STA );
 
-  //char hostname[16];                       // "ConeZ-" + 4 hex + NUL
+  char hostname[16];                       // "ConeZ-" + 4 hex + NUL
   sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
 
   WiFi.setHostname( hostname );              // must precede WiFi.begin()
 
-  OutputStream->print( "Hostname: " );
-  OutputStream->println( hostname );
+  Serial.print( "Hostname: " );
+  Serial.println( hostname );
 
   WiFi.begin( wifi_ssid, wifi_psk );
 
@@ -363,52 +362,68 @@ void setup()
   while( WiFi.status() != WL_CONNECTED && millis() - t_wifi_start < WIFI_TIMEOUT * 1000 )
   {
     delay( 500 );
-    OutputStream->print( "." );
+    Serial.print( "." );
   }
 
   if( WiFi.status() == WL_CONNECTED )
   {
-    OutputStream->println( " Connected");
-    OutputStream->print( "IP address: " );
-    OutputStream->println( WiFi.localIP() );
+    Serial.println( " Connected");
+    Serial.print( "IP address: " );
+    Serial.println( WiFi.localIP() );
   }
   else
-    OutputStream->println( " WiFi timed out" );
-
+  {
+    Serial.println("");
+    Serial.println("WiFi timed out");
+  }
 
   http_setup();
 
   //At this point switch comms over to telnet
   TelnetStream2.begin();
-  OutputStream->println( "Telnet Initalized");
-  OutputStream->println( "CLI active");
+  Serial.println( "Telnet Initalized");
+  Serial.println( "CLI active");
+
+  //Init print manager
+  printManagerInit(&Serial);
+  setDebugLevel(SOURCE_SYSTEM, true);
+  setDebugLevel(SOURCE_BASIC, true);
+  setDebugLevel(SOURCE_COMMANDS, true);
+  setDebugLevel(SOURCE_GPS, false);
+  setDebugLevel(SOURCE_LORA, false);
+  setDebugLevel(SOURCE_SHELL, false);
+  setDebugLevel(SOURCE_OTHER, false);
+  showTimestamps(true);
 
   //Start Thread for Basic interpreter/FastLED here
-  //setup_basic();
-  //OutputStream->println( "BASIC task active");
+  setup_basic();
+  Serial.println("BASIC task active\n");
 
 #ifdef USE_TELNET
-  OutputStream->println( "CLI now via Telnet. Press any key to return to Serial");
+  Serial.println("CLI now via Telnet. Press any key to return to Serial\n");
   setCLIEcho(false);
-  OutputStream = &TelnetStream2;
+  setStream(&TelnetStream2);
 #endif
   //Init command Line interpreter
-  init_commands(OutputStream);
+  init_commands(getStream());
 }
 
 
 void loop()
 {
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+
+  inc_thread_count(xPortGetCoreID());
+
+
   http_loop();
 
   //Run Shell commands and check serial port. Protected bymutex.
-  //take_terminal();
   run_commands();
   check_serial();
-  //give_terminal();
 
   //Check for startup.bas and if it exist run it once
-  //basic_autoexec();
+  basic_autoexec();
 
   // put your main code here, to run repeatedly:
   //Serial.print( "." );
@@ -429,7 +444,8 @@ void loop()
   // Process GPS messages
   gps_loop();
 
-  //RUN Speed-Of-SOuind Effect
+  //RUN Direct Effects
   //CIRCLE_effect();
-  SOS_effect2();
+  //SOS_effect2();
+
 }

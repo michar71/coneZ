@@ -110,7 +110,7 @@ void loop()
   char str3[256];
   // Empty loop as all the logic is in the tasks.
   // You could add other tasks here, or use the loop() function to perform work on core 1
-  //vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay to avoid blocking other cores
+  vTaskDelay(1000 / portTICK_PERIOD_MS); // Delay to avoid blocking other cores
 
   //Not mutex protected, should be interrupted
   for (int ii=0;ii<10000;ii++)

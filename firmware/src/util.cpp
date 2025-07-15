@@ -1,10 +1,7 @@
 #include <Arduino.h>
 #include "main.h"
 #include "util.h"
-
-// External variables
-extern Stream *OutputStream;
-
+#include "printManager.h"
 
 // Blink an error code forever
 void blinkloop( int flashes )
@@ -39,9 +36,9 @@ void hexdump( uint8_t *buf, int len )
 
   for( i = 0; i < len; ++i )
   {
-    OutputStream->print( buf[ i ], HEX );
-    OutputStream->print( " " );
+    printfnl(SOURCE_NONE,"%02x", buf[ i ]);
+    printfnl(SOURCE_NONE,"\n");
   }
 
-  OutputStream->print( "\n" );
+  printfnl(SOURCE_NONE,"\n");
 }

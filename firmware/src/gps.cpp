@@ -3,10 +3,8 @@
 #include <TinyGPSPlus.h>
 #include "main.h"
 #include "gps.h"
+#include "printManager.h"
 
-// External variables
-extern Stream *OutputStream;
-extern uint32_t debug;
 
 // Stuff we're exporting
 float gps_lat = 40.76;
@@ -40,39 +38,34 @@ int gps_loop()
     {
         unsigned char ch = GPSSerial.read();
 
-        if( debug & DEBUG_MSG_GPS_RAW )     OutputStream->write( ch );
+        if (getDebug(SOURCE_GPS))
+        {
+
+            getLock();
+            getStream()->write( ch );
+            releaseLock();
 
         gps.encode( ch );
-    }
-
-    if( gps.location.isUpdated() )
-    {
-        gps_lat = gps.location.lat();
-        gps_lon = gps.location.lng();
-        gps_pos_valid = gps.location.isValid();
-
-        gps_alt = gps.altitude.meters();
-        gps_alt_valid = gps.altitude.isValid();
-
-        if( debug & DEBUG_MSG_GPS )
-        {
-            OutputStream->print( "<GPS> Update available: " );
-            OutputStream->printf( "Valid=%u  Lat=%0.6f  Lon=%0.6f  Alt=%dm", (int) gps_pos_valid, gps_lat, gps_lon, (int) gps_alt );
-            OutputStream->print( "\n" );
         }
 
-
-        if( gps.time.isValid() )
+        if( gps.location.isUpdated() )
         {
-            if( debug & DEBUG_MSG_GPS )
+            gps_lat = gps.location.lat();
+            gps_lon = gps.location.lng();
+            gps_pos_valid = gps.location.isValid();
+
+            gps_alt = gps.altitude.meters();
+            gps_alt_valid = gps.altitude.isValid();
+
+            printfnl(SOURCE_GPS,"GPS updated: Valid=%u Lat=%0.6f  Lon=%0.6f  Alt=%dm\n", (int) gps_pos_valid, gps_lon, (int)gps_alt);
+
+
+            if( gps.time.isValid() )
             {
-                OutputStream->print( "<GPS> Time valid: " );
-                OutputStream->printf( "date=%u  time=%u", gps.date.value(), gps.time.value() );
-                OutputStream->print( "\n" );
+                printfnl(SOURCE_GPS,"GPS Time: date=%u  time=%u\n",  gps.date.value(), gps.time.value());
             }
         }
     }
-
     return 0;
 }
 

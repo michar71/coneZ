@@ -12,7 +12,6 @@
 #include <Arduino.h>
 #endif
 
-Stream *OS = NULL;
 
 //Set defaults if not defined somewhere else
 #ifndef FSLINK
@@ -67,17 +66,17 @@ char *stabp;														/* STRING TABLE POINTER*/
 #define B	sp[0]								/* RIGHT OPERAND */
 #define PCV	((Val)*pc++)						/* GET IMMEDIATE */
 #define STEP	return 1						/* CONTINUE RUNNING */
-#define DRIVER	while (((*pc++)()) && (globalerror == 0))	/* RUN PROGRAM. BAIL ON ERROR*/
+//#define DRIVER	while (((*pc++)()) && (globalerror == 0))	/* RUN PROGRAM. BAIL ON ERROR*/
 
-/*
+
 void DRIVER()
 {
 	while (((*pc++)()) && (globalerror == 0))
 	{
-		esp_task_wdt_reset();
+		//vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
-*/
+
 
 
 #define LOC(N) value[sub[v][N+2]]				/* SUBROUTINE LOCAL */
@@ -86,29 +85,24 @@ void DRIVER()
 int	(*kwdhook)(char *kwd);						/* KEYWORD HOOK */
 int	(*funhook)(char *kwd, int n);				/* FUNCTION CALL HOOK */
 
-void initbasic(Stream* out, int comp) 
+void initbasic(int comp) 
   { 
 	pc=prg; sp=stk+(int)STKSZ; 
 	csp=cstk+(int)STKSZ; 
 	stabp=stab; 
 	compile=comp; 
 	cpc = 0; 
-	OS = out;
 	registerhook(); 
 
 }
 void bad(char *msg) 
 { 
-	take_terminal();
-	OS->printf("ERROR %d: %s\n", lnum, msg);
-	give_terminal();
+	printfnl(SOURCE_BASIC,"ERROR %d: %s\n", lnum, msg);
 	globalerror = 1; 
 }
 void err(char *msg) 
 { 
-	take_terminal();
-	OS->printf("ERROR %d: %s\n",lmap[pc-prg-1],msg);
-	give_terminal();
+	printfnl(SOURCE_BASIC,"ERROR %d: %s\n",lmap[pc-prg-1],msg);
 	globalerror = 2; 
 }
 
@@ -125,30 +119,26 @@ int LOAD_() { *--sp=value[PCV]; STEP; }
 int STORE_() { value[PCV]=*sp++; STEP; }
 void ECHO_() 
 { 
-	take_terminal();
-	OS->printf("%d\n",*sp++); 
-	give_terminal();
+	printfnl(SOURCE_BASIC,"%d\n",*sp++); 
 }
 int FORMAT_() 
 { 
 	char *f; 
 	Val n=PCV, *ap=(sp+=n)-1;
-	take_terminal();
 	for (f=stab + *sp++; *f; f++)
 		if (*f=='%') 
 		{
-			OS->printf("%d", (int)*ap--);
+			printfnl(SOURCE_BASIC,"%d", (int)*ap--);
 		}
 	else if (*f=='$') 
 	{
-		OS->printf("%s", (char*)*ap--);
+		printfnl(SOURCE_BASIC,"%s", (char*)*ap--);
 	}
 	else 
 	{
-		OS->print(*f);
+		printfnl(SOURCE_BASIC,"%c",*f);
 	}
-	OS->println(); 
-	give_terminal();
+	printfnl(SOURCE_BASIC,"\n");
 	STEP;
 }
 int ADD_() { A+=B; sp++; STEP; };
@@ -428,26 +418,23 @@ int interp(char* filen)
 	{
 		file = FSLINK.open(filen);
 		if (file.size() > 0)
-			OS->println("File Opened");
+			printfnl(SOURCE_BASIC,"File: %s opened\n", filen);
 		else
 		{
-			OS->println("File does not exists");
+			printfnl(SOURCE_BASIC,"File: %s does not exist!\n", filen);
 			return 0;
 		}	
 	}
 	for (;;) 
 	{
-		esp_task_wdt_reset();
+		//vTaskDelay(5 / portTICK_PERIOD_MS);
 		globalerror=0;
 		for (;;) 
 		{
-			esp_task_wdt_reset();
+			//vTaskDelay(5 / portTICK_PERIOD_MS);
 			if (filen==NULL)
 			{ 
-				take_terminal();
-				OS->print(lnum+1);
-				OS->println("> ");
-				give_terminal();
+				printfnl(SOURCE_BASIC,"> \n",lnum+1);
 			}
 			if (filen!=NULL)
 			{
@@ -461,9 +448,8 @@ int interp(char* filen)
 			{
 				do
 				{
-					take_terminal();
-					len  = OS->readBytesUntil('\n', lp=lbuf,sizeof lbuf);
-					give_terminal();
+					//vTaskDelay(5 / portTICK_PERIOD_MS);
+					len  = getStream()->readBytesUntil('\n', lp=lbuf,sizeof lbuf);
 				}
 				while (len == 0);
 				lbuf[len] = 0;
@@ -479,19 +465,15 @@ int interp(char* filen)
 			if (compile) continue;						/* CONTINUE COMPILING */
 			opc=pc, pc=prg+ipc;							/* START OF IMMEDIATE */
 			emit((int (*)())BREAK_);					/* RUN STATEMENT */
-			DRIVER;  									/* MOVE PROGRAM FORWARD */	
+			DRIVER();  									/* MOVE PROGRAM FORWARD */	
 
 			//Handle Errors
 			if ((error=check_error(filen)) > -1) return error; 
 		}
-		take_terminal();
-		OS->print("Compiled Size:");
-		OS->print(cpc * 4);
-		OS->println(" Bytes");
-		give_terminal();
+		printfnl(SOURCE_BASIC,"Compiled Size: %d Bytes\n", cpc * 4);
 		ipc=cpc+1, compile=0, file.close(), filen=NULL; /* DONE COMPILING */
 		emit((int (*)())BYE_);							/* RUN PROGRAM */
-		DRIVER;  										/* MOVE PROGRAM FORWARD */			
+		DRIVER();  										/* MOVE PROGRAM FORWARD */			
 		//Handle Errors
 		if ((error=check_error(filen)) > -1) return error; 
 	}

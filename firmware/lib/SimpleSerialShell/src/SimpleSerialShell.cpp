@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SimpleSerialShell.h>
+#include "./../../../src/printManager.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 /*!
@@ -66,9 +67,11 @@ class SimpleSerialShell::Command {
          */
         void renderDocumentation(Stream& str) const
         {
+            getLock();
             str.print(F("  "));
             str.print(nameAndDocs);
             str.println();
+            releaseLock();
         }
 
         Command * next;
@@ -117,13 +120,17 @@ bool SimpleSerialShell::executeIfInput(void)
     bool bufferReady = prepInput();
     bool didSomething = false;
 
-    if (bufferReady) {
+    if (bufferReady) 
+    {
         didSomething = true;
         execute();
-    if (shellConnection)
-	    shellConnection->print(F("> ")); // provide command prompt feedback
+        if (shellConnection)
+        {
+            getLock();
+            shellConnection->print(F("> ")); // provide command prompt feedback
+            releaseLock();
+        }
     }
-
     return didSomething;
 }
 
@@ -147,7 +154,11 @@ bool SimpleSerialShell::prepInput(void)
     do {
         int c = -1;
         if (shellConnection)
+        {
+            getLock();
             c  = shellConnection->read();
+            releaseLock();
+        }
         switch (c)
         {
             case -1: // No character present; don't do anything.
@@ -162,7 +173,11 @@ bool SimpleSerialShell::prepInput(void)
                 // Destructive backspace: remove last character
                 if (inptr > 0) {
                     if (shellConnection)
+                    {
+                        getLock();
                         shellConnection->print(F("\b \b"));  // remove char in raw UI
+                        releaseLock();
+                    }
                     linebuffer[--inptr] = 0;
                 }
                 break;
@@ -171,15 +186,21 @@ bool SimpleSerialShell::prepInput(void)
                 //Ctrl-R retypes the line
                 if (shellConnection)
                 {
+                    getLock();
                     shellConnection->print(F("\r\n"));
                     shellConnection->print(linebuffer);
+                    releaseLock();
                 }
                 break;
 
             case 0x15: //CTRL('U')
                 //Ctrl-U deletes the entire line and starts over.
                 if (shellConnection)
+                {
+                    getLock();
                     shellConnection->println(F("XXX"));
+                    releaseLock();
+                }
                 resetBuffer();
                 break;
 
@@ -190,7 +211,11 @@ bool SimpleSerialShell::prepInput(void)
                 // raw input only sends "return" for the keypress
                 // line is complete
                 if (shellConnection)
+                {
+                    getLock();
                     shellConnection->println();     // Echo newline too.
+                    releaseLock();
+                }
                 bufferReady = true;
                 break;
 
@@ -205,7 +230,11 @@ bool SimpleSerialShell::prepInput(void)
                 if (echoEnabled)
                 {
                     if (shellConnection)
+                    {
+                        getLock();
                         shellConnection->write(c);
+                        releaseLock();
+                    }
                 }
                 if (inptr >= SIMPLE_SERIAL_SHELL_BUFSIZE-1) {
                     bufferReady = true; // flush to avoid overflow
@@ -246,7 +275,11 @@ int SimpleSerialShell::execute(void)
     {
         // empty line; no arguments found.
         if (shellConnection)
-           shellConnection->println(F("OK"));
+        {
+            getLock();
+            shellConnection->println(F("OK"));
+            releaseLock();
+        }
         resetBuffer();
         return EXIT_SUCCESS;
     }
@@ -270,8 +303,10 @@ int SimpleSerialShell::execute(void)
 int SimpleSerialShell::execute(int argc, char **argv)
 {
     m_lastErrNo = 0;
-    for ( Command * aCmd = firstCommand; aCmd != NULL; aCmd = aCmd->next) {
-        if (aCmd->compareName(argv[0]) == 0) {
+    for ( Command * aCmd = firstCommand; aCmd != NULL; aCmd = aCmd->next) 
+    {
+        if (aCmd->compareName(argv[0]) == 0) 
+        {
             m_lastErrNo = aCmd->execute(argc, argv);
             resetBuffer();
             return m_lastErrNo;
@@ -279,9 +314,11 @@ int SimpleSerialShell::execute(int argc, char **argv)
     }
     if (shellConnection )
     {
-           shellConnection->print(F("\""));
-           shellConnection->print(argv[0]);
-           shellConnection->print(F("\": "));
+        getLock();
+        shellConnection->print(F("\""));
+        shellConnection->print(argv[0]);
+        shellConnection->print(F("\": "));
+        releaseLock();
     }
 
     return report(F("command not found"), -1);
@@ -300,13 +337,19 @@ int SimpleSerialShell::report(const __FlashStringHelper * constMsg, int errorCod
     {
         String message(constMsg);
         if (shellConnection )
+        {
+            getLock();
             shellConnection->print(errorCode);
+            releaseLock();
+        }
         if (message[0] != '\0') 
         {
             if (shellConnection )
             {
+                getLock();
                 shellConnection->print(F(": "));
                 shellConnection->println(message);
+                releaseLock();
             }
         }
     }
@@ -327,7 +370,9 @@ void SimpleSerialShell::resetBuffer(void)
 //
 int SimpleSerialShell::printHelp(int /*argc*/, char ** /*argv*/)
 {
+    getLock();
     shell.println(F("Commands available are:"));
+    releaseLock();
     auto aCmd = firstCommand;  // first in list of commands.
     while (aCmd)
     {
@@ -342,30 +387,73 @@ int SimpleSerialShell::printHelp(int /*argc*/, char ** /*argv*/)
 //
 size_t SimpleSerialShell::write(uint8_t aByte)
 {
-    return shellConnection ?
-           shellConnection->write(aByte)
-           : 0;
+    if (!shellConnection)
+    {
+        return 0; // no stream to write to
+    }
+    else
+    {
+        getLock();
+        size_t bytesWritten = shellConnection->write(aByte);
+        releaseLock();
+        return bytesWritten;
+    }
+
 }
 
 int SimpleSerialShell::available()
 {
-    return shellConnection ? shellConnection->available() : 0;
+    if (shellConnection)
+    {
+        getLock();
+        int availableBytes = shellConnection->available();
+        releaseLock();
+        return availableBytes;
+    }
+    else
+    {
+        return 0; // no data available
+    }
 }
 
 int SimpleSerialShell::read()
 {
-    return shellConnection ? shellConnection->read() : 0;
+    if(shellConnection)
+    {
+        getLock();
+        int c = shellConnection->read();
+        releaseLock();
+        return c;
+    }
+    else
+    {
+        return 0; // no data available
+    }
 }
 
 int SimpleSerialShell::peek()
 {
-    return shellConnection ? shellConnection->peek() : 0;
+    if (shellConnection)
+    {
+        getLock();
+        int c = shellConnection->peek();
+        releaseLock();
+        return c;
+    }
+    else
+    {
+        return 0; // no data available
+    }
 }
 
 void SimpleSerialShell::flush()
 {
     if (shellConnection)
+    {        
+        getLock();
         shellConnection->flush();
+        releaseLock();
+    }
 }
 
 void SimpleSerialShell::setTokenizer(TokenizerFunction f)

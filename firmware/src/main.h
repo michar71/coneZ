@@ -3,6 +3,9 @@
 
 #include "FastLED.h"
 
+//#define configGENERATE_RUN_TIME_STATS 
+//#define configUSE_STATS_FORMATTING_FUNCTIONS
+
 // Misc GPIO pins
 #define LED_PIN 40
 
@@ -56,11 +59,6 @@
 // Other
 #define IMU_INT_PIN     37
 
-// Debug message bitmask
-#define DEBUG_MSG_LORA      0x00010000
-#define DEBUG_MSG_LORA_RAW  0x00020000
-#define DEBUG_MSG_GPS       0x00040000
-#define DEBUG_MSG_GPS_RAW   0x00080000
 
 // LED counts per output
 #define NUM_LEDS1 50

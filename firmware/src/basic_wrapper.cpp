@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_task_wdt.h"
+#include "printManager.h"
 #include "FS.h"
 #include <LittleFS.h>
 #define FSLINK LittleFS
@@ -11,11 +12,9 @@
 
 #define MAX_PARAMS 16
 
-Stream* BOutputStream = NULL;
 
 TaskHandle_t basic_task;
 SemaphoreHandle_t basic_mutex;
-SemaphoreHandle_t terminal_mutex;
 char next_code[256] = {0};
 int params[MAX_PARAMS];
 
@@ -47,48 +46,38 @@ void basic_task_fun( void * parameter )
 {
     for(;;)
     {
-        esp_task_wdt_reset();
+        vTaskDelay(5 / portTICK_PERIOD_MS);
+        inc_thread_count(xPortGetCoreID());
         if (xSemaphoreTake(basic_mutex, portMAX_DELAY) == pdTRUE) 
         {
             if (next_code[0] != 0)
             {
                 //Execute program
-                take_terminal();
-                BOutputStream->print("RUNNING ");
-                BOutputStream->print(next_code);
-                BOutputStream->print(" ON CORE ");
-                BOutputStream->println(xPortGetCoreID());
-                give_terminal();
+                printfnl(SOURCE_BASIC,"Running: %s on Core:%d\n",next_code,xPortGetCoreID());
                 reset_params();
-                initbasic(BOutputStream,1);      
+                initbasic(1);      
                 int res = interp(next_code);
                 if (res != 0)
                 {
-                    take_terminal();
-                    BOutputStream->print("Error Exit Code: ");
-                    BOutputStream->println(res);
-                    give_terminal();
+                    printfnl(SOURCE_BASIC,"Error Exit Code: %d\n",res);
                 }   
                 else 
                 {
-                    take_terminal();
-                    BOutputStream->println("DONE");
-                    give_terminal();
+                    printfnl(SOURCE_BASIC,"DONE\n");
                 }
                 //Reset Exec Code
                 next_code[0] = 0;
             }
             xSemaphoreGive(basic_mutex);
         }  
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        
     }
 }
 
-bool set_basic_program(Stream *output,char* prog)
+bool set_basic_program(char* prog)
 {
     if (xSemaphoreTake(basic_mutex, 1000) == pdTRUE) 
     {
-        BOutputStream = output;
         strcpy(next_code,prog);
         xSemaphoreGive(basic_mutex);
         return true;
@@ -96,15 +85,6 @@ bool set_basic_program(Stream *output,char* prog)
     return false;
 }
 
-void take_terminal(void)
-{
-    xSemaphoreTake(terminal_mutex, portMAX_DELAY);
-}
-
-void give_terminal(void)
-{
-    xSemaphoreGive(terminal_mutex);
-}
 
 void setup_basic()
 {
@@ -112,9 +92,8 @@ void setup_basic()
     register_param_callback(get_basic_param);
 
     //Start Own Thread
-   basic_mutex = xSemaphoreCreateMutex();    
-   terminal_mutex = xSemaphoreCreateMutex();    
-   //xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 65535, NULL, 128, &basic_task, 1);
-   xTaskCreate(basic_task_fun, "BasicTask", 65535, NULL, 128, NULL);
+    basic_mutex = xSemaphoreCreateMutex();    
+    xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 65535, NULL, 1, &basic_task, 0);
+    //xTaskCreate(basic_task_fun, "BasicTask", 65535, NULL, 128, NULL);
 }
 
