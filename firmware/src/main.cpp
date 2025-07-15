@@ -23,6 +23,7 @@
 #include "basic_wrapper.h"
 #include "effects.h"
 #include "printManager.h"
+#include "sensors.h"
 
 #define USE_TELNET
 
@@ -337,6 +338,9 @@ void setup()
   // Fire up GPS UART.
   gps_setup();
 
+  //Setup Sensors
+  sensors_setup();
+
 
   Serial.println( "\nConnecting to wifi..." );
   
@@ -393,6 +397,7 @@ void setup()
   setDebugLevel(SOURCE_LORA, false);
   setDebugLevel(SOURCE_SHELL, false);
   setDebugLevel(SOURCE_OTHER, false);
+  setDebugLevel(SOURCE_SENSORS, false);
   showTimestamps(true);
 
   //Start Thread for Basic interpreter/FastLED here

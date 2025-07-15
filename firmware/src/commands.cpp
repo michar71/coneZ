@@ -156,7 +156,10 @@ int cmd_debug( int argc, char **argv )
     else
      if( !strcasecmp( argv[1], "OTHER" ) )
         mask_to_set = SOURCE_OTHER;
-    else           
+    else       
+     if( !strcasecmp( argv[1], "SENSORS" ) )
+        mask_to_set = SOURCE_SENSORS;
+    else            
     
     {
         printfnl(SOURCE_COMMANDS,"Debug name \"%s\"not recognized.\n", argv[1] );

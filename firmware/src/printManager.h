@@ -17,7 +17,8 @@ typedef enum {
     SOURCE_GPS = 16,
     SOURCE_LORA = 32,
     SOURCE_OTHER = 64,
-    SOURCE_NONE = 128
+    SOURCE_SENSORS = 128,
+    SOURCE_NONE = 256
 } source_e;
 
 

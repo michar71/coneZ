@@ -121,6 +121,8 @@ void ECHO_()
 { 
 	printfnl(SOURCE_BASIC,"%d\n",*sp++); 
 }
+
+/*
 int FORMAT_() 
 { 
 	char *f; 
@@ -142,6 +144,26 @@ int FORMAT_()
 	printfnl(SOURCE_NONE,"\n");
 	STEP;
 }
+	*/
+
+
+int FORMAT_() 
+{ 
+	getLock(); //Get the lock to prevent concurrent access to the Serial port
+	char *f; 
+	Val n=PCV, *ap=(sp+=n)-1;
+	for (f=stab + *sp++; *f; f++)
+		if (*f=='%') 
+			getStream()->printf("%d", (int)*ap--);
+		else if (*f=='$') 
+			getStream()->printf("%s", (char*)*ap--);
+		else 
+			getStream()->print(*f);
+	getStream()->print('\n'); 
+	releaseLock(); //Release the lock
+	STEP;
+}
+
 int ADD_() { A+=B; sp++; STEP; };
 int SUBS_() { A-=B; sp++; STEP; };
 int MUL_() { A*=B; sp++; STEP; };
