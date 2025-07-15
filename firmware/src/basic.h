@@ -125,20 +125,21 @@ int FORMAT_()
 { 
 	char *f; 
 	Val n=PCV, *ap=(sp+=n)-1;
+	printfnl(SOURCE_BASIC,"");
 	for (f=stab + *sp++; *f; f++)
 		if (*f=='%') 
 		{
-			printfnl(SOURCE_BASIC,"%d", (int)*ap--);
+			printfnl(SOURCE_NONE,"%d", (int)*ap--);
 		}
 	else if (*f=='$') 
 	{
-		printfnl(SOURCE_BASIC,"%s", (char*)*ap--);
+		printfnl(SOURCE_NONE,"%s", (char*)*ap--);
 	}
 	else 
 	{
-		printfnl(SOURCE_BASIC,"%c",*f);
+		printfnl(SOURCE_NONE,"%c",*f);
 	}
-	printfnl(SOURCE_BASIC,"\n");
+	printfnl(SOURCE_NONE,"\n");
 	STEP;
 }
 int ADD_() { A+=B; sp++; STEP; };
