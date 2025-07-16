@@ -73,7 +73,7 @@ void DRIVER()
 {
 	while (((*pc++)()) && (globalerror == 0))
 	{
-		//vTaskDelay(1 / portTICK_PERIOD_MS);
+		vTaskDelay(1 / portTICK_PERIOD_MS);
 	}
 }
 
@@ -122,45 +122,34 @@ void ECHO_()
 	printfnl(SOURCE_BASIC,"%d\n",*sp++); 
 }
 
-/*
+
 int FORMAT_() 
 { 
 	char *f; 
 	Val n=PCV, *ap=(sp+=n)-1;
-	printfnl(SOURCE_BASIC,"");
+	char buf[256];
+	buf[0] = 0;
 	for (f=stab + *sp++; *f; f++)
+	{
+		char local[255];
+		local[0] = 0;
 		if (*f=='%') 
 		{
-			printfnl(SOURCE_NONE,"%d", (int)*ap--);
+			snprintf(local, sizeof(local)-1, "%d", (int)*ap--);
 		}
-	else if (*f=='$') 
-	{
-		printfnl(SOURCE_NONE,"%s", (char*)*ap--);
-	}
-	else 
-	{
-		printfnl(SOURCE_NONE,"%c",*f);
-	}
-	printfnl(SOURCE_NONE,"\n");
-	STEP;
-}
-	*/
-
-
-int FORMAT_() 
-{ 
-	getLock(); //Get the lock to prevent concurrent access to the Serial port
-	char *f; 
-	Val n=PCV, *ap=(sp+=n)-1;
-	for (f=stab + *sp++; *f; f++)
-		if (*f=='%') 
-			getStream()->printf("%d", (int)*ap--);
 		else if (*f=='$') 
-			getStream()->printf("%s", (char*)*ap--);
-		else 
-			getStream()->print(*f);
-	getStream()->print('\n'); 
-	releaseLock(); //Release the lock
+		{
+			snprintf(local, sizeof(local)-1, "%s", (char*)*ap--);
+		}
+		else
+		{ 
+			snprintf(local, sizeof(local)-1, "%c", *f);
+		}
+		strncat(buf,local,sizeof(buf)-1);
+	}		
+	getLock();
+	getStream()->println(buf);
+	releaseLock();
 	STEP;
 }
 
@@ -305,7 +294,8 @@ void base()
 void stmt() 
 {	
 	int	n,var;
-	switch (read()) {
+	int i =read();
+	switch (i) {
 	case FORMAT:
 		need(STRING), inst(NUMBER_, tokv);
 		n=0; if (want(COMMA)) LIST(expr(); n++);
@@ -450,11 +440,11 @@ int interp(char* filen)
 	}
 	for (;;) 
 	{
-		//vTaskDelay(5 / portTICK_PERIOD_MS);
+		vTaskDelay(5 / portTICK_PERIOD_MS);
 		globalerror=0;
 		for (;;) 
 		{
-			//vTaskDelay(5 / portTICK_PERIOD_MS);
+			vTaskDelay(5 / portTICK_PERIOD_MS);
 			if (filen==NULL)
 			{ 
 				printfnl(SOURCE_BASIC,"> \n",lnum+1);
@@ -471,7 +461,7 @@ int interp(char* filen)
 			{
 				do
 				{
-					//vTaskDelay(5 / portTICK_PERIOD_MS);
+					vTaskDelay(5 / portTICK_PERIOD_MS);
 					len  = getStream()->readBytesUntil('\n', lp=lbuf,sizeof lbuf);
 				}
 				while (len == 0);

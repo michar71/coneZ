@@ -9,6 +9,7 @@
 #define FSLINK LittleFS
 #define REAL_ESP32_HW
 #include "basic.h"
+#include "gps.h"
 
 #define MAX_PARAMS 16
 
@@ -34,6 +35,28 @@ int get_basic_param(int paramID)
 
   //This is probably atomic....   
   return params[paramID];
+}
+
+int8_t getLocationData(float* org_lat, float* org_lon, float* lat, float* lon, float* alt, float* speed, float* dir)
+{
+    int8_t err = 0;
+
+    if (get_gpsstatus())
+    {
+        *org_lat = get_org_lat();
+        *org_lon = get_org_lon();
+        *lat = get_lat();
+        *lon = get_lon();
+        *alt = get_alt();
+        *speed = get_speed();
+        *dir = get_dir();
+        err = 1;
+    }
+    else
+    {
+        err = -1; //No GPS data available
+    }
+    return err;
 }
 
 void reset_params(void)
@@ -89,6 +112,7 @@ bool set_basic_program(char* prog)
 void setup_basic()
 {
     //Set Callback Functions
+    register_location_callback(getLocationData);
     register_param_callback(get_basic_param);
 
     //Start Own Thread
