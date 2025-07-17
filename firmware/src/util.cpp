@@ -3,6 +3,7 @@
 #include "util.h"
 #include "printManager.h"
 
+
 // Blink an error code forever
 void blinkloop( int flashes )
 {

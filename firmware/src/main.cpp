@@ -32,7 +32,6 @@
 
 #define WIFI_TIMEOUT                10    // Seconds
 
-#define FSLINK LittleFS
 #include "commands.h"
 
 
@@ -162,6 +161,7 @@ void blink_leds(CRGB col)
     delay(300);      
 }
 
+
 void color_leds(int ch, int cnt, CRGB col)
 {
     if (cnt > NUM_LEDS1)
@@ -212,6 +212,7 @@ void check_serial(void)
   }
 }
 
+
 void basic_autoexec(void)
 {
     //Hmm... Maybe this should actually happen in setup?
@@ -235,6 +236,7 @@ void basic_autoexec(void)
   }
 }
 
+
 void buzzer(int freq, int vol)
 {
   //ledcSetup(0, freq, 8);
@@ -244,6 +246,7 @@ void buzzer(int freq, int vol)
   analogWriteFrequency(freq);
   analogWrite(BUZZER_PIN,vol);
 }
+
 
 void setup()
 {

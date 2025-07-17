@@ -9,11 +9,21 @@
 #include <nvs.h>
 #include <LittleFS.h>
 #include <FS.h>
+#include <TinyGPSPlus.h>
 #include "main.h"
 #include "http.h"
+#include "gps.h"
 
 
 WebServer server(80);
+
+extern TinyGPSPlus gps;
+extern float gps_lat;
+extern float gps_lon;
+extern bool gps_pos_valid;
+extern float gps_alt;       // Altitude is in meters
+extern bool gps_alt_valid;
+
 
 
 String html_escape( const char* str )
@@ -29,6 +39,25 @@ String html_escape( const char* str )
     }
  
     return escaped;
+}
+
+
+String http_get_gps()
+{
+    char buf[128];
+
+    String out = "<h3>GPS</h3><pre>";
+
+    snprintf( buf, sizeof( buf ), "gps_valid=%u\n", (int) gps_pos_valid );
+    out += buf;
+    snprintf( buf, sizeof( buf ), "date=%d  time=%d\n", gps.date.isValid() ? gps.date.value() : -1, gps.time.isValid() ? gps.time.value() : -1 );
+    out += buf;
+    snprintf( buf, sizeof( buf ), "lat=%0.6f  lon=%0.6f  alt=%dm\n", gps_lat, gps_lon, (int) gps_alt  );
+    out += buf;
+
+    out += "</pre><br>\n";
+
+    return out;
 }
 
 
@@ -79,6 +108,10 @@ void http_root()
 {
     String page = "<html><body>";
 
+    page += http_get_gps();
+
+    page += "<hr><br>\n";
+
     page += getPartitionInfoHTML();
 
     page += "<hr><br>\n";
@@ -100,14 +133,100 @@ void http_reboot()
 }
 
 
-void http_dir()
+// Show LittleFS directory listing.
+String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 1 )
 {
-    server.send( 200, "text/plain", "FIXME..." );
+    String out;
+    //String out = "Listing directory: ";
+    //out += dirname;
+    //out += "\n";
+
+    File root = fs.open( dirname );
+
+    if( !root || !root.isDirectory() )
+    {
+        out += " - failed to open directory\n";
+        return out;
+    }
+
+    File file = root.openNextFile();
+    while( file )
+    {
+//        if (file.isDirectory())
+//        {
+//            out += "[DIR]   ";
+//            out += dirname;
+//            if( strcmp( dirname, "/" ) )
+//                out += "/";
+//            out += file.name();
+//            out += "/\n";
+//
+//            if (levels)
+//            {
+//                out += http_dir_list( fs, file.path(), levels - 1 );
+//            }
+//        }
+//        else
+        {
+            out += "[FILE]  ";
+            out += dirname;
+            if( strcmp( dirname, "/" ) )
+                out += "/";
+            out += file.name();
+            out += "  Size: ";
+            out += file.size();
+            out += "\n";
+
+        }
+
+        file = root.openNextFile();
+    }
+
+    // Now list subdirectories
+    root.rewindDirectory();
+    file = root.openNextFile();
+    while( file )
+    {
+        if (file.isDirectory())
+        {
+            out += "[DIR]   ";
+            out += dirname;
+            if( strcmp( dirname, "/" ) )
+                out += "/";
+            out += file.name();
+            out += "/\n";
+
+            if (levels)
+            {
+                out += http_dir_list( fs, file.path(), levels - 1 );
+            }
+        }
+
+        file = root.openNextFile();
+    }
+
+    return out;
 }
 
 
+void http_dir()
+{
+    String out = "<html><body>\n";
+    
+    out += "<h3>LittleFS directory listing:</h3><hr>\n<pre>";
+
+    // Start from the root directory.
+    out += http_dir_list( FSLINK, "/" );
+
+    server.send( 200, "text/html", out );
+}
+
+
+// Show NVS key/value config contents.
 void http_nvs()
 {
+    String out = "<html><body>\n";
+
     server.send( 200, "text/plain", "FIXME..." );
 }
 

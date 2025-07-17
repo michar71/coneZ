@@ -19,6 +19,7 @@ typedef enum {
     SOURCE_LORA         = 0x00010000,
     SOURCE_LORA_RAW     = 0x00020000,
     SOURCE_SENSORS      = 0x00100000,
+    SOURCE_WIFI         = 0x10000000,
     SOURCE_OTHER        = 0x40000000,
     SOURCE_NONE         = 0x80000000
 } source_e;

@@ -3,6 +3,8 @@
 
 #include "FastLED.h"
 
+#define FSLINK LittleFS
+
 //#define configGENERATE_RUN_TIME_STATS 
 //#define configUSE_STATS_FORMATTING_FUNCTIONS
 

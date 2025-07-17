@@ -139,6 +139,16 @@ void printfnl(source_e source, const char *format, ...)
             }
             break;
 
+        case SOURCE_WIFI:
+            if (debug & SOURCE_WIFI)
+            {
+                print_ts();
+                OutputStream->print("[WIFI] ");
+                vsnprintf(buf,max_txt, format, args);
+                OutputStream->print(buf);
+            }
+            break;
+
         case SOURCE_SENSORS:
             if (debug & SOURCE_SENSORS)
             {
