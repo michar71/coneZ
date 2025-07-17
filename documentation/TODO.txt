@@ -1,16 +1,20 @@
 Hardware:
-  Apply Fixes to all boards:
+  Apply fixes to all v0.1 boards:
      Remove R11
      Bridge Rx/Tx to GPS
-     Add LoRa Antenna
+     Add LoRa antenna wire
+
+  For next board revision:
+     Add ESD protection to all external connections, playa is high-static environment.
+     Remove R11, or make it pull GPS_ON high, or else connect GPS_ON to a GPIO pin
+     Connect GPS RX/TX to UART, or other GPIOs that can be mapped to one of the UARTs?
+     Board fails if solar input voltage exceeds 17VDC or 18VDC?  Needs to handle up to 20VDC solar input.
 
 Firmware:
    Base Code
       POST
       Temp Sensor Tie-In
       IMU Driver
-      GPS Driver
-
 
    Basic
      Own Thread. (How do we handle debug messages? Dump into file?)
@@ -18,4 +22,3 @@ Firmware:
      Hook up Sync pulse
      Push RAM into PSRAM?
      Add Temp Sensor Support
-     
