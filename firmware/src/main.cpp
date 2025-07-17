@@ -136,7 +136,7 @@ void dump_i2c( TwoWire &bus )
     }
     else
     {
-        Serial.printf( "  I2C error %d @ 0x%02X\n", err,addr );
+        //Serial.printf( "  I2C error %d @ 0x%02X\n", err,addr );
     }
   }
 

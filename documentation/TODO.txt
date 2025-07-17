@@ -12,6 +12,7 @@ Hardware:
      Add jumper-selectable 3.3V vs 5V signal level on RGB LED signal outputs, WS2811 12V strings might need 5V TTL levels?
      Jumper-selectable LEDs, to disable them for other projects.
      Make the various LEDs different colors, rather than all yellow, to differentiate function by quick visual check?
+     Replace Schottky diodes on solar and battery power sources with FETs and "ideal diode" controllers?
 
 Firmware:
    Base Code

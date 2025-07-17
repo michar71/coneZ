@@ -52,7 +52,7 @@ void sensors_setup(void)
     } else {
         Serial.println("Seems we are on earth and upright, not in space...");
     }
-    Serial.printf("Bat Voltage: %.2f V Solar Voltage: %.2f V\n", bat_voltage(), solar_voltage());
+    Serial.printf("Batt: %.2f V   Solar: %.2f V\n", bat_voltage(), solar_voltage());
 }
 
 void sensors_loop(void)

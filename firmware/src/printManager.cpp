@@ -58,16 +58,17 @@ void printfnl(source_e source, const char *format, ...)
                 OutputStream->print(buf);
             }
             break;
+
         case SOURCE_SHELL:
             if (debug & SOURCE_BASIC)
             {
                 print_ts();
                 OutputStream->print("[SHELL] ");
                 vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-                
+                OutputStream->print(buf);    
             }
             break;
+
         case SOURCE_COMMANDS:
             if (debug & SOURCE_COMMANDS)
             {
@@ -75,9 +76,9 @@ void printfnl(source_e source, const char *format, ...)
                 OutputStream->print("[COMMANDS] ");
                 vsnprintf(buf,max_txt, format, args);
                 OutputStream->print(buf);
-                
             }
             break;
+
         case SOURCE_SYSTEM:
             if (debug & SOURCE_SYSTEM)
             {
@@ -85,9 +86,9 @@ void printfnl(source_e source, const char *format, ...)
                 OutputStream->print("[SYSTEM] ");
                 vsnprintf(buf,max_txt, format, args);
                 OutputStream->print(buf);
-                
             }
             break;
+
         case SOURCE_GPS:
             if (debug & SOURCE_GPS)
             {
@@ -97,6 +98,17 @@ void printfnl(source_e source, const char *format, ...)
                 OutputStream->print(buf);
             }
             break;
+
+        case SOURCE_GPS_RAW:
+            if (debug & SOURCE_GPS_RAW)
+            {
+                print_ts();
+                OutputStream->print("[GPS_RAW] ");
+                vsnprintf(buf,max_txt, format, args);
+                OutputStream->print(buf);
+            }
+            break;
+
         case SOURCE_LORA:
             if (debug & SOURCE_LORA)
             {
@@ -106,6 +118,17 @@ void printfnl(source_e source, const char *format, ...)
                 OutputStream->print(buf);   
             }
             break;
+
+        case SOURCE_LORA_RAW:
+            if (debug & SOURCE_LORA_RAW)
+            {
+                print_ts();
+                OutputStream->print("[LORA_RAW] ");
+                vsnprintf(buf,max_txt, format, args);
+                OutputStream->print(buf);   
+            }
+            break;
+
         case SOURCE_OTHER:
             if (debug & SOURCE_OTHER)
             {
@@ -115,6 +138,7 @@ void printfnl(source_e source, const char *format, ...)
                 OutputStream->print(buf);
             }
             break;
+
         case SOURCE_SENSORS:
             if (debug & SOURCE_SENSORS)
             {
@@ -123,7 +147,8 @@ void printfnl(source_e source, const char *format, ...)
                 vsnprintf(buf,max_txt, format, args);
                 OutputStream->print(buf);
             }
-            break;            
+            break;
+
         case SOURCE_NONE:
                 vsnprintf(buf,max_txt, format, args);
                 OutputStream->print(buf);
@@ -173,6 +198,7 @@ Stream* getStream(void)
     return OutputStream;
 }
 
+
 void setDebugLevel(source_e system, bool enable)
 {
     if (enable) {
@@ -181,10 +207,20 @@ void setDebugLevel(source_e system, bool enable)
         debug &= ~system;
     }
 }
+
+
+void setDebugOff( void )
+{
+    // Turn off everything except SYSTEM and SHELL and COMMAND debug messages.
+    debug &= ( SOURCE_SYSTEM | SOURCE_SHELL | SOURCE_COMMANDS );
+}
+
+
 void showTimestamps(bool enable)
 {
     ts = enable;
 }
+
 
 void getLock(void)
 {
@@ -211,6 +247,7 @@ void inc_thread_count(int thread)
     }
     threadLoopCount[thread]++;
 }
+
 
 long get_thread_count(int thread)
 {

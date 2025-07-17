@@ -18,20 +18,20 @@ void renameFile(fs::FS &fs, const char *path1, const char *path2)
     } else {
       printfnl(SOURCE_COMMANDS,"- rename failed\n");
     }
-  }
+}
   
-  void deleteFile(fs::FS &fs, const char *path) 
-  {
+void deleteFile(fs::FS &fs, const char *path)
+{
     printfnl(SOURCE_COMMANDS,"Deleting file: %s\r\n", path);
     if (fs.remove(path)) {
       printfnl(SOURCE_COMMANDS,"- file deleted\n");
     } else {
       printfnl(SOURCE_COMMANDS,"- delete failed\n");
     }
-  }
+}
 
 
-void listDir(fs::FS &fs, const char *dirname, uint8_t levels) 
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
 {
   printfnl(SOURCE_COMMANDS,"Listing directory: %s\r\n", dirname);
 
@@ -115,10 +115,18 @@ int test(int argc, char **argv)
 };
 
 
+int cmd_reboot( int argc, char **argv )
+{
+    printfnl( SOURCE_SYSTEM, "Rebooting...\n" );
+    delay( 1000 );
+    ESP.restart();
+
+    return 0;
+}
+
+
 int cmd_debug( int argc, char **argv )
 {
- 
-
     // If no args, show current debug message config.
     if( argc < 2 )
     {
@@ -129,9 +137,19 @@ int cmd_debug( int argc, char **argv )
         printfnl(SOURCE_COMMANDS," - COMMANDS: \t%s\n", getDebug(SOURCE_COMMANDS) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - SHELL: \t%s\n", getDebug(SOURCE_SHELL) ? "on" : "off" );        
         printfnl(SOURCE_COMMANDS," - GPS: \t%s\n", getDebug(SOURCE_GPS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS," - GPS_RAW: \t%s\n", getDebug(SOURCE_GPS_RAW) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - LORA: \t%s\n", getDebug(SOURCE_LORA) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS," - LORA_RAW: \t%s\n", getDebug(SOURCE_LORA_RAW) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS," - SENSORS: \t%s\n", getDebug(SOURCE_SENSORS) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - OTHER: \t%s\n", getDebug(SOURCE_OTHER) ? "on" : "off" );
 
+        return 0;
+    }
+
+    // Turn off all debug messages?
+    if( !strcasecmp( argv[1], "off" ) )
+    {
+        setDebugOff();
         return 0;
     }
 
@@ -151,21 +169,30 @@ int cmd_debug( int argc, char **argv )
     if( !strcasecmp( argv[1], "GPS" ) )
         mask_to_set = SOURCE_GPS;
     else
+    if( !strcasecmp( argv[1], "GPS_RAW" ) )
+        mask_to_set = SOURCE_GPS_RAW;
+    else
     if( !strcasecmp( argv[1], "LORA" ) )
         mask_to_set = SOURCE_LORA;
     else
-     if( !strcasecmp( argv[1], "OTHER" ) )
+    if( !strcasecmp( argv[1], "LORA_RAW" ) )
+        mask_to_set = SOURCE_LORA_RAW;
+    else
+    if( !strcasecmp( argv[1], "OTHER" ) )
         mask_to_set = SOURCE_OTHER;
     else       
-     if( !strcasecmp( argv[1], "SENSORS" ) )
+    if( !strcasecmp( argv[1], "SENSORS" ) )
         mask_to_set = SOURCE_SENSORS;
     else            
-    
     {
         printfnl(SOURCE_COMMANDS,"Debug name \"%s\"not recognized.\n", argv[1] );
         return 1;
     }
 
+    // If someone just does "debug {name}", treat the same as "debug {name} on"
+    if( argc == 2 )
+        setDebugLevel( (source_e) mask_to_set, true );
+    else
     if( argc >= 3 )
     {
         if( !strcasecmp( argv[2], "off" ) )
@@ -448,6 +475,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("param"), paramBasic);
     shell.addCommand(F("tc"), tc);
+    shell.addCommand(F("reboot"), cmd_reboot );
     
     //System commands
 

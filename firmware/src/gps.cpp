@@ -40,19 +40,20 @@ int gps_setup()
 
 int gps_loop()
 {
+    // Any characters from the GPS waiting for us?
     while( GPSSerial.available() )
     {
         unsigned char ch = GPSSerial.read();
 
-        if (getDebug(SOURCE_GPS))
+        if( getDebug( SOURCE_GPS_RAW ) )
         {
 
             getLock();
             getStream()->write( ch );
             releaseLock();
+        }
 
         gps.encode( ch );
-        }
 
         if( gps.location.isUpdated() )
         {
@@ -65,13 +66,18 @@ int gps_loop()
             gps_speed = gps.speed.mps();
             gps_dir = gps.course.deg();
 
-            printfnl(SOURCE_GPS,"GPS updated: Valid=%u Lat=%0.6f  Lon=%0.6f  Alt=%dm\n", (int) gps_pos_valid, gps_lon, (int)gps_alt);
+            printfnl( SOURCE_GPS, "GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n",
+                (int) gps_pos_valid,
+                gps_lat,
+                gps_lon,
+                (int)gps_alt,
+                gps.date.isValid() ? gps.date.value() : -1,
+                gps.time.isValid() ? gps.time.value() : -1 );
 
-
-            if( gps.time.isValid() )
-            {
-                printfnl(SOURCE_GPS,"GPS Time: date=%u  time=%u\n",  gps.date.value(), gps.time.value());
-            }
+            //if( gps.time.isValid() )
+            //{
+            //    printfnl(SOURCE_GPS,"GPS Time: date=%u  time=%u\n",  gps.date.value(), gps.time.value());
+            //}
         }
     }
     return 0;
