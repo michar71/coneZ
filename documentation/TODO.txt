@@ -9,6 +9,9 @@ Hardware:
      Remove R11, or make it pull GPS_ON high, or else connect GPS_ON to a GPIO pin
      Connect GPS RX/TX to UART, or other GPIOs that can be mapped to one of the UARTs?
      Board fails if solar input voltage exceeds 17VDC or 18VDC?  Needs to handle up to 20VDC solar input.
+     Add jumper-selectable 3.3V vs 5V signal level on RGB LED signal outputs, WS2811 12V strings might need 5V TTL levels?
+     Jumper-selectable LEDs, to disable them for other projects.
+     Make the various LEDs different colors, rather than all yellow, to differentiate function by quick visual check?
 
 Firmware:
    Base Code
