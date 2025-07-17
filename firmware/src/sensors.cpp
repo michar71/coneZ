@@ -38,6 +38,15 @@ void sensors_setup(void)
         mpu.enableAccDLPF(true);
         mpu.setAccDLPF(MPU6500_DLPF_6);
     }
+    sensors_loop();
+
+    Serial.printf("TMP102 Temperature: %.2f C\n", temperature);
+    Serial.printf("MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f\n", gValue.x, gValue.y, gValue.z);
+    if (gValue.z < 0.5) {
+        Serial.println("Looks like we are in space, not on earth...");
+    } else {
+        Serial.println("Seems we are on earth and upright, not in space...");
+    }
 }
 
 void sensors_loop(void)

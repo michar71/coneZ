@@ -13,5 +13,6 @@ float getRoll(void);
 float getYaw(void);
 
 float getMaxAccXYZ(bool resetMax = false);
+void sensors_loop(void);
 
 #endif
