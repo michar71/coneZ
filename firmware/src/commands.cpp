@@ -140,6 +140,7 @@ int cmd_debug( int argc, char **argv )
         printfnl(SOURCE_COMMANDS," - GPS_RAW: \t%s\n", getDebug(SOURCE_GPS_RAW) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - LORA: \t%s\n", getDebug(SOURCE_LORA) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - LORA_RAW: \t%s\n", getDebug(SOURCE_LORA_RAW) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS," - FSYNC: \t%s\n", getDebug(SOURCE_FSYNC) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - WIFI: \t%s\n", getDebug(SOURCE_WIFI) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - SENSORS: \t%s\n", getDebug(SOURCE_SENSORS) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS," - OTHER: \t%s\n", getDebug(SOURCE_OTHER) ? "on" : "off" );
@@ -181,6 +182,9 @@ int cmd_debug( int argc, char **argv )
     else
     if( !strcasecmp( argv[1], "WIFI" ) )
         mask_to_set = SOURCE_WIFI;
+    else
+    if( !strcasecmp( argv[1], "FSYNC" ) )
+        mask_to_set = SOURCE_FSYNC;
     else
     if( !strcasecmp( argv[1], "OTHER" ) )
         mask_to_set = SOURCE_OTHER;

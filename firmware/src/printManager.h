@@ -11,15 +11,35 @@
 
 typedef enum {
     SOURCE_BASIC        = 0x00000001,
+                                        // Available: 0x00000002
+                                        // Available: 0x00000004
+                                        // Available: 0x00000008
+                                        // Available: 0x00000010
+                                        // Available: 0x00000020
+                                        // Available: 0x00000040
+                                        // Available: 0x00000080
     SOURCE_SHELL        = 0x00000100,
     SOURCE_COMMANDS     = 0x00000200,
     SOURCE_SYSTEM       = 0x00000400,
+                                        // Available: 0x00000800
     SOURCE_GPS          = 0x00001000,
     SOURCE_GPS_RAW      = 0x00002000,
+                                        // Available: 0x00004000
+                                        // Available: 0x00008000
     SOURCE_LORA         = 0x00010000,
     SOURCE_LORA_RAW     = 0x00020000,
-    SOURCE_SENSORS      = 0x00100000,
+                                        // Available: 0x00040000
+                                        // Available: 0x00080000
+    SOURCE_FSYNC        = 0x00100000,
+                                        // Available: 0x00200000
+                                        // Available: 0x00400000
+                                        // Available: 0x00800000
+    SOURCE_SENSORS      = 0x01000000,
+                                        // Available: 0x02000000
+                                        // Available: 0x04000000
+                                        // Available: 0x08000000
     SOURCE_WIFI         = 0x10000000,
+                                        // Available: 0x20000000
     SOURCE_OTHER        = 0x40000000,
     SOURCE_NONE         = 0x80000000
 } source_e;

@@ -149,6 +149,16 @@ void printfnl(source_e source, const char *format, ...)
             }
             break;
 
+        case SOURCE_FSYNC:
+            if (debug & SOURCE_FSYNC)
+            {
+                print_ts();
+                OutputStream->print("[FSYNC] ");
+                vsnprintf(buf,max_txt, format, args);
+                OutputStream->print(buf);
+            }
+            break;
+
         case SOURCE_SENSORS:
             if (debug & SOURCE_SENSORS)
             {

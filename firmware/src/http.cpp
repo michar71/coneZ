@@ -134,12 +134,14 @@ void http_reboot()
 
 
 // Show LittleFS directory listing.
-String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 1 )
+String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 3 )
 {
-    String out;
-    //String out = "Listing directory: ";
-    //out += dirname;
-    //out += "\n";
+    String out = "Directory: ";
+    out += dirname;
+    if( strcmp( dirname, "/" ) )
+        out += "/";
+
+    out += "\n";
 
     File root = fs.open( dirname );
 
@@ -152,58 +154,52 @@ String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 1 )
     File file = root.openNextFile();
     while( file )
     {
-//        if (file.isDirectory())
-//        {
-//            out += "[DIR]   ";
-//            out += dirname;
-//            if( strcmp( dirname, "/" ) )
-//                out += "/";
-//            out += file.name();
-//            out += "/\n";
-//
-//            if (levels)
-//            {
-//                out += http_dir_list( fs, file.path(), levels - 1 );
-//            }
-//        }
-//        else
+        if( !file.isDirectory() )
         {
-            out += "[FILE]  ";
+            out += "  ";
             out += dirname;
             if( strcmp( dirname, "/" ) )
                 out += "/";
             out += file.name();
-            out += "  Size: ";
+            out += "   ";
             out += file.size();
+            out += " bytes";
             out += "\n";
 
         }
 
         file = root.openNextFile();
     }
+ 
+    out += "\n";
 
     // Now list subdirectories
+    bool any_dirs_listed = false;
     root.rewindDirectory();
     file = root.openNextFile();
     while( file )
     {
         if (file.isDirectory())
         {
-            out += "[DIR]   ";
-            out += dirname;
-            if( strcmp( dirname, "/" ) )
-                out += "/";
-            out += file.name();
-            out += "/\n";
+            //out += "  [DIR]   ";
+            //out += dirname;
+            //if( strcmp( dirname, "/" ) )
+            //    out += "/";
+            //out += file.name();
+            //out += "/\n";
 
             if (levels)
             {
                 out += http_dir_list( fs, file.path(), levels - 1 );
+                any_dirs_listed = true;
             }
         }
 
         file = root.openNextFile();
     }
+
+    if( any_dirs_listed )
+        out += "\n";
 
     return out;
 }
@@ -211,12 +207,39 @@ String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 1 )
 
 void http_dir()
 {
+    char buf[16];
     String out = "<html><body>\n";
     
     out += "<h3>LittleFS directory listing:</h3><hr>\n<pre>";
 
     // Start from the root directory.
     out += http_dir_list( FSLINK, "/" );
+
+    out += "<br><hr>";
+
+    // Filesystem space stats:
+    size_t total = FSLINK.totalBytes();
+    size_t used = FSLINK.usedBytes();
+
+    out += "<pre>Total bytes: ";
+    out += total;
+    out += "\nUsed bytes:  ";
+    out += used;
+
+    // Calculate used space %
+    if( total < 1 )     // Avoid divide by 0 if no filesystem.
+        total = 1;
+
+    snprintf( buf, sizeof( buf ), "   (%0.1f%%)", ( (float) used / (float) total ) * 100.0 );
+    out += buf;
+
+    out += "\nFree bytes:  ";
+    out += ( total - used );
+
+    snprintf( buf, sizeof( buf ), "   (%0.1f%%)", ( (float) ( total - used ) / ( float) total ) * 100.0 );
+    out += buf;
+
+    out += "\n</pre>";
 
     server.send( 200, "text/html", out );
 }
