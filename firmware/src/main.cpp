@@ -219,10 +219,14 @@ void basic_autoexec(void)
   if (startup)
   {
     startup = false;
+
+    //Appartly the function exist() exist... But shouldn't be used.
+    //Because it uses open() which flags an error if the file doesn't exists...
+    //Open bug in littleFS for 4 year... WTF????
     if (FSLINK.exists((char*)"/startup.bas"))
     {
         printfnl(SOURCE_SYSTEM,"startup.bas found. Executing...\n");
-        set_basic_program("/startup.bas");
+        set_basic_program((char*)"/startup.bas");
     }
     else
     {
@@ -448,6 +452,9 @@ void loop()
 
   // Process GPS messages
   gps_loop();
+
+  //Proicess Sensors.. Maybe we shoudl run this slower?
+  sensors_loop();
 
   //RUN Direct Effects
   //CIRCLE_effect();

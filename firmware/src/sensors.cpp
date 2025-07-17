@@ -16,6 +16,8 @@ xyzFloat gyr;
 xyzFloat angle;
 float mpu_temp;
 float resultantG = 0;
+int adc_bat_mv = 0;
+int adc_solar_mv = 0;
 
 
 void sensors_setup(void)
@@ -38,6 +40,9 @@ void sensors_setup(void)
         mpu.enableAccDLPF(true);
         mpu.setAccDLPF(MPU6500_DLPF_6);
     }
+
+    //Setup ADC's
+    
     sensors_loop();
 
     Serial.printf("TMP102 Temperature: %.2f C\n", temperature);
@@ -47,6 +52,7 @@ void sensors_setup(void)
     } else {
         Serial.println("Seems we are on earth and upright, not in space...");
     }
+    Serial.printf("Bat Voltage: %.2f V Solar Voltage: %.2f V\n", bat_voltage(), solar_voltage());
 }
 
 void sensors_loop(void)
@@ -62,6 +68,10 @@ void sensors_loop(void)
     angle = mpu.getAngles();
     resultantG = mpu.getResultantG(gValue);
     //printfnl(SOURCE_SENSORS, "MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f", accX, accY, accZ);
+
+    //Read ADC's
+    adc_bat_mv = analogReadMilliVolts(1); 
+    adc_solar_mv = analogReadMilliVolts(2); 
 }
 
 
@@ -134,3 +144,21 @@ float getMaxAccXYZ(bool resetMax)
     return maxAcc;
 }
     // Placeholder for temperature reading logic
+
+float bat_voltage(void)
+{
+    static int last_val = 0;
+
+    int newval = (last_val + adc_bat_mv)/2;
+    last_val = adc_bat_mv;
+    return (newval / 1000.0); // Convert millivolts to volts
+}
+
+float solar_voltage(void)
+{
+    static int last_val = 0;
+
+    int newval = (last_val + adc_solar_mv)/2;
+    last_val = adc_solar_mv;
+    return (newval / 1000.0); // Convert millivolts to volts
+}
