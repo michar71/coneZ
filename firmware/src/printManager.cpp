@@ -29,7 +29,9 @@ void print_ts(void)
     }
 }
 
-void printfnl(source_e source, const char *format, ...)
+
+// va_list version of printfnl
+void vprintfnl( source_e source, const char *format, va_list args )
 {
     const int max_txt = 255;
     char buf[max_txt];
@@ -38,8 +40,8 @@ void printfnl(source_e source, const char *format, ...)
         return; // No output stream set
     }
 
-    va_list args;
-    va_start(args, format);
+    //va_list args;
+    //va_start(args, format);
 
     //get Mutex
     if (xSemaphoreTake(print_mutex, portMAX_DELAY) != pdTRUE) 
@@ -180,6 +182,34 @@ void printfnl(source_e source, const char *format, ...)
     //return mutex
     xSemaphoreGive(print_mutex);
 }
+
+
+// Overloaded printfnl() that accepts F() wrapped __FlashStringHelper strings.
+void printfnl( source_e source, const __FlashStringHelper *format, ... )
+{
+    const int max_fmt = 128;
+    char fmt[max_fmt];
+
+    // Copy format string from PROGMEM (flash) to RAM
+    strncpy_P(fmt, (const char *)format, max_fmt);
+    fmt[max_fmt - 1] = 0;
+
+    va_list args;
+    va_start(args, format);
+    vprintfnl(source, fmt, args);
+    va_end(args);
+}
+
+
+void printfnl( source_e source, const char *format, ... )
+{
+    va_list args;
+    va_start(args, format);
+    vprintfnl(source, format, args);
+    va_end(args);
+}
+
+
 
 /*
 void printfl(source_e source, const char *format, ...)

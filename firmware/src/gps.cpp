@@ -66,7 +66,7 @@ int gps_loop()
             gps_speed = gps.speed.mps();
             gps_dir = gps.course.deg();
 
-            printfnl( SOURCE_GPS, "GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n",
+            printfnl( SOURCE_GPS, F("GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n"),
                 (int) gps_pos_valid,
                 gps_lat,
                 gps_lon,

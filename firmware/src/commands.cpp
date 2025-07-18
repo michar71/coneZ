@@ -12,48 +12,48 @@
 
 void renameFile(fs::FS &fs, const char *path1, const char *path2) 
 {
-    printfnl(SOURCE_COMMANDS,"Renaming file %s to %s\r\n", path1, path2);
+    printfnl(SOURCE_COMMANDS, F("Renaming file %s to %s\r\n"), path1, path2);
     if (fs.rename(path1, path2)) {
-      printfnl(SOURCE_COMMANDS,"- file renamed\n");
+      printfnl(SOURCE_COMMANDS, F("- file renamed\n") );
     } else {
-      printfnl(SOURCE_COMMANDS,"- rename failed\n");
+      printfnl(SOURCE_COMMANDS, F("- rename failed\n") );
     }
 }
   
 void deleteFile(fs::FS &fs, const char *path)
 {
-    printfnl(SOURCE_COMMANDS,"Deleting file: %s\r\n", path);
+    printfnl(SOURCE_COMMANDS, F("Deleting file: %s\r\n"), path);
     if (fs.remove(path)) {
-      printfnl(SOURCE_COMMANDS,"- file deleted\n");
+      printfnl(SOURCE_COMMANDS, F( "- file deleted\n") );
     } else {
-      printfnl(SOURCE_COMMANDS,"- delete failed\n");
+      printfnl(SOURCE_COMMANDS, F( "- delete failed\n") );
     }
 }
 
 
 void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
 {
-  printfnl(SOURCE_COMMANDS,"Listing directory: %s\r\n", dirname);
+  printfnl(SOURCE_COMMANDS, F("Listing directory: %s\r\n"), dirname);
 
   File root = fs.open(dirname);
   if (!root) {
-    printfnl(SOURCE_COMMANDS,"- failed to open directory\n");
+    printfnl(SOURCE_COMMANDS, F("- failed to open directory\n") );
     return;
   }
   if (!root.isDirectory()) {
-    printfnl(SOURCE_COMMANDS," - not a directory\n");
+    printfnl(SOURCE_COMMANDS, F(" - not a directory\n") );
     return;
   }
 
   File file = root.openNextFile();
   while (file) {
     if (file.isDirectory()) {
-      printfnl(SOURCE_COMMANDS,"  DIR : %s\n",file.name());
+      printfnl(SOURCE_COMMANDS, F("  DIR : %s\n"), file.name());
       if (levels) {
         listDir(fs, file.path(), levels - 1);
       }
     } else {
-      printfnl(SOURCE_COMMANDS,"  FILE: %s \tSIZE: %d\n",file.name(),file.size());
+      printfnl(SOURCE_COMMANDS, F("  FILE: %s \tSIZE: %d\n"), file.name(),file.size());
     }
     file = root.openNextFile();
   }
@@ -61,41 +61,40 @@ void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
 
 void readFile(fs::FS &fs, const char *path) 
 {
-    printfnl(SOURCE_COMMANDS,"Listing file: %s\r\n", path);
-    printfnl(SOURCE_COMMANDS,"\n");
+    printfnl(SOURCE_COMMANDS,"Listing file: %s\r\n\n", path);
   
     File file = fs.open(path);
     if (!file || file.isDirectory()) 
     {
-      printfnl(SOURCE_COMMANDS,"- failed to open file for reading\n");
+      printfnl(SOURCE_COMMANDS, F("- failed to open file for reading\n") );
       return;
     }
   
     while (file.available()) 
     {
-      printfnl(SOURCE_COMMANDS,"%c\n",file.read());
+      printfnl(SOURCE_COMMANDS, F("%c\n"), file.read());
     }
-    printfnl(SOURCE_COMMANDS,"\n");
-    printfnl(SOURCE_COMMANDS,"- file read complete\n");
+    printfnl(SOURCE_COMMANDS, F("\n") );
+    printfnl(SOURCE_COMMANDS, F("- file read complete\n") );
     file.close();
   }
   
   void writeFile(fs::FS &fs, const char *path, const char *message) 
   {
-    printfnl(SOURCE_COMMANDS,"Writing file: %s\r\n", path);
+    printfnl(SOURCE_COMMANDS, F("Writing file: %s\r\n"), path);
   
     File file = fs.open(path, FILE_WRITE);
     if (!file) {
-      printfnl(SOURCE_COMMANDS,"- failed to open file for writing\n");
+      printfnl(SOURCE_COMMANDS, F("- failed to open file for writing\n") );
       return;
     }
     if (file.print(message)) 
     {
-      printfnl(SOURCE_COMMANDS,"- file written\n");
+      printfnl(SOURCE_COMMANDS, F("- file written\n") );
     } 
     else 
     {
-      printfnl(SOURCE_COMMANDS,"- write failed\n");
+      printfnl(SOURCE_COMMANDS, F("- write failed\n") );
     }
     file.close();
   }
@@ -105,11 +104,11 @@ Commands
 */
 int test(int argc, char **argv) 
 {
-  printfnl(SOURCE_COMMANDS,"Test function called with %d Arguments\n", argc);
-  printfnl(SOURCE_COMMANDS," Arguments:\n");
+  printfnl(SOURCE_COMMANDS, F("Test function called with %d Arguments\n"), argc);
+  printfnl(SOURCE_COMMANDS, F(" Arguments:\n") );
   for (int ii=0;ii<argc;ii++)
   {
-    printfnl(SOURCE_COMMANDS,"Argument %d: %s\n", ii, argv[ii]);
+    printfnl(SOURCE_COMMANDS, F("Argument %d: %s\n"), ii, argv[ii]);
   }  
   return 0;
 };
@@ -117,7 +116,7 @@ int test(int argc, char **argv)
 
 int cmd_reboot( int argc, char **argv )
 {
-    printfnl( SOURCE_SYSTEM, "Rebooting...\n" );
+    printfnl( SOURCE_SYSTEM, F("Rebooting...\n") );
     delay( 1000 );
     ESP.restart();
 
@@ -130,20 +129,20 @@ int cmd_debug( int argc, char **argv )
     // If no args, show current debug message config.
     if( argc < 2 )
     {
-        printfnl(SOURCE_COMMANDS,"Current Debug Settings:\n");
+        printfnl(SOURCE_COMMANDS, F("Current Debug Settings:\n") );
 
-        printfnl(SOURCE_COMMANDS," - SYSTEM: \t%s\n", getDebug(SOURCE_SYSTEM) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - BASIC: \t%s\n", getDebug(SOURCE_BASIC) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - COMMANDS: \t%s\n", getDebug(SOURCE_COMMANDS) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - SHELL: \t%s\n", getDebug(SOURCE_SHELL) ? "on" : "off" );        
-        printfnl(SOURCE_COMMANDS," - GPS: \t%s\n", getDebug(SOURCE_GPS) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - GPS_RAW: \t%s\n", getDebug(SOURCE_GPS_RAW) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - LORA: \t%s\n", getDebug(SOURCE_LORA) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - LORA_RAW: \t%s\n", getDebug(SOURCE_LORA_RAW) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - FSYNC: \t%s\n", getDebug(SOURCE_FSYNC) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - WIFI: \t%s\n", getDebug(SOURCE_WIFI) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - SENSORS: \t%s\n", getDebug(SOURCE_SENSORS) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS," - OTHER: \t%s\n", getDebug(SOURCE_OTHER) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - SYSTEM: \t%s\n"), getDebug(SOURCE_SYSTEM) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - BASIC: \t%s\n"), getDebug(SOURCE_BASIC) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - COMMANDS: \t%s\n"), getDebug(SOURCE_COMMANDS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - SHELL: \t%s\n"), getDebug(SOURCE_SHELL) ? "on" : "off" );        
+        printfnl(SOURCE_COMMANDS, F(" - GPS: \t%s\n"), getDebug(SOURCE_GPS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - GPS_RAW: \t%s\n"), getDebug(SOURCE_GPS_RAW) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - LORA: \t%s\n"), getDebug(SOURCE_LORA) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - LORA_RAW: \t%s\n"), getDebug(SOURCE_LORA_RAW) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - FSYNC: \t%s\n"), getDebug(SOURCE_FSYNC) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - WIFI: \t%s\n"), getDebug(SOURCE_WIFI) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - SENSORS: \t%s\n"), getDebug(SOURCE_SENSORS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - OTHER: \t%s\n"), getDebug(SOURCE_OTHER) ? "on" : "off" );
 
         return 0;
     }
@@ -193,7 +192,7 @@ int cmd_debug( int argc, char **argv )
         mask_to_set = SOURCE_SENSORS;
     else            
     {
-        printfnl(SOURCE_COMMANDS,"Debug name \"%s\"not recognized.\n", argv[1] );
+        printfnl(SOURCE_COMMANDS, F("Debug name \"%s\"not recognized.\n"), argv[1] );
         return 1;
     }
 
@@ -216,7 +215,7 @@ int delFile(int argc, char **argv)
 {
     if (argc != 2)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
     deleteFile(FSLINK,argv[1]);
@@ -227,7 +226,7 @@ int renFile(int argc, char **argv)
 {
     if (argc != 3)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
     renameFile(FSLINK,argv[1], argv[2]);
@@ -238,12 +237,12 @@ int listFile(int argc, char **argv)
 {
     if (argc != 2)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
 
     readFile(FSLINK,argv[1]); 
-    printfnl(SOURCE_COMMANDS,"\n");
+    printfnl(SOURCE_COMMANDS, F("\n"));
     return 0;
 }
 
@@ -251,7 +250,7 @@ int listDir(int argc, char **argv)
 {
     if (argc != 1)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
     listDir(FSLINK,"/",1); 
@@ -262,7 +261,7 @@ int loadFile(int argc, char **argv)
 {
     if (argc != 2)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;       
     }
     else
@@ -272,7 +271,7 @@ int loadFile(int argc, char **argv)
         char line[256];
         char inchar;
         bool isDone = false;
-        printfnl(SOURCE_COMMANDS,"Ready for file. Press CTRL+Z to end transmission and save file %s\n",argv[1]);
+        printfnl(SOURCE_COMMANDS, F("Ready for file. Press CTRL+Z to end transmission and save file %s\n"), argv[1]);
         //Flush serial buffer
         getLock();
         getStream()->flush();
@@ -280,7 +279,7 @@ int loadFile(int argc, char **argv)
         File file = FSLINK.open(argv[1], FILE_WRITE);
         if (!file) 
         {
-            printfnl(SOURCE_COMMANDS,"- failed to open file for writing\n");
+            printfnl(SOURCE_COMMANDS, F("- failed to open file for writing\n") );
             return 1;
         }
 
@@ -332,7 +331,7 @@ int loadFile(int argc, char **argv)
         //close file
         file.close();
         releaseLock();
-        printfnl(SOURCE_COMMANDS,"%d Lines written to file\n",linecount);
+        printfnl(SOURCE_COMMANDS, F("%d Lines written to file\n"), linecount);
         
         return 0;
     }
@@ -343,13 +342,13 @@ int runBasic(int argc, char **argv)
 {
     if (argc != 2)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;       
     }
     else
     {
         if (false == set_basic_program(argv[1]))
-          printfnl(SOURCE_COMMANDS,"BASIC code already running\n");        
+          printfnl(SOURCE_COMMANDS, F("BASIC code already running\n") );
         return 0;
     }
 }
@@ -358,7 +357,7 @@ int stopBasic(int argc, char **argv)
 {
     if (argc != 1)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;       
     }
     else
@@ -372,7 +371,7 @@ int paramBasic(int argc, char **argv)
 {
     if (argc != 3)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;       
     }
     else
@@ -445,7 +444,7 @@ int tc(int argc, char **argv)
     char buf[1024];
     if (argc != 1)
     {
-        printfnl(SOURCE_COMMANDS,"Wrong argument count\n");
+        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;       
     }
     else
@@ -456,10 +455,10 @@ int tc(int argc, char **argv)
         printfl(SOURCE_COMMANDS,"%s",buf);
         printfl(SOURCE_COMMANDS,"");
         */
-        printfnl(SOURCE_COMMANDS,"Thread Count:\n");
+        printfnl(SOURCE_COMMANDS,F("Thread Count:\n") );
         for (int ii=0;ii<4;ii++)
         {
-            printfnl(SOURCE_COMMANDS,"Core %d: %d\n",(uint8_t)ii,(unsigned int)get_thread_count(ii));
+            printfnl( SOURCE_COMMANDS, F("Core %d: %d\n"), (uint8_t)ii, (unsigned int)get_thread_count(ii) );
         }
         return 0;
     }
@@ -468,38 +467,20 @@ int tc(int argc, char **argv)
 
 int cmd_help( int argc, char **argv )
 {
-    char buf[128];
-
-    // Maybe we should make printfnl() accept FlashStringHelper strings.
-    strncpy_P( buf, (PGM_P) F( "Available commands:\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  ?                                  Show help\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  debug [off | {source} [on|off]]    Show or set debug message types\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  del {filename}                     Delete file\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  dir                                List files\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  help                               Crash the main thread\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  list {filename}                    Show file contents\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  load {filename}                    Load BASIC program\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  param {arg1} {arg2}                Set BASIC program arguments\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  reboot                             Respawn as a coyote\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  ren {oldname} {newname}            Rename file\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  run {filename}                     Run BASIC program\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  stop                               Stop BASIC program\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-    strncpy_P( buf, (PGM_P) F( "  tc                                 Show thread count\n\n" ), sizeof( buf ) );
-    printfnl( SOURCE_COMMANDS, buf );
-
+    printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  ?                                  Show help\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]    Show or set debug message types\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  del {filename}                     Delete file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  dir                                List files\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  help                               Crash the main thread\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  list {filename}                    Show file contents\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  load {filename}                    Load BASIC program\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                Set BASIC program arguments\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  reboot                             Respawn as a coyote\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  ren {oldname} {newname}            Rename file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  run {filename}                     Run BASIC program\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  stop                               Stop BASIC program\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n\n" ) );
     return 0;
 }
 
