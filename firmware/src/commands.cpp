@@ -465,6 +465,45 @@ int tc(int argc, char **argv)
     }
 }
 
+
+int cmd_help( int argc, char **argv )
+{
+    char buf[128];
+
+    // Maybe we should make printfnl() accept FlashStringHelper strings.
+    strncpy_P( buf, (PGM_P) F( "Available commands:\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  ?                                  Show help\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  debug [off | {source} [on|off]]    Show or set debug message types\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  del {filename}                     Delete file\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  dir                                List files\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  help                               Crash the main thread\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  list {filename}                    Show file contents\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  load {filename}                    Load BASIC program\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  param {arg1} {arg2}                Set BASIC program arguments\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  reboot                             Respawn as a coyote\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  ren {oldname} {newname}            Rename file\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  run {filename}                     Run BASIC program\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  stop                               Stop BASIC program\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+    strncpy_P( buf, (PGM_P) F( "  tc                                 Show thread count\n\n" ), sizeof( buf ) );
+    printfnl( SOURCE_COMMANDS, buf );
+
+    return 0;
+}
+
+
 void init_commands(Stream *dev)
 {
     shell.attach(*dev);
@@ -473,17 +512,20 @@ void init_commands(Stream *dev)
     shell.addCommand(F("test"), test);
 
     //file Sydstem commands
-    shell.addCommand(F("dir"), listDir);
+    shell.addCommand(F("?"), cmd_help);
     shell.addCommand(F("debug"), cmd_debug );
-    shell.addCommand(F("list"), listFile);
-    shell.addCommand(F("ren"), renFile);
     shell.addCommand(F("del"), delFile);
-    shell.addCommand(F("load"), loadFile);   
+    shell.addCommand(F("dir"), listDir);
+    shell.addCommand(F("help"), cmd_help);
+    shell.addCommand(F("list"), listFile);
+    shell.addCommand(F("load"), loadFile);
+    shell.addCommand(F("param"), paramBasic);
+    shell.addCommand(F("reboot"), cmd_reboot );
+    shell.addCommand(F("ren"), renFile);
     shell.addCommand(F("run"), runBasic);
     shell.addCommand(F("stop"), stopBasic);
-    shell.addCommand(F("param"), paramBasic);
     shell.addCommand(F("tc"), tc);
-    shell.addCommand(F("reboot"), cmd_reboot );
+    
     
     //System commands
 
