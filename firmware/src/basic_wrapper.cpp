@@ -10,6 +10,7 @@
 #define REAL_ESP32_HW
 #include "basic.h"
 #include "gps.h"
+#include "sensors.h"
 
 #define MAX_PARAMS 16
 
@@ -57,6 +58,80 @@ int8_t getLocationData(float* org_lat, float* org_lon, float* lat, float* lon, f
         err = -1; //No GPS data available
     }
     return err;
+}
+
+int8_t getDateTimeData(bool *hasDate, bool *hasTime, int *day, int *month, int *year, int *hour, int *minute, int *second, int* dayOfWeek, int *dayOfYear, bool *isLeapYear)
+{
+    int8_t err = 0;
+
+    if (get_gpsstatus())
+    {
+        *hasDate = true;
+        *hasTime = true;
+        *day = get_day();
+        *month = get_month();
+        *year = get_year(); 
+        *hour = get_hour();
+        *minute = get_minute();
+        *second = get_second();
+        //Calulate day of week
+
+        //Calulate day of year
+
+        //calulate leap year
+        *dayOfWeek = get_day_of_week();
+        *dayOfYear = get_dayofyear();
+        *isLeapYear = get_isleapyear();
+    }
+    else
+    {
+        *hasDate = false;
+        *hasTime = false;
+        *day = 0;
+        *month = 0;
+        *year = 0;
+        *hour = 0;
+        *minute = 0;
+        *second = 0;
+        *dayOfWeek = 0;
+        *dayOfYear = 0;
+        *isLeapYear = false;
+        err=0;
+    }
+    return err;
+}
+
+int8_t getIMUdata(float* roll,float* pitch,float* yaw,float* accX,float* accY,float* accZ)
+{
+    if (imuAvaialble())
+    {
+        *roll = getRoll();
+        *pitch = getPitch();
+        *yaw = getYaw();
+        *accX = getAccX();
+        *accY = getAccY();
+        *accZ = getAccZ();
+        return GYRO_BIT | ACC_BIT; //IMU data available but only Gyro/Accelerometer data
+    }
+    else
+    {
+        *roll = 0;
+        *pitch = 0;
+        *yaw = 0;
+        *accX = 0;
+        *accY = 0;
+        *accZ = 0;
+        return 0; //IMU data not available
+    }
+}
+
+
+int8_t getENVdata(float* temp, float* humidity, float* brightness)
+{
+    *temp = getTemp();
+    *humidity = -1;
+    *brightness = -1;
+    return 1; //Data available
 }
 
 void reset_params(void)
@@ -108,12 +183,182 @@ bool set_basic_program(char* prog)
     return false;
 }
 
+int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, int timeout_ms)
+{
+    switch (event)
+    {
+        case EVENT_SYNC_PULSE:
+        {
+            return -1; //Event not supported
+            //Need to add support here to wait for a specific sync pule via LoRa.
+            //Couyld be we want to repsond to all of them or a specific one.
+        }
+        case EVENT_DIGITAL_PIN:
+        {
+            return -1; //Event not supported
+        }
+        case EVENT_ANALOG_PIN:
+        {
+            return -1; //Event not supported
+        }
+        case EVENT_SYS_TIMER:
+        {
+            //For Sys-Timer the condition options are different.
+            //First we take the trigger value and convert it to the value in mmilisec,
+            long t = triggerValue;
+            switch (condition)
+            {
+                case CONDITON_HOUR:
+                    t *= 3600000; //Convert to ms
+                    break;
+                case CONDITON_MINUTE:
+                    t *= 60000; //Convert to ms
+                    break;
+                case CONDITON_SECOND:
+                    t *= 1000; //Convert to ms
+                    break;
+                case CONDITON_MS:
+                    //Already in ms
+                    break;
+                default:
+                    break;
+            }
+            long st = millis();
+            while (st < t)
+            {
+                vTaskDelay(1 / portTICK_PERIOD_MS);
+                inc_thread_count(xPortGetCoreID());
+                st = millis();
+                if (timeout_ms > 0 && (st - t) > timeout_ms)
+                {
+                    return 0; //Timeout
+                }
+            }
+            return 1; //Event received
+        }            
+        case EVENT_GPS_PPS:
+        {
+            //First chekc if GPS has lock
+            if (!get_gpsstatus())
+            {
+                return -1; //No GPS Signal
+            }
+            //Now we can wait for the PPS Pulse
+            bool pps = get_pps();
+            bool last_pps = pps;
+            long t = millis();
+            if (condition == CONDITON_LOW_TO_HIGH)
+            {
+                do{
+                    last_pps = pps;
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    inc_thread_count(xPortGetCoreID());
+                    bool pps = get_pps();
+                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    {
+                        return 0; //Timeout
+                    }
+                } while (!((last_pps == false) && (pps == true))); //Wait for PPS to go high
+                return 1; //PPS Pulse received
+            }
+            else if (condition == CONDITON_HIGH_TO_LOW)
+            {
+                do{
+                    last_pps = pps;
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    inc_thread_count(xPortGetCoreID());
+                    bool pps = get_pps();
+                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    {
+                        return 0; //Timeout
+                    }
+                } while (!((last_pps == true) && (pps == false))); //Wait for PPS to go high
+                return 1; //PPS Pulse received  
+            }
+            else
+            {
+                return -1; //Condition not supported
+            }
+            break;
+        }
+        case EVENT_PARAM:
+        {
+            long t = millis();
+            if (condition == CONDITON_LARGER)
+            {
+                do{
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    inc_thread_count(xPortGetCoreID());
+                    bool pps = get_pps();
+                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    {
+                        return 0; //Timeout
+                    }
+                } while (get_basic_param(sourceID) <= triggerValue); //Wait for PPS to go high
+                return 1;
+            }
+            if (condition == CONDITON_SMALLER)
+            {
+                do{
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    inc_thread_count(xPortGetCoreID());
+                    bool pps = get_pps();
+                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    {
+                        return 0; //Timeout
+                    }
+                } while (get_basic_param(sourceID) >= triggerValue); //Wait for PPS to go high
+                return 1; 
+            }            
+            else if (condition == CONDITON_EQUAL)
+            {
+                do{
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    inc_thread_count(xPortGetCoreID());
+                    bool pps = get_pps();
+                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    {
+                        return 0; //Timeout
+                    }
+                } while (get_basic_param(sourceID) != triggerValue); //Wait for PPS to go high
+                return 1;
+            }         
+            else if (condition == CONDITON_NOT_EQUAL)
+            {
+                do{
+                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    inc_thread_count(xPortGetCoreID());
+                    bool pps = get_pps();
+                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    {
+                        return 0; //Timeout
+                    }
+                } while (get_basic_param(sourceID) == triggerValue); //Wait for PPS to go high
+                return 1; //PPS Pulse received
+            }    
+            else
+            {
+                return -1; //Condition not supported
+            }                 
+        }
+        default:
+        {
+            return -1; //Unknown event
+        }
+    }
 
+
+    return 0;
+}
 void setup_basic()
 {
     //Set Callback Functions
     register_location_callback(getLocationData);
     register_param_callback(get_basic_param);
+    register_datetime_callback(getDateTimeData);
+    register_imu_callback(getIMUdata);
+    register_sync_callback(getSyncEvent);
+    register_env_callback(getENVdata);
 
     //Start Own Thread
     basic_mutex = xSemaphoreCreateMutex();    

@@ -31,6 +31,8 @@ HardwareSerial GPSSerial(0);
 
 int gps_setup()
 {
+    //Setup PPS Pin
+    pinMode(GPS_PPS_PIN, INPUT_PULLUP);
     GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin
                      44 /*RX0*/, 43 /*TX0*/ );
 
@@ -126,4 +128,103 @@ float get_org_lat(void)
 float get_org_lon(void)
 {
     return origin_lon;
+}
+
+int get_day(void)
+{
+    return gps.date.day();
+}   
+
+int get_month(void)
+{
+    return gps.date.month();
+}
+
+int get_year(void)
+{
+    return gps.date.year();
+}
+
+int get_hour(void)
+{
+    return gps.time.hour();
+}
+
+int get_minute(void)
+{
+    return gps.time.minute();
+}
+
+int get_second(void)
+{
+    return gps.time.second();
+}
+
+
+int get_day_of_week(void)
+{
+    int month = gps.date.month();
+    int year = gps.date.year();
+
+        if (month < 3) {
+        month += 12;
+        year -= 1;
+    }
+
+    int k = year % 100;
+    int j = year / 100;
+
+    int h = (gps.date.day() + (13 * (month + 1)) / 5 + k + k/4 + j/4 + 5*j) % 7;
+
+    // Zeller's congruence: 0=Saturday, so we convert to 0=Sunday
+    int day_of_week = (h + 6) % 7;
+    return day_of_week;
+}
+
+bool get_isleapyear(void)
+{
+    int year = gps.date.year();
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}   
+
+int get_dayofyear(void)
+{
+    int year = gps.date.year();
+    int month = gps.date.month();
+    int day = gps.date.day();
+
+
+    // Days in each month for a non-leap year
+    int days_in_month[] = { 31, 28, 31, 30, 31, 30,
+                            31, 31, 30, 31, 30, 31 };
+
+    if (get_isleapyear()) {
+        days_in_month[1] = 29; // February in a leap year
+    }
+
+    // Validate day for the given month
+    if (day > days_in_month[month - 1]) {
+        return -1; // Invalid day
+    }
+
+    int doy = 0;
+    for (int i = 0; i < month - 1; ++i) {
+        doy += days_in_month[i];
+    }
+    doy += day;
+
+    return doy;
+}
+
+
+bool get_pps(void)
+{
+    if (digitalRead(GPS_PPS_PIN) == HIGH)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }   
 }

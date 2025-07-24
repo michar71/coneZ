@@ -18,6 +18,7 @@ float mpu_temp;
 float resultantG = 0;
 int adc_bat_mv = 0;
 int adc_solar_mv = 0;
+bool IMU_avaliable = false;
 
 
 void sensors_setup(void)
@@ -39,6 +40,7 @@ void sensors_setup(void)
         mpu.setAccRange(MPU6500_ACC_RANGE_2G);
         mpu.enableAccDLPF(true);
         mpu.setAccDLPF(MPU6500_DLPF_6);
+        IMU_avaliable = true;
     }
 
     //Setup ADC's
@@ -109,6 +111,11 @@ float getRoll(void)
 float getYaw(void)
 {
     return atan2(gValue.y, gValue.x) * 180.0 / M_PI;
+}
+
+bool imuAvaialble(void)
+{
+    return IMU_avaliable;
 }
 
 

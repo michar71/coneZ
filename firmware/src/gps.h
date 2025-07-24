@@ -13,4 +13,16 @@ float get_dir(void);
 bool get_gpsstatus(void);
 float get_org_lat(void);
 float get_org_lon(void);
+
+int get_day(void);
+int get_month(void);
+int get_year(void);
+int get_day_of_week(void);
+int get_dayofyear(void);
+bool get_isleapyear(void);
+int get_hour(void);
+int get_minute(void);
+int get_second(void);
+
+bool get_pps(void);
 #endif

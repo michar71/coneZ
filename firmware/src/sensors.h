@@ -3,6 +3,7 @@
 
 
 void sensors_setup(void);
+bool imuAvaialble(void);
 float getTemp(void);
 float getAccX(void);
 float getAccY(void);

@@ -34,52 +34,53 @@ WAITIME(ms)       -> x mS minus the time that has passed since LOCKTIME was call
 DONE int RANDOM(int min, int max)
 DONE int VERSION()  -> Retrun basic version number
 int FLAG(int ID) -> Check one of up to 8 flags from the host-process. Can be a number or 1/0 for true/false.
-int WAITFOR(int event , int cond, int val, int timeout)
+int WAITFOR(int event , int source,int cond, int trigger, int timeout)
 
 event = 0 -> Sync Pulse
+    source =0 for all sync pulses or number ID of sync pulse to wait for
     cond = 0 = all sync pulses, 1 = specific sync pulse ID
-    val = 0 for all sync pulses or number ID of sync pulse to wait for
+    trigger = not used
     timeout -> Timeout in ms, 0 = wait forever
     ret = 0 = timerout, 1 = event received    
 
 event = 1 -> Digital Pin Change
+    source = pin number
     cond = 0 = low to high, 1 = high to low
-    val = pin number
+    trigger = not used
     timeout = timeout in ms, 0 = wait forever
 
     ret = 0 = timerout, 1 = event received    
 
 event = 2 -> Analog Pin Change from smaller then TH to larger then TH
+    source = pin number
+    cond = Condition to triggere on
+    trigger = value to compare against
+    timeout = timeout in ms, 0 = wait forever   
+
+    ret = 0 = timerout, 1 = event received
+
+event = 3 -> Analog Pin Change
     cond = Threshold
     val = pin number
     timeout = timeout in ms, 0 = wait forever   
 
     ret = 0 = timerout, 1 = event received
+  
 
-event = 3 -> Analog Pin Change from larger then TH to smaller then TH
-    cond = Threshold
-    val = pin number
-    timeout = timeout in ms, 0 = wait forever   
-
-    ret = 0 = timerout, 1 = event received
-
-event = 4 -> wait for system timer to reach a specific value
-    cond = 0 = millisec, 1 = sec, 2 = min, 3 = hours
-    val = value to wait for
-    timeout = timeout in ms, 0 = wait forever   
-
-    ret = 0 = timerout, 1 = event received    
-
-event = 5 -> wait for GPS PPS Pulse
-    cond = 0 = low, 1 = high, 2 = transition from low to high, 3 = transition from high to low
-    val = 0
+event = 4 -> wait for GPS PPS Pulse
+    souce = not used
+    2 = transition from low to high, 3 = transition from high to low
+    trigger = not used
     timeout -> Timeout in ms, 0 = wait forever
+
     ret = 0 = timerout, 1 = event received, -1 = no GPS Signal  
 
-event = 0 -> wait for Param to reach a specific state
-    cond = paramID
-    val = Value we are waiting for/comparing too
+event = 5 -> wait for Param to reach a specific state
+    source = param
+    cond = tyope of condition
+    trigger = Value we are waiting for/comparing too
     timeout -> Timeout in ms, 0 = wait forever
+
     ret = 0 = timerout, 1 = event received   
 
 Hardware:
@@ -138,6 +139,19 @@ DONE int ACCX() //Accelerometer X in m/s^2
 DONE int ACCY() //Accelerometer Y in m/s^2
 DONE int ACCZ() //Accelerometer Z in m/s^2
 
+Date/Time Functions based on GPS or RTC:
+DONE int HASDATE() //Date is available
+DONE int HASTIME() //Time is available
+DONE int DAY() //Returns day of week 0=Sunday, 1=Monday etc.
+DONE int MONTH() //Returns month 1-12
+DONE int YEAR() //Returns year 4 digit
+DONE int HOUR() //Returns hour 0-23
+DONE int MINUTE() //Returns minute 0-59
+DONE int SECOND() //Returns second 0-59
+DONE int DAYOFWEEK() //Returns day of week 0-6 (0=Sunday, 1=Monday etc.)
+DONE int DAYOFYEAR() //Returns day of year 1-366
+DONE int ISLEAPYEAR() //Returns 1 if leap year, 0 if not
+
 environmental-sensor functions:
 DONE int TEMP() //returns temperature in Deg C*10 or -10000 if no temp sensor present 
 DONE int HUM() //returns humidity in % or -1 if no humidity sensor present
@@ -184,26 +198,53 @@ CallbackIMUFunction IMU_Func = NULL;
 typedef int8_t (*CallbackENVFunction)(float*,float*,float*);
 CallbackENVFunction ENV_Func = NULL;
 
-//SYNC_function (int pulseID, int timeout_ms)
+//SYNC_function (int pulseID,int condition, int timeout_ms)
 //This function is called to wait for sync pulses.
-// pulseID = 0 for all sync pulses, 1 for sync pulse 1, 2 for sync pulse 2 etc.
-// timeout_ms = 0 for no timeout, >0 for timeout in ms
+// int event
+// int Source ID
+// int condition
+// int trigger-value
+//int  timeout_ms = 0 for no timeout, >0 for timeout in ms
 //Return Values:
+//-1 = Not Implemented/availabe
 //0 = Timeout
 //1 = Sync Pulse received
-typedef int8_t (*CallbackSYNCFunction)(int,int);
+typedef int8_t (*CallbackSYNCFunction)(int,int,int,int,int);
 CallbackSYNCFunction SYNC_Func = NULL;
-#define EVENT_PULSE 0
-#define EVENT_DIGITAL 1
-#define EVENT_ANALOG_UP 2
-#define EVENT_ANALOG_DOWN 3
-#define EVENT_TIMER 4
+#define EVENT_SYNC_PULSE 0
+#define EVENT_DIGITAL_PIN 1
+#define EVENT_ANALOG_PIN 2
+#define EVENT_SYS_TIMER 4
+#define EVENT_GPS_PPS 5
+#define EVENT_PARAM 6
+
+#define CONDITON_LARGER 0
+#define CONDITON_SMALLER 1
+#define CONDITON_EQUAL 2
+#define CONDITON_NOT_EQUAL 3
+#define CONDITON_LOW_TO_HIGH 4
+#define CONDITON_HIGH_TO_LOW 5
+
+#define CONDITON_HOUR 6
+#define CONDITON_MINUTE 7
+#define CONDITON_SECOND 8
+#define CONDITON_MS 9
 
 //int PARAM_function (int paramID)
 //Returns the value of the parameter paramID. Return 0 if parasmID does not exist...
 //paramID 0 should be used to termiante a program if set to 1 if its in a loop.
 typedef int (*CallbackPARAMFunction)(int);
 CallbackPARAMFunction PARAM_Func = NULL;
+
+//int DATETIME_function (bool *hasDate, bool *hasTime, int *day, int *month, int *year, int *hour, int *minute, int *second, int* dayOfWeek, int *dayOfYear, bool *isLeapYear)
+//This function returns date/time info either via GPS or a RTC
+//Return Values:
+//0 = Error
+//1 = Valid Data
+//2 = No GPS Signal, but RTC data available
+typedef int8_t (*CallbackDATETIMEFunction)(bool*,bool*,int*,int*,int*,int*,int*,int*,int*,int*,bool*);
+CallbackDATETIMEFunction DATETIME_Func = NULL;
+
 
 //Gamma-Table LUT
 const uint8_t  gamma8[] = {
@@ -286,6 +327,18 @@ const uint8_t  gamma8[] = {
 #define VERSION_T "VERSION"
 #define WAITFOR_T "WAITFOR"
 #define GETPARAM_T "GETPARAM"
+
+#define HASDATE_T "HASDATE"
+#define HASTIME_T "HASTIME"
+#define DAY_T "DAY"
+#define MONTH_T "MONTH"
+#define YEAR_T "YEAR"
+#define HOUR_T "HOUR"
+#define MINUTE_T "MINUTE"
+#define SECOND_T "SECOND"
+#define DAYOFWEEK_T "DAYOFWEEK"
+#define DAYOFYEAR_T "DAYOFYEAR"
+#define ISLEAPYEAR_T "ISLEAPYEAR"
 
 //-------------------------------------
 //Real HW dependecies.... We can ifdef this with stubs or PC functions for testing on other platform
@@ -1726,7 +1779,7 @@ int HUM_()
         int8_t res = ENV_Func(&temp,&hum,&bright);
         if (res < 0)
         {
-            *sp=0; //Push back to to the stack
+            *sp=-1; //Push back to to the stack
             STEP;
         }
         *sp=(int)round(hum); //Push back to to the stack
@@ -1750,7 +1803,7 @@ int BRIGHT_()
         int8_t res = ENV_Func(&temp,&hum,&bright);
         if (res < 0)
         {
-            *sp=0; //Push back to to the stack
+            *sp=-1; //Push back to to the stack
             STEP;
         }
         *sp=(int)round(bright); //Push back to to the stack
@@ -1776,38 +1829,424 @@ int GETPARAM_()
 int WAITFOR_()
 {
     int timeout = (int)*sp++;
-    int value = (int)*sp++;
-    int condition = (int)*sp++;    
+    int trigger = (int)*sp++;
+    int condition = (int)*sp++;      
+    int source = (int)*sp++;      
     int event = (int)*sp;  //Pull value from Stack and rewind stack
 
-    if (event == EVENT_PULSE)
+    if (SYNC_Func == NULL)
     {
-        if (SYNC_Func == NULL)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-
-        uint8_t ret = SYNC_Func(value,timeout); //Call the sync function
-        if (ret == 0) //If we timed out
-        {
-            *sp=0; //Push back to to the stack
-            STEP;            
-        }
-        else
-        {
-            *sp=1; //Push back to to the stack
-            STEP; 
-        }
+        *sp=0; //Push back to to the stack
+        STEP;
     }
-    else
+
+    uint8_t ret = SYNC_Func(event,source, condition, trigger,timeout); //Call the sync function
+    if (ret == 0) //If we timed out
+    {
+        *sp=0; //Push back to to the stack
+        STEP;            
+    }
+    else if(ret == -1)
     {
         bad((char*)"WAITFOR: EVENT NOT SUPPORTED");
         return 0;
     }
-
-
+    else if (ret == 1) //If we got the event
+    {
+        *sp=1; //Push back to to the stack
+        STEP; 
+    }
+    else
+    {
+        bad((char*)"WAITFOR: UNKNOWN RETURN VALUE FROM SYNC FUNCTION");
+        *sp=0; //Push back to to the stack
+        STEP; 
+    }
 }
+
+
+int HASDATE_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hasdate == false)
+        {
+            *sp=0; //Push back to to the stack
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int HASTIME_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hastime == false)
+        {
+            *sp=0; //Push back to to the stack
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int HOUR_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hastime == true)
+        {
+            *sp=hour;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int MINUTE_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hastime == true)
+        {
+            *sp=minute;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int SECOND_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hastime == true)
+        {
+            *sp=second;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int DAY_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hasdate == true)
+        {
+            *sp=day;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int MONTH_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hasdate == true)
+        {
+            *sp=month;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int YEAR_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hasdate == true)
+        {
+            *sp=year;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int DAYOFWEEK_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hasdate == true)
+        {
+            *sp=dayofweek;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int DAYOFYEAR_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hasdate == true)
+        {
+            *sp=dayofyear;
+        }
+        else
+        {
+            *sp=1; //Push back to to the stack
+        }
+        STEP;
+    }
+}
+
+int ISLEAPYEAR_()
+{
+    if (NULL == DATETIME_Func)
+    {
+        *sp=0; //Push back to to the stack
+        STEP;
+    }
+    else
+    {
+        bool hasdate;
+        bool hastime;
+        int hour;
+        int minute;
+        int second;
+        int day;
+        int month;
+        int year;
+        int dayofweek;
+        int dayofyear;
+        bool isleapyear;
+
+        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
+        if (hasdate == false)
+        {
+            *sp=0; //Push back to to the stack
+        }
+        else
+        {
+            if (isleapyear == false)
+            {
+                *sp=0; //Push back to to the stack
+            }
+            else
+            {
+                *sp=1; //Push back to to the stack
+            }
+    }
+        STEP;
+    }
+}
+
+
 
 //We get the name of the function and the number of arguments.
 //Validate here if the number of arguments is correct and then push the function to the progam buffer.
@@ -2239,9 +2678,9 @@ int funhook_(char *msg, int n)
     }   
     if (!strcmp(msg,WAITFOR_T))
     {
-        if (n!=4) 
+        if (n!=5) 
         {
-            bad((char*)"WAITFOR: 4 ARGUMENTS REQUIRED");
+            bad((char*)"WAITFOR: 5 ARGUMENTS REQUIRED");
             return 0;
         }
         emit(WAITFOR_);STEP;
@@ -2254,7 +2693,78 @@ int funhook_(char *msg, int n)
             return 0;
         }
         emit(GETPARAM_);STEP;
-    }      
+    }    
+   if (!strcmp(msg,HASDATE_T))
+{
+    if (n!=0) 
+    {
+        bad((char*)"VERSION: NO ARGUMENTS REQUIRED");
+        return 0;
+    }
+    emit(HASDATE_);STEP;
+}         
+    if (!strcmp(msg,HASTIME_T))
+    {
+        if (n!=0) 
+        {
+            bad((char*)"HASTIME: NO ARGUMENTS REQUIRED");
+            return 0;
+        }
+        emit(HASTIME_);STEP;
+    }
+    if (!strcmp(msg,HOUR_T))
+     {
+          if (n!=0) 
+          {
+                bad((char*)"HOUR: NO ARGUMENTS REQUIRED");
+                return 0;
+          }
+          emit(HOUR_);STEP;
+     }
+    if (!strcmp(msg,MINUTE_T))
+    {
+        if (n!=0) 
+        {                bad((char*)"MINUTE: NO ARGUMENTS REQUIRED");
+            return 0;
+        }
+        emit(MINUTE_);STEP;
+    }
+    if (!strcmp(msg,SECOND_T))
+    {
+        if (n!=0) 
+        {
+            bad((char*)"SECOND: NO ARGUMENTS REQUIRED");
+            return 0;
+        }
+        emit(SECOND_);STEP;
+    }
+    if (!strcmp(msg,DAYOFWEEK_T))
+    {
+        if (n!=0) 
+        {
+            bad((char*)"DAYOFWEEK: NO ARGUMENTS REQUIRED");
+            return 0;
+        }
+        emit(DAYOFWEEK_);STEP;
+    }
+    if (!strcmp(msg,DAYOFYEAR_T))
+    {   
+        if (n!=0) 
+        {
+                bad((char*)"DAYOFYEAR: NO ARGUMENTS REQUIRED");
+                return 0;
+        }
+        emit(DAYOFYEAR_);STEP;
+    }
+    if (!strcmp(msg,ISLEAPYEAR_T))
+    {
+        if (n!=0) 
+        {
+                bad((char*)"ISLEAPYEAR: NO ARGUMENTS REQUIRED");
+                return 0;
+        }
+        emit(ISLEAPYEAR_);STEP;
+    }
     //If we reach here we did not find a matching function                   
     else	
 		return 0;
@@ -2287,9 +2797,21 @@ void register_sync_callback(CallbackSYNCFunction func)
     SYNC_Func = func;    
 }
 
+//SYNC Callback provides external sync pulse syncronisation
+void register_env_callback(CallbackENVFunction func)
+{
+    ENV_Func = func;    
+}
+
 //PARAM Callback provides access to external parameters
 void register_param_callback(CallbackPARAMFunction func)
 {
     PARAM_Func = func;    
+}
+
+//DATETIME Callback provides access to date/time
+void register_datetime_callback(CallbackDATETIMEFunction func)
+{
+    DATETIME_Func = func;
 }
 #endif
