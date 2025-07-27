@@ -33,7 +33,6 @@ LOCKTIME()        -> Stores the current time
 WAITIME(ms)       -> x mS minus the time that has passed since LOCKTIME was called. This allows to have consistent timing/delays even if scripts take some (even variable) time to execute for each frame.
 DONE int RANDOM(int min, int max)
 DONE int VERSION()  -> Retrun basic version number
-int FLAG(int ID) -> Check one of up to 8 flags from the host-process. Can be a number or 1/0 for true/false.
 int WAITFOR(int event , int source,int cond, int trigger, int timeout)
 
 event = 0 -> Sync Pulse
@@ -120,8 +119,8 @@ DONE int LUT(int)  -> Returns the value of the LUT at index. If no LUT is loaded
 Location Based Functions. All Distances in meters, angles in Degrees:
 DONE int HASORIGIN()   //Origin Data is avaliable
 DONE int HASGPS() //Spped/Dir are avialable
-DONE int ORIGINDIST()
-DONE int ORIGINANGLE()
+DONE int ORIGINDIST()   //Distance in m to Origin
+DONE int ORIGINANGLE()  //Angle in Deg to Origin
 DONE int GPSSPEED()   //in m/s
 DONE int GPSDIR()     //Angle in deg
 DONE int GPSALT()     //Altitude in m
