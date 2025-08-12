@@ -24,6 +24,7 @@
 #include "effects.h"
 #include "printManager.h"
 #include "sensors.h"
+#include "sun.h"
 
 #define USE_TELNET
 
@@ -407,6 +408,9 @@ void setup()
   setDebugLevel(SOURCE_SENSORS, false);
   showTimestamps(true);
 
+  //TBD for NEVADA
+  sunSetTZOffset(7);
+
   //Start Thread for Basic interpreter/FastLED here
   setup_basic();
   Serial.println("BASIC task active\n");
@@ -427,7 +431,7 @@ void loop()
 
   inc_thread_count(xPortGetCoreID());
 
-
+  //HTTP Request Processor
   http_loop();
 
   //Run Shell commands and check serial port. Protected bymutex.
@@ -458,6 +462,12 @@ void loop()
 
   //Proicess Sensors.. Maybe we shoudl run this slower?
   sensors_loop();
+
+  EVERY_N_SECONDS( 60 )
+  {
+    // Update the sun position every minute
+    sunUpdateViaGPS();
+  }
 
   //RUN Direct Effects
   //CIRCLE_effect();
