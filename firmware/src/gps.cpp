@@ -5,14 +5,18 @@
 #include "gps.h"
 #include "printManager.h"
 
-//Stuff that needs to be set via LoRa
-float origin_lat = 40.762173;
-float origin_lon = -119.193672;
+// Stuff that needs to be set via LoRa
+//   Playa origin:
+//float origin_lat = 40.762173;
+//float origin_lon = -119.193672;
+//   ESE origin:
+float origin_lat = 36.236735;
+float origin_lon = -118.025373;
 
 
 // Stuff we're exporting
-float gps_lat = 40.76;
-float gps_lon = -119.19;
+float gps_lat = /*40.76*/ origin_lat;
+float gps_lon = /*-119.19*/ origin_lon;
 bool gps_pos_valid = false;
 
 float gps_alt = 0;       // Altitude is in meters

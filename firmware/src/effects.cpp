@@ -5,6 +5,7 @@
 
 
 extern Stream *OutputStream;
+extern bool gps_pos_valid;
 
 
 
@@ -152,6 +153,8 @@ void SOS_effect(void)
 void SOS_effect2(void)
 {
     CRGB col;
+    int ms_per_cycle = 3000;
+    float sos_speed_scaling = 0.5;
 
     //Get Lat/Lon/Time
     float lat = get_lat();
@@ -178,10 +181,13 @@ void SOS_effect2(void)
     Serial.print("Dist: ");
     Serial.println(dist_meters);
 
-    //calulate offset in MS wth speed ofd sound being 343m/s
-    float sos_ms = 343.0;
+    // Calulate offset in ms with speed of sound being approximately 343m/s
+    const float sos_mps = 343.0 * sos_speed_scaling;
     
-    float offset_ms = dist_meters / sos_ms * 1000;
+    float offset_ms = dist_meters / sos_mps * 1000;
+ 
+    offset_ms = fmod( offset_ms, ms_per_cycle );
+ 
     OutputStream->print("Offset ");
     OutputStream->println(offset_ms);
 
@@ -189,7 +195,7 @@ void SOS_effect2(void)
     OutputStream->println( sec );
 
     //Wait for sec to roll over Mod 10;
-    if (sec != prev_sec && sec%2 == 0)
+    if (sec != prev_sec && sec % 3 == 0)
     {
         prev_sec = sec;
 
@@ -198,8 +204,8 @@ void SOS_effect2(void)
         OutputStream->print("PING - sec = ");
         OutputStream->println( sec );
       
-        //Flash Light
-        for (int ii = 255; ii>0; ii=ii-16)
+        //Flash Light - Ramp up
+        for (int ii = 0; ii<255; ii=ii+16)
         {
           CRGB col;
           col.r = ii;
@@ -209,14 +215,34 @@ void SOS_effect2(void)
           delay (20);
         }
 
-        // Baseline green glow
-        col.r = 0;
-        col.g = 2;
-        col.b = 0;
-        color_leds(1, 50, col );
-        delay(25);
-        color_leds(1, 50, col );
-        delay( 25 );
+        //Flash Light - Ramp down
+        for (int ii = 255; ii>0; ii=ii-8)
+        {
+          CRGB col;
+          col.r = ii;
+          col.g = ii;
+          col.b = ii;
+          color_leds(1, 50, col);
+          delay (20);
+        }
+
+        // Baseline green glow (or blue if not valid GPS)
+        if( gps_pos_valid )
+        {
+          col.r = 0;
+          col.g = 4;
+          col.b = 0;
+        }
+        else
+        {
+            col.r = 0;
+            col.g = 0;
+            col.b = 10;
+        }
+        color_leds( 1, 50, col );
+        delay( 20 );
+        color_leds( 1, 50, col );
+        delay( 20 );
       }
 }
 

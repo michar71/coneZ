@@ -471,6 +471,6 @@ void loop()
 
   //RUN Direct Effects
   //CIRCLE_effect();
-  //SOS_effect2();
+  SOS_effect2();
 
 }
