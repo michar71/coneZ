@@ -12,14 +12,20 @@
 #define DOWNSTREAM_SF           9               // SF7...SF12
 #define DOWNSTREAM_CR           6               // 4/6 coding rate
 #define DOWNSTREAM_PREAMBLE     8               // 8 preamble symbols
-#define DOWNSTREAM_TXPOWER      5               // Transmit power
+#define DOWNSTREAM_TXPOWER      10              // Transmit power
 #define LORA_SYNC_WORD          0x1424          // LoRa private sync word
 
 #define LORA_SPI_FREQ           1000000
 
 SPIClass spiLoRa( HSPI );
 SPISettings spiLoRaSettings( LORA_SPI_FREQ, MSBFIRST, SPI_MODE0 );
-SX1268 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
+
+// Create the LoRa radio object depending on which board we're building for.
+#ifdef BOARD_LORA_SX1268
+  SX1268 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
+#elif DEFINED( BOARD_LORA_SX1262 )
+  SX1262 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
+#endif
 
 
 // IRQ handler for LoRa RX
@@ -35,7 +41,7 @@ int lora_setup( void )
 {
   Serial.println("Init LoRa... ");
 
-  spiLoRa.begin( LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS );
+  spiLoRa.begin( LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI, LORA_PIN_NSS );
 
 
   radio.setTCXO( 1.8, 5000 );

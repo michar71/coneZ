@@ -1,6 +1,7 @@
 #ifndef main_h
 #define main_h
 
+#include "board.h"
 #include "FastLED.h"
 
 #define FSLINK LittleFS
@@ -14,17 +15,6 @@
 // I2C pins
 #define I2C_SDA_PIN   17
 #define I2C_SCL_PIN   18
-
-// Pin mapping for SX1262 on Heltec LoRa32 v3
-#define LORA_PIN_CS     8
-#define LORA_PIN_DIO1   14
-#define LORA_PIN_RST    12
-#define LORA_PIN_BUSY   13
-
-#define LORA_NSS        8
-#define LORA_SCK        9
-#define LORA_MOSI       10
-#define LORA_MISO       11
 
 // PSRAM
 #define PSR_CE          4
@@ -49,14 +39,6 @@
 #define LOAD_ON_PIN     47
 #define PWR_SW_PIN      33
 #define PWR_OFF_PIN     34
-
-// Audio-Buzzer
-#define BUZZER_PIN     48
-
-// GPS
-#define GPS_RX_PIN      40
-#define GPS_TX_PIN      39
-#define GPS_PPS_PIN     42
 
 // Other
 #define IMU_INT_PIN     37
