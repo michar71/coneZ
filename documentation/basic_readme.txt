@@ -1,12 +1,24 @@
 			BASIC INTERPRETER
 			JERRY WILLIAMS JR
 
-Thank you for you interest in my little BASIC interpreter.
-Since a few people have asked, I've started including the license here in the repository.
-I have enjoyed hearing from people who find a use for this, so please do send me an e-mail if you feel so inclined.
-The license is the same as MIT with the paragraph removed:
-	The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+(Revised Version, M. Hartmann, 2026)
 
+
+GENERAL NOTES:
+
+General
+        * There can be a total of 256 variables/arrays/subroutines
+	* No line numbers are required
+
+Variables
+	* Variable-names are case-sensitive
+        * Variables can only hold signed integers. (32-bit)   
+        * Variables can be 16 characters long
+
+Arrays
+	* Array indices start at 1
+	* Arrays are dynamically allocated and can in theory be 65534 entries large
+        
 
 STATEMENTS:
 	#	COMMENT ...
@@ -41,14 +53,8 @@ EXPRESSIONS:
 	* OPERATORS ARE LEFT-ASSOCIATIVE
 	* STRINGS SHOULD ONLY BE USED FOR "FORMAT"
 
-GENERAL NOTES:
-	* VARIABLES ARE CASE-INSENSITIVE
-	* ARRAY INDEXES START FROM 1
-	
 
-
-			IMPLEMENTATION
-
+IMPLEMENTATION DETAILS:
 	* ALL BLOCK STRUCTURES LEAVE THEIR KEYWORD AT THE TOP
 		OF THE C-STACK TO BE CHECKED AGAINST "END"
 	* "TEMP" KEEPS TRACK OF HOW MANY CELLS ARE ON THE
@@ -60,18 +66,18 @@ GENERAL NOTES:
 	* "INITBASIC" IS NOT MEANT TO RESET THE INTERPRETER
 
 COMPILING AND INTERPRETING:
-	IF GIVEN A FILE, WE BEGIN IN COMPILED MODE
-	IF NO FILE IS GIVEN, WE BEGIN IN INTERPRETED MODE
-	"CPC" IS THE "PC" OF THE NEXT INSTRUCTION TO COMPILE
-	"IPC" IS THE BEGINNING OF TEMPORARY INTERPRETED CODE
-	"OPC" IS THE PC TO RETURN TO AFTER INTERPRETED CODE IS RUN
-	A STATEMENT IS COMPILED IN EITHER MODE
-	AFTER A STATEMENT IS COMPILED, IT IS RUN IN I-MODE BY:
+	* IF GIVEN A FILE, WE BEGIN IN COMPILED MODE
+	* IF NO FILE IS GIVEN, WE BEGIN IN INTERPRETED MODE
+	* "CPC" IS THE "PC" OF THE NEXT INSTRUCTION TO COMPILE
+	* "IPC" IS THE BEGINNING OF TEMPORARY INTERPRETED CODE
+	* "OPC" IS THE PC TO RETURN TO AFTER INTERPRETED CODE IS RUN
+	* A STATEMENT IS COMPILED IN EITHER MODE
+	* AFTER A STATEMENT IS COMPILED, IT IS RUN IN I-MODE BY:
 		SETTING "PC" TO "IPC"
 		EMITTING A "STOP_"
 		RUNNING THE DRIVER
 		RESTORING THE "PC" AND "CPC"
-	COMPLEX STATEMENTS LIKE IF SET ENTER COMPILED MODE
+	* COMPLEX STATEMENTS LIKE IF SET ENTER COMPILED MODE
 	* "OPC" IS NULL IF "BREAK" IS RUN FROM COMPILED CODE
 	* "RESUME" WITH A VALUE FOR EXPRESSIONS NOT STATEMENTS
 
