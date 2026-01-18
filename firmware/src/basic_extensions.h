@@ -239,8 +239,8 @@ CallbackSYNCFunction SYNC_Func = NULL;
 #define CONDITON_MS 9
 
 //int PARAM_function (int paramID)
-//Returns the value of the parameter paramID. Return 0 if parasmID does not exist...
-//paramID 0 should be used to termiante a program if set to 1 if its in a loop.
+//Returns the value of the parameter paramID. Return 0 if paramID does not exist...
+//paramID 0 should be used to terminate a program if set to 1 if its in a loop.
 typedef int (*CallbackPARAMFunction)(int);
 CallbackPARAMFunction PARAM_Func = NULL;
 
@@ -2291,11 +2291,14 @@ int funhook_exec_(char *msg, int n)
     return 0;  //Hmmm, should we return 1 on unknown function???
 }
 
+//Register hooks for keyword and function processing
 void registerhook() 
 {
     kwdhook=kwdhook_;
     funhook=funhook_exec_;
 }
+
+//----------------- Callback Registration ----------------//
 
 //Location Callback provides Origin Latitude, Orgin Longitude, Latitude, Longitude, Altitude, Speed, Course
 void register_location_callback(CallbackLocationFunction func)
