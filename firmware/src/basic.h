@@ -496,7 +496,7 @@ int interp(char* filen)
 //This file includes the user extensions. It needs a lot of stuff from this file so we include it at the end. 
 //Because I did not not take computer science at university to not do this.
 //MS Copilot comment -> "This is a hack, but it works.""   
-#include "extensions.h"
+#include "basic_extensions.h"
 
 
 #endif

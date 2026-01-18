@@ -13,6 +13,11 @@ extern CRGB leds3[NUM_LEDS3];
 extern CRGB leds4[NUM_LEDS4];
 
 /*
+TODO
+====
+- make basic things real.h/.c files
+
+
 Functions:
 =========
 
@@ -27,8 +32,8 @@ DONE int GAMMA256(int val) -> Same lookup based Gamma function  we apply before 
 DONE int USEGAMMA(int enable) -> Automatically apply Gamma correction to all LED values 0 = Disable, 1 = Enable
 
 System:
-DONE int TIMESTAMP(int divider)
-DONE WAIT (int ms)
+DONE int TIMESTAMP(int divider) -> Get ther current millisec() timer didided by divider
+DONE WAIT (int ms) -> Wait for ms millisec
 LOCKTIME()        -> Stores the current time 
 WAITIME(ms)       -> x mS minus the time that has passed since LOCKTIME was called. This allows to have consistent timing/delays even if scripts take some (even variable) time to execute for each frame.
 DONE int RANDOM(int min, int max)
@@ -99,7 +104,7 @@ DONE int GETMAXLED() -> Get the number of LEDs in Strip
 
 Array:
 DONE SHIFTARRAY(array A, int amount, int val) -> Shift the values of an array to left or right by a specific amount setting the new pixels to val
-DONE ROTATEARRAY(array A, int amount)
+DONE ROTATEARRAY(array A, int amount) -> Rotate array A by [amount] entries. (Can be positive or negative)
 DONE COPYARRAY(array A, array B) -> Copy the content of array A to array B. If B is smaller then A it will be truncated, if larger it will be padded with 0.
 DONE RGBTOHSVARRAY(array R, array G, array B) -> Convert RGB values in an array to HSV values in an array
 DONE HSVTORGBARRAY(array H, array S, array V) -> Convert HSV values in an array to RGB values in an array
@@ -117,47 +122,51 @@ DONE int ARRAYTOLUT(array) -> Copies array to LUT.
 DONE int LUT(int)  -> Returns the value of the LUT at index. If no LUT is loaded it will return 0. If the index is larger then the LUT size it will return 0.
 
 Location Based Functions. All Distances in meters, angles in Degrees:
-DONE int HASORIGIN()   //Origin Data is avaliable
-DONE int HASGPS() //Spped/Dir are avialable
-DONE int ORIGINDIST()   //Distance in m to Origin
-DONE int ORIGINANGLE()  //Angle in Deg to Origin
-DONE int GPSSPEED()   //in m/s
-DONE int GPSDIR()     //Angle in deg
-DONE int GPSALT()     //Altitude in m
-DONE int DIST(int X1, int Y1, int X2, int Y2)
-DONE int ANGLE(int X1, int Y1, int X2, int Y2)
+DONE int HASORIGIN()    ->Origin Data is avaliable
+DONE int HASGPS()       ->Speed/Dir are avialable
+DONE int ORIGINDIST()   ->Distance in m to Origin
+DONE int ORIGINANGLE()  ->Angle in Deg to Origin
+DONE int GPSSPEED()     ->Speed derived from GPS in m/s
+DONE int GPSDIR()       ->Direction derived from GPS as Angle in deg
+DONE int GPSALT()       ->Altitude derived from GPS in m
+DONE int DIST(int X1, int Y1, int X2, int Y2). ->Distanve between two points
+DONE int ANGLE(int X1, int Y1, int X2, int Y2) -> Angle in degree between two points
 
 IMU based Functions:
-DONE int HASGYRO() //IMU Gyro Data is avaliable
-DONE int HASACC() //IMU Acc Data is avaliable
-DONE int HASMAG()  //IMU Mag data is avialable
-DONE int PITCH() //Pitch in degrees
-DONE int ROLL() //Roll in degrees
-DONE int YAW() //Yaw in degrees
-DONE int ACCX() //Accelerometer X in m/s^2
-DONE int ACCY() //Accelerometer Y in m/s^2
-DONE int ACCZ() //Accelerometer Z in m/s^2
+DONE int HASGYRO()  ->IMU Gyro Data is avaliable
+DONE int HASACC()   ->IMU Acc Data is avaliable
+DONE int HASMAG()   ->IMU Mag data is avialable
+DONE int PITCH()    ->Pitch in degrees
+DONE int ROLL()     ->Roll in degrees
+DONE int YAW()      ->Yaw in degrees
+DONE int ACCX()     ->Accelerometer X in m/s^2
+DONE int ACCY()     -> Accelerometer Y in m/s^2
+DONE int ACCZ()     ->Accelerometer Z in m/s^2
 
 Date/Time Functions based on GPS or RTC:
-DONE int HASDATE() //Date is available
-DONE int HASTIME() //Time is available
-DONE int DAY() //Returns day of week 0=Sunday, 1=Monday etc.
-DONE int MONTH() //Returns month 1-12
-DONE int YEAR() //Returns year 4 digit
-DONE int HOUR() //Returns hour 0-23
-DONE int MINUTE() //Returns minute 0-59
-DONE int SECOND() //Returns second 0-59
-DONE int DAYOFWEEK() //Returns day of week 0-6 (0=Sunday, 1=Monday etc.)
-DONE int DAYOFYEAR() //Returns day of year 1-366
-DONE int ISLEAPYEAR() //Returns 1 if leap year, 0 if not
+DONE int HASDATE()      ->Date is available
+DONE int HASTIME()      ->Time is available
+DONE int DAY()          ->Returns day of week 0=Sunday, 1=Monday etc.
+DONE int MONTH()        ->Returns month 1-12
+DONE int YEAR()         ->Returns year 4 digit
+DONE int HOUR()         ->Returns hour 0-23
+DONE int MINUTE()       ->Returns minute 0-59
+DONE int SECOND()       ->Returns second 0-59
+DONE int DAYOFWEEK()    ->Returns day of week 0-6 (0=Sunday, 1=Monday etc.)
+DONE int DAYOFYEAR()    ->Returns day of year 1-366
+DONE int ISLEAPYEAR()   ->Returns 1 if leap year, 0 if not
 
 environmental-sensor functions:
-DONE int TEMP() //returns temperature in Deg C*10 or -10000 if no temp sensor present 
-DONE int HUM() //returns humidity in % or -1 if no humidity sensor present
-DONE int LIGHT() //returns brightness beteen 0-4096 or -1 cif brightness senor does not exist
+DONE int TEMP()     ->returns temperature in Deg C*10 or -10000 if no temp sensor present 
+DONE int HUM()      ->returns humidity in % or -1 if no humidity sensor present
+DONE int LIGHT()    ->returns brightness beteen 0-4096 or -1 cif brightness senor does not exist
 
 */
+
+
 //Function-Callbacks
+//------------------
+
 
 //Location function [float pointers to return org_lat,org_long,lat,long,alt,speed,dir]
 //Return Values:
@@ -266,81 +275,19 @@ const uint8_t  gamma8[] = {
 };
 
 //------------------------------------
-//USER DEFINED FUNCTIONS
+//USER DEFINED COMMAND HOOKS
 //------------------------------------
 #define PRINTS_T "PRINTS"
 
-#define LIMIT256_T "LIMIT256"
-#define LIMIT_T "LIMIT"
-#define SCALE_T "SCALE"
-#define SIN256_T "SIN256"
-#define GAMMA256_T "GAMMA256"
-#define USEGAMMA_T "USEGAMMA"
-
-
-#define ABS_T "ABS"
-#define WAIT_T "WAIT"
-#define RANDOM_T "RANDOM"
-#define TIMESTAMP_T "TIMESTAMP"
-#define GETMAXLED_T "GETMAXLED"
-#define SETLEDRGB_T "SETLEDRGB"
-#define SETLEDCOL_T "SETLEDCOL"
-
-#define SETARRAY_T "SETARRAY"
-#define SHIFTARRAY_T "SHIFTARRAY"
-#define ROTATEARRAY_T "ROTATEARRAY"
-#define COPYARRAY_T "COPYARRAY"
-#define SCALELIMITARRAY_T "SCALELIMITARRAY"
-#define RGBTOHSVARRAY_T "RGBTOHSVARRAY"
-#define HSVTORGBARRAY_T "HSVTORGBARRAY"
-#define LOADLUT_T "LOADLUT"
-#define SAVELUT_T "SAVELUT"
-#define LUTSIZE_T "LUTSIZE"
-#define LUTTOARRAY_T "LUTTOARRAY"
-#define ARRAYTOLUT_T "ARRAYTOLUT"
-#define LUT_T "LUT"
-
-#define HASORIGIN_T "HASORIGIN"
-#define HASGPS_T "HASGPS"
-#define ORIGINDIST_T "ORIGINDIST"
-#define ORIGINANGLE_T "ORIGINANGLE"
-#define GPSSPEED_T "GPSSPEED"
-#define GPSDIR_T "GPSDIR"
-#define DIST_T "DIST"
-#define ANGLE_T "ANGLE"
-
-#define HASGYRO_T "HASGYRO"
-#define HASACC_T "HASACC"
-#define HASMAG_T "HASMAG"
-#define PITCH_T "PITCH"
-#define ROLL_T "ROLL"
-#define YAW_T "YAW"
-#define ACCX_T "ACCX"
-#define ACCY_T "ACCY"
-#define ACCZ_T "ACCZ"
-
-#define TEMP_T "TEMP"
-#define HUM_T "HUM"
-#define BRIGHT_T "BRIGHT"
-
-#define VERSION_T "VERSION"
-#define WAITFOR_T "WAITFOR"
-#define GETPARAM_T "GETPARAM"
-
-#define HASDATE_T "HASDATE"
-#define HASTIME_T "HASTIME"
-#define DAY_T "DAY"
-#define MONTH_T "MONTH"
-#define YEAR_T "YEAR"
-#define HOUR_T "HOUR"
-#define MINUTE_T "MINUTE"
-#define SECOND_T "SECOND"
-#define DAYOFWEEK_T "DAYOFWEEK"
-#define DAYOFYEAR_T "DAYOFYEAR"
-#define ISLEAPYEAR_T "ISLEAPYEAR"
-
 //-------------------------------------
 //Real HW dependecies.... We can ifdef this with stubs or PC functions for testing on other platform
+//This needs overhaul for option to simulate in different enyronment like Unreal Engine
+
+//- Introduce shim layer for extensions so we can call into one processing function
+//- Seperate pure software functions from hardware-dependant functions
+//- Add hardware abstraction layer that allows for SW redirect
+//- Full #Define / #ifdef Handling
+//- make basic.h a real C-File....
 //-------------------------------------
 #ifdef REAL_ESP32_HW
 
@@ -2245,544 +2192,116 @@ int ISLEAPYEAR_()
     }
 }
 
+typedef struct 
+{
+   char command_name[16];
+   int (*command_link_opcode)();
+   unsigned char param_count;
+}s_basic_command;
 
+//List of command, their function link and number of parameters
+static s_basic_command function_hook_data[] =
+{
+    {"LIMIT256",LIMIT256_,1},
+    {"LIMIT",LIMIT_,3},
+    {"SCALE",SCALE_,5},
+    {"SIN256",SIN256_,1},
+    {"GAMMA256",GAMMA256_,1},
+    {"USEGAMMA",USEGAMMA_,1},   
+    {"ABS",ABS_,1},
+    {"WAIT",WAIT_,1},
+    {"RANDOM",RANDOM_,2},
+    {"TIMESTAMP",TIMESTAMP_,1},
+    {"GETMAXLED",GETMAXLED_,0},
+    {"SETLEDRGB",SETLEDRGB_,3},
+    {"SETLEDCOL",SETLEDCOL_,3},
+    {"SETARRAY",SETARRAY_,4},
+    {"SHIFTARRAY",SHIFTARRAY_,3},
+    {"ROTATEARRAY",ROTATEARRAY_,2},
+    {"COPYARRAY",COPYARRAY_,2},
+    {"SCALELIMITARRAY",SCALELIMITARRAY_,4},
+    {"RGBTOHSVARRAY",RGBTOHSVARRAY_,3},
+    {"HSVTORGBARRAY",HSVTORGBARRAY_,3},
+    {"LOADLUT",LOADLUT_,1},
+    {"SAVELUT",SAVELUT_,1},
+    {"LUTSIZE",LUTSIZE_,1},
+    {"LUTTOARRAY",LUTTOARRAY_,1},
+    {"ARRAYTOLUT",ARRAYTOLUT_,1},
+    {"LUT",LUT_,1},
+    {"HASORIGIN",HASORIGIN_,0},
+    {"HASGPS",HASGPS_,0},
+    {"ORIGINDIST",ORIGINDIST_,0},
+    {"ORIGINANGLE",ORIGINANGLE_,0},
+    {"GPSSPEED",GPSSPEED_,0},
+    {"GPSDIR",GPSDIR_,0},
+    {"GPSALT",GPSALT_,0},
+    {"DIST",DIST_,4},
+    {"ANGLE",ANGLE_,4},
+    {"HASGYRO",HASGYRO_,0},
+    {"HASACC",HASACC_,0},
+    {"HASMAG",HASMAG_,0},
+    {"PITCH",PITCH_,0},
+    {"ROLL",ROLL_,0},
+    {"YAW",YAW_,0},
+    {"ACCX",ACCX_,0},
+    {"ACCY",ACCY_,0},
+    {"ACCZ",ACCZ_,0},
+    {"TEMP",TEMP_,0},
+    {"HUM",HUM_,0},
+    {"BRIGHT",BRIGHT_,0},
+    {"VERSION",VERSION_,0},
+    {"GETPARAM",GETPARAM_,1},
+    {"WAITFOR",WAITFOR_,5},
+    {"HASDATE",HASDATE_,0},
+    {"HASTIME",HASTIME_,0},
+    {"HOUR",HOUR_,0},
+    {"MINUTE",MINUTE_,0},
+    {"SECOND",SECOND_,0},
+    {"DAY",DAY_,0},
+    {"MONTH",MONTH_,0},
+    {"YEAR",YEAR_,0},
+    {"DAYOFWEEK",DAYOFWEEK_,0},
+    {"DAYOFYEAR",DAYOFYEAR_,0},
+    {"ISLEAPYEAR",ISLEAPYEAR_,0},
+};
 
 //We get the name of the function and the number of arguments.
 //Validate here if the number of arguments is correct and then push the function to the progam buffer.
-//In the function we pull the arguments off the dstasck and put the result back on the stack.
-int funhook_(char *msg, int n) 
-{   
-	if (!strcmp(msg,LIMIT256_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"LIMIT256: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(LIMIT256_);STEP;
-    }
-	if (!strcmp(msg,SCALE_T))
-    {
-        if (n!=5) 
-        {
-            bad((char*)"SCALE: 5 ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(SCALE_);STEP;
-    }    
-	if (!strcmp(msg,LIMIT_T))
-    {
-        if (n!=3) 
-        {
-            bad((char*)"LIMIT: 3 ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(LIMIT_);STEP;
-    }    
-	if (!strcmp(msg,ABS_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"ABS: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(ABS_);STEP;
-    }    
-	if (!strcmp(msg,SIN256_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"ABS: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(SIN256_);STEP;
-    }        
-	if (!strcmp(msg,SETARRAY_T))
-    {
-        if (n!=4) 
-        {
-            bad((char*)"SETARRAY: 4 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(SETARRAY_);STEP;
-    }     
-	if (!strcmp(msg,ROTATEARRAY_T))
-    {
-        if (n!=2) 
-        {
-            bad((char*)"ROTATEARRAY: 2 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(ROTATEARRAY_);STEP;
-    }   
-	if (!strcmp(msg,SHIFTARRAY_T))
-    {
-        if (n!=3) 
-        {
-            bad((char*)"SHIFTARRAY: 3 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(SHIFTARRAY_);STEP;
-    }       
-	if (!strcmp(msg,COPYARRAY_T))
-    {
-        if (n!=2) 
-        {
-            bad((char*)"COPYARRAY: 2 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(COPYARRAY_);STEP;
-    }              
-	if (!strcmp(msg,GETMAXLED_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"GETMAXLED: NO ARGUMENT REQUIRED");
-            return 0;
-        }        
-		emit(GETMAXLED_);STEP;
-    }  
-	if (!strcmp(msg,WAIT_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"WAIT: 1 ARGUMENT REQUIRED");
-            return 0;
-        }        
-		emit(WAIT_);STEP;
-    }  
-	if (!strcmp(msg,SETLEDRGB_T))
-    {
-        if (n!=3) 
-        {
-            bad((char*)"SETLEDRGB: 3 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(SETLEDRGB_);STEP;
-    }    
-    	if (!strcmp(msg,SETLEDCOL_T))
-    {
-        if (n!=3) 
-        {
-            bad((char*)"SETLEDCOL: 3 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(SETLEDCOL_);STEP;
-    }  
- 	if (!strcmp(msg,TIMESTAMP_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"TIMESTAMP: 1 ARGUMENT REQUIRED");
-            return 0;
-        }        
-		emit(TIMESTAMP_);STEP;
-    }      
- 	if (!strcmp(msg,RANDOM_T))
-    {
-        if (n!=2) 
-        {
-            bad((char*)"RANDOM: 2 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(RANDOM_);STEP;
-    }      
- 	if (!strcmp(msg,SCALELIMITARRAY_T))
-    {
-        if (n!=4) 
-        {
-            bad((char*)"SCALELIMITARRAY: 4 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(SCALELIMITARRAY_);STEP;
-    }      
-	if (!strcmp(msg,RGBTOHSVARRAY_T))
-    {
-        if (n!=3) 
-        {
-            bad((char*)"RGBTOHSVARRAY: 3 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(RGBTOHSVARRAY_);STEP;
-    }   
-	if (!strcmp(msg,HSVTORGBARRAY_T))
-    {
-        if (n!=3) 
-        {
-            bad((char*)"HSVTORGBARRAY: 3 ARGUMENTS REQUIRED");
-            return 0;
-        }        
-		emit(HSVTORGBARRAY_);STEP;
-    }      
-    if (!strcmp(msg,LOADLUT_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"LOADLUT: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(LOADLUT_);STEP;
-    }
-    if (!strcmp(msg,SAVELUT_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"SAVELUT: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(SAVELUT_);STEP;
-    }
-    if (!strcmp(msg,LUTSIZE_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"LUTSIZE: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(LUTSIZE_);STEP;
-    }
-    if (!strcmp(msg,LUTTOARRAY_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"LUTTOARRAY: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(LUTTOARRAY_);STEP;
-    }
-    if (!strcmp(msg,ARRAYTOLUT_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"ARRAYTOLUT: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(ARRAYTOLUT_);STEP;
-    }
-    if (!strcmp(msg,LUT_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"LUT: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(LUT_);STEP;
-    }
-    if (!strcmp(msg,USEGAMMA_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"USEGAMMA: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(USEGAMMA_);STEP;
-    }    
-    if (!strcmp(msg,GAMMA256_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"GAMMA256: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(GAMMA256_);STEP;
-    }    
-    if (!strcmp(msg,HASORIGIN_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"HASORIGIN: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HASORIGIN_);STEP;
-    }   
-    if (!strcmp(msg,HASGPS_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"HASGPS: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HASGPS_);STEP;
-    }   
-    if (!strcmp(msg,ORIGINDIST_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"ORIGINDIST: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(ORIGINDIST_);STEP;
-    }       
-    if (!strcmp(msg,ORIGINANGLE_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"ORIGINANGLE: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(ORIGINANGLE_);STEP;
-    }   
-    if (!strcmp(msg,GPSSPEED_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"GPSSPEED: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(GPSSPEED_);STEP;
-    }  
-    if (!strcmp(msg,GPSDIR_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"GPSDIR: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(GPSDIR_);STEP;
-    }             
-    if (!strcmp(msg,DIST_T))
-    {
-        if (n!=4) 
-        {
-            bad((char*)"DIST: 4 ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(DIST_);STEP;
-    }    
-    if (!strcmp(msg,ANGLE_T))
-    {
-        if (n!=4) 
-        {
-            bad((char*)"ANGLE: 4 ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(ANGLE_);STEP;
-    }  
-    if (!strcmp(msg,HASGYRO_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"HASGYRO: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HASGYRO_);STEP;
-    }  
-    if (!strcmp(msg,HASACC_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"HASACC: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HASACC_);STEP;
-    }  
-    if (!strcmp(msg,HASMAG_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"HASMAG: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HASMAG_);STEP;
-    }      
-    if (!strcmp(msg,ROLL_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"ROLL: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(ROLL_);STEP;
-    }  
-    if (!strcmp(msg,PITCH_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"PITCH: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(PITCH_);STEP;
-    }  
-    if (!strcmp(msg,YAW_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"YAW: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(YAW_);STEP;
-    }          
-    if (!strcmp(msg,ACCX_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"ACCX: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(ACCX_);STEP;
-    }  
-    if (!strcmp(msg,ACCY_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"ACCY: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(ACCY_);STEP;
-    }    
-    if (!strcmp(msg,ACCZ_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"ACCZ: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(ACCZ_);STEP;
-    }      
-    if (!strcmp(msg,TEMP_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"TEMP: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HUM_);STEP;
-    }        
-    if (!strcmp(msg,TEMP_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"HUM: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HUM_);STEP;
-    }       
-    if (!strcmp(msg,BRIGHT_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"BRIGHT: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(BRIGHT_);STEP;
-    }         
-    if (!strcmp(msg,VERSION_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"VERSION: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(VERSION_);STEP;
-    }   
-    if (!strcmp(msg,WAITFOR_T))
-    {
-        if (n!=5) 
-        {
-            bad((char*)"WAITFOR: 5 ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(WAITFOR_);STEP;
-    }  
-    if (!strcmp(msg,GETPARAM_T))
-    {
-        if (n!=1) 
-        {
-            bad((char*)"GETPARAM: 1 ARGUMENT REQUIRED");
-            return 0;
-        }
-        emit(GETPARAM_);STEP;
-    }    
-   if (!strcmp(msg,HASDATE_T))
+//In the function we pull the arguments off the stack and put the result back on the stack.
+int funhook_exec_(char *msg, int n)
 {
-    if (n!=0) 
+    for (int ii=0;ii<sizeof(function_hook_data) / sizeof(s_basic_command);ii++)
     {
-        bad((char*)"VERSION: NO ARGUMENTS REQUIRED");
-        return 0;
-    }
-    emit(HASDATE_);STEP;
-}         
-    if (!strcmp(msg,HASTIME_T))
-    {
-        if (n!=0) 
+        if (!strcmp(msg,function_hook_data[ii].command_name))
         {
-            bad((char*)"HASTIME: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(HASTIME_);STEP;
-    }
-    if (!strcmp(msg,HOUR_T))
-     {
-          if (n!=0) 
-          {
-                bad((char*)"HOUR: NO ARGUMENTS REQUIRED");
+            if (n != function_hook_data[ii].param_count)
+            {
+                char bad_msg[128];
+                sprintf(bad_msg,"%s: %d ARGUMENTS REQUIRED",function_hook_data[ii].command_name,function_hook_data[ii].param_count);
+                bad((char*)bad_msg);
                 return 0;
-          }
-          emit(HOUR_);STEP;
-     }
-    if (!strcmp(msg,MINUTE_T))
-    {
-        if (n!=0) 
-        {                bad((char*)"MINUTE: NO ARGUMENTS REQUIRED");
+            }
+            emit(function_hook_data[ii].command_link_opcode);STEP;
             return 0;
         }
-        emit(MINUTE_);STEP;
     }
-    if (!strcmp(msg,SECOND_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"SECOND: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(SECOND_);STEP;
-    }
-    if (!strcmp(msg,DAYOFWEEK_T))
-    {
-        if (n!=0) 
-        {
-            bad((char*)"DAYOFWEEK: NO ARGUMENTS REQUIRED");
-            return 0;
-        }
-        emit(DAYOFWEEK_);STEP;
-    }
-    if (!strcmp(msg,DAYOFYEAR_T))
-    {   
-        if (n!=0) 
-        {
-                bad((char*)"DAYOFYEAR: NO ARGUMENTS REQUIRED");
-                return 0;
-        }
-        emit(DAYOFYEAR_);STEP;
-    }
-    if (!strcmp(msg,ISLEAPYEAR_T))
-    {
-        if (n!=0) 
-        {
-                bad((char*)"ISLEAPYEAR: NO ARGUMENTS REQUIRED");
-                return 0;
-        }
-        emit(ISLEAPYEAR_);STEP;
-    }
-    //If we reach here we did not find a matching function                   
-    else	
-		return 0;
+    char bad_msg[128];
+    sprintf(bad_msg,"%s: UNKNOWN FUNCTION",msg);
+    bad((char*)bad_msg);
+    return 0;  //Hmmm, should we return 1 on unknown function???
 }
 
-//-------------------------------------
 void registerhook() 
 {
     kwdhook=kwdhook_;
-    funhook=funhook_;
+    funhook=funhook_exec_;
 }
-
 
 //Location Callback provides Origin Latitude, Orgin Longitude, Latitude, Longitude, Altitude, Speed, Course
 void register_location_callback(CallbackLocationFunction func)
 {
     Loc_Func = func;
 }
-
 
 //IMU Callback provides Roll, Pitch, Yaw, AccX, AccY, AccZ,  
 void register_imu_callback(CallbackIMUFunction func)
