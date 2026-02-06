@@ -9,12 +9,12 @@
 #include <TinyGPSPlus.h>
 
 // Stuff that needs to be set via LoRa
-//   Playa origin:
-//float origin_lat = 40.762173;
-//float origin_lon = -119.193672;
+//   Nevada desert festival origin:
+float origin_lat = 40.762173;
+float origin_lon = -119.193672;
 //   ESE origin:
-float origin_lat = 36.236735;
-float origin_lon = -118.025373;
+//float origin_lat = 36.236735;
+//float origin_lon = -118.025373;
 
 
 // Stuff we're exporting
