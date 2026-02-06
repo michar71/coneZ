@@ -1,41 +1,79 @@
 #include "basic_wrapper.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h"
-#include "esp_task_wdt.h"
 #include "printManager.h"
-#include "FS.h"
-#include <LittleFS.h>
-#define FSLINK LittleFS
-#define BASIC_WRAPPER_TU
-#define REAL_ESP32_HW
-#include "basic.h"
-#include "gps.h"
-#include "sensors.h"
+
+#ifdef INCLUDE_WASM
+#include "wasm_wrapper.h"
+#endif
+
+// ---------- Params (always available) ----------
 
 #define MAX_PARAMS 16
-
-
-TaskHandle_t basic_task;
-SemaphoreHandle_t basic_mutex;
-char next_code[256] = {0};
 volatile int params[MAX_PARAMS];
 
 void set_basic_param(uint8_t paramID, int val)
 {
   if (paramID > MAX_PARAMS-1)
      paramID = MAX_PARAMS-1;
-
   params[paramID] = val;
 }
 
 int get_basic_param(int paramID)
 {
-      if (paramID > MAX_PARAMS-1)
+  if (paramID > MAX_PARAMS-1)
      paramID = MAX_PARAMS-1;
-
   return params[paramID];
 }
+
+// ---------- Script routing ----------
+
+static bool has_extension(const char *path, const char *ext)
+{
+    size_t plen = strlen(path);
+    size_t elen = strlen(ext);
+    if (plen < elen) return false;
+    return strcasecmp(path + plen - elen, ext) == 0;
+}
+
+bool set_script_program(char *path)
+{
+#ifdef INCLUDE_WASM
+    if (has_extension(path, ".wasm")) {
+        return set_wasm_program(path);
+    }
+#endif
+
+#ifdef INCLUDE_BASIC
+    if (has_extension(path, ".bas")) {
+        return set_basic_program(path);
+    }
+#endif
+
+    printfnl(SOURCE_SYSTEM, "Unknown script type: %s\n", path);
+    return false;
+}
+
+
+// ============================================================
+// BASIC interpreter (guarded by INCLUDE_BASIC)
+// ============================================================
+#ifdef INCLUDE_BASIC
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "esp_task_wdt.h"
+#include "FS.h"
+#include <LittleFS.h>
+#define BASIC_WRAPPER_TU
+#define REAL_ESP32_HW
+#include "basic.h"
+#include "gps.h"
+#include "sensors.h"
+
+
+TaskHandle_t basic_task;
+SemaphoreHandle_t basic_mutex;
+char next_code[256] = {0};
 
 int8_t getLocationData(float* org_lat, float* org_lon, float* lat, float* lon, float* alt, float* speed, float* dir)
 {
@@ -376,4 +414,6 @@ void setup_basic()
     xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 65535, NULL, 1, &basic_task, 0);
     //xTaskCreate(basic_task_fun, "BasicTask", 65535, NULL, 128, NULL);
 }
+
+#endif // INCLUDE_BASIC
 

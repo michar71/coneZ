@@ -1,0 +1,664 @@
+ConeZ BASIC Scripting Reference
+=================================
+
+ConeZ includes a BASIC interpreter for writing LED effects and interactive
+programs. Scripts are stored as .bas files on the LittleFS filesystem and
+executed in a dedicated FreeRTOS task on Core 0 (65KB stack, priority 1).
+
+Loading and running a script from the CLI:
+
+  run /test.bas
+
+Scripts compile on load, then execute. Output appears on the BASIC debug
+channel, filterable with "debug BASIC on/off".
+
+
+Language Basics
+---------------
+
+Variables:
+  Single-word identifiers, case-insensitive (converted to uppercase
+  internally). Created automatically on first use. All values are signed
+  integers (ptrdiff_t — 32-bit on ESP32).
+
+  X = 42
+  MYVAR = X + 1
+
+Numbers:
+  Decimal or hexadecimal via 0x prefix. Parsed with strtol().
+
+  A = 255
+  B = 0xFF
+
+Strings:
+  Double-quoted. Used with FORMAT, PRINTS, and string parameters.
+
+  FORMAT "hello world"
+
+Comments:
+  Lines starting with # are ignored.
+
+  # this is a comment
+
+Operators:
+  Arithmetic:   +  -  *  /  \ (modulus)
+  Comparison:   =  <  >  <>  <=  >=
+  Logical:      AND  OR
+
+  Comparisons return -1 (true) or 0 (false).
+  AND and OR are bitwise operations on integer values.
+
+
+Output
+------
+
+  > expr
+      Print an integer value followed by a newline.
+
+      > 42 + 1
+
+  PRINTS expr
+      Print a string to the console.
+
+      PRINTS "hello"
+
+  FORMAT "text", val1, val2, ...
+      Formatted output. Use % for integer placeholders, $ for string
+      placeholders. Prints the result followed by a newline.
+
+      FORMAT "X is % and Y is %", X, Y
+
+
+Control Flow
+------------
+
+IF / THEN (single-line):
+
+  IF X > 10 THEN > X
+
+IF / ELSE / ELSE IF / END IF (multi-line):
+
+  IF X > 10
+      > X
+  ELSE IF X > 5
+      > 5
+  ELSE
+      > 0
+  END IF
+
+WHILE / END WHILE:
+
+  WHILE X < 100
+      X = X + 1
+  END WHILE
+
+FOR / END FOR:
+
+  FOR I = 0 TO 9
+      > I
+  END FOR
+
+  The loop variable increments by 1 each iteration. The loop runs while
+  the variable is less than or equal to the TO value.
+
+BYE:
+  Exit the program immediately.
+
+BREAK:
+  Break out of the current execution block.
+
+RESUME:
+  Resume execution from the last saved position.
+
+
+Subroutines
+-----------
+
+Define with SUB / END SUB. Parameters are listed after the name.
+Use LOCAL to declare local variables within the subroutine.
+
+  SUB FLASH R, G, B
+      LOCAL I
+      FOR I = 0 TO 255
+          S = SETLEDCOL(255 - I, 255 - I, 255 - I)
+          S = WAIT(3)
+      END FOR
+      S = SETLEDCOL(R, G, B)
+  END SUB
+
+Call as a statement (no return value):
+
+  FLASH 255, 0, 0
+
+Call as an expression (captures return value):
+
+  RESULT = FLASH(255, 0, 0)
+
+Use RETURN to exit early, optionally with a value:
+
+  SUB MAX A, B
+      IF A > B THEN RETURN A
+      RETURN B
+  END SUB
+
+  BIGGER = MAX(10, 20)
+
+
+Arrays
+------
+
+  DIM arr(size)
+      Allocate an array of size elements. Arrays are 1-indexed.
+
+  arr(index)
+      Read value at index.
+
+  arr(index) = value
+      Write value at index.
+
+  UBOUND(arr)
+      Returns the array size (number of elements).
+
+Example:
+
+  DIM COLORS(50)
+  SETARRAY COLORS, 1, 50, 0
+  COLORS(1) = 255
+  > UBOUND(COLORS)
+
+
+Stopping a Program
+-------------------
+
+  BYE
+      Exit the program immediately.
+
+  GETPARAM(0) convention:
+      The CLI "stop" command sets param 0 to 1. Scripts should check
+      this in their main loop for graceful shutdown:
+
+      WHILE (GETPARAM(0) = 0)
+          # ... your effect loop ...
+      END WHILE
+      # cleanup here
+      BYE
+
+
+Built-in Functions
+------------------
+
+All functions are called with parentheses. Functions that return a value
+can be used in expressions. Functions that don't return a meaningful value
+return 0 (assign to a dummy variable).
+
+  VAL = FUNCTION(args)
+  S = FUNCTION(args)       # S is a dummy for void-like functions
+
+
+General / Math
+~~~~~~~~~~~~~~
+
+  ABS(val)
+      Absolute value.
+
+  LIMIT(val, min, max)
+      Clamp val to the range [min, max].
+
+  LIMIT256(val)
+      Clamp val to the range [0, 255].
+
+  SCALE(val, valmin, valmax, rmin, rmax)
+      Map val from [valmin, valmax] to [rmin, rmax].
+      Uses integer arithmetic (Arduino map() function).
+
+  SIN256(val)
+      Sine wave. Input 0..255 maps to 0..360 degrees.
+      Output 0..255 (full sine cycle, offset to unsigned range).
+
+  RANDOM(min, max)
+      Random integer in [min, max).
+
+  GAMMA256(val)
+      Gamma correction lookup. Input 0..255, output 0..255.
+      Same gamma table used by the LED system.
+
+
+System
+~~~~~~
+
+  VERSION()
+      Returns the BASIC interpreter version number.
+
+  TIMESTAMP(divider)
+      Returns millis() / divider. Useful for timing.
+      divider must not be 0 (division by zero error).
+
+      T = TIMESTAMP(1000)    # seconds since boot
+
+  WAIT(ms)
+      Delay for ms milliseconds. Yields to FreeRTOS scheduler.
+
+  GETPARAM(id)
+      Read a shared parameter (0..15). Param 0 is the stop flag.
+      Returns 0 if the parameter callback is not registered.
+
+  WAITFOR(event, source, condition, trigger, timeout)
+      Block until an event occurs. See WAITFOR Reference below.
+      Returns 1 on event, 0 on timeout.
+
+
+LED
+~~~
+
+  GETMAXLED()
+      Returns the number of LEDs on channel 1.
+
+  SETLEDRGB(arrR, arrG, arrB)
+      Set LEDs from three arrays (red, green, blue). Each array must
+      have exactly GETMAXLED() elements. Values are clamped to 0..255.
+      Automatically calls led_show() after writing.
+
+  SETLEDCOL(r, g, b)
+      Fill all LEDs on channel 1 with one solid RGB color.
+      Values are clamped to 0..255. Calls led_show() after writing.
+
+  USEGAMMA(enable)
+      Enable (1) or disable (0) automatic gamma correction for
+      SETLEDRGB and SETLEDCOL. Default is off. When enabled, all
+      color values pass through the gamma8 lookup table before being
+      written to the LED buffer.
+
+
+Array Operations
+~~~~~~~~~~~~~~~~
+
+  SETARRAY(arr, start, end, value)
+      Fill elements from index start to end (inclusive) with value.
+      Indices are 1-based.
+
+  SHIFTARRAY(arr, amount, fillval)
+      Shift elements. Positive amount shifts right, negative shifts
+      left. New positions are filled with fillval.
+
+  ROTATEARRAY(arr, amount)
+      Circular rotate. Positive amount rotates right, negative left.
+      No data is lost — elements wrap around.
+
+  COPYARRAY(arrSrc, arrDst)
+      Copy contents of arrSrc into arrDst. If arrDst is smaller,
+      data is truncated. If larger, remaining elements are set to 0.
+
+  SCALELIMITARRAY(arr, percent, min, max)
+      Multiply each element by percent/100, then clamp to [min, max].
+      Uses integer truncation (values converge toward 0).
+
+  RGBTOHSVARRAY(arrR, arrG, arrB)
+      Convert three RGB arrays to HSV in-place. After the call,
+      arrR contains hue, arrG contains saturation, arrB contains value.
+      All arrays must be the same size.
+
+  HSVTORGBARRAY(arrH, arrS, arrV)
+      Convert three HSV arrays to RGB in-place. After the call,
+      arrH contains red, arrS contains green, arrV contains blue.
+      All arrays must be the same size.
+
+
+LUT (Lookup Tables)
+~~~~~~~~~~~~~~~~~~~
+
+  One LUT can be loaded at a time. LUT files are stored on the
+  filesystem as LUT_N.csv (e.g., LUT_1.csv for index 1).
+
+  LOADLUT(index)
+      Load LUT_[index].csv from filesystem. Returns the number of
+      entries, or triggers an error if loading fails.
+
+  SAVELUT(index)
+      Save the current LUT to LUT_[index].csv.
+      Returns 1 on success.
+
+  LUTSIZE(index)
+      Get the number of entries in a LUT. If the LUT at this index
+      is already loaded, returns its size immediately. Otherwise reads
+      the file to count entries. Useful for DIM-ing an array to the
+      right size before calling LUTTOARRAY.
+
+  LUT(index)
+      Read the value at position index from the currently loaded LUT.
+      A LUT must be loaded first with LOADLUT.
+
+  LUTTOARRAY(arr)
+      Copy the loaded LUT into an array. If the LUT is larger than
+      the array, data is truncated. Returns 0.
+
+  ARRAYTOLUT(arr)
+      Copy an array into the LUT (replacing any previously loaded LUT).
+      Returns 0.
+
+
+GPS / Location
+~~~~~~~~~~~~~~
+
+  All distances in meters, all angles in degrees. Values are integers
+  (floats from the GPS are rounded).
+
+  HASGPS()
+      Returns 1 if GPS has a fix with valid position, 0 otherwise.
+
+  HASORIGIN()
+      Returns 1 if origin coordinates are set and GPS has a fix.
+
+  ORIGINDIST()
+      Distance from current position to origin in meters.
+      Returns 0 if GPS/origin unavailable.
+
+  ORIGINANGLE()
+      Bearing from origin to current position in degrees.
+      Returns 0 if GPS/origin unavailable.
+
+  GPSSPEED()
+      Current speed derived from GPS, in m/s (rounded to integer).
+
+  GPSDIR()
+      Current direction of travel in degrees (rounded to integer).
+
+  GPSALT()
+      Altitude in meters (rounded to integer).
+
+  DIST(x1, y1, x2, y2)
+      Distance between two points (in meters).
+
+  ANGLE(x1, y1, x2, y2)
+      Bearing in degrees between two points.
+
+
+IMU
+~~~
+
+  HASGYRO()
+      Returns 1 if gyroscope data is available, 0 otherwise.
+
+  HASACC()
+      Returns 1 if accelerometer data is available, 0 otherwise.
+
+  HASMAG()
+      Returns 1 if magnetometer data is available, 0 otherwise.
+
+  PITCH()
+      Pitch angle in degrees. Returns 0 if IMU unavailable.
+
+  ROLL()
+      Roll angle in degrees. Returns 0 if IMU unavailable.
+
+  YAW()
+      Yaw angle in degrees. Returns 0 if IMU unavailable.
+
+  ACCX(), ACCY(), ACCZ()
+      Accelerometer reading on each axis. Returns 0 if unavailable.
+
+
+Environment
+~~~~~~~~~~~
+
+  TEMP()
+      Temperature in degrees C * 10 (e.g., 225 = 22.5C).
+      Returns -10000 if no temperature sensor is present.
+
+  HUM()
+      Humidity in percent. Returns -1 if no humidity sensor.
+
+  BRIGHT()
+      Brightness reading, 0..4096. Returns -1 if no light sensor.
+
+
+Date / Time
+~~~~~~~~~~~
+
+  Date and time are sourced from GPS. All functions return -1 (or 0 for
+  availability checks) if no GPS signal is available.
+
+  HASDATE()
+      Returns 1 if date data is available, 0 otherwise.
+
+  HASTIME()
+      Returns 1 if time data is available, 0 otherwise.
+
+  HOUR()
+      Hour, 0-23. Returns -1 if time unavailable.
+
+  MINUTE()
+      Minute, 0-59. Returns -1 if time unavailable.
+
+  SECOND()
+      Second, 0-59. Returns -1 if time unavailable.
+
+  DAY()
+      Day of month, 1-31. Returns -1 if date unavailable.
+
+  MONTH()
+      Month, 1-12. Returns -1 if date unavailable.
+
+  YEAR()
+      4-digit year. Returns -1 if date unavailable.
+
+  DAYOFWEEK()
+      Day of week: 0=Sunday, 1=Monday, ..., 6=Saturday.
+      Returns -1 if date unavailable.
+
+  DAYOFYEAR()
+      Day of year, 1-366. Returns -1 if date unavailable.
+
+  ISLEAPYEAR()
+      Returns 1 if current year is a leap year, 0 otherwise.
+
+
+WAITFOR Event Reference
+-----------------------
+
+  WAITFOR(event, source, condition, trigger, timeout)
+
+  Blocks until the specified event occurs or timeout expires.
+  timeout is in milliseconds. 0 = wait forever.
+  Returns: 1 = event received, 0 = timeout, error on unsupported event.
+
+  Event 0 — Sync Pulse (EVENT_SYNC_PULSE)
+      Not yet implemented. Reserved for LoRa sync.
+
+  Event 1 — Digital Pin (EVENT_DIGITAL_PIN)
+      Not yet implemented.
+
+  Event 2 — Analog Pin (EVENT_ANALOG_PIN)
+      Not yet implemented.
+
+  Event 4 — System Timer (EVENT_SYS_TIMER)
+      Waits for a duration based on condition and trigger value.
+
+      source:    not used
+      condition: time unit for the trigger value
+          6 = hours    (trigger * 3600000 ms)
+          7 = minutes  (trigger * 60000 ms)
+          8 = seconds  (trigger * 1000 ms)
+          9 = ms       (trigger used directly)
+      trigger:   number of time units to wait
+
+      Example — wait 5 seconds:
+          S = WAITFOR(4, 0, 8, 5, 0)
+
+  Event 5 — GPS PPS Pulse (EVENT_GPS_PPS)
+      Waits for the GPS PPS (pulse-per-second) signal edge.
+      Returns -1 if GPS has no fix.
+
+      source:    not used
+      condition:
+          4 = rising edge (low to high)
+          5 = falling edge (high to low)
+      trigger:   not used
+
+      Example — wait for PPS rising edge with 2 second timeout:
+          S = WAITFOR(5, 0, 4, 0, 2000)
+
+  Event 6 — Parameter (EVENT_PARAM)
+      Waits for a shared parameter to meet a condition.
+
+      source:    parameter ID (0..15)
+      condition:
+          0 = param > trigger
+          1 = param < trigger
+          2 = param = trigger
+          3 = param <> trigger
+      trigger:   value to compare against
+
+      Example — wait for param 1 to equal 42:
+          S = WAITFOR(6, 1, 2, 42, 5000)
+
+
+Example Scripts
+---------------
+
+RGB Cycle
+~~~~~~~~~
+
+  Cycles through red, green, blue, and off. Uses a subroutine
+  to set the color and wait.
+
+      # Define a subroutine to set color and pause
+      SUB SETCOL R,G,B
+          S = SETLEDCOL(R,G,B)
+          S = WAIT(500)
+      END SUB
+
+      CNT = 0
+      WHILE (GETPARAM(0) = 0)
+          SETCOL 255,0,0
+          SETCOL 0,255,0
+          SETCOL 0,0,255
+          SETCOL 0,0,0
+          CNT = CNT + 1
+          FORMAT "LOOPS: %",CNT
+      END WHILE
+      FORMAT "TEST DONE"
+
+
+Speed-of-Sound Strobe (sol.bas)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  Synchronized strobe effect that accounts for distance from an origin
+  point. Calculates sound propagation delay and triggers a strobe at the
+  appropriate offset after each 4-second GPS time mark.
+
+      # Strobe subroutine: flash white then fade to color
+      SUB STROBE R,G,B
+          FOR I = 0 TO 255
+              S = SETLEDCOL(255-I,255-I,255-I)
+              S = WAIT(3)
+          END FOR
+          S = SETLEDCOL(R,G,B)
+      END SUB
+
+      # Wait for GPS
+      FORMAT "WAITING FOR GPS"
+      STARTTIME = TIMESTAMP(1000)
+      GPS = 0
+      WHILE (GPS = 0)
+          GPS = HASGPS()
+          S = WAIT(1000)
+      END WHILE
+      FORMAT "GPS OK"
+
+      # Wait for origin
+      FORMAT "WAITING FOR ORIGIN"
+      ORG = 0
+      WHILE (ORG = 0)
+          ORG = HASORIGIN()
+          S = WAIT(1000)
+      END WHILE
+      FORMAT "ORG OK"
+
+      STROBE 0,32,0
+
+      LASTSEC = 0
+      DIST = 0
+      TDMS = 0
+
+      # Main loop: strobe every 4th second with distance-based delay
+      WHILE (GETPARAM(0) = 0)
+          SEC = SECOND()
+          IF (SEC <> LASTSEC) AND (SEC \ 4 = 0)
+              S = WAIT(TDMS)
+              STROBE 8,0,0
+              FORMAT "PING"
+              LASTSEC = SEC
+              DIST = ORIGINDIST()
+              TDMS = (DIST * 1000) / 343
+          END IF
+      END WHILE
+      FORMAT "STOPPED"
+      BYE
+
+
+Function Quick Reference
+------------------------
+
+  Function                               Args  Category
+  -------                                ----  --------
+  ABS(val)                                 1   Math
+  LIMIT(val, min, max)                     3   Math
+  LIMIT256(val)                            1   Math
+  SCALE(val, vmin, vmax, rmin, rmax)       5   Math
+  SIN256(val)                              1   Math
+  RANDOM(min, max)                         2   Math
+  GAMMA256(val)                            1   Math
+  VERSION()                                0   System
+  TIMESTAMP(divider)                       1   System
+  WAIT(ms)                                 1   System
+  GETPARAM(id)                             1   System
+  WAITFOR(event, src, cond, trig, tout)    5   System
+  GETMAXLED()                              0   LED
+  SETLEDRGB(arrR, arrG, arrB)              3   LED
+  SETLEDCOL(r, g, b)                       3   LED
+  USEGAMMA(enable)                         1   LED
+  SETARRAY(arr, start, end, val)           4   Array
+  SHIFTARRAY(arr, amount, fillval)         3   Array
+  ROTATEARRAY(arr, amount)                 2   Array
+  COPYARRAY(src, dst)                      2   Array
+  SCALELIMITARRAY(arr, pct, min, max)      4   Array
+  RGBTOHSVARRAY(arrR, arrG, arrB)          3   Array
+  HSVTORGBARRAY(arrH, arrS, arrV)          3   Array
+  LOADLUT(index)                           1   LUT
+  SAVELUT(index)                           1   LUT
+  LUTSIZE(index)                           1   LUT
+  LUT(index)                               1   LUT
+  LUTTOARRAY(arr)                          1   LUT
+  ARRAYTOLUT(arr)                          1   LUT
+  HASGPS()                                 0   GPS
+  HASORIGIN()                              0   GPS
+  ORIGINDIST()                             0   GPS
+  ORIGINANGLE()                            0   GPS
+  GPSSPEED()                               0   GPS
+  GPSDIR()                                 0   GPS
+  GPSALT()                                 0   GPS
+  DIST(x1, y1, x2, y2)                    4   GPS
+  ANGLE(x1, y1, x2, y2)                   4   GPS
+  HASGYRO()                                0   IMU
+  HASACC()                                 0   IMU
+  HASMAG()                                 0   IMU
+  PITCH()                                  0   IMU
+  ROLL()                                   0   IMU
+  YAW()                                    0   IMU
+  ACCX()                                   0   IMU
+  ACCY()                                   0   IMU
+  ACCZ()                                   0   IMU
+  TEMP()                                   0   Env
+  HUM()                                    0   Env
+  BRIGHT()                                 0   Env
+  HASDATE()                                0   Date/Time
+  HASTIME()                                0   Date/Time
+  HOUR()                                   0   Date/Time
+  MINUTE()                                 0   Date/Time
+  SECOND()                                 0   Date/Time
+  DAY()                                    0   Date/Time
+  MONTH()                                  0   Date/Time
+  YEAR()                                   0   Date/Time
+  DAYOFWEEK()                              0   Date/Time
+  DAYOFYEAR()                              0   Date/Time
+  ISLEAPYEAR()                             0   Date/Time

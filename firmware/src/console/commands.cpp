@@ -8,6 +8,9 @@
 #include "esp_ota_ops.h"
 #include <esp_app_format.h>
 #include "basic_wrapper.h"
+#ifdef INCLUDE_WASM
+#include "wasm_wrapper.h"
+#endif
 #include "main.h"
 #include "task.h"
 #include "printManager.h"
@@ -147,6 +150,7 @@ int cmd_debug( int argc, char **argv )
 
         printfnl(SOURCE_COMMANDS, F(" - SYSTEM: \t%s\n"), getDebug(SOURCE_SYSTEM) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, F(" - BASIC: \t%s\n"), getDebug(SOURCE_BASIC) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - WASM: \t%s\n"), getDebug(SOURCE_WASM) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, F(" - COMMANDS: \t%s\n"), getDebug(SOURCE_COMMANDS) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, F(" - SHELL: \t%s\n"), getDebug(SOURCE_SHELL) ? "on" : "off" );        
         printfnl(SOURCE_COMMANDS, F(" - GPS: \t%s\n"), getDebug(SOURCE_GPS) ? "on" : "off" );
@@ -174,6 +178,9 @@ int cmd_debug( int argc, char **argv )
     else
     if( !strcasecmp( argv[1], "BASIC" ) )
         mask_to_set = SOURCE_BASIC;
+    else
+    if( !strcasecmp( argv[1], "WASM" ) )
+        mask_to_set = SOURCE_WASM;
     else
     if( !strcasecmp( argv[1], "COMMANDS" ) )
         mask_to_set = SOURCE_COMMANDS;
@@ -232,7 +239,7 @@ int delFile(int argc, char **argv)
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
-    deleteFile(FSLINK,argv[1]);
+    deleteFile(LittleFS,argv[1]);
     return 0;
 }
 
@@ -243,7 +250,7 @@ int renFile(int argc, char **argv)
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
-    renameFile(FSLINK,argv[1], argv[2]);
+    renameFile(LittleFS,argv[1], argv[2]);
     return 0;
 }
 
@@ -255,7 +262,7 @@ int listFile(int argc, char **argv)
         return 1;
     }
 
-    readFile(FSLINK,argv[1]); 
+    readFile(LittleFS,argv[1]); 
     printfnl(SOURCE_COMMANDS, F("\n"));
     return 0;
 }
@@ -267,7 +274,7 @@ int listDir(int argc, char **argv)
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
-    listDir(FSLINK,"/",1); 
+    listDir(LittleFS,"/",1); 
     return 0;
 }
 
@@ -290,7 +297,7 @@ int loadFile(int argc, char **argv)
         getLock();
         getStream()->flush();
         //create file
-        File file = FSLINK.open(argv[1], FILE_WRITE);
+        File file = LittleFS.open(argv[1], FILE_WRITE);
         if (!file)
         {
             releaseLock();
@@ -355,31 +362,34 @@ int loadFile(int argc, char **argv)
 
 }
 
-int runBasic(int argc, char **argv) 
+int runBasic(int argc, char **argv)
 {
     if (argc != 2)
     {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
-        return 1;       
+        printfnl(SOURCE_COMMANDS, F("Usage: run <file.bas|file.wasm>\n") );
+        return 1;
     }
     else
     {
-        if (false == set_basic_program(argv[1]))
-          printfnl(SOURCE_COMMANDS, F("BASIC code already running\n") );
+        if (false == set_script_program(argv[1]))
+          printfnl(SOURCE_COMMANDS, F("Script already running or unknown type\n") );
         return 0;
     }
 }
 
-int stopBasic(int argc, char **argv) 
+int stopBasic(int argc, char **argv)
 {
     if (argc != 1)
     {
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
-        return 1;       
+        return 1;
     }
     else
     {
-        set_basic_param(0,1);      
+        set_basic_param(0,1);
+#ifdef INCLUDE_WASM
+        wasm_request_stop();
+#endif
         return 0;
     }
 }
@@ -414,6 +424,7 @@ int cmd_ps(int argc, char **argv)
     static const char *taskNames[] = {
         "loopTask",     // Arduino main loop
         "BasicTask",    // BASIC interpreter
+        "WasmTask",     // WASM runtime
         "led_render",   // LED render task
         "IDLE0",        // Idle task core 0
         "IDLE1",        // Idle task core 1
@@ -685,10 +696,45 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  time                               Show current date/time\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  uptime                             Show system uptime\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  version                            Show firmware version\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  wasm [status|info <file>]           WASM runtime status/info\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  wifi                               Show WiFi status\n\n" ) );
     return 0;
 }
 
+
+#ifdef INCLUDE_WASM
+int cmd_wasm(int argc, char **argv)
+{
+    if (argc < 2 || !strcasecmp(argv[1], "status")) {
+        printfnl(SOURCE_COMMANDS, F("WASM Runtime:\n"));
+        printfnl(SOURCE_COMMANDS, F("  Running: %s\n"), wasm_is_running() ? "yes" : "no");
+        if (wasm_is_running()) {
+            const char *p = wasm_get_current_path();
+            printfnl(SOURCE_COMMANDS, F("  Module:  %s\n"), (p && p[0]) ? p : "(unknown)");
+        }
+        return 0;
+    }
+
+    if (!strcasecmp(argv[1], "info")) {
+        if (argc < 3) {
+            printfnl(SOURCE_COMMANDS, F("Usage: wasm info <file.wasm>\n"));
+            return 1;
+        }
+        File f = LittleFS.open(argv[2], "r");
+        if (!f) {
+            printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), argv[2]);
+            return 1;
+        }
+        printfnl(SOURCE_COMMANDS, F("WASM Module: %s\n"), argv[2]);
+        printfnl(SOURCE_COMMANDS, F("  Size: %u bytes\n"), (unsigned)f.size());
+        f.close();
+        return 0;
+    }
+
+    printfnl(SOURCE_COMMANDS, F("Usage: wasm [status | info <file>]\n"));
+    return 1;
+}
+#endif
 
 void init_commands(Stream *dev)
 {
@@ -723,11 +769,9 @@ void init_commands(Stream *dev)
     shell.addCommand(F("uptime"), cmd_uptime);
     shell.addCommand(F("version"), cmd_version);
     shell.addCommand(F("wifi"), cmd_wifi);
-    
-    
-    //System commands
-
-    //Basic Commands
+#ifdef INCLUDE_WASM
+    shell.addCommand(F("wasm"), cmd_wasm);
+#endif
 }
 
 void run_commands(void)

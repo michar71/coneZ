@@ -60,6 +60,16 @@ void vprintfnl( source_e source, const char *format, va_list args )
             }
             break;
 
+        case SOURCE_WASM:
+            if (debug & SOURCE_WASM)
+            {
+                print_ts();
+                OutputStream->print("[WASM] ");
+                vsnprintf(buf,max_txt, format, args);
+                OutputStream->print(buf);
+            }
+            break;
+
         case SOURCE_SHELL:
             if (debug & SOURCE_SHELL)
             {

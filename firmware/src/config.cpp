@@ -56,6 +56,7 @@ static const cfg_descriptor_t cfg_table[] = {
     // [debug]
     CFG_ENTRY("debug",  "system",       CFG_BOOL,  dbg_system),
     CFG_ENTRY("debug",  "basic",        CFG_BOOL,  dbg_basic),
+    CFG_ENTRY("debug",  "wasm",         CFG_BOOL,  dbg_wasm),
     CFG_ENTRY("debug",  "commands",     CFG_BOOL,  dbg_commands),
     CFG_ENTRY("debug",  "gps",          CFG_BOOL,  dbg_gps),
     CFG_ENTRY("debug",  "gps_raw",      CFG_BOOL,  dbg_gps_raw),
@@ -105,6 +106,7 @@ static void config_fill_defaults(conez_config_t *cfg)
 
     cfg->dbg_system       = DEFAULT_DBG_SYSTEM;
     cfg->dbg_basic        = DEFAULT_DBG_BASIC;
+    cfg->dbg_wasm         = DEFAULT_DBG_WASM;
     cfg->dbg_commands     = DEFAULT_DBG_COMMANDS;
     cfg->dbg_gps          = DEFAULT_DBG_GPS;
     cfg->dbg_gps_raw      = DEFAULT_DBG_GPS_RAW;
@@ -179,7 +181,7 @@ static char *str_trim(char *s)
 // ---------- INI parser ----------
 static void config_parse_ini(void)
 {
-    File f = FSLINK.open(CONFIG_PATH, "r");
+    File f = LittleFS.open(CONFIG_PATH, "r");
     if (!f)
         return;
 
@@ -244,7 +246,7 @@ void config_init(void)
 {
     config_fill_defaults(&config);
 
-    if (littlefs_mounted && FSLINK.exists(CONFIG_PATH))
+    if (littlefs_mounted && LittleFS.exists(CONFIG_PATH))
         config_parse_ini();
     else
         Serial.println("No /config.ini — using compiled defaults.");
@@ -259,7 +261,7 @@ void config_save(void)
         return;
     }
 
-    File f = FSLINK.open(CONFIG_PATH, "w");
+    File f = LittleFS.open(CONFIG_PATH, "w");
     if (!f)
     {
         printfnl(SOURCE_COMMANDS, F("Error: cannot open %s for writing\n"), CONFIG_PATH);
@@ -309,8 +311,8 @@ void config_save(void)
 
 void config_reset(void)
 {
-    if (littlefs_mounted && FSLINK.exists(CONFIG_PATH))
-        FSLINK.remove(CONFIG_PATH);
+    if (littlefs_mounted && LittleFS.exists(CONFIG_PATH))
+        LittleFS.remove(CONFIG_PATH);
 
     config_fill_defaults(&config);
     printfnl(SOURCE_COMMANDS, F("Config reset to compiled defaults.\n"));
@@ -321,6 +323,7 @@ void config_apply_debug(void)
 {
     setDebugLevel(SOURCE_SYSTEM,    config.dbg_system);
     setDebugLevel(SOURCE_BASIC,     config.dbg_basic);
+    setDebugLevel(SOURCE_WASM,      config.dbg_wasm);
     setDebugLevel(SOURCE_COMMANDS,  config.dbg_commands);
     setDebugLevel(SOURCE_GPS,       config.dbg_gps);
     setDebugLevel(SOURCE_GPS_RAW,   config.dbg_gps_raw);

@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include <SimpleSerialShell.h>
-#include "./../../../src/printManager.h"
+#include "./../../../src/console/printManager.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 /*!

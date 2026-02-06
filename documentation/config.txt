@@ -60,7 +60,7 @@ Sections and Keys
   device_name       DHCP hostname (blank = auto)   (default: empty)
                       When empty, hostname is auto-generated as
                       ConeZ-XXYY from the last 2 bytes of the MAC address.
-  startup_script    BASIC script to auto-run       (default: /startup.bas)
+  startup_script    Script to auto-run (.bas/.wasm) (default: /startup.bas)
   timezone          Standard (winter) UTC offset   (default: -8)
                       Set to the non-DST offset for your zone (e.g. -8 for PST).
                       When auto_dst is on, +1 is added automatically during DST.
@@ -89,6 +89,7 @@ Sections and Keys
 [debug]
   system            System messages                (default: on)
   basic             BASIC interpreter output       (default: on)
+  wasm              WASM runtime output            (default: on)
   commands          CLI command output             (default: on)
   gps               GPS position updates           (default: off)
   gps_raw           Raw NMEA sentences             (default: off)
@@ -149,6 +150,9 @@ before any hardware that depends on config values is initialized:
   printManagerInit()
   config_apply_debug()     Applies config.dbg_* settings
   sunSetTZOffset()         Reads config.timezone
+  setup_basic()            Starts BASIC task on Core 0 (if INCLUDE_BASIC)
+  setup_wasm()             Starts WASM task on Core 0 (if INCLUDE_WASM)
+  script_autoexec()        Runs startup_script via set_script_program()
 
 
 Adding a New Config Key

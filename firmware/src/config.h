@@ -55,6 +55,7 @@
 #define DEFAULT_DBG_FSYNC       false
 #define DEFAULT_DBG_WIFI        false
 #define DEFAULT_DBG_SENSORS     false
+#define DEFAULT_DBG_WASM        true
 #define DEFAULT_DBG_OTHER       false
 
 // ---------- Config struct ----------
@@ -96,6 +97,7 @@ typedef struct {
     // [debug]
     bool    dbg_system;
     bool    dbg_basic;
+    bool    dbg_wasm;
     bool    dbg_commands;
     bool    dbg_gps;
     bool    dbg_gps_raw;

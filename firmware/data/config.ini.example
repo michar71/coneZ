@@ -39,6 +39,7 @@ count4=50
 [debug]
 system=on
 basic=on
+wasm=on
 commands=on
 gps=off
 gps_raw=off

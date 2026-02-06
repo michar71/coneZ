@@ -226,13 +226,13 @@ void http_dir()
     }
 
     // Start from the root directory.
-    out += http_dir_list( FSLINK, "/" );
+    out += http_dir_list( LittleFS, "/" );
 
     out += "<br><hr>";
 
     // Filesystem space stats:
-    size_t total = FSLINK.totalBytes();
-    size_t used = FSLINK.usedBytes();
+    size_t total = LittleFS.totalBytes();
+    size_t used = LittleFS.usedBytes();
 
     out += "<pre>Total bytes: ";
     out += total;
