@@ -58,6 +58,8 @@ const char *wifi_ssid = "RN-ConeZ";
 const char *wifi_psk = "conezconez";
 
 
+bool littlefs_mounted = false;
+
 void init_LittleFS()
 {
   Serial.println("---- LittleFS ----");
@@ -68,6 +70,7 @@ void init_LittleFS()
     return;
   }
 
+  littlefs_mounted = true;
   Serial.println("LittleFS mounted successfully.");
 
   size_t total = FSLINK.totalBytes();
@@ -182,7 +185,7 @@ void basic_autoexec(void)
     //Appartly the function exist() exist... But shouldn't be used.
     //Because it uses open() which flags an error if the file doesn't exists...
     //Open bug in littleFS for 4 year... WTF????
-    if (FSLINK.exists((char*)"/startup.bas"))
+    if (littlefs_mounted && FSLINK.exists((char*)"/startup.bas"))
     {
         printfnl(SOURCE_SYSTEM,"startup.bas found. Executing...\n");
         set_basic_program((char*)"/startup.bas");
@@ -359,7 +362,7 @@ void setup()
 
   //At this point switch comms over to telnet
   TelnetStream2.begin();
-  Serial.println( "Telnet Initalized");
+  Serial.println( "Telnet initialized");
   Serial.println( "CLI active");
 
   //Init print manager

@@ -21,5 +21,6 @@ GeoResult xy_to_polar(float x1, float y1, float x2, float y2);
 void latlon_to_meters(float latitude_deg, float longitude_deg,
                       float *x_offset_meters, float *y_offset_meters);
 
+extern bool littlefs_mounted;
 
 #endif
