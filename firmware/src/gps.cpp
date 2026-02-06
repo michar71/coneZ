@@ -32,6 +32,13 @@ volatile float gps_speed = 0;    // Speed is in m/s
 volatile bool gps_time_valid = false;
 volatile uint32_t gps_time = 0;
 
+volatile int gps_day = 0;
+volatile int gps_month = 0;
+volatile int gps_year = 0;
+volatile int gps_hour = 0;
+volatile int gps_minute = 0;
+volatile int gps_second = 0;
+
 TinyGPSPlus gps;
 
 // Serial
@@ -77,6 +84,13 @@ int gps_loop()
             gps_speed = gps.speed.mps();
             gps_dir = gps.course.deg();
 
+            gps_day = gps.date.day();
+            gps_month = gps.date.month();
+            gps_year = gps.date.year();
+            gps_hour = gps.time.hour();
+            gps_minute = gps.time.minute();
+            gps_second = gps.time.second();
+
             printfnl( SOURCE_GPS, F("GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n"),
                 (int) gps_pos_valid,
                 gps_lat,
@@ -106,7 +120,7 @@ float get_lon(void)
 
 int get_sec(void)
 {
-    return gps.time.second();
+    return gps_second;
 }
 
 float get_alt(void)
@@ -141,41 +155,41 @@ float get_org_lon(void)
 
 int get_day(void)
 {
-    return gps.date.day();
+    return gps_day;
 }
 
 int get_month(void)
 {
-    return gps.date.month();
+    return gps_month;
 }
 
 int get_year(void)
 {
-    return gps.date.year();
+    return gps_year;
 }
 
 int get_hour(void)
 {
-    return gps.time.hour();
+    return gps_hour;
 }
 
 int get_minute(void)
 {
-    return gps.time.minute();
+    return gps_minute;
 }
 
 int get_second(void)
 {
-    return gps.time.second();
+    return gps_second;
 }
 
 
 int get_day_of_week(void)
 {
-    int month = gps.date.month();
-    int year = gps.date.year();
+    int month = gps_month;
+    int year = gps_year;
 
-        if (month < 3) {
+    if (month < 3) {
         month += 12;
         year -= 1;
     }
@@ -183,7 +197,7 @@ int get_day_of_week(void)
     int k = year % 100;
     int j = year / 100;
 
-    int h = (gps.date.day() + (13 * (month + 1)) / 5 + k + k/4 + j/4 + 5*j) % 7;
+    int h = (gps_day + (13 * (month + 1)) / 5 + k + k/4 + j/4 + 5*j) % 7;
 
     // Zeller's congruence: 0=Saturday, so we convert to 0=Sunday
     int day_of_week = (h + 6) % 7;
@@ -192,15 +206,15 @@ int get_day_of_week(void)
 
 bool get_isleapyear(void)
 {
-    int year = gps.date.year();
+    int year = gps_year;
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
 }
 
 int get_dayofyear(void)
 {
-    int year = gps.date.year();
-    int month = gps.date.month();
-    int day = gps.date.day();
+    int year = gps_year;
+    int month = gps_month;
+    int day = gps_day;
 
 
     // Validate month range
