@@ -269,6 +269,66 @@ const uint8_t  gamma8[] = {
 };
 
 //------------------------------------
+//Helper structs for callback results
+//------------------------------------
+
+struct DateTimeResult {
+    bool hasdate, hastime;
+    int day, month, year, hour, minute, second;
+    int dayofweek, dayofyear;
+    bool isleapyear;
+    bool valid;
+};
+
+static DateTimeResult fetch_datetime() {
+    DateTimeResult r = {};
+    if (DATETIME_Func) {
+        DATETIME_Func(&r.hasdate, &r.hastime, &r.day, &r.month, &r.year,
+                       &r.hour, &r.minute, &r.second, &r.dayofweek,
+                       &r.dayofyear, &r.isleapyear);
+        r.valid = true;
+    }
+    return r;
+}
+
+struct IMUResult {
+    float roll, pitch, yaw, accX, accY, accZ;
+    int8_t status;  // 0=unavailable, GYRO_BIT|ACC_BIT|MAG_BIT
+};
+
+static IMUResult fetch_imu() {
+    IMUResult r = {};
+    if (IMU_Func)
+        r.status = IMU_Func(&r.roll, &r.pitch, &r.yaw, &r.accX, &r.accY, &r.accZ);
+    return r;
+}
+
+struct LocationResult {
+    float org_lat, org_lon, lat, lon, alt, speed, dir;
+    int8_t status;  // -1=no sat, 0=no data, 1=valid
+};
+
+static LocationResult fetch_location() {
+    LocationResult r = {};
+    if (Loc_Func)
+        r.status = Loc_Func(&r.org_lat, &r.org_lon, &r.lat, &r.lon,
+                             &r.alt, &r.speed, &r.dir);
+    return r;
+}
+
+struct ENVResult {
+    float temp, humidity, brightness;
+    int8_t status;
+};
+
+static ENVResult fetch_env() {
+    ENVResult r = {};
+    if (ENV_Func)
+        r.status = ENV_Func(&r.temp, &r.humidity, &r.brightness);
+    return r;
+}
+
+//------------------------------------
 //USER DEFINED COMMAND HOOKS
 //------------------------------------
 #define PRINTS_T "PRINTS"
@@ -1012,190 +1072,61 @@ int TIMESTAMP_()
 
 int HASORIGIN_()
 {
-    if (NULL == Loc_Func)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    float oLat = 0, oLon = 0, lat = 0, lon = 0, alt = 0, speed = 0, dir = 0;
-    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-    if (((oLat == 0) && (oLon == 0)) || (res != 1))
-    {
-        *sp=0;
-        STEP;
-    }
-
-    *sp=1;
+    LocationResult loc = fetch_location();
+    *sp = (loc.status == 1 && (loc.org_lat != 0 || loc.org_lon != 0)) ? 1 : 0;
     STEP;
 }
 
 int HASGPS_()
 {
-    if (NULL == Loc_Func)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    float oLat = 0, oLon = 0, lat = 0, lon = 0, alt = 0, speed = 0, dir = 0;
-    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-    if (((lat == 0) && (lon == 0)) || (res != 1))
-    {
-        *sp=0;
-        STEP;
-    }
-
-    *sp=1;
+    LocationResult loc = fetch_location();
+    *sp = (loc.status == 1 && (loc.lat != 0 || loc.lon != 0)) ? 1 : 0;
     STEP;
 }
 
 int ORIGINDIST_()
 {
-    if (NULL == Loc_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;        
-    }
-
-    float oLat = 0;
-    float oLon = 0;
-    float lat = 0;
-    float lon = 0;
-    float alt = 0;
-    float speed = 0;
-    float dir = 0;
-
-    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-    if (res != 1)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    } 
-
-    float xom1 = 0;
-    float yom1 = 0;
-    latlon_to_meters(oLat, oLon, &xom1,  &yom1);
-    float xom2 = 0;
-    float yom2 = 0;
-    latlon_to_meters(lat, lon, &xom2,  &yom2);
-    GeoResult gr = xy_to_polar(xom1, yom1, xom2, yom2); 
-
-    *sp=(int)round(gr.distance); //Push back to to the stack
-    STEP;  
+    LocationResult loc = fetch_location();
+    if (loc.status != 1) { *sp = 0; STEP; }
+    float x1, y1, x2, y2;
+    latlon_to_meters(loc.org_lat, loc.org_lon, &x1, &y1);
+    latlon_to_meters(loc.lat, loc.lon, &x2, &y2);
+    GeoResult gr = xy_to_polar(x1, y1, x2, y2);
+    *sp = (int)round(gr.distance);
+    STEP;
 }
 
 int ORIGINANGLE_()
 {
-    if (NULL == Loc_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;        
-    }
-
-    float oLat = 0;
-    float oLon = 0;
-    float lat = 0;
-    float lon = 0;
-    float alt = 0;
-    float speed = 0;
-    float dir = 0;
-
-    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-    if (res != 1)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    } 
-
-    float xom1 = 0;
-    float yom1 = 0;
-    latlon_to_meters(oLat, oLon, &xom1,  &yom1);
-    float xom2 = 0;
-    float yom2 = 0;
-    latlon_to_meters(lat, lon, &xom2,  &yom2);
-    GeoResult gr = xy_to_polar(xom1, yom1, xom2, yom2); 
-
-    *sp=(int)round(gr.bearing_deg); //Push back to to the stack
-    STEP;  
+    LocationResult loc = fetch_location();
+    if (loc.status != 1) { *sp = 0; STEP; }
+    float x1, y1, x2, y2;
+    latlon_to_meters(loc.org_lat, loc.org_lon, &x1, &y1);
+    latlon_to_meters(loc.lat, loc.lon, &x2, &y2);
+    GeoResult gr = xy_to_polar(x1, y1, x2, y2);
+    *sp = (int)round(gr.bearing_deg);
+    STEP;
 }
 
 int GPSSPEED_()
 {
-    if (NULL == Loc_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;        
-    }
-
-    float oLat = 0;
-    float oLon = 0;
-    float lat = 0;
-    float lon = 0;
-    float alt = 0;
-    float speed = 0;
-    float dir = 0;
-
-    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-    if (res != 1)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    } 
-    *sp=(int)round(speed); //Push back to to the stack
-    STEP; 
+    LocationResult loc = fetch_location();
+    *sp = (loc.status == 1) ? (int)round(loc.speed) : 0;
+    STEP;
 }
 
 int GPSDIR_()
 {
-    if (NULL == Loc_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;        
-    }
-
-    float oLat = 0;
-    float oLon = 0;
-    float lat = 0;
-    float lon = 0;
-    float alt = 0;
-    float speed = 0;
-    float dir = 0;
-
-    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-    if (res != 1)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    } 
-    *sp=(int)round(dir); //Push back to to the stack
-    STEP; 
+    LocationResult loc = fetch_location();
+    *sp = (loc.status == 1) ? (int)round(loc.dir) : 0;
+    STEP;
 }
 
 int GPSALT_()
 {
-    if (NULL == Loc_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;        
-    }
-
-    float oLat = 0;
-    float oLon = 0;
-    float lat = 0;
-    float lon = 0;
-    float alt = 0;
-    float speed = 0;
-    float dir = 0;
-
-    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-    if (res != 1)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    } 
-    *sp=(int)round(alt); //Push back to to the stack
-    STEP; 
+    LocationResult loc = fetch_location();
+    *sp = (loc.status == 1) ? (int)round(loc.alt) : 0;
+    STEP;
 }
 
 int DIST_ ()
@@ -1224,304 +1155,87 @@ int ANGLE_ ()
 
 int HASGYRO_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    float roll = 0, pitch = 0, yaw = 0, accX = 0, accY = 0, accZ = 0;
-    int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-    if ((res & GYRO_BIT) == 0)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    *sp=1;
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status & GYRO_BIT) ? 1 : 0;
     STEP;
 }
 
 int HASACC_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    float roll = 0, pitch = 0, yaw = 0, accX = 0, accY = 0, accZ = 0;
-    int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-    if ((res & ACC_BIT) == 0)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    *sp=1;
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status & ACC_BIT) ? 1 : 0;
     STEP;
 }
 
 int HASMAG_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    float roll = 0, pitch = 0, yaw = 0, accX = 0, accY = 0, accZ = 0;
-    int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-    if ((res & MAG_BIT) == 0)
-    {
-        *sp=0;
-        STEP;
-    }
-
-    *sp=1;
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status & MAG_BIT) ? 1 : 0;
     STEP;
 }
 
 int PITCH_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
-
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if (res < 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-        *sp=pitch; //Push back to to the stack
-        STEP;
-    }
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status > 0) ? (int)imu.pitch : 0;
+    STEP;
 }
 
 int ROLL_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
-
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if (res < 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-        *sp=roll; //Push back to to the stack
-        STEP;
-    }
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status > 0) ? (int)imu.roll : 0;
+    STEP;
 }
 
 int YAW_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
-
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if (res < 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-        *sp=yaw; //Push back to to the stack
-        STEP;
-    }
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status > 0) ? (int)imu.yaw : 0;
+    STEP;
 }
 
 int ACCX_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
-
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if (res < 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-        *sp=accX; //Push back to to the stack
-        STEP;
-    }
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status > 0) ? (int)imu.accX : 0;
+    STEP;
 }
 
 int ACCY_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
-
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if (res < 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-        *sp=accY; //Push back to to the stack
-        STEP;
-    }
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status > 0) ? (int)imu.accY : 0;
+    STEP;
 }
 
 int ACCZ_()
 {
-    if (NULL == IMU_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
-
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if (res < 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-        *sp=accZ; //Push back to to the stack
-        STEP;
-    }
+    IMUResult imu = fetch_imu();
+    *sp = (imu.status > 0) ? (int)imu.accZ : 0;
+    STEP;
 }
 
 int TEMP_()
 {
-    if (NULL == ENV_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float temp = 0;
-        float hum = 0;
-        float bright = 0;
-
-        int8_t res = ENV_Func(&temp,&hum,&bright);
-        if (res < 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
-        if (temp <= -10000)
-        {
-            *sp=-10000; //Push back to to the stack
-            STEP;
-        }
-        else
-        {
-            *sp=(int)round(temp*10); //Push back to to the stack
-            STEP;
-        }
-    }
+    ENVResult env = fetch_env();
+    if (env.status <= 0 || env.temp <= -10000) { *sp = -10000; STEP; }
+    *sp = (int)round(env.temp * 10);
+    STEP;
 }
 
 int HUM_()
 {
-    if (NULL == ENV_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float temp = 0;
-        float hum = 0;
-        float bright = 0;
-
-        int8_t res = ENV_Func(&temp,&hum,&bright);
-        if (res < 0)
-        {
-            *sp=-1; //Push back to to the stack
-            STEP;
-        }
-        *sp=(int)round(hum); //Push back to to the stack
-        STEP;
-    }
+    ENVResult env = fetch_env();
+    *sp = (env.status > 0) ? (int)round(env.humidity) : -1;
+    STEP;
 }
 
 int BRIGHT_()
 {
-    if (NULL == ENV_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        float temp = 0;
-        float hum = 0;
-        float bright = 0;
-
-        int8_t res = ENV_Func(&temp,&hum,&bright);
-        if (res < 0)
-        {
-            *sp=-1; //Push back to to the stack
-            STEP;
-        }
-        *sp=(int)round(bright); //Push back to to the stack
-        STEP;
-    }
+    ENVResult env = fetch_env();
+    *sp = (env.status > 0) ? (int)round(env.brightness) : -1;
+    STEP;
 }
 
 int GETPARAM_()
@@ -1580,383 +1294,79 @@ int WAITFOR_()
 
 int HASDATE_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hasdate == false)
-        {
-            *sp=0; //Push back to to the stack
-        }
-        else
-        {
-            *sp=1; //Push back to to the stack
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hasdate) ? 1 : 0;
+    STEP;
 }
 
 int HASTIME_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hastime == false)
-        {
-            *sp=0; //Push back to to the stack
-        }
-        else
-        {
-            *sp=1; //Push back to to the stack
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hastime) ? 1 : 0;
+    STEP;
 }
 
 int HOUR_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hastime == true)
-        {
-            *sp=hour;
-        }
-        else
-        {
-            *sp=-1; //Error: no time data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hastime) ? dt.hour : -1;
+    STEP;
 }
 
 int MINUTE_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hastime == true)
-        {
-            *sp=minute;
-        }
-        else
-        {
-            *sp=-1; //Error: no time data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hastime) ? dt.minute : -1;
+    STEP;
 }
 
 int SECOND_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hastime == true)
-        {
-            *sp=second;
-        }
-        else
-        {
-            *sp=-1; //Error: no time data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hastime) ? dt.second : -1;
+    STEP;
 }
 
 int DAY_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hasdate == true)
-        {
-            *sp=day;
-        }
-        else
-        {
-            *sp=-1; //Error: no date data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hasdate) ? dt.day : -1;
+    STEP;
 }
 
 int MONTH_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hasdate == true)
-        {
-            *sp=month;
-        }
-        else
-        {
-            *sp=-1; //Error: no date data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hasdate) ? dt.month : -1;
+    STEP;
 }
 
 int YEAR_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hasdate == true)
-        {
-            *sp=year;
-        }
-        else
-        {
-            *sp=-1; //Error: no date data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hasdate) ? dt.year : -1;
+    STEP;
 }
 
 int DAYOFWEEK_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hasdate == true)
-        {
-            *sp=dayofweek;
-        }
-        else
-        {
-            *sp=-1; //Error: no date data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hasdate) ? dt.dayofweek : -1;
+    STEP;
 }
 
 int DAYOFYEAR_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hasdate == true)
-        {
-            *sp=dayofyear;
-        }
-        else
-        {
-            *sp=-1; //Error: no date data
-        }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hasdate) ? dt.dayofyear : -1;
+    STEP;
 }
 
 int ISLEAPYEAR_()
 {
-    if (NULL == DATETIME_Func)
-    {
-        *sp=0; //Push back to to the stack
-        STEP;
-    }
-    else
-    {
-        bool hasdate;
-        bool hastime;
-        int hour;
-        int minute;
-        int second;
-        int day;
-        int month;
-        int year;
-        int dayofweek;
-        int dayofyear;
-        bool isleapyear;
-
-        int8_t res = DATETIME_Func(&hasdate,&hastime,&day,&month,&year,&hour,&minute,&second,&dayofweek,&dayofyear,&isleapyear);
-        if (hasdate == false)
-        {
-            *sp=0; //Push back to to the stack
-        }
-        else
-        {
-            if (isleapyear == false)
-            {
-                *sp=0; //Push back to to the stack
-            }
-            else
-            {
-                *sp=1; //Push back to to the stack
-            }
-    }
-        STEP;
-    }
+    DateTimeResult dt = fetch_datetime();
+    *sp = (dt.valid && dt.hasdate && dt.isleapyear) ? 1 : 0;
+    STEP;
 }
 
 typedef struct 
