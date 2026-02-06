@@ -120,3 +120,29 @@ void lora_rx( void )
     // Re-enter receive mode for the next packet
     radio.startReceive();
 }
+
+
+float lora_get_rssi(void)
+{
+    return radio.getRSSI();
+}
+
+float lora_get_snr(void)
+{
+    return radio.getSNR();
+}
+
+float lora_get_frequency(void)
+{
+    return DOWNSTREAM_FREQUENCY;
+}
+
+float lora_get_bandwidth(void)
+{
+    return DOWNSTREAM_BANDWIDTH;
+}
+
+int lora_get_sf(void)
+{
+    return DOWNSTREAM_SF;
+}

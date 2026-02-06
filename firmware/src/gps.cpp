@@ -245,6 +245,16 @@ int get_dayofyear(void)
 }
 
 
+int get_satellites(void)
+{
+    return gps.satellites.value();
+}
+
+int get_hdop(void)
+{
+    return gps.hdop.value();
+}
+
 bool get_pps(void)
 {
     if (digitalRead(GPS_PPS_PIN) == HIGH)
@@ -281,6 +291,8 @@ int get_second(void) { return 0; }
 int get_day_of_week(void) { return 0; }
 int get_dayofyear(void) { return 0; }
 bool get_isleapyear(void) { return false; }
+int get_satellites(void) { return 0; }
+int get_hdop(void) { return 0; }
 bool get_pps(void) { return false; }
 
 #endif
