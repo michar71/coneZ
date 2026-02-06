@@ -3,6 +3,7 @@
 
 #include "Arduino.h"
 
+bool is_us_dst(int year, int month, int day);
 bool sunSetPosition(float latitude, float longitude);
 bool sunSetTZOffset(int dstOffset);
 bool sunSetCurrentDate(int year, int month, int day);

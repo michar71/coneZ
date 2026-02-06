@@ -155,3 +155,26 @@ LOW
 #54 FIXED -- getMaxAccXYZ() only tracked positive acceleration.
     Changed comparisons to use fabs() so negative values are
     correctly tracked by magnitude.
+
+
+OPEN (won't fix / deferred)
+---------------------------
+
+#55 Magic numbers scattered throughout codebase.
+    FreeRTOS stack sizes (65535), buffer sizes (128/255) used as raw
+    literals instead of named constants. LED counts are now configurable
+    via the [led] config section (led.count1..count4, default 50).
+
+#56 Commented-out code in gps.cpp, effects.cpp, main.cpp, etc.
+    Dead commented blocks left from development/debugging.
+
+#57 set_basic_param/get_basic_param silently clamp invalid index
+    to MAX_PARAMS-1 instead of rejecting out-of-range values.
+
+#58 check_serial() 512-byte buffer has no overflow protection.
+
+#59 SOS_effect()/CIRCLE_effect() still use blocking delay() calls.
+    Kept intentionally for now.
+
+#60 "help" shell command crashes the main thread.
+    Root cause under investigation.

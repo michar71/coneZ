@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <FS.h>
+#include <WebServer.h>
 #include "config.h"
 #include "main.h"
 #include "printManager.h"
@@ -42,6 +43,12 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("system", "device_name",  CFG_STR,   device_name),
     CFG_ENTRY("system", "startup_script", CFG_STR, startup_script),
     CFG_ENTRY("system", "timezone",     CFG_INT,   timezone),
+    CFG_ENTRY("system", "auto_dst",    CFG_BOOL,  auto_dst),
+    // [led]
+    CFG_ENTRY("led",    "count1",       CFG_INT,   led_count1),
+    CFG_ENTRY("led",    "count2",       CFG_INT,   led_count2),
+    CFG_ENTRY("led",    "count3",       CFG_INT,   led_count3),
+    CFG_ENTRY("led",    "count4",       CFG_INT,   led_count4),
     // [debug]
     CFG_ENTRY("debug",  "system",       CFG_BOOL,  dbg_system),
     CFG_ENTRY("debug",  "basic",        CFG_BOOL,  dbg_basic),
@@ -81,6 +88,12 @@ static void config_fill_defaults(conez_config_t *cfg)
     strlcpy(cfg->device_name,     DEFAULT_DEVICE_NAME,    sizeof(cfg->device_name));
     strlcpy(cfg->startup_script,  DEFAULT_STARTUP_SCRIPT, sizeof(cfg->startup_script));
     cfg->timezone         = DEFAULT_TIMEZONE;
+    cfg->auto_dst         = DEFAULT_AUTO_DST;
+
+    cfg->led_count1       = DEFAULT_LED_COUNT;
+    cfg->led_count2       = DEFAULT_LED_COUNT;
+    cfg->led_count3       = DEFAULT_LED_COUNT;
+    cfg->led_count4       = DEFAULT_LED_COUNT;
 
     cfg->dbg_system       = DEFAULT_DBG_SYSTEM;
     cfg->dbg_basic        = DEFAULT_DBG_BASIC;
@@ -309,6 +322,183 @@ void config_apply_debug(void)
     setDebugLevel(SOURCE_WIFI,      config.dbg_wifi);
     setDebugLevel(SOURCE_SENSORS,   config.dbg_sensors);
     setDebugLevel(SOURCE_OTHER,     config.dbg_other);
+}
+
+
+// ---------- Web interface ----------
+
+static String html_attr_escape(const char *str)
+{
+    String out;
+    while (*str)
+    {
+        if (*str == '<')       out += "&lt;";
+        else if (*str == '>')  out += "&gt;";
+        else if (*str == '&')  out += "&amp;";
+        else if (*str == '"')  out += "&quot;";
+        else                   out += *str;
+        str++;
+    }
+    return out;
+}
+
+
+String config_get_html(const char *msg)
+{
+    String page = "<html><head><style>"
+        "body{font-family:sans-serif;max-width:700px;margin:auto;padding:10px}"
+        "fieldset{margin-bottom:12px} legend{font-weight:bold}"
+        "label{display:inline-block;width:140px} input[type=text],input[type=password]{width:200px}"
+        ".msg{padding:8px;margin-bottom:10px;background:#d4edda;border:1px solid #c3e6cb}"
+        ".btn{margin-top:10px;padding:6px 16px}"
+        "</style></head><body>\n";
+
+    page += "<h2>ConeZ Configuration</h2>\n";
+
+    if (msg && msg[0])
+    {
+        page += "<div class='msg'>";
+        page += msg;
+        page += "</div>\n";
+    }
+
+    page += "<form method='POST' action='/config'>\n";
+
+    const char *prev_section = "";
+    uint8_t *base = (uint8_t *)&config;
+    char buf[64];
+
+    for (int i = 0; i < CFG_TABLE_SIZE; i++)
+    {
+        const cfg_descriptor_t *d = &cfg_table[i];
+
+        // New section — close previous fieldset, open new one
+        if (strcmp(d->section, prev_section) != 0)
+        {
+            if (i > 0)
+                page += "</fieldset>\n";
+            page += "<fieldset><legend>";
+            page += d->section;
+            page += "</legend>\n";
+            prev_section = d->section;
+        }
+
+        // Build the form field name: section.key
+        snprintf(buf, sizeof(buf), "%s.%s", d->section, d->key);
+
+        page += "<label>";
+        page += d->key;
+        page += "</label> ";
+
+        switch (d->type)
+        {
+        case CFG_BOOL:
+        {
+            bool val = *(bool *)(base + d->offset);
+            page += "<input type='checkbox' name='";
+            page += buf;
+            page += "' value='1'";
+            if (val) page += " checked";
+            page += "><br>\n";
+            break;
+        }
+        case CFG_STR:
+        {
+            const char *val = (const char *)(base + d->offset);
+            bool is_password = (strcmp(d->section, "wifi") == 0 && strcmp(d->key, "password") == 0);
+            page += "<input type='";
+            page += is_password ? "password" : "text";
+            page += "' name='";
+            page += buf;
+            page += "' value='";
+            page += html_attr_escape(val);
+            page += "'><br>\n";
+            break;
+        }
+        case CFG_HEX:
+        {
+            int val = *(int *)(base + d->offset);
+            char hexbuf[16];
+            snprintf(hexbuf, sizeof(hexbuf), "0x%04X", val);
+            page += "<input type='text' name='";
+            page += buf;
+            page += "' value='";
+            page += hexbuf;
+            page += "'><br>\n";
+            break;
+        }
+        case CFG_FLOAT:
+        {
+            float val = *(float *)(base + d->offset);
+            char fbuf[32];
+            snprintf(fbuf, sizeof(fbuf), "%.9g", val);
+            page += "<input type='text' name='";
+            page += buf;
+            page += "' value='";
+            page += fbuf;
+            page += "'><br>\n";
+            break;
+        }
+        case CFG_INT:
+        {
+            int val = *(int *)(base + d->offset);
+            char ibuf[16];
+            snprintf(ibuf, sizeof(ibuf), "%d", val);
+            page += "<input type='text' name='";
+            page += buf;
+            page += "' value='";
+            page += ibuf;
+            page += "'><br>\n";
+            break;
+        }
+        }
+    }
+
+    // Close last fieldset
+    if (CFG_TABLE_SIZE > 0)
+        page += "</fieldset>\n";
+
+    page += "<input type='submit' value='Save' class='btn'>\n";
+    page += "</form>\n";
+
+    page += "<form method='POST' action='/config/reset' "
+            "onsubmit=\"return confirm('Reset all settings to defaults?')\">\n";
+    page += "<input type='submit' value='Reset to Defaults' class='btn'>\n";
+    page += "</form>\n";
+
+    page += "<br><a href='/'>Back to Home</a>\n";
+    page += "</body></html>\n";
+
+    return page;
+}
+
+
+void config_set_from_web(WebServer &srv)
+{
+    char buf[64];
+    uint8_t *base = (uint8_t *)&config;
+
+    for (int i = 0; i < CFG_TABLE_SIZE; i++)
+    {
+        const cfg_descriptor_t *d = &cfg_table[i];
+        snprintf(buf, sizeof(buf), "%s.%s", d->section, d->key);
+
+        if (d->type == CFG_BOOL)
+        {
+            // Checkbox: absent means off, present means on
+            bool checked = srv.hasArg(buf);
+            *(bool *)(base + d->offset) = checked;
+        }
+        else
+        {
+            String val = srv.arg(buf);
+            if (val.length() > 0)
+                config_set_field(d, val.c_str());
+        }
+    }
+
+    config_save();
+    config_apply_debug();
 }
 
 

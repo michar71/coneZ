@@ -32,7 +32,11 @@
 // System
 #define DEFAULT_DEVICE_NAME     ""
 #define DEFAULT_STARTUP_SCRIPT  "/startup.bas"
-#define DEFAULT_TIMEZONE        7
+#define DEFAULT_TIMEZONE        -8              // Standard (winter) offset; DST adds +1 automatically
+#define DEFAULT_AUTO_DST        true
+
+// LED counts per channel
+#define DEFAULT_LED_COUNT       50
 
 // Debug (true = on at boot)
 #define DEFAULT_DBG_SYSTEM      true
@@ -71,6 +75,13 @@ typedef struct {
     char    device_name[CONFIG_MAX_DEVICE_NAME];
     char    startup_script[CONFIG_MAX_PATH];
     int     timezone;
+    bool    auto_dst;
+
+    // [led]
+    int     led_count1;
+    int     led_count2;
+    int     led_count3;
+    int     led_count4;
 
     // [debug]
     bool    dbg_system;
@@ -95,5 +106,10 @@ void config_save(void);
 void config_reset(void);
 void config_apply_debug(void);
 int  cmd_config(int argc, char **argv);
+
+// ---------- Web interface ----------
+class WebServer;   // forward-declare
+String config_get_html(const char *msg);
+void   config_set_from_web(WebServer &server);
 
 #endif

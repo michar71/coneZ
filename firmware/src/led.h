@@ -4,17 +4,11 @@
 #include "board.h"
 #include "FastLED.h"
 
-// LED counts per output
-#define NUM_LEDS1 50
-#define NUM_LEDS2 1
-#define NUM_LEDS3 1
-#define NUM_LEDS4 1
-
-// Global LED buffers -- writable from any task
-extern CRGB leds1[NUM_LEDS1];
-extern CRGB leds2[NUM_LEDS2];
-extern CRGB leds3[NUM_LEDS3];
-extern CRGB leds4[NUM_LEDS4];
+// Global LED buffers -- dynamically allocated in led_setup() from config
+extern CRGB *leds1;
+extern CRGB *leds2;
+extern CRGB *leds3;
+extern CRGB *leds4;
 
 // Initialize FastLED hardware. Call from setup() before led_start_task().
 void led_setup( void );

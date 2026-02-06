@@ -23,7 +23,14 @@ sync_word=0x12
 [system]
 device_name=
 startup_script=/startup.bas
-timezone=7
+timezone=-8
+auto_dst=on
+
+[led]
+count1=50
+count2=50
+count3=50
+count4=50
 
 [debug]
 system=on
