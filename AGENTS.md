@@ -67,17 +67,21 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer definitions and N
 
 ### Key Hardware Interfaces
 
-- **LoRa:** RadioLib, SX1262/SX1268 via SPI, 431.250 MHz, SF9, 500 kHz BW
+- **LoRa:** RadioLib, SX1262/SX1268 via SPI, configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW)
 - **GPS:** TinyGPSPlus on UART (9600 baud), with PPS pin for sync
 - **LEDs:** FastLED WS2811 on 4 GPIO pins — RGB1 (50 LEDs), RGB2/3/4 (1 LED each), BRG color order. All FastLED interaction is centralized in `led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
 - **Temp:** TMP102 on I2C 0x48
-- **WiFi:** STA mode connecting to "RN-ConeZ", with ElegantOTA at `/update`
+- **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`
 - **CLI:** SimpleSerialShell, defaults to Telnet after setup; press any key on USB Serial to switch back
+
+### Configuration
+
+INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-table-driven: `cfg_table[]` in `config.cpp` maps `{section, key, type, offset}` to `conez_config_t` struct fields. Covers WiFi, GPS origin, LoRa radio params, timezone, debug defaults, and startup script. CLI commands: `config`, `config set`, `config unset`, `config reset`. See `documentation/config.txt` for full reference.
 
 ### Filesystem
 
-LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), LUT data files (`LUT_N.csv`). If `/startup.bas` exists it auto-executes on boot.
+LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), LUT data files (`LUT_N.csv`), and optionally `/config.ini`. The configured startup script (default `/startup.bas`) auto-executes on boot if present.
 
 ### Firmware Versioning
 

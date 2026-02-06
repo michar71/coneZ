@@ -1,0 +1,150 @@
+ConeZ CLI Command Reference
+============================
+
+The CLI is available via Telnet (default) or USB Serial. After boot the
+CLI listens on Telnet; pressing any key on the USB Serial port switches
+the CLI back to Serial.
+
+
+Quick Reference
+---------------
+
+  ?                                  Show help
+  config [set|unset|reset]           Show or change settings
+  debug [off | {source} [on|off]]    Show or set debug message types
+  del {filename}                     Delete file
+  dir                                List files
+  gps                                Show GPS status
+  led                                Show LED configuration
+  list {filename}                    Show file contents
+  load {filename}                    Receive file via serial (CTRL+Z to end)
+  lora                               Show LoRa radio status
+  mem                                Show heap memory stats
+  param {id} {value}                 Set BASIC program parameter
+  ps                                 Show task list and stack watermarks
+  reboot                             Reboot the device
+  ren {oldname} {newname}            Rename file
+  run {filename}                     Run BASIC program
+  sensors                            Show sensor readings
+  stop                               Stop running BASIC program
+  tc                                 Show thread count per core
+  time                               Show current date/time from GPS
+  uptime                             Show system uptime
+  version                            Show firmware version and board info
+  wifi                               Show WiFi status
+
+
+Detailed Command Descriptions
+-----------------------------
+
+?
+  Alias for the help display. Shows all available commands.
+
+config
+  Show all current configuration settings. See documentation/config.txt
+  for the full config system reference.
+
+  config set section.key value
+      Set a configuration value and save to flash.
+      Debug settings take effect immediately; all others require reboot.
+      Values with spaces are supported (e.g. config set wifi.ssid My Net).
+
+  config unset section.key
+      Revert a single key to its compiled default and save.
+
+  config reset
+      Delete /config.ini and revert all settings to compiled defaults.
+
+debug
+  With no arguments, shows the current on/off state of each debug source.
+
+  debug off
+      Turn off all debug message sources.
+
+  debug {source}
+      Turn on the named source. Equivalent to "debug {source} on".
+
+  debug {source} on|off
+      Enable or disable a specific source.
+
+  Sources: SYSTEM, BASIC, COMMANDS, SHELL, GPS, GPS_RAW, LORA, LORA_RAW,
+           FSYNC, WIFI, SENSORS, OTHER
+
+del {filename}
+  Delete a file from LittleFS. Path must start with /.
+  Example: del /old_script.bas
+
+dir
+  List all files and directories on LittleFS with sizes.
+
+gps
+  Show GPS status: fix, satellites, HDOP, position, altitude, speed,
+  direction. Only available on boards with GPS hardware.
+
+led
+  Show LED strip configuration (number of LEDs per strip).
+  Only available on boards with RGB LEDs.
+
+list {filename}
+  Print the contents of a file to the console.
+  Example: list /startup.bas
+
+load {filename}
+  Receive a file over the serial connection line by line.
+  Send CTRL+Z (0x1A) to end transmission and save the file.
+  Example: load /new_script.bas
+
+lora
+  Show LoRa radio status: frequency, bandwidth, spreading factor,
+  last RSSI and SNR.
+
+mem
+  Show heap memory: free bytes, minimum since boot, largest allocatable
+  block.
+
+param {id} {value}
+  Set a BASIC program parameter. Parameters are a 16-slot integer array
+  shared between the main loop and running BASIC scripts. The BASIC
+  program reads them with GETPARAM(id).
+  Example: param 1 42
+
+ps
+  Show FreeRTOS task list with state, priority, core affinity, and
+  minimum free stack (high water mark) for each known task.
+
+reboot
+  Reboot the ESP32.
+
+ren {oldname} {newname}
+  Rename a file on LittleFS.
+  Example: ren /old.bas /new.bas
+
+run {filename}
+  Start a BASIC program. The program runs on the dedicated BASIC task
+  (Core 0). Only one program can run at a time.
+  Example: run /test.bas
+
+sensors
+  Show sensor readings: IMU (roll/pitch/yaw/acceleration), temperature,
+  battery voltage, solar voltage. Available sensors depend on the board.
+
+stop
+  Stop the currently running BASIC program by setting parameter 0 to 1.
+  The BASIC program should check GETPARAM(0) to honor the stop request.
+
+tc
+  Show the thread loop counter for each CPU core. Useful for checking
+  that tasks are running.
+
+time
+  Show current date, time, and day of week from GPS.
+  Only available on boards with GPS hardware.
+
+uptime
+  Show time since boot in days, hours, minutes, seconds.
+
+version
+  Show firmware project name, version, build date/time, and board type.
+
+wifi
+  Show WiFi status: SSID, connection state, IP address, RSSI.
