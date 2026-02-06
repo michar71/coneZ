@@ -2,26 +2,22 @@
 #include "main.h"
 #include "gps.h"
 #include "printManager.h"
+#include "config.h"
 
 #ifdef BOARD_HAS_GPS
 
 #include <HardwareSerial.h>
 #include <TinyGPSPlus.h>
 
-// Stuff that needs to be set via LoRa
-//   Nevada desert festival origin:
-float origin_lat = 40.762173;
-float origin_lon = -119.193672;
-//   ESE origin:
-//float origin_lat = 36.236735;
-//float origin_lon = -118.025373;
-
+// Origin coordinates — set from config in gps_setup()
+float origin_lat;
+float origin_lon;
 
 // Stuff we're exporting
 // Marked volatile for cross-core visibility (Core 1 writes, Core 0 reads).
 // Individual aligned 32-bit reads/writes are atomic on Xtensa.
-volatile float gps_lat = /*40.76*/ origin_lat;
-volatile float gps_lon = /*-119.19*/ origin_lon;
+volatile float gps_lat;
+volatile float gps_lon;
 volatile bool gps_pos_valid = false;
 
 volatile float gps_alt = 0;       // Altitude is in meters
@@ -47,6 +43,12 @@ HardwareSerial GPSSerial(0);
 
 int gps_setup()
 {
+    // Load origin from config
+    origin_lat = config.origin_lat;
+    origin_lon = config.origin_lon;
+    gps_lat    = origin_lat;
+    gps_lon    = origin_lon;
+
     //Setup PPS Pin
     pinMode(GPS_PPS_PIN, INPUT_PULLUP);
     GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin

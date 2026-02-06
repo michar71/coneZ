@@ -15,6 +15,7 @@
 #include "sensors.h"
 #include "lora.h"
 #include "led.h"
+#include "config.h"
 
 
 //Serial/Telnet Shell comamnds
@@ -645,6 +646,7 @@ int cmd_help( int argc, char **argv )
 {
     printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  ?                                  Show help\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]           Show or change settings\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]    Show or set debug message types\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  del {filename}                     Delete file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  dir                                List files\n" ) );
@@ -680,6 +682,7 @@ void init_commands(Stream *dev)
 
     //file Sydstem commands
     shell.addCommand(F("?"), cmd_help);
+    shell.addCommand(F("config"), cmd_config);
     shell.addCommand(F("debug"), cmd_debug );
     shell.addCommand(F("del"), delFile);
     shell.addCommand(F("dir"), listDir);

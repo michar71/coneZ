@@ -24,6 +24,7 @@
 #include "printManager.h"
 #include "sensors.h"
 #include "sun.h"
+#include "config.h"
 
 #define USE_TELNET
 
@@ -52,10 +53,6 @@
 #ifndef BUILD_TIME
 #define BUILD_TIME "unknown"
 #endif
-
-
-const char *wifi_ssid = "RN-ConeZ";
-const char *wifi_psk = "conezconez";
 
 
 bool littlefs_mounted = false;
@@ -185,14 +182,14 @@ void basic_autoexec(void)
     //Appartly the function exist() exist... But shouldn't be used.
     //Because it uses open() which flags an error if the file doesn't exists...
     //Open bug in littleFS for 4 year... WTF????
-    if (littlefs_mounted && FSLINK.exists((char*)"/startup.bas"))
+    if (littlefs_mounted && FSLINK.exists(config.startup_script))
     {
-        printfnl(SOURCE_SYSTEM,"startup.bas found. Executing...\n");
-        set_basic_program((char*)"/startup.bas");
+        printfnl(SOURCE_SYSTEM,"%s found. Executing...\n", config.startup_script);
+        set_basic_program(config.startup_script);
     }
     else
     {
-      printfnl(SOURCE_SYSTEM,"No startup.bas\n");
+      printfnl(SOURCE_SYSTEM,"No %s\n", config.startup_script);
     }
   }
 }
@@ -301,6 +298,9 @@ void setup()
   init_LittleFS();
   list_dir( FSLINK, "/" );
 
+  // Load config from /config.ini (or use compiled defaults)
+  config_init();
+
 
   // I2C
   Wire.begin( I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ );
@@ -322,21 +322,27 @@ void setup()
   Serial.println( "\nConnecting to wifi..." );
   
 
-  // Generate ConeZ-nnnn DHCP hostname from last 2 octets of MAC address.
+  // Generate DHCP hostname: use config.device_name if set, else ConeZ-nnnn from MAC.
   WiFi.mode( WIFI_STA );
 
-  uint8_t mac[6];
-  esp_read_mac( mac, ESP_MAC_WIFI_STA );
-
-  char hostname[16];                       // "ConeZ-" + 4 hex + NUL
-  sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
+  char hostname[CONFIG_MAX_DEVICE_NAME];
+  if (config.device_name[0] != '\0')
+  {
+    strlcpy( hostname, config.device_name, sizeof(hostname) );
+  }
+  else
+  {
+    uint8_t mac[6];
+    esp_read_mac( mac, ESP_MAC_WIFI_STA );
+    sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
+  }
 
   WiFi.setHostname( hostname );              // must precede WiFi.begin()
 
   Serial.print( "Hostname: " );
   Serial.println( hostname );
 
-  WiFi.begin( wifi_ssid, wifi_psk );
+  WiFi.begin( config.wifi_ssid, config.wifi_password );
 
   unsigned long t_wifi_start = millis();
 
@@ -367,18 +373,10 @@ void setup()
 
   //Init print manager
   printManagerInit(&Serial);
-  setDebugLevel(SOURCE_SYSTEM, true);
-  setDebugLevel(SOURCE_BASIC, true);
-  setDebugLevel(SOURCE_COMMANDS, true);
-  setDebugLevel(SOURCE_GPS, false);
-  setDebugLevel(SOURCE_LORA, false);
-  setDebugLevel(SOURCE_SHELL, false);
-  setDebugLevel(SOURCE_OTHER, false);
-  setDebugLevel(SOURCE_SENSORS, false);
+  config_apply_debug();
   showTimestamps(true);
 
-  //TBD for NEVADA
-  sunSetTZOffset(7);
+  sunSetTZOffset(config.timezone);
 
   //Start the LED render task (owns FastLED.show() from here on)
   led_start_task();
