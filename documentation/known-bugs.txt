@@ -1,0 +1,71 @@
+Known Firmware Bugs
+===================
+Identified 2026-02-05 via code review. Organized by severity.
+
+
+CRITICAL
+--------
+
+#3  FIXED -- Mutex released before interp(); next_code copied to local buffer
+
+#7  FIXED -- Duplicate "debug" global variable removed from main.cpp
+
+#8  FIXED -- GPS_RX_PIN was a typo (40 instead of 44). LED_PIN=40 is correct.
+
+
+HIGH
+----
+
+#9  FIXED -- FastLED separated into dedicated render task (led.cpp/led.h).
+    FastLED.show() now called from exactly one place: the LED render task
+    on Core 1. All other code writes to LED buffers and calls led_show()
+    to set a dirty flag. The render task runs at ~30 FPS.
+
+#10 SOS_effect2() blocks main loop for 3+ seconds
+    effects.cpp:153-247
+    When the trigger fires, delay() calls block for 3+ seconds total.
+    During this time LoRa RX, GPS, HTTP, CLI, and sensors all stop.
+    FIX: Rewrite as a non-blocking state machine that returns to loop()
+    each iteration, or move effects to their own FreeRTOS task.
+
+#11 Effects use hardcoded origin coordinates
+    effects.cpp:96-97, 165-166, 265-266
+    Each effect declares local origin_lat/origin_lon set to Playa
+    coordinates (40.762173, -119.193672) that shadow the GPS module's
+    globals (ESE: 36.236735, -118.025373). The accessor functions
+    get_org_lat()/get_org_lon() are never called by effects.
+    FIX: Replace local origin variables with get_org_lat()/get_org_lon().
+
+#12 FIXED -- SCALE_() returns input instead of scaled result
+
+#13 FIXED -- TEMP/HUM function registration broken
+
+#14 FIXED -- RGB<->HSV conversion functions are swapped
+
+#15 FIXED -- ACCZ_() returns Y-axis instead of Z-axis
+
+#16 FIXED -- EVENT_SYS_TIMER logic broken
+
+
+MEDIUM
+------
+
+#18 FIXED -- SOURCE_SHELL debug flag corrected in printManager.cpp
+
+#19 FIXED -- Added volatile to cross-core GPS/sensor/sun globals
+
+#20 FIXED -- ROTATEARRAY_() left-rotate off-by-one corrected
+
+#21 FIXED -- WAITFOR_() int8_t type mismatch corrected
+
+#24 FIXED -- IMU_INT_PIN was a typo (37 instead of 41). RGB2_PIN=37 is correct.
+
+#25 FIXED -- readFile() now reads line-by-line
+
+#26 FIXED -- check_serial() only calls init_commands() once via flag
+
+#27 FIXED -- Date/time functions now return -1 on error instead of 1
+
+#28 FIXED -- DAY/MONTH/YEAR/GPSALT registered in funhook_(), GPSALT_T defined
+
+#29 FIXED -- sunSetPosition() header signature matches implementation

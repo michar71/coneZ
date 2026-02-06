@@ -44,9 +44,8 @@ void vprintfnl( source_e source, const char *format, va_list args )
     //va_start(args, format);
 
     //get Mutex
-    if (xSemaphoreTake(print_mutex, portMAX_DELAY) != pdTRUE) 
+    if (xSemaphoreTake(print_mutex, portMAX_DELAY) != pdTRUE)
     {
-        va_end(args);
         return; // Failed to acquire mutex
     }
 
@@ -62,7 +61,7 @@ void vprintfnl( source_e source, const char *format, va_list args )
             break;
 
         case SOURCE_SHELL:
-            if (debug & SOURCE_BASIC)
+            if (debug & SOURCE_SHELL)
             {
                 print_ts();
                 OutputStream->print("[SHELL] ");
@@ -177,8 +176,6 @@ void vprintfnl( source_e source, const char *format, va_list args )
             break;            
     }
     
-    va_end(args);
-
     //return mutex
     xSemaphoreGive(print_mutex);
 }

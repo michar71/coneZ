@@ -146,27 +146,35 @@ void basic_task_fun( void * parameter )
     {
         vTaskDelay(5 / portTICK_PERIOD_MS);
         inc_thread_count(xPortGetCoreID());
-        if (xSemaphoreTake(basic_mutex, portMAX_DELAY) == pdTRUE) 
+        if (xSemaphoreTake(basic_mutex, portMAX_DELAY) == pdTRUE)
         {
             if (next_code[0] != 0)
             {
+                //Copy program path to local buffer and release mutex
+                char local_code[256];
+                strncpy(local_code, next_code, sizeof(local_code));
+                local_code[sizeof(local_code) - 1] = '\0';
+                next_code[0] = 0;
+                xSemaphoreGive(basic_mutex);
+
                 //Execute program
-                printfnl(SOURCE_BASIC,"Running: %s on Core:%d\n",next_code,xPortGetCoreID());
+                printfnl(SOURCE_BASIC,"Running: %s on Core:%d\n",local_code,xPortGetCoreID());
                 reset_params();
-                initbasic(1);      
-                int res = interp(next_code);
+                initbasic(1);
+                int res = interp(local_code);
                 if (res != 0)
                 {
                     printfnl(SOURCE_BASIC,"Error Exit Code: %d\n",res);
-                }   
-                else 
+                }
+                else
                 {
                     printfnl(SOURCE_BASIC,"DONE\n");
                 }
-                //Reset Exec Code
-                next_code[0] = 0;
             }
-            xSemaphoreGive(basic_mutex);
+            else
+            {
+                xSemaphoreGive(basic_mutex);
+            }
         }  
         
     }
@@ -176,7 +184,8 @@ bool set_basic_program(char* prog)
 {
     if (xSemaphoreTake(basic_mutex, 1000) == pdTRUE) 
     {
-        strcpy(next_code,prog);
+        strncpy(next_code, prog, sizeof(next_code) - 1);
+        next_code[sizeof(next_code) - 1] = '\0';
         xSemaphoreGive(basic_mutex);
         return true;
     }
@@ -204,18 +213,18 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
         case EVENT_SYS_TIMER:
         {
             //For Sys-Timer the condition options are different.
-            //First we take the trigger value and convert it to the value in mmilisec,
-            long t = triggerValue;
+            //First we take the trigger value and convert it to a duration in milliseconds,
+            long duration_ms = triggerValue;
             switch (condition)
             {
                 case CONDITON_HOUR:
-                    t *= 3600000; //Convert to ms
+                    duration_ms *= 3600000; //Convert to ms
                     break;
                 case CONDITON_MINUTE:
-                    t *= 60000; //Convert to ms
+                    duration_ms *= 60000; //Convert to ms
                     break;
                 case CONDITON_SECOND:
-                    t *= 1000; //Convert to ms
+                    duration_ms *= 1000; //Convert to ms
                     break;
                 case CONDITON_MS:
                     //Already in ms
@@ -223,13 +232,13 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 default:
                     break;
             }
-            long st = millis();
-            while (st < t)
+            long start = millis();
+            long deadline = start + duration_ms;
+            while (millis() < deadline)
             {
                 vTaskDelay(1 / portTICK_PERIOD_MS);
                 inc_thread_count(xPortGetCoreID());
-                st = millis();
-                if (timeout_ms > 0 && (st - t) > timeout_ms)
+                if (timeout_ms > 0 && (millis() - start) > timeout_ms)
                 {
                     return 0; //Timeout
                 }
@@ -253,7 +262,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                     last_pps = pps;
                     vTaskDelay(1 / portTICK_PERIOD_MS);
                     inc_thread_count(xPortGetCoreID());
-                    bool pps = get_pps();
+                    pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
                         return 0; //Timeout
@@ -267,13 +276,13 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                     last_pps = pps;
                     vTaskDelay(1 / portTICK_PERIOD_MS);
                     inc_thread_count(xPortGetCoreID());
-                    bool pps = get_pps();
+                    pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
-                } while (!((last_pps == true) && (pps == false))); //Wait for PPS to go high
-                return 1; //PPS Pulse received  
+                } while (!((last_pps == true) && (pps == false))); //Wait for PPS to go low
+                return 1; //PPS Pulse received
             }
             else
             {
@@ -289,12 +298,11 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 do{
                     vTaskDelay(1 / portTICK_PERIOD_MS);
                     inc_thread_count(xPortGetCoreID());
-                    bool pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
-                } while (get_basic_param(sourceID) <= triggerValue); //Wait for PPS to go high
+                } while (get_basic_param(sourceID) <= triggerValue);
                 return 1;
             }
             if (condition == CONDITON_SMALLER)
@@ -302,39 +310,36 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 do{
                     vTaskDelay(1 / portTICK_PERIOD_MS);
                     inc_thread_count(xPortGetCoreID());
-                    bool pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
-                } while (get_basic_param(sourceID) >= triggerValue); //Wait for PPS to go high
-                return 1; 
-            }            
+                } while (get_basic_param(sourceID) >= triggerValue);
+                return 1;
+            }
             else if (condition == CONDITON_EQUAL)
             {
                 do{
                     vTaskDelay(1 / portTICK_PERIOD_MS);
                     inc_thread_count(xPortGetCoreID());
-                    bool pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
-                } while (get_basic_param(sourceID) != triggerValue); //Wait for PPS to go high
+                } while (get_basic_param(sourceID) != triggerValue);
                 return 1;
-            }         
+            }
             else if (condition == CONDITON_NOT_EQUAL)
             {
                 do{
                     vTaskDelay(1 / portTICK_PERIOD_MS);
                     inc_thread_count(xPortGetCoreID());
-                    bool pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
-                } while (get_basic_param(sourceID) == triggerValue); //Wait for PPS to go high
-                return 1; //PPS Pulse received
+                } while (get_basic_param(sourceID) == triggerValue);
+                return 1;
             }    
             else
             {

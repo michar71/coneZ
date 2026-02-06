@@ -2,54 +2,14 @@
 #define main_h
 
 #include "board.h"
-#include "FastLED.h"
+#include "led.h"
 
 #define FSLINK LittleFS
 
-//#define configGENERATE_RUN_TIME_STATS 
+//#define configGENERATE_RUN_TIME_STATS
 //#define configUSE_STATS_FORMATTING_FUNCTIONS
 
-// Misc GPIO pins
-#define LED_PIN 40
-
-// I2C pins
-#define I2C_SDA_PIN   17
-#define I2C_SCL_PIN   18
-
-// PSRAM
-#define PSR_CE          4
-#define PSR_MISO        5
-#define PSR_SCK         6
-#define PSR_MOSI        7
-
-// RGB String Pins
-#define RGB1_PIN        38
-#define RGB2_PIN        37
-#define RGB3_PIN        36
-#define RGB4_PIN        35
-
-// Hartmann extension connector
-#define EXT1_PIN        15
-#define EXT2_PIN        16
-
-// Power Management/Charging
-#define ADC_BAT_PIN     1
-#define ADC_SOLAR_PIN   2
-#define SOLAR_PWM_PIN   21
-#define LOAD_ON_PIN     47
-#define PWR_SW_PIN      33
-#define PWR_OFF_PIN     34
-
-// Other
-#define IMU_INT_PIN     37
-
-
-// LED counts per output
-#define NUM_LEDS1 50
-#define NUM_LEDS2 1
-#define NUM_LEDS3 1
-#define NUM_LEDS4 1
-
+// Pin definitions are in board.h
 
 // Structure to hold result
 typedef struct {
@@ -57,7 +17,6 @@ typedef struct {
     float bearing_deg;  // Bearing in degrees
 } GeoResult;
 
-void color_leds(int ch, int cnt, CRGB col);
 GeoResult xy_to_polar(float x1, float y1, float x2, float y2);
 void latlon_to_meters(float latitude_deg, float longitude_deg,
                       float *x_offset_meters, float *y_offset_meters);

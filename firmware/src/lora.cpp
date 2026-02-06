@@ -23,7 +23,7 @@ SPISettings spiLoRaSettings( LORA_SPI_FREQ, MSBFIRST, SPI_MODE0 );
 // Create the LoRa radio object depending on which board we're building for.
 #ifdef BOARD_LORA_SX1268
   SX1268 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
-#elif DEFINED( BOARD_LORA_SX1262 )
+#elif defined( BOARD_LORA_SX1262 )
   SX1262 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
 #endif
 
@@ -41,7 +41,7 @@ int lora_setup( void )
 {
   Serial.println("Init LoRa... ");
 
-  spiLoRa.begin( LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI, LORA_PIN_NSS );
+  spiLoRa.begin( LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI, LORA_PIN_CS );
 
 
   radio.setTCXO( 1.8, 5000 );
@@ -116,5 +116,7 @@ void lora_rx( void )
             printfnl(SOURCE_LORA, "Packet: %s\n",str.c_str() );
             //hexdump( (uint8_t*)str.c_str(), str.length() );
     }
-    
+
+    // Re-enter receive mode for the next packet
+    radio.startReceive();
 }

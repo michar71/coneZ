@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <Sensor_TMP102.h>
 #include <MPU6500_WE.h>
+#include "board.h"
 #include "printManager.h"
 
 #define MPU6500_ADDR 0x68
@@ -10,14 +11,15 @@
 MPU6500_WE mpu(MPU6500_ADDR);
 Sensor_TMP102 tmp;
 
-float temperature = -500;
+// Marked volatile for cross-core visibility (Core 1 writes, Core 0 reads).
+volatile float temperature = -500;
 xyzFloat gValue ;
 xyzFloat gyr;
 xyzFloat angle;
-float mpu_temp;
-float resultantG = 0;
-int adc_bat_mv = 0;
-int adc_solar_mv = 0;
+volatile float mpu_temp;
+volatile float resultantG = 0;
+volatile int adc_bat_mv = 0;
+volatile int adc_solar_mv = 0;
 bool IMU_avaliable = false;
 
 
@@ -72,8 +74,10 @@ void sensors_loop(void)
     //printfnl(SOURCE_SENSORS, "MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f", accX, accY, accZ);
 
     //Read ADC's
-    adc_bat_mv = analogReadMilliVolts(1); 
-    adc_solar_mv = analogReadMilliVolts(2); 
+    adc_bat_mv = analogReadMilliVolts(ADC_BAT_PIN);
+#ifdef ADC_SOLAR_PIN
+    adc_solar_mv = analogReadMilliVolts(ADC_SOLAR_PIN);
+#endif
 }
 
 

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "main.h"
+#include "led.h"
 #include "util.h"
 #include "gps.h"
 
@@ -133,18 +134,19 @@ void SOS_effect(void)
         OutputStream->println( sec );
       
         //Flash Light
-        for (int ii = 255; ii>0; ii=ii-32)
+        for (int ii = 255; ii>=0; ii=ii-32)
         {
           CRGB col;
           col.r = ii;
           col.g = ii;
           col.b = ii;
-          color_leds(1, 50, col);
+          led_set_channel(1, 50, col);
+          led_show();
           delay (20);
         }
-        color_leds(1, 50, CRGB::Black);
         delay(25);
-        color_leds(1, 50, CRGB::Black);
+        led_set_channel(1, 50, CRGB::Black);
+        led_show();
       }
 }
 
@@ -211,18 +213,20 @@ void SOS_effect2(void)
           col.r = ii;
           col.g = ii;
           col.b = ii;
-          color_leds(1, 50, col);
+          led_set_channel(1, 50, col);
+          led_show();
           delay (20);
         }
 
         //Flash Light - Ramp down
-        for (int ii = 255; ii>0; ii=ii-8)
+        for (int ii = 255; ii>=0; ii=ii-8)
         {
           CRGB col;
           col.r = ii;
           col.g = ii;
           col.b = ii;
-          color_leds(1, 50, col);
+          led_set_channel(1, 50, col);
+          led_show();
           delay (20);
         }
 
@@ -239,9 +243,11 @@ void SOS_effect2(void)
             col.g = 0;
             col.b = 10;
         }
-        color_leds( 1, 50, col );
+        led_set_channel( 1, 50, col );
+        led_show();
         delay( 20 );
-        color_leds( 1, 50, col );
+        led_set_channel( 1, 50, col );
+        led_show();
         delay( 20 );
       }
 }
@@ -295,11 +301,12 @@ void CIRCLE_effect(void)
         int hue = (int)map(deg,0,360,0,255);
         //hue = hue + offset_cnt;
         hue = hue + map( get_sec(), 0, 59, 0, 255 );
-        hue  = hue % 255;
+        hue  = hue % 256;
 
         CRGB col;
         col.setHSV(hue,255,255);
-        color_leds(1, 50, col);
+        led_set_channel(1, 50, col);
+        led_show();
         delay (20);
         //offset_cnt = offset_cnt + 5;
       }

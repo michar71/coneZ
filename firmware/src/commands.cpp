@@ -70,9 +70,12 @@ void readFile(fs::FS &fs, const char *path)
       return;
     }
   
-    while (file.available()) 
+    char buf[128];
+    while (file.available())
     {
-      printfnl(SOURCE_COMMANDS, F("%c\n"), file.read());
+      int len = file.readBytesUntil('\n', buf, sizeof(buf) - 1);
+      buf[len] = '\0';
+      printfnl(SOURCE_COMMANDS, "%s\n", buf);
     }
     printfnl(SOURCE_COMMANDS, F("\n") );
     printfnl(SOURCE_COMMANDS, F("- file read complete\n") );
@@ -277,8 +280,9 @@ int loadFile(int argc, char **argv)
         getStream()->flush();
         //create file
         File file = FSLINK.open(argv[1], FILE_WRITE);
-        if (!file) 
+        if (!file)
         {
+            releaseLock();
             printfnl(SOURCE_COMMANDS, F("- failed to open file for writing\n") );
             return 1;
         }
@@ -308,13 +312,15 @@ int loadFile(int argc, char **argv)
                     if (inchar == '\n')
                     {
                         //Write line
-                        if (file.print(line)) 
+                        line[charcount] = '\0';
+                        if (file.print(line))
                         {
                         } 
                         else 
                         {
                           getStream()->printf("Write Error\n");
                           file.close();
+                          releaseLock();
                           return 1;
                         }
                         //increase line counter

@@ -1,9 +1,12 @@
 #include <Arduino.h>
-#include <HardwareSerial.h>
-#include <TinyGPSPlus.h>
 #include "main.h"
 #include "gps.h"
 #include "printManager.h"
+
+#ifdef BOARD_HAS_GPS
+
+#include <HardwareSerial.h>
+#include <TinyGPSPlus.h>
 
 // Stuff that needs to be set via LoRa
 //   Playa origin:
@@ -15,17 +18,19 @@ float origin_lon = -118.025373;
 
 
 // Stuff we're exporting
-float gps_lat = /*40.76*/ origin_lat;
-float gps_lon = /*-119.19*/ origin_lon;
-bool gps_pos_valid = false;
+// Marked volatile for cross-core visibility (Core 1 writes, Core 0 reads).
+// Individual aligned 32-bit reads/writes are atomic on Xtensa.
+volatile float gps_lat = /*40.76*/ origin_lat;
+volatile float gps_lon = /*-119.19*/ origin_lon;
+volatile bool gps_pos_valid = false;
 
-float gps_alt = 0;       // Altitude is in meters
-bool gps_alt_valid = false;
-float gps_dir = 0;
-float gps_speed = 0;    // Speed is in m/s
+volatile float gps_alt = 0;       // Altitude is in meters
+volatile bool gps_alt_valid = false;
+volatile float gps_dir = 0;
+volatile float gps_speed = 0;    // Speed is in m/s
 
-bool gps_time_valid = false;
-uint32_t gps_time = 0;
+volatile bool gps_time_valid = false;
+volatile uint32_t gps_time = 0;
 
 TinyGPSPlus gps;
 
@@ -38,7 +43,7 @@ int gps_setup()
     //Setup PPS Pin
     pinMode(GPS_PPS_PIN, INPUT_PULLUP);
     GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin
-                     44 /*RX0*/, 43 /*TX0*/ );
+                     GPS_RX_PIN, GPS_TX_PIN );
 
     return 0;
 }
@@ -137,7 +142,7 @@ float get_org_lon(void)
 int get_day(void)
 {
     return gps.date.day();
-}   
+}
 
 int get_month(void)
 {
@@ -189,7 +194,7 @@ bool get_isleapyear(void)
 {
     int year = gps.date.year();
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-}   
+}
 
 int get_dayofyear(void)
 {
@@ -197,6 +202,11 @@ int get_dayofyear(void)
     int month = gps.date.month();
     int day = gps.date.day();
 
+
+    // Validate month range
+    if (month < 1 || month > 12) {
+        return -1; // Invalid month
+    }
 
     // Days in each month for a non-leap year
     int days_in_month[] = { 31, 28, 31, 30, 31, 30,
@@ -207,7 +217,7 @@ int get_dayofyear(void)
     }
 
     // Validate day for the given month
-    if (day > days_in_month[month - 1]) {
+    if (day < 1 || day > days_in_month[month - 1]) {
         return -1; // Invalid day
     }
 
@@ -230,5 +240,33 @@ bool get_pps(void)
     else
     {
         return false;
-    }   
+    }
 }
+
+#else // No GPS hardware
+
+int gps_setup() { return 0; }
+int gps_loop() { return 0; }
+
+float get_lat(void) { return 0; }
+float get_lon(void) { return 0; }
+int get_sec(void) { return 0; }
+float get_alt(void) { return 0; }
+float get_speed(void) { return 0; }
+float get_dir(void) { return 0; }
+bool get_gpsstatus(void) { return false; }
+float get_org_lat(void) { return 0; }
+float get_org_lon(void) { return 0; }
+
+int get_day(void) { return 0; }
+int get_month(void) { return 0; }
+int get_year(void) { return 0; }
+int get_hour(void) { return 0; }
+int get_minute(void) { return 0; }
+int get_second(void) { return 0; }
+int get_day_of_week(void) { return 0; }
+int get_dayofyear(void) { return 0; }
+bool get_isleapyear(void) { return false; }
+bool get_pps(void) { return false; }
+
+#endif
