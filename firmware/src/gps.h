@@ -28,4 +28,14 @@ int get_satellites(void);
 int get_hdop(void);
 
 bool get_pps(void);
+
+// --- Unified time API ---
+void     pps_isr_init(void);     // attach PPS interrupt (called from gps_setup)
+bool     get_time_valid(void);   // true if any time source (GPS+PPS or NTP) is active
+uint64_t get_epoch_ms(void);     // ms since Unix epoch, interpolated between updates
+uint8_t  get_time_source(void);  // 0=none, 1=NTP, 2=GPS+PPS
+bool     get_pps_flag(void);     // rising-edge flag, clear-on-read
+void     ntp_setup(void);        // call after WiFi connects
+void     ntp_loop(void);         // periodic re-sync check
+
 #endif

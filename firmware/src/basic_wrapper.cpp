@@ -252,36 +252,43 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 return -1; //No GPS Signal
             }
             //Now we can wait for the PPS Pulse
-            bool pps = get_pps();
-            bool last_pps = pps;
             long t = millis();
             if (condition == CONDITON_LOW_TO_HIGH)
             {
+                // Use ISR flag for sub-ms rising edge detection
+                get_pps_flag();  // clear any stale flag
                 do{
-                    last_pps = pps;
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    pps = get_pps();
+                    if (get_pps_flag())
+                    {
+                        return 1; //PPS rising edge received
+                    }
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
-                } while (!((last_pps == false) && (pps == true))); //Wait for PPS to go high
-                return 1; //PPS Pulse received
+                } while (true);
             }
             else if (condition == CONDITON_HIGH_TO_LOW)
             {
-                do{
-                    last_pps = pps;
+                // Wait for rising edge via ISR flag, then poll for falling edge
+                get_pps_flag();  // clear any stale flag
+                // First wait for rising edge
+                while (!get_pps_flag()) {
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
-                    {
-                        return 0; //Timeout
-                    }
-                } while (!((last_pps == true) && (pps == false))); //Wait for PPS to go low
-                return 1; //PPS Pulse received
+                        return 0;
+                }
+                // Now poll for falling edge
+                while (get_pps()) {
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                    inc_thread_count(xPortGetCoreID());
+                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                        return 0;
+                }
+                return 1; //PPS falling edge received
             }
             else
             {

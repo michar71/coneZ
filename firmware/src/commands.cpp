@@ -611,19 +611,34 @@ int cmd_sensors(int argc, char **argv)
 
 int cmd_time(int argc, char **argv)
 {
-#ifdef BOARD_HAS_GPS
     static const char *dayNames[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-    int dow = get_day_of_week();
-    if (dow < 0 || dow > 6) dow = 0;
 
-    printfnl(SOURCE_COMMANDS, F("Time: %04d-%02d-%02d %02d:%02d:%02d (%s)\n"),
-        get_year(), get_month(), get_day(),
-        get_hour(), get_minute(), get_second(),
-        dayNames[dow]);
-    printfnl(SOURCE_COMMANDS, F("GPS time valid: %s\n"), get_gpsstatus() ? "Yes" : "No");
-#else
-    printfnl(SOURCE_COMMANDS, F("GPS time not available on this board\n"));
+    if (get_time_valid()) {
+        int dow = get_day_of_week();
+        if (dow < 0 || dow > 6) dow = 0;
+
+        printfnl(SOURCE_COMMANDS, F("Time:   %04d-%02d-%02d %02d:%02d:%02d UTC (%s)\n"),
+            get_year(), get_month(), get_day(),
+            get_hour(), get_minute(), get_second(),
+            dayNames[dow]);
+
+        uint64_t epoch = get_epoch_ms();
+        printfnl(SOURCE_COMMANDS, F("Epoch:  %lu%03lu ms\n"),
+            (unsigned long)(epoch / 1000), (unsigned long)(epoch % 1000));
+    } else {
+        printfnl(SOURCE_COMMANDS, F("Time:   not available\n"));
+    }
+
+    // Show time source
+    uint8_t ts = get_time_source();
+    const char *src = "none";
+    if (ts == 2)      src = "GPS+PPS";
+    else if (ts == 1) src = "NTP";
+    printfnl(SOURCE_COMMANDS, F("Source: %s\n"), src);
+#ifdef BOARD_HAS_GPS
+    printfnl(SOURCE_COMMANDS, F("GPS fix: %s  Sats: %d\n"), get_gpsstatus() ? "Yes" : "No", get_satellites());
 #endif
+
     return 0;
 }
 

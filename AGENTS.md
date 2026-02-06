@@ -68,16 +68,31 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 ### Key Hardware Interfaces
 
 - **LoRa:** RadioLib, SX1262/SX1268 via SPI, configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW)
-- **GPS:** TinyGPSPlus on UART (9600 baud), with PPS pin for sync
+- **GPS:** TinyGPSPlus on UART (9600 baud), with PPS pin for interrupt-driven timing (see Time System below)
 - **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. All FastLED interaction is centralized in `led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
 - **Temp:** TMP102 on I2C 0x48
 - **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`
 - **CLI:** SimpleSerialShell, defaults to Telnet after setup; press any key on USB Serial to switch back
 
+### Time System
+
+Unified time API in `gps.h`/`gps.cpp` provides millisecond-precision epoch time across all board types. Consumers call `get_epoch_ms()` regardless of source.
+
+**Tiered sources (higher priority wins):**
+- **GPS + PPS** (time_source=2, ~1us accuracy) — ConeZ PCB only. PPS rising edge triggers `IRAM_ATTR` ISR that captures `millis()`. NMEA sentence (arriving ~100-200ms later) provides absolute time for the preceding edge. Epoch stored under `portMUX_TYPE` spinlock (64-bit not atomic on 32-bit Xtensa).
+- **NTP** (time_source=1, ~10-50ms accuracy) — Any board with WiFi. Uses ESP32 SNTP via `configTime()`. NTP server configurable via `[system] ntp_server` config key.
+- **None** (time_source=0) — `get_epoch_ms()` returns 0, consumers no-op.
+
+**GPS staleness fallback:** If PPS stops arriving for >10 seconds (GPS loss), `ntp_loop()` downgrades `time_source` to 0, allowing NTP to take over if WiFi is available.
+
+**API:** `get_epoch_ms()` (ms since Unix epoch), `get_time_valid()` (any source active), `get_time_source()` (0/1/2), `get_pps_flag()` (ISR edge flag, clear-on-read), `ntp_setup()`, `ntp_loop()`.
+
+**Thread safety:** `epoch_at_pps` + `millis_at_pps` protected by `portMUX_TYPE` spinlock. `pps_edge_flag` also uses spinlock for atomic read-then-clear. 32-bit `pps_millis`/`pps_count` use `volatile` only (aligned 32-bit atomic on Xtensa).
+
 ### Configuration
 
-INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-table-driven: `cfg_table[]` in `config.cpp` maps `{section, key, type, offset}` to `conez_config_t` struct fields. Covers WiFi, GPS origin, LoRa radio params, timezone, debug defaults, and startup script. CLI commands: `config`, `config set`, `config unset`, `config reset`. See `documentation/config.txt` for full reference.
+INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-table-driven: `cfg_table[]` in `config.cpp` maps `{section, key, type, offset}` to `conez_config_t` struct fields. Covers WiFi, GPS origin, LoRa radio params, NTP server, timezone, debug defaults, callsign, and startup script. CLI commands: `config`, `config set`, `config unset`, `config reset`. See `documentation/config.txt` for full reference.
 
 ### Filesystem
 
@@ -89,7 +104,7 @@ LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), LUT data files (
 
 ### Cue System
 
-GPS-time-synced LED cueing engine for music-synchronized light shows across geographically distributed cones. Binary `.cue` files on LittleFS contain a sorted timeline of cue entries (fill, blackout, stop, effect) that the engine walks during playback. Each cue supports group targeting (per-cone, per-group, bitmask) and spatial delay modes (radial ripple, directional waves) computed from GPS position.
+Epoch-time-synced LED cueing engine for music-synchronized light shows across geographically distributed cones. Uses `get_epoch_ms()` for timing — works with GPS+PPS (sub-ms sync between cones) or NTP fallback (adequate for single-cone or loose-sync shows). Binary `.cue` files on LittleFS contain a sorted timeline of cue entries (fill, blackout, stop, effect) that the engine walks during playback. Each cue supports group targeting (per-cone, per-group, bitmask) and spatial delay modes (radial ripple, directional waves) computed from GPS position.
 
 **Firmware files:** `cue.h`, `cue.cpp`. Initialized via `cue_setup()` in `setup()`, ticked via `cue_loop()` in the main loop.
 

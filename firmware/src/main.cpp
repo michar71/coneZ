@@ -360,6 +360,9 @@ void setup()
     Serial.println( " Connected");
     Serial.print( "IP address: " );
     Serial.println( WiFi.localIP() );
+
+    // Start NTP time sync (provides time on all boards, fills in before GPS lock)
+    ntp_setup();
   }
   else
   {
@@ -440,6 +443,9 @@ void loop()
     sunUpdateViaGPS();
   }
 #endif
+
+  // NTP time sync (runs on all boards when WiFi is connected)
+  ntp_loop();
 
   //Proicess Sensors.. Maybe we shoudl run this slower?
   sensors_loop();

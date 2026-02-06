@@ -1,8 +1,17 @@
 #include <Arduino.h>
+#include <sys/time.h>
 #include "main.h"
 #include "gps.h"
 #include "printManager.h"
 #include "config.h"
+
+// --- Shared time state (both builds) ---
+// Protected by spinlock for 64-bit coherency on 32-bit Xtensa
+static portMUX_TYPE time_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint64_t epoch_at_pps = 0;      // epoch ms at last PPS/NTP update
+static volatile uint32_t millis_at_pps = 0;     // millis() at that same moment
+static volatile bool     epoch_valid = false;
+static volatile uint8_t  time_source = 0;        // 0=none, 1=NTP, 2=GPS+PPS
 
 #ifdef BOARD_HAS_GPS
 
@@ -25,9 +34,6 @@ volatile bool gps_alt_valid = false;
 volatile float gps_dir = 0;
 volatile float gps_speed = 0;    // Speed is in m/s
 
-volatile bool gps_time_valid = false;
-volatile uint32_t gps_time = 0;
-
 volatile int gps_day = 0;
 volatile int gps_month = 0;
 volatile int gps_year = 0;
@@ -35,10 +41,60 @@ volatile int gps_hour = 0;
 volatile int gps_minute = 0;
 volatile int gps_second = 0;
 
+// --- PPS interrupt state ---
+static volatile uint32_t pps_millis = 0;     // millis() captured in ISR
+static volatile uint32_t pps_count = 0;      // increments each PPS edge
+static volatile bool     pps_edge_flag = false; // rising-edge flag, clear-on-read
+
 TinyGPSPlus gps;
 
 // Serial
 HardwareSerial GPSSerial(0);
+
+
+// --- PPS interrupt handler ---
+static void IRAM_ATTR pps_isr(void)
+{
+    pps_millis = millis();
+    pps_count++;
+    portENTER_CRITICAL_ISR(&time_mux);
+    pps_edge_flag = true;
+    portEXIT_CRITICAL_ISR(&time_mux);
+}
+
+
+// Convert date/time fields to Unix epoch in milliseconds (UTC)
+static uint64_t datetime_to_epoch_ms(int year, int month, int day,
+                                     int hour, int minute, int second)
+{
+    // Days from 1970-01-01 to start of given year
+    uint32_t days = 0;
+    for (int y = 1970; y < year; y++) {
+        bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        days += leap ? 366 : 365;
+    }
+
+    // Days in each month for the target year
+    static const int mdays[] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+    bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    for (int m = 1; m < month; m++) {
+        days += mdays[m - 1];
+        if (m == 2 && leap) days++;
+    }
+    days += day - 1;
+
+    uint64_t secs = (uint64_t)days * 86400ULL
+                  + (uint64_t)hour * 3600ULL
+                  + (uint64_t)minute * 60ULL
+                  + (uint64_t)second;
+    return secs * 1000ULL;
+}
+
+
+void pps_isr_init(void)
+{
+    attachInterrupt(digitalPinToInterrupt(GPS_PPS_PIN), pps_isr, RISING);
+}
 
 
 int gps_setup()
@@ -51,6 +107,10 @@ int gps_setup()
 
     //Setup PPS Pin
     pinMode(GPS_PPS_PIN, INPUT_PULLUP);
+
+    // Attach PPS interrupt for sub-ms timing
+    pps_isr_init();
+
     GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin
                      GPS_RX_PIN, GPS_TX_PIN );
 
@@ -93,6 +153,19 @@ int gps_loop()
             gps_minute = gps.time.minute();
             gps_second = gps.time.second();
 
+            // Compute epoch from NMEA time and anchor to last PPS edge
+            if (pps_count > 0 && gps.date.isValid() && gps.time.isValid()) {
+                uint64_t ep = datetime_to_epoch_ms(gps_year, gps_month, gps_day,
+                                                    gps_hour, gps_minute, gps_second);
+                uint32_t pm = pps_millis;  // snapshot atomic 32-bit read
+                portENTER_CRITICAL(&time_mux);
+                epoch_at_pps = ep;
+                millis_at_pps = pm;
+                epoch_valid = true;
+                time_source = 2;  // GPS+PPS — highest priority
+                portEXIT_CRITICAL(&time_mux);
+            }
+
             printfnl( SOURCE_GPS, F("GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n"),
                 (int) gps_pos_valid,
                 gps_lat,
@@ -100,11 +173,6 @@ int gps_loop()
                 (int)gps_alt,
                 gps.date.isValid() ? gps.date.value() : -1,
                 gps.time.isValid() ? gps.time.value() : -1 );
-
-            //if( gps.time.isValid() )
-            //{
-            //    printfnl(SOURCE_GPS,"GPS Time: date=%u  time=%u\n",  gps.date.value(), gps.time.value());
-            //}
         }
     }
     return 0;
@@ -269,14 +337,123 @@ bool get_pps(void)
     }
 }
 
-#else // No GPS hardware
+
+bool get_pps_flag(void)
+{
+    portENTER_CRITICAL(&time_mux);
+    bool flag = pps_edge_flag;
+    pps_edge_flag = false;
+    portEXIT_CRITICAL(&time_mux);
+    return flag;
+}
+
+
+bool get_time_valid(void)
+{
+    return epoch_valid;
+}
+
+
+uint64_t get_epoch_ms(void)
+{
+    uint64_t ep;
+    uint32_t mp;
+    bool valid;
+
+    portENTER_CRITICAL(&time_mux);
+    ep = epoch_at_pps;
+    mp = millis_at_pps;
+    valid = epoch_valid;
+    portEXIT_CRITICAL(&time_mux);
+
+    if (!valid) return 0;
+
+    uint32_t elapsed = millis() - mp;  // unsigned wraps correctly at 49 days
+    return ep + elapsed;
+}
+
+
+uint8_t get_time_source(void)
+{
+    return time_source;
+}
+
+
+// NTP on GPS boards: provides time before GPS lock, NTP only wins if GPS+PPS hasn't set epoch yet
+void ntp_setup(void)
+{
+    if (config.ntp_server[0] != '\0')
+        configTime(0, 0, config.ntp_server, "pool.ntp.org");
+    else
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+}
+
+
+void ntp_loop(void)
+{
+    // If GPS+PPS is active, only allow NTP fallback if GPS is stale (>10s)
+    if (time_source >= 2) {
+        portENTER_CRITICAL(&time_mux);
+        uint32_t mp = millis_at_pps;
+        portEXIT_CRITICAL(&time_mux);
+        if (millis() - mp < 10000) return;  // GPS still fresh
+        // GPS stale — downgrade so NTP can fill in
+        portENTER_CRITICAL(&time_mux);
+        time_source = 0;
+        portEXIT_CRITICAL(&time_mux);
+    }
+
+    // Rate limit: update once per second
+    static uint32_t last_ntp_ms = 0;
+    if (millis() - last_ntp_ms < 1000) return;
+    last_ntp_ms = millis();
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    // ESP32 SNTP sets the system clock; check if it's been set (> year 2024)
+    if (tv.tv_sec < 1704067200L) return;  // 2024-01-01 00:00:00 UTC
+
+    uint64_t ep = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
+    uint32_t now_m = millis();
+
+    portENTER_CRITICAL(&time_mux);
+    epoch_at_pps = ep;
+    millis_at_pps = now_m;
+    epoch_valid = true;
+    if (time_source < 1) time_source = 1;
+    portEXIT_CRITICAL(&time_mux);
+
+    // Populate date/time volatiles so existing getters work even before GPS fix
+    struct tm tm;
+    time_t t = tv.tv_sec;
+    gmtime_r(&t, &tm);
+    gps_year   = tm.tm_year + 1900;
+    gps_month  = tm.tm_mon + 1;
+    gps_day    = tm.tm_mday;
+    gps_hour   = tm.tm_hour;
+    gps_minute = tm.tm_min;
+    gps_second = tm.tm_sec;
+}
+
+
+#else // No GPS hardware — NTP provides time
+
+// Date/time volatiles populated by NTP so existing getters work
+static volatile int gps_day = 0;
+static volatile int gps_month = 0;
+static volatile int gps_year = 0;
+static volatile int gps_hour = 0;
+static volatile int gps_minute = 0;
+static volatile int gps_second = 0;
 
 int gps_setup() { return 0; }
 int gps_loop() { return 0; }
+void pps_isr_init(void) { }
 
 float get_lat(void) { return 0; }
 float get_lon(void) { return 0; }
-int get_sec(void) { return 0; }
+int get_sec(void) { return gps_second; }
 float get_alt(void) { return 0; }
 float get_speed(void) { return 0; }
 float get_dir(void) { return 0; }
@@ -284,17 +461,120 @@ bool get_gpsstatus(void) { return false; }
 float get_org_lat(void) { return 0; }
 float get_org_lon(void) { return 0; }
 
-int get_day(void) { return 0; }
-int get_month(void) { return 0; }
-int get_year(void) { return 0; }
-int get_hour(void) { return 0; }
-int get_minute(void) { return 0; }
-int get_second(void) { return 0; }
-int get_day_of_week(void) { return 0; }
-int get_dayofyear(void) { return 0; }
-bool get_isleapyear(void) { return false; }
+int get_day(void) { return gps_day; }
+int get_month(void) { return gps_month; }
+int get_year(void) { return gps_year; }
+int get_hour(void) { return gps_hour; }
+int get_minute(void) { return gps_minute; }
+int get_second(void) { return gps_second; }
+
+int get_day_of_week(void)
+{
+    int month = gps_month;
+    int year = gps_year;
+    if (month < 3) { month += 12; year -= 1; }
+    int k = year % 100;
+    int j = year / 100;
+    int h = (gps_day + (13 * (month + 1)) / 5 + k + k/4 + j/4 + 5*j) % 7;
+    return (h + 6) % 7;
+}
+
+int get_dayofyear(void)
+{
+    if (gps_month < 1 || gps_month > 12) return -1;
+    int days_in_month[] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+    bool leap = (gps_year % 4 == 0 && gps_year % 100 != 0) || (gps_year % 400 == 0);
+    if (leap) days_in_month[1] = 29;
+    if (gps_day < 1 || gps_day > days_in_month[gps_month - 1]) return -1;
+    int doy = 0;
+    for (int i = 0; i < gps_month - 1; ++i) doy += days_in_month[i];
+    return doy + gps_day;
+}
+
+bool get_isleapyear(void)
+{
+    return (gps_year % 4 == 0 && gps_year % 100 != 0) || (gps_year % 400 == 0);
+}
+
 int get_satellites(void) { return 0; }
 int get_hdop(void) { return 0; }
 bool get_pps(void) { return false; }
+bool get_pps_flag(void) { return false; }
+
+
+bool get_time_valid(void)
+{
+    return epoch_valid;
+}
+
+
+uint64_t get_epoch_ms(void)
+{
+    uint64_t ep;
+    uint32_t mp;
+    bool valid;
+
+    portENTER_CRITICAL(&time_mux);
+    ep = epoch_at_pps;
+    mp = millis_at_pps;
+    valid = epoch_valid;
+    portEXIT_CRITICAL(&time_mux);
+
+    if (!valid) return 0;
+
+    uint32_t elapsed = millis() - mp;
+    return ep + elapsed;
+}
+
+
+uint8_t get_time_source(void)
+{
+    return time_source;
+}
+
+
+void ntp_setup(void)
+{
+    if (config.ntp_server[0] != '\0')
+        configTime(0, 0, config.ntp_server, "pool.ntp.org");
+    else
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+}
+
+
+void ntp_loop(void)
+{
+    // Rate limit: update once per second
+    static uint32_t last_ntp_ms = 0;
+    if (millis() - last_ntp_ms < 1000) return;
+    last_ntp_ms = millis();
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    // ESP32 SNTP sets the system clock; check if it's been set (> year 2024)
+    if (tv.tv_sec < 1704067200L) return;  // 2024-01-01 00:00:00 UTC
+
+    uint64_t ep = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
+    uint32_t now_m = millis();
+
+    portENTER_CRITICAL(&time_mux);
+    epoch_at_pps = ep;
+    millis_at_pps = now_m;
+    epoch_valid = true;
+    if (time_source < 1) time_source = 1;
+    portEXIT_CRITICAL(&time_mux);
+
+    // Populate date/time volatiles so existing getters work
+    struct tm tm;
+    time_t t = tv.tv_sec;
+    gmtime_r(&t, &tm);
+    gps_year   = tm.tm_year + 1900;
+    gps_month  = tm.tm_mon + 1;
+    gps_day    = tm.tm_mday;
+    gps_hour   = tm.tm_hour;
+    gps_minute = tm.tm_min;
+    gps_second = tm.tm_sec;
+}
 
 #endif
