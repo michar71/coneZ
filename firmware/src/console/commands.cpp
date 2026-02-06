@@ -20,6 +20,7 @@
 #include "led.h"
 #include "config.h"
 #include "cue.h"
+#include "psram.h"
 
 
 //Serial/Telnet Shell comamnds
@@ -410,10 +411,22 @@ int paramBasic(int argc, char **argv)
 
 int cmd_mem(int argc, char **argv)
 {
-    printfnl(SOURCE_COMMANDS, F("Heap Memory:\n") );
+    printfnl(SOURCE_COMMANDS, F("Heap:\n") );
     printfnl(SOURCE_COMMANDS, F("  Free:    %u bytes\n"), esp_get_free_heap_size() );
     printfnl(SOURCE_COMMANDS, F("  Min:     %u bytes  (lowest since boot)\n"), esp_get_minimum_free_heap_size() );
     printfnl(SOURCE_COMMANDS, F("  Largest: %u bytes  (biggest allocatable block)\n"), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) );
+
+    printfnl(SOURCE_COMMANDS, F("\nPSRAM:\n") );
+    if (psram_available()) {
+        printfnl(SOURCE_COMMANDS, F("  Size:       %u bytes (%u KB)\n"), psram_size(), psram_size()/1024);
+        printfnl(SOURCE_COMMANDS, F("  Used:       %u bytes\n"), psram_bytes_used());
+        printfnl(SOURCE_COMMANDS, F("  Free:       %u bytes\n"), psram_bytes_free());
+        printfnl(SOURCE_COMMANDS, F("  Contiguous: %u bytes\n"), psram_bytes_contiguous());
+        printfnl(SOURCE_COMMANDS, F("  Alloc slots: %d / %d\n"), psram_alloc_count(), psram_alloc_entries_max());
+    } else {
+        printfnl(SOURCE_COMMANDS, F("  Not available (using heap fallback)\n") );
+    }
+
     return 0;
 }
 
@@ -695,6 +708,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  time                               Show current date/time\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  uptime                             Show system uptime\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  psram [test [forever]]              PSRAM status, memory test, or loop test\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  version                            Show firmware version\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  wasm [status|info <file>]           WASM runtime status/info\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  wifi                               Show WiFi status\n\n" ) );
@@ -736,6 +750,33 @@ int cmd_wasm(int argc, char **argv)
 }
 #endif
 
+int cmd_psram(int argc, char **argv)
+{
+    if (argc >= 2 && !strcasecmp(argv[1], "test")) {
+        bool forever = (argc >= 3 && !strcasecmp(argv[2], "forever"));
+        return psram_test(forever);
+    }
+    // Default: show status
+    printfnl(SOURCE_COMMANDS, F("PSRAM:\n"));
+    printfnl(SOURCE_COMMANDS, F("  Available:   %s\n"), psram_available() ? "yes" : "no");
+    printfnl(SOURCE_COMMANDS, F("  Size:        %u bytes (%u KB)\n"), psram_size(), psram_size()/1024);
+    printfnl(SOURCE_COMMANDS, F("  Used:        %u bytes\n"), psram_bytes_used());
+    printfnl(SOURCE_COMMANDS, F("  Free:        %u bytes\n"), psram_bytes_free());
+    printfnl(SOURCE_COMMANDS, F("  Contiguous:  %u bytes\n"), psram_bytes_contiguous());
+    printfnl(SOURCE_COMMANDS, F("  Alloc slots: %d / %d\n"), psram_alloc_count(), psram_alloc_entries_max());
+#if PSRAM_CACHE_PAGES > 0
+    uint32_t hits = psram_cache_hits(), misses = psram_cache_misses();
+    uint32_t total = hits + misses;
+    printfnl(SOURCE_COMMANDS, F("  Cache:       %d x %d bytes (%u KB DRAM)\n"),
+             PSRAM_CACHE_PAGES, PSRAM_CACHE_PAGE_SIZE,
+             (PSRAM_CACHE_PAGES * PSRAM_CACHE_PAGE_SIZE) / 1024);
+    printfnl(SOURCE_COMMANDS, F("  Cache hits:  %u / %u (%u%%)\n"),
+             hits, total, total ? (hits * 100 / total) : 0);
+#endif
+    return 0;
+}
+
+
 void init_commands(Stream *dev)
 {
     shell.attach(*dev);
@@ -759,6 +800,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("mem"), cmd_mem);
     shell.addCommand(F("param"), paramBasic);
     shell.addCommand(F("ps"), cmd_ps);
+    shell.addCommand(F("psram"), cmd_psram);
     shell.addCommand(F("reboot"), cmd_reboot );
     shell.addCommand(F("ren"), renFile);
     shell.addCommand(F("run"), runBasic);

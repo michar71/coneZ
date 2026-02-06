@@ -30,6 +30,7 @@
 #include "config.h"
 #include "cue.h"
 #include "lut.h"
+#include "psram.h"
 
 #define USE_TELNET
 
@@ -287,6 +288,9 @@ void setup()
 
   // Initialize cue engine (no file loaded yet)
   cue_setup();
+
+  // Initialize external PSRAM (ConeZ PCB only)
+  psram_setup();
 
 #ifdef BOARD_HAS_RGB_LEDS
   //Setup RGB leds (buffers sized from config)
