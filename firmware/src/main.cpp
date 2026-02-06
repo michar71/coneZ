@@ -25,6 +25,7 @@
 #include "sensors.h"
 #include "sun.h"
 #include "config.h"
+#include "cue.h"
 
 #define USE_TELNET
 
@@ -281,6 +282,9 @@ void setup()
   // Load config from /config.ini (or use compiled defaults)
   config_init();
 
+  // Initialize cue engine (no file loaded yet)
+  cue_setup();
+
 #ifdef BOARD_HAS_RGB_LEDS
   //Setup RGB leds (buffers sized from config)
   led_setup();
@@ -439,6 +443,9 @@ void loop()
 
   //Proicess Sensors.. Maybe we shoudl run this slower?
   sensors_loop();
+
+  // Cue timeline engine
+  cue_loop();
 
 #ifdef BOARD_HAS_RGB_LEDS
   //RUN Direct Effects

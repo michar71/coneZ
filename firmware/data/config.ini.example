@@ -25,6 +25,8 @@ device_name=
 startup_script=/startup.bas
 timezone=-8
 auto_dst=on
+cone_id=0
+cone_group=0
 
 [led]
 count1=50

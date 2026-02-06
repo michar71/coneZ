@@ -1,0 +1,68 @@
+# example_show.yaml — Demo show for ConeZ cue engine
+#
+# Compile with:  python3 tools/cuetool.py build tools/example_show.yaml -o show.cue
+# Inspect with:  python3 tools/cuetool.py dump show.cue
+# Load on device: copy show.cue to LittleFS, then: cue load /show.cue && cue start
+
+cues:
+  # 0s — all channels red
+  - time: 0s
+    type: fill
+    channel: 1
+    color: [255, 0, 0]
+
+  - time: 0s
+    type: fill
+    channel: 2
+    color: [255, 0, 0]
+
+  # 2s — channel 1 goes green
+  - time: 2s
+    type: fill
+    channel: 1
+    color: [0, 255, 0]
+
+  # 4s — channel 2 goes blue, with radial spatial delay
+  - time: 4s
+    type: fill
+    channel: 2
+    color: [0, 0, 255]
+    spatial:
+      mode: radial_config
+      delay: 5.0
+
+  # 6s — channel 1 white, only cone 3
+  - time: 6s
+    type: fill
+    channel: 1
+    color: [255, 255, 255]
+    group: cone:3
+
+  # 8s — channel 1 purple, all except group 1
+  - time: 8s
+    type: fill
+    channel: 1
+    color: [128, 0, 255]
+    group: not_group:1
+
+  # 10s — stop channel 1
+  - time: 10s
+    type: stop
+    channel: 1
+
+  # 12s — blackout (all channels)
+  - time: 12s
+    type: blackout
+
+  # 15s — effect on channel 1 for 5 seconds
+  - time: 15s
+    type: effect
+    channel: 1
+    file: "/fire.bas"
+    duration: 5s
+    params: [128, 64, 32]
+    flags: [loop]
+
+  # 20s — final blackout
+  - time: 20s
+    type: blackout

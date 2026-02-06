@@ -44,6 +44,8 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("system", "startup_script", CFG_STR, startup_script),
     CFG_ENTRY("system", "timezone",     CFG_INT,   timezone),
     CFG_ENTRY("system", "auto_dst",    CFG_BOOL,  auto_dst),
+    CFG_ENTRY("system", "cone_id",    CFG_INT,   cone_id),
+    CFG_ENTRY("system", "cone_group", CFG_INT,   cone_group),
     // [led]
     CFG_ENTRY("led",    "count1",       CFG_INT,   led_count1),
     CFG_ENTRY("led",    "count2",       CFG_INT,   led_count2),
@@ -89,6 +91,8 @@ static void config_fill_defaults(conez_config_t *cfg)
     strlcpy(cfg->startup_script,  DEFAULT_STARTUP_SCRIPT, sizeof(cfg->startup_script));
     cfg->timezone         = DEFAULT_TIMEZONE;
     cfg->auto_dst         = DEFAULT_AUTO_DST;
+    cfg->cone_id          = DEFAULT_CONE_ID;
+    cfg->cone_group       = DEFAULT_CONE_GROUP;
 
     cfg->led_count1       = DEFAULT_LED_COUNT;
     cfg->led_count2       = DEFAULT_LED_COUNT;
