@@ -17,7 +17,7 @@
     // Memory
     #define BOARD_SPIFLASH_SIZE     (8*1024*1024)
     #define BOARD_HAS_IMPROVISED_PSRAM                  // PSRAM hanging off aux SPI interface
-    #define BOARD_PSRAM_SIZE        (2*1024*1024)
+    #define BOARD_PSRAM_SIZE        (8*1024*1024)
 
     // Status LED
     #define LED_PIN         40
@@ -82,8 +82,6 @@
 
     // Memory
     #define BOARD_SPIFLASH_SIZE     (8*1024*1024)
-    #define BOARD_HAS_PSRAM                         // Natively connected PSRAM
-    #define BOARD_PSRAM_SIZE        (8*1024*1024)
 
     // Status LED
     #define LED_PIN         35
