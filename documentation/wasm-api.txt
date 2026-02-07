@@ -21,7 +21,9 @@ C modules:
 
   Include conez_api.h to get all imports, libc-equivalent functions,
   and helper utilities. The -mbulk-memory flag enables WASM memory.copy
-  and memory.fill instructions for memcpy/memset/memmove.
+  and memory.fill instructions for memcpy/memset/memmove. Strip debug
+  sections with llvm-strip (or wasm-strip) to minimize binary size —
+  the Makefile does this automatically.
 
 Rust modules (no_std, recommended for size):
 
@@ -695,11 +697,12 @@ The loop function must use #[export_name = "loop"] because `loop` is a
 Rust keyword.
 
 
-Example Binary Sizes
---------------------
+Example Binary Sizes (stripped)
+-------------------------------
 
   rgb_cycle.wasm       (C, no printf)             465 bytes
-  hsv_rainbow.wasm     (C, no printf)             469 bytes
+  hsv_rainbow.wasm     (C, no printf)             411 bytes
+  sos_flash.wasm       (C, printf + GPS + math)   744 bytes
   rust_rgb_cycle.wasm  (Rust no_std, no printf)   353 bytes
   C module with printf (host-imported)             ~641 bytes
   C module with printf (CONEZ_PRINTF_INLINE)       ~7.7 KB

@@ -469,7 +469,7 @@ void loop()
 #ifdef BOARD_HAS_RGB_LEDS
   //RUN Direct Effects
   //CIRCLE_effect();
-  SOS_effect2();
+  //SOS_effect2();
 #endif
 
 }

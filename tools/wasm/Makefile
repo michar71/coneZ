@@ -1,8 +1,9 @@
 CC      = clang
+STRIP   = $(or $(shell which llvm-strip 2>/dev/null),$(shell which wasm-strip 2>/dev/null),$(shell ls /usr/lib/llvm-*/bin/llvm-strip 2>/dev/null | tail -1))
 CFLAGS  = --target=wasm32 -mbulk-memory -O2 -nostdlib -I .
 LDFLAGS = -Wl,--no-entry -Wl,--export=setup -Wl,--export=loop -Wl,--allow-undefined
 
-C_EXAMPLES    = examples/rgb_cycle.wasm examples/hsv_rainbow.wasm
+C_EXAMPLES    = examples/rgb_cycle.wasm examples/hsv_rainbow.wasm examples/sos_flash.wasm
 RUST_EXAMPLES = examples/rust_rainbow.wasm examples/rust_rgb_cycle.wasm
 EXAMPLES      = $(C_EXAMPLES) $(RUST_EXAMPLES)
 
@@ -10,6 +11,7 @@ all: $(EXAMPLES)
 
 examples/%.wasm: examples/%.c conez_api.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+	$(STRIP) $@
 
 examples/rust_rainbow.wasm: examples/rust_rainbow/src/lib.rs examples/rust_rainbow/Cargo.toml
 	cd examples/rust_rainbow && cargo build --release --target wasm32-wasip1
