@@ -122,6 +122,7 @@ clang --target=wasm32 -mbulk-memory -O2 -nostdlib \
   -Wl,--no-entry -Wl,--export=setup -Wl,--export=loop \
   -Wl,--allow-undefined \
   -I . -o module.wasm module.c
+llvm-strip module.wasm
 ```
 
 **Authoring modules (Rust):** Two approaches:
