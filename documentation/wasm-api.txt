@@ -160,7 +160,7 @@ GPIO
 GPS
 ~~~
 
-  bool gps_present()        GPS module Present
+  int   gps_present()       1 if GPS hardware is present on this board, 0 otherwise
   float get_lat()           Latitude in degrees
   float get_lon()           Longitude in degrees
   float get_alt()           Altitude in meters
@@ -183,7 +183,7 @@ GPS Origin / Geometry
 
 IMU
 ~~~
-  Bool imu_present()       IMU is Present
+  int   imu_present()       1 if IMU hardware is present, 0 otherwise
   float get_roll()          Roll angle in degrees
   float get_pitch()         Pitch angle in degrees
   float get_yaw()           Yaw angle in degrees
@@ -212,10 +212,12 @@ Environment
       Solar panel voltage. Returns -1000 if not Present
 
   float get_battery_percentage()
-	Get estimated remaining battery charge
+      Estimated remaining battery charge as a percentage (0-100).
+      Returns -1000.0 if not available (not yet implemented).
 
-  Float get_battery_runtime()
-	Get estimated remaining battery runtime
+  float get_battery_runtime()
+      Estimated remaining battery runtime in minutes.
+      Returns -1000.0 (not available — requires current sensing hardware).
 
 
 Sun Position
@@ -228,11 +230,13 @@ Sun Position
   int get_sunset()
       Sunset time as minutes past midnight. Returns -1 if not available.
 
-  Float get_sun_azimuth()
-      Current Sun Azimuth in Degree
+  float get_sun_azimuth()
+      Current sun azimuth in degrees (0=N, 90=E, 180=S, 270=W).
+      Returns -1000.0 if not available (no GPS fix or no valid time).
 
-  Float get_sun_elevation()
-      Current Sun Elevation as angle in Degree
+  float get_sun_elevation()
+      Current sun elevation angle in degrees (-90 to 90).
+      Returns -1000.0 if not available.
 
   int sun_valid()
       Returns 1 if sun position data is valid, 0 otherwise.
@@ -265,10 +269,12 @@ Time
       source is available. Uses GPS+PPS when available, NTP fallback.
 
   int64_t get_uptime_ms()
-      Milliseconds since system start.
+      Milliseconds since boot (64-bit, does not wrap).
 
   int64_t get_last_comm_ms()
-      Last time we received a command via LoRa or Wifi
+      Milliseconds since last LoRa or HTTP communication was received.
+      Returns 0 (not yet implemented — will track actual comm timestamps
+      in a future firmware update).
 
   int millis()
       Milliseconds since boot (wraps at ~49 days).
@@ -654,6 +660,11 @@ Not needed for C modules or Rust no_std modules.
 
 Rust no_std API
 ---------------
+
+A complete Rust bindings file is available at tools/wasm/conez_api.rs.
+It declares all host imports and provides safe convenience helpers.
+Include it with `include!("../../conez_api.rs")` or copy the extern
+block into your lib.rs.
 
 For Rust modules targeting wasm32-unknown-unknown with #![no_std],
 declare host imports as extern "C" blocks. Example:

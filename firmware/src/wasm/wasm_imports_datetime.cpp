@@ -77,6 +77,19 @@ m3ApiRawFunction(m3_time_valid) {
     m3ApiReturn(get_time_valid() ? 1 : 0);
 }
 
+// I64 get_uptime_ms()
+m3ApiRawFunction(m3_get_uptime_ms) {
+    m3ApiReturnType(int64_t);
+    m3ApiReturn((int64_t)millis());
+}
+
+// I64 get_last_comm_ms()
+// FIXME: return 0 (boot time) until we track last LoRa/HTTP comm timestamp
+m3ApiRawFunction(m3_get_last_comm_ms) {
+    m3ApiReturnType(int64_t);
+    m3ApiReturn((int64_t)0);
+}
+
 
 // ---------- Link datetime imports ----------
 
@@ -114,6 +127,11 @@ M3Result link_datetime_imports(IM3Module module)
     result = m3_LinkRawFunction(module, "env", "get_is_leap_year", "i()", m3_get_is_leap_year);
     if (result && result != m3Err_functionLookupFailed) return result;
     result = m3_LinkRawFunction(module, "env", "time_valid", "i()", m3_time_valid);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    result = m3_LinkRawFunction(module, "env", "get_uptime_ms", "I()", m3_get_uptime_ms);
+    if (result && result != m3Err_functionLookupFailed) return result;
+    result = m3_LinkRawFunction(module, "env", "get_last_comm_ms", "I()", m3_get_last_comm_ms);
     if (result && result != m3Err_functionLookupFailed) return result;
 
     return m3Err_none;

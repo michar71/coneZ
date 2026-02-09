@@ -1,3 +1,4 @@
+#include <math.h>
 #include <sunset.h>
 #include "sun.h"
 #include "gps.h"
@@ -196,4 +197,85 @@ int sunRise() //Returns minutes past midnight
         return -1; // Invalid sunrise time
     }
     return sunrise;
+}
+
+// Simplified solar position from UTC time and lat/lon.
+// Returns azimuth (0=N, 90=E) and elevation in degrees.
+static bool calc_sun_position(float *az, float *el)
+{
+    if (!dataIsValid || !get_time_valid()) return false;
+
+    float lat = lastLat;
+    float lon = lastLong;
+    int yr = get_year(), mo = get_month(), dy = get_day();
+    int hr = get_hour(), mn = get_minute(), sc = get_second();
+
+    // Julian day number
+    int a = (14 - mo) / 12;
+    int y = yr + 4800 - a;
+    int m = mo + 12 * a - 3;
+    double jdn = dy + (153 * m + 2) / 5 + 365 * y + y/4 - y/100 + y/400 - 32045;
+    double jd = jdn + (hr - 12) / 24.0 + mn / 1440.0 + sc / 86400.0;
+
+    // Days since J2000.0
+    double n = jd - 2451545.0;
+
+    // Mean longitude and mean anomaly (degrees)
+    double L = fmod(280.460 + 0.9856474 * n, 360.0);
+    if (L < 0) L += 360.0;
+    double g = fmod(357.528 + 0.9856003 * n, 360.0);
+    if (g < 0) g += 360.0;
+    double g_rad = g * M_PI / 180.0;
+
+    // Ecliptic longitude
+    double lambda = L + 1.915 * sin(g_rad) + 0.020 * sin(2.0 * g_rad);
+    double lambda_rad = lambda * M_PI / 180.0;
+
+    // Obliquity of ecliptic
+    double eps = 23.439 - 0.0000004 * n;
+    double eps_rad = eps * M_PI / 180.0;
+
+    // Solar declination
+    double sin_dec = sin(eps_rad) * sin(lambda_rad);
+    double dec = asin(sin_dec);
+    double cos_dec = cos(dec);
+
+    // Right ascension
+    double ra = atan2(cos(eps_rad) * sin(lambda_rad), cos(lambda_rad));
+
+    // Greenwich mean sidereal time (hours -> radians)
+    double gmst_hr = fmod(6.697375 + 0.0657098242 * n + (double)hr + (double)mn / 60.0 + (double)sc / 3600.0, 24.0);
+    if (gmst_hr < 0) gmst_hr += 24.0;
+    double gmst_rad = gmst_hr * M_PI / 12.0;
+
+    // Hour angle
+    double ha = gmst_rad + lon * M_PI / 180.0 - ra;
+
+    double lat_rad = lat * M_PI / 180.0;
+
+    // Elevation
+    double sin_el = sin(lat_rad) * sin_dec + cos(lat_rad) * cos_dec * cos(ha);
+    *el = (float)(asin(sin_el) * 180.0 / M_PI);
+
+    // Azimuth (measured from North, clockwise)
+    double az_rad = atan2(-sin(ha), cos(lat_rad) * tan(dec) - sin(lat_rad) * cos(ha));
+    double az_deg = az_rad * 180.0 / M_PI;
+    if (az_deg < 0) az_deg += 360.0;
+    *az = (float)az_deg;
+
+    return true;
+}
+
+float sunAzimuth()
+{
+    float az, el;
+    if (!calc_sun_position(&az, &el)) return -1000.0f;
+    return az;
+}
+
+float sunElevation()
+{
+    float az, el;
+    if (!calc_sun_position(&az, &el)) return -1000.0f;
+    return el;
 }

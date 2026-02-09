@@ -1,6 +1,7 @@
 #ifdef INCLUDE_WASM
 
 #include "wasm_internal.h"
+#include "board.h"
 #include "main.h"
 #include "gps.h"
 #include "sensors.h"
@@ -164,6 +165,56 @@ m3ApiRawFunction(m3_is_daylight) {
     m3ApiReturn((now_min >= rise && now_min < set) ? 1 : 0);
 }
 
+// --- Hardware presence ---
+
+// i32 gps_present()
+m3ApiRawFunction(m3_gps_present) {
+    m3ApiReturnType(int32_t);
+#ifdef BOARD_HAS_GPS
+    m3ApiReturn(1);
+#else
+    m3ApiReturn(0);
+#endif
+}
+
+// i32 imu_present()
+m3ApiRawFunction(m3_imu_present) {
+    m3ApiReturnType(int32_t);
+    m3ApiReturn(imuAvailable() ? 1 : 0);
+}
+
+// --- Battery percentage / runtime ---
+
+// f32 get_battery_percentage()
+// FIXME: implement real LiPo voltage-to-percentage lookup
+m3ApiRawFunction(m3_get_battery_percentage) {
+    m3ApiReturnType(float);
+    float v = bat_voltage();
+    if (v < 0.01f) m3ApiReturn(-1000.0f);  // no battery
+    m3ApiReturn(-1000.0f);  // FIXME: placeholder until battery curve is calibrated
+}
+
+// f32 get_battery_runtime()
+// FIXME: needs current sensing hardware to estimate runtime
+m3ApiRawFunction(m3_get_battery_runtime) {
+    m3ApiReturnType(float);
+    m3ApiReturn(-1000.0f);  // not available
+}
+
+// --- Sun azimuth / elevation ---
+
+// f32 get_sun_azimuth() — degrees from north, -1000 if invalid
+m3ApiRawFunction(m3_get_sun_azimuth) {
+    m3ApiReturnType(float);
+    m3ApiReturn(sunAzimuth());
+}
+
+// f32 get_sun_elevation() — degrees, -1000 if invalid
+m3ApiRawFunction(m3_get_sun_elevation) {
+    m3ApiReturnType(float);
+    m3ApiReturn(sunElevation());
+}
+
 // --- Origin / Geometry ---
 
 m3ApiRawFunction(m3_get_origin_lat) {
@@ -285,6 +336,24 @@ M3Result link_sensor_imports(IM3Module module)
     result = m3_LinkRawFunction(module, "env", "origin_dist", "f()", m3_origin_dist);
     if (result && result != m3Err_functionLookupFailed) return result;
     result = m3_LinkRawFunction(module, "env", "origin_bearing", "f()", m3_origin_bearing);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    // Hardware presence
+    result = m3_LinkRawFunction(module, "env", "gps_present", "i()", m3_gps_present);
+    if (result && result != m3Err_functionLookupFailed) return result;
+    result = m3_LinkRawFunction(module, "env", "imu_present", "i()", m3_imu_present);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    // Battery percentage / runtime
+    result = m3_LinkRawFunction(module, "env", "get_battery_percentage", "f()", m3_get_battery_percentage);
+    if (result && result != m3Err_functionLookupFailed) return result;
+    result = m3_LinkRawFunction(module, "env", "get_battery_runtime", "f()", m3_get_battery_runtime);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    // Sun azimuth / elevation
+    result = m3_LinkRawFunction(module, "env", "get_sun_azimuth", "f()", m3_get_sun_azimuth);
+    if (result && result != m3Err_functionLookupFailed) return result;
+    result = m3_LinkRawFunction(module, "env", "get_sun_elevation", "f()", m3_get_sun_elevation);
     if (result && result != m3Err_functionLookupFailed) return result;
 
     return m3Err_none;

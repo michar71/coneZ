@@ -14,6 +14,8 @@ bool sunDataIsValid();
 bool sunLight(int mam);
 int sunSet();  //Retruns minutes past midnight
 int sunRise(); //Returns minutes past midnight
+float sunAzimuth();   // degrees, -1000 if invalid
+float sunElevation(); // degrees, -1000 if invalid
 
 
 #endif

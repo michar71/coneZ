@@ -151,9 +151,23 @@ DONE int DAYOFYEAR()    ->Returns day of year 1-366
 DONE int ISLEAPYEAR()   ->Returns 1 if leap year, 0 if not
 
 environmental-sensor functions:
-DONE int TEMP()     ->returns temperature in Deg C*10 or -10000 if no temp sensor present 
+DONE int TEMP()     ->returns temperature in Deg C*10 or -10000 if no temp sensor present
 DONE int HUM()      ->returns humidity in % or -1 if no humidity sensor present
 DONE int LIGHT()    ->returns brightness beteen 0-4096 or -1 cif brightness senor does not exist
+
+Hardware presence:
+DONE int GPSPRESENT()   ->Returns 1 if GPS hardware is present on this board, 0 otherwise
+DONE int IMUPRESENT()   ->Returns 1 if IMU hardware initialized successfully, 0 otherwise
+
+System status:
+DONE int UPTIME()       ->Returns milliseconds since boot (wraps at ~49 days)
+DONE int LASTCOMM()     ->Returns ms since last LoRa/HTTP comm (FIXME: returns 0 for now)
+DONE int BATPCT()       ->Returns battery percentage (FIXME: returns -1000 for now)
+DONE int BATRUNTIME()   ->Returns battery runtime in minutes (-1000 = not available)
+
+Sun position:
+DONE int SUNAZ()        ->Returns sun azimuth in degrees (0=N, 90=E), -1000 if invalid
+DONE int SUNEL()        ->Returns sun elevation in degrees, -1000 if invalid
 
 */
 
@@ -348,6 +362,9 @@ static ENVResult fetch_env() {
 #include "FastLED.h"
 #include "config.h"
 #include "lut.h"
+#include "board.h"
+#include "sensors.h"
+#include "sun.h"
 
 int getNumLeds()
 {
@@ -382,6 +399,32 @@ unsigned long getTimestamp()
     return millis(); //Return the current timestamp in milliseconds
 }
 
+int gpsPresentHW()
+{
+#ifdef BOARD_HAS_GPS
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int imuPresentHW()
+{
+    return imuAvailable() ? 1 : 0;
+}
+
+int getSunAzHW()
+{
+    float az = sunAzimuth();
+    return (az <= -999.0f) ? -1000 : (int)round(az);
+}
+
+int getSunElHW()
+{
+    float el = sunElevation();
+    return (el <= -999.0f) ? -1000 : (int)round(el);
+}
+
 #else
 int getNumLeds()
 {
@@ -409,6 +452,12 @@ unsigned long getTimestamp()
 {
     return 0; //Return the current timestamp in milliseconds
 }
+
+int gpsPresentHW() { return 0; }
+int imuPresentHW() { return 0; }
+int getSunAzHW() { return -1000; }
+int getSunElHW() { return -1000; }
+
 #endif
 
 //------------------------
@@ -1369,6 +1418,56 @@ int ISLEAPYEAR_()
     STEP;
 }
 
+int GPSPRESENT_()
+{
+    *sp = gpsPresentHW();
+    STEP;
+}
+
+int IMUPRESENT_()
+{
+    *sp = imuPresentHW();
+    STEP;
+}
+
+int UPTIME_()
+{
+    *sp = (int)getTimestamp();
+    STEP;
+}
+
+// FIXME: return 0 (boot time) until we track last LoRa/HTTP comm timestamp
+int LASTCOMM_()
+{
+    *sp = 0;
+    STEP;
+}
+
+// FIXME: implement real LiPo voltage-to-percentage lookup
+int BATPCT_()
+{
+    *sp = -1000;
+    STEP;
+}
+
+int BATRUNTIME_()
+{
+    *sp = -1000; // not available without current sensing
+    STEP;
+}
+
+int SUNAZ_()
+{
+    *sp = getSunAzHW();
+    STEP;
+}
+
+int SUNEL_()
+{
+    *sp = getSunElHW();
+    STEP;
+}
+
 typedef struct 
 {
    char command_name[16];
@@ -1440,6 +1539,14 @@ static s_basic_command function_hook_data[] =
     {"DAYOFWEEK",DAYOFWEEK_,0},
     {"DAYOFYEAR",DAYOFYEAR_,0},
     {"ISLEAPYEAR",ISLEAPYEAR_,0},
+    {"GPSPRESENT",GPSPRESENT_,0},
+    {"IMUPRESENT",IMUPRESENT_,0},
+    {"UPTIME",UPTIME_,0},
+    {"LASTCOMM",LASTCOMM_,0},
+    {"BATPCT",BATPCT_,0},
+    {"BATRUNTIME",BATRUNTIME_,0},
+    {"SUNAZ",SUNAZ_,0},
+    {"SUNEL",SUNEL_,0},
 };
 
 //We get the name of the function and the number of arguments.

@@ -397,6 +397,18 @@ IMU
       Accelerometer reading on each axis. Returns 0 if unavailable.
 
 
+Hardware Presence
+~~~~~~~~~~~~~~~~~
+
+  GPSPRESENT()
+      Returns 1 if GPS hardware is present on this board, 0 otherwise.
+      This is a compile-time check — unlike HASGPS(), it does not require
+      a satellite fix.
+
+  IMUPRESENT()
+      Returns 1 if the IMU initialized successfully, 0 otherwise.
+
+
 Environment
 ~~~~~~~~~~~
 
@@ -409,6 +421,41 @@ Environment
 
   BRIGHT()
       Brightness reading, 0..4096. Returns -1 if no light sensor.
+
+
+Battery / Power
+~~~~~~~~~~~~~~~
+
+  BATPCT()
+      Estimated battery percentage (0-100).
+      Returns -1000 (not yet implemented — placeholder).
+
+  BATRUNTIME()
+      Estimated battery runtime in minutes.
+      Returns -1000 (not available — requires current sensing hardware).
+
+
+Sun Position
+~~~~~~~~~~~~
+
+  SUNAZ()
+      Sun azimuth in degrees (0=N, 90=E, 180=S, 270=W).
+      Returns -1000 if not available (no GPS fix or no valid time).
+
+  SUNEL()
+      Sun elevation angle in degrees.
+      Returns -1000 if not available.
+
+
+System Status
+~~~~~~~~~~~~~
+
+  UPTIME()
+      Milliseconds since boot (wraps at ~49 days).
+
+  LASTCOMM()
+      Milliseconds since last LoRa/HTTP communication.
+      Returns 0 (not yet implemented — placeholder).
 
 
 Date / Time
@@ -651,6 +698,14 @@ Function Quick Reference
   TEMP()                                   0   Env
   HUM()                                    0   Env
   BRIGHT()                                 0   Env
+  GPSPRESENT()                             0   Hardware
+  IMUPRESENT()                             0   Hardware
+  BATPCT()                                 0   Battery
+  BATRUNTIME()                             0   Battery
+  SUNAZ()                                  0   Sun
+  SUNEL()                                  0   Sun
+  UPTIME()                                 0   System
+  LASTCOMM()                               0   System
   HASDATE()                                0   Date/Time
   HASTIME()                                0   Date/Time
   HOUR()                                   0   Date/Time

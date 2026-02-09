@@ -130,6 +130,10 @@ float get_dir(void);
 __attribute__((import_module("env"), import_name("gps_valid")))
 int gps_valid(void);
 
+/* Returns 1 if GPS hardware is present on this board, 0 otherwise. */
+__attribute__((import_module("env"), import_name("gps_present")))
+int gps_present(void);
+
 /* ---- GPS Origin / Geometry ---- */
 
 /* Returns the configured origin latitude (from config). */
@@ -176,6 +180,10 @@ float get_acc_z(void);
 __attribute__((import_module("env"), import_name("imu_valid")))
 int imu_valid(void);
 
+/* Returns 1 if IMU hardware is present on this board, 0 otherwise. */
+__attribute__((import_module("env"), import_name("imu_present")))
+int imu_present(void);
+
 /* ---- Environment ---- */
 
 /* Temperature in degrees Celsius, or a large negative if no sensor. */
@@ -198,6 +206,14 @@ float get_bat_voltage(void);
 __attribute__((import_module("env"), import_name("get_solar_voltage")))
 float get_solar_voltage(void);
 
+/* Battery percentage (0-100), or -1000 if not available. */
+__attribute__((import_module("env"), import_name("get_battery_percentage")))
+float get_battery_percentage(void);
+
+/* Estimated battery runtime in minutes, or -1000 if not available. */
+__attribute__((import_module("env"), import_name("get_battery_runtime")))
+float get_battery_runtime(void);
+
 /* ---- Sun Position ---- */
 
 /* Minutes past midnight for sunrise. Returns -1 if sun data not available. */
@@ -215,6 +231,14 @@ int sun_valid(void);
 /* 1 if between sunrise and sunset, 0 if night, -1 if no data. */
 __attribute__((import_module("env"), import_name("is_daylight")))
 int is_daylight(void);
+
+/* Sun azimuth in degrees (0=N, 90=E, 180=S, 270=W). -1000 if not available. */
+__attribute__((import_module("env"), import_name("get_sun_azimuth")))
+float get_sun_azimuth(void);
+
+/* Sun elevation in degrees (-90 to 90). -1000 if not available. */
+__attribute__((import_module("env"), import_name("get_sun_elevation")))
+float get_sun_elevation(void);
 
 /* ---- Cue Engine ---- */
 
@@ -261,6 +285,14 @@ void delay_ms(int ms);
 /* Returns 1 if any time source (GPS+PPS or NTP) is active, 0 otherwise. */
 __attribute__((import_module("env"), import_name("time_valid")))
 int time_valid(void);
+
+/* Milliseconds since boot (64-bit, no wrap). */
+__attribute__((import_module("env"), import_name("get_uptime_ms")))
+int64_t get_uptime_ms(void);
+
+/* Milliseconds since last LoRa/HTTP communication (0 = boot / not tracked yet). */
+__attribute__((import_module("env"), import_name("get_last_comm_ms")))
+int64_t get_last_comm_ms(void);
 
 /* ---- Date/Time (calendar fields) ---- */
 

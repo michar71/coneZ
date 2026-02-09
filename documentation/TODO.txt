@@ -15,6 +15,11 @@ Hardware:
      Replace Schottky diodes on solar and battery power sources with FETs and "ideal diode" controllers?
 
 Firmware:
+   WASM API
+      Implement get_last_comm_ms() — track last LoRa/HTTP communication timestamp (currently returns 0)
+      Implement get_battery_percentage() — LiPo voltage-to-percentage lookup with calibrated discharge curve
+      Implement get_battery_runtime() — needs current sensing hardware
+
    Base Code
       POST
       Temp Sensor Tie-In
