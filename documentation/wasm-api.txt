@@ -160,6 +160,7 @@ GPIO
 GPS
 ~~~
 
+  bool gps_present()        GPS module Present
   float get_lat()           Latitude in degrees
   float get_lon()           Longitude in degrees
   float get_alt()           Altitude in meters
@@ -182,7 +183,7 @@ GPS Origin / Geometry
 
 IMU
 ~~~
-
+  Bool imu_present()       IMU is Present
   float get_roll()          Roll angle in degrees
   float get_pitch()         Pitch angle in degrees
   float get_yaw()           Yaw angle in degrees
@@ -196,20 +197,25 @@ Environment
 ~~~~~~~~~~~
 
   float get_temp()
-      Temperature in degrees Celsius. Returns a large negative value
-      if no sensor is present.
+      Temperature in degrees Celsius. Returns -1000 if not Present
 
   float get_humidity()
-      Humidity in percent. Returns -1.0 if no sensor is present.
+      Humidity in percent. Returns -1000 if not Present
 
   float get_brightness()
-      Brightness 0-4096. Returns -1.0 if no sensor is present.
+      Brightness 0-4096. Returns -1000 if not Present
 
   float get_bat_voltage()
-      Battery voltage. Returns 0 if no power management hardware.
+      Battery voltage. Returns -1000 if not Present
 
   float get_solar_voltage()
-      Solar panel voltage. Returns 0 if no power management hardware.
+      Solar panel voltage. Returns -1000 if not Present
+
+  float get_battery_percentage()
+	Get estimated remaining battery charge
+
+  Float get_battery_runtime()
+	Get estimated remaining battery runtime
 
 
 Sun Position
@@ -222,12 +228,19 @@ Sun Position
   int get_sunset()
       Sunset time as minutes past midnight. Returns -1 if not available.
 
+  Float get_sun_azimuth()
+      Current Sun Azimuth in Degree
+
+  Float get_sun_elevation()
+      Current Sun Elevation as angle in Degree
+
   int sun_valid()
       Returns 1 if sun position data is valid, 0 otherwise.
 
   int is_daylight()
       Returns 1 if currently between sunrise and sunset, 0 if night,
       -1 if sun data is not available.
+
 
   Sun calculations are updated automatically from GPS every 60 seconds.
 
@@ -251,6 +264,12 @@ Time
       Milliseconds since Unix epoch (64-bit). Returns 0 if no time
       source is available. Uses GPS+PPS when available, NTP fallback.
 
+  int64_t get_uptime_ms()
+      Milliseconds since system start.
+
+  int64_t get_last_comm_ms()
+      Last time we received a command via LoRa or Wifi
+
   int millis()
       Milliseconds since boot (wraps at ~49 days).
 
@@ -261,6 +280,8 @@ Time
 
   int time_valid()
       Returns 1 if any time source (GPS+PPS or NTP) is active.
+
+
 
 
 Date/Time (calendar fields)
