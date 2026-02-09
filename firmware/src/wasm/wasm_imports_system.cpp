@@ -49,6 +49,18 @@ m3ApiRawFunction(m3_cue_elapsed) {
     m3ApiReturn((int32_t)cue_get_elapsed_ms());
 }
 
+// --- Random ---
+
+// i32 random_int(i32 min, i32 max) — hardware RNG random in [min, max]
+m3ApiRawFunction(m3_random_int)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, min_val);
+    m3ApiGetArg(int32_t, max_val);
+    if (min_val >= max_val) m3ApiReturn(min_val);
+    m3ApiReturn((int32_t)random(min_val, max_val));
+}
+
 // --- Event synchronization ---
 
 // i32 wait_pps(i32 timeout_ms) -> 1=received, 0=timeout, -1=no GPS
@@ -116,6 +128,10 @@ M3Result link_system_imports(IM3Module module)
     result = m3_LinkRawFunction(module, "env", "cue_playing", "i()", m3_cue_playing);
     if (result && result != m3Err_functionLookupFailed) return result;
     result = m3_LinkRawFunction(module, "env", "cue_elapsed", "i()", m3_cue_elapsed);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    // Random
+    result = m3_LinkRawFunction(module, "env", "random_int", "i(ii)", m3_random_int);
     if (result && result != m3Err_functionLookupFailed) return result;
 
     // Event synchronization

@@ -312,6 +312,10 @@ Params (inter-task communication)
   int  should_stop()
       Returns 1 if the host has requested this module to stop.
 
+  int  random_int(int min, int max)
+      Return a random integer in [min, max) using the ESP32 hardware RNG.
+      Returns min if min >= max.
+
 
 Event Synchronization
 ~~~~~~~~~~~~~~~~~~~~~

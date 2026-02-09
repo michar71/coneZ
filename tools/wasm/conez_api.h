@@ -308,6 +308,10 @@ void set_param(int id, int val);
 __attribute__((import_module("env"), import_name("should_stop")))
 int should_stop(void);
 
+/* Return a random integer in [min, max) using ESP32 hardware RNG. */
+__attribute__((import_module("env"), import_name("random_int")))
+int random_int(int min, int max);
+
 /* ---- Event Synchronization ---- */
 
 /*

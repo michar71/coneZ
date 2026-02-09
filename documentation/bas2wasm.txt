@@ -1,0 +1,200 @@
+bas2wasm — BASIC to WASM Compiler
+===================================
+
+bas2wasm compiles ConeZ BASIC scripts (.bas) into WASM 1.0 binaries (.wasm)
+that run on the ConeZ WASM runtime. The compiled output uses the same host
+API as hand-written WASM modules (see wasm-api.txt).
+
+The compiler is a single C file with no dependencies beyond libc. It can be
+built on any system with a C compiler:
+
+    cc -o bas2wasm tools/bas2wasm/bas2wasm.c
+    ./bas2wasm script.bas -o script.wasm
+
+The .wasm file can then be uploaded to the ConeZ filesystem and run with:
+
+    run /script.wasm
+
+
+Differences from the BASIC Interpreter
+---------------------------------------
+
+The compiler accepts the same language as the interpreter (see
+basic-scripting.txt) with the following differences:
+
+  Additions:
+    - Floating-point variables and arithmetic (f32)
+    - Float math functions: SIN, COS, SQRT, ATAN2, POW
+    - Type conversion functions: INT, FLOAT
+    - Float-returning sensor functions with # suffix
+    - FORMAT & placeholder for printing floats
+
+  Unsupported:
+    - RESUME (interpreter-specific, compile-time error)
+
+  Behavioral:
+    - BREAK compiles to a function return (not a block break)
+    - Compiled code runs ~10x faster than interpreted
+
+
+Floating-Point Support
+----------------------
+
+The BASIC interpreter is integer-only. The compiler extends the language
+with f32 (32-bit float) support, taking advantage of WASM's native float
+instructions. This is a compiler-only extension — the interpreter is unchanged.
+
+Type Rules:
+
+  Variables are typed i32 (integer) or f32 (float). The type is determined
+  by the first value assigned:
+
+    X = 42            # X is i32
+    Y = 3.14          # Y is f32 (number contains a decimal point)
+    Z = GPSLAT#()     # Z is f32 (# function returns float)
+
+  In mixed arithmetic, i32 values are promoted to f32 automatically:
+
+    A = 10            # i32
+    B = 2.5           # f32
+    C = A * B         # C is f32 (A promoted to f32 for multiply)
+
+  Assignment to a typed variable coerces the value:
+
+    X = 42            # X is i32
+    X = 3.14          # 3.14 is truncated to 3
+
+
+Float Literals:
+
+  Any number with a decimal point is a float literal:
+
+    X = 3.14
+    Y = 0.5
+    Z = 1.0           # float, not integer (has decimal point)
+
+
+Math Functions (compiler-only):
+
+  SIN(x)              Sine. Input in radians, returns f32.
+  COS(x)              Cosine. Input in radians, returns f32.
+  SQRT(x)             Square root. Returns f32.
+  ATAN2(y, x)         Two-argument arctangent. Returns f32 radians.
+  POW(base, exp)      Exponentiation. Returns f32.
+
+Type Conversion:
+
+  INT(x)              Convert f32 to i32 (truncate toward zero).
+  FLOAT(x)            Convert i32 to f32.
+
+
+Float Sensor Functions:
+
+  The interpreter's sensor functions truncate float values to integers.
+  The compiler provides # variants that return the native f32 value:
+
+  Function            Interpreter (i32)    Compiler # variant (f32)
+  --------            -----------------    ------------------------
+  GPSLAT#()           n/a                  Latitude as f32
+  GPSLON#()           n/a                  Longitude as f32
+  GPSALT#()           GPSALT() truncated   Altitude as f32
+  GPSSPEED#()         GPSSPEED() truncated Speed as f32
+  GPSDIR#()           GPSDIR() truncated   Direction as f32
+  ORIGINDIST#()       ORIGINDIST() trunc   Distance as f32 meters
+  ORIGINANGLE#()      ORIGINANGLE() trunc  Bearing as f32 degrees
+  PITCH#()            PITCH() truncated    Pitch as f32 degrees
+  ROLL#()             ROLL() truncated     Roll as f32 degrees
+  YAW#()              YAW() truncated      Yaw as f32 degrees
+  ACCX#()             ACCX() truncated     Accel X as f32
+  ACCY#()             ACCY() truncated     Accel Y as f32
+  ACCZ#()             ACCZ() truncated     Accel Z as f32
+  TEMP#()             TEMP() returns C*10  Temperature as f32 C
+  HUM#()              HUM() truncated      Humidity as f32
+  BRIGHT#()           BRIGHT() truncated   Brightness as f32
+
+  Note: TEMP#() returns degrees C as a float (e.g. 22.5), while the
+  interpreter's TEMP() returns C*10 as an integer (e.g. 225).
+
+
+Output with Floats:
+
+  > expr
+      Automatically calls print_f32 if the expression is f32,
+      or print_i32 if i32.
+
+  FORMAT "...", args
+      Use & as a float placeholder (in addition to % for int, $ for string):
+
+      LAT = GPSLAT#()
+      FORMAT "Latitude: &", LAT
+
+
+Compiled Output
+---------------
+
+The compiler produces a valid WASM 1.0 binary with these sections:
+
+  Type       Function signatures
+  Import     Host API functions used by the program
+  Function   Type indices for local functions (setup + SUBs)
+  Memory     1 page (64KB)
+  Global     All BASIC variables as mutable globals + heap pointer
+  Export     setup function + memory
+  Code       Function bodies as WASM bytecode
+  Data       String constants
+
+Only imports that the program actually uses are included — a simple program
+that uses GETPARAM and FORMAT will import just those two functions.
+
+Memory layout:
+
+  [0 .. data_end)       String constants
+  [data_end .. heap)    Heap for DIM arrays (bump-allocated)
+  [0xF000 .. 0xF100)   FORMAT argument buffer (scratch space)
+
+Variables are WASM globals (not in linear memory). Arrays are allocated
+from the heap in linear memory.
+
+
+SUB Compilation
+---------------
+
+SUBs compile to WASM functions. Parameters become WASM function params.
+The compiler saves and restores global values for parameter variables,
+matching the BASIC interpreter's shadowing semantics:
+
+  SUB FOO A, B
+      LOCAL C
+      ...
+  END SUB
+
+Compiles to a WASM function that:
+  1. Saves current values of globals A and B
+  2. Installs parameter values into globals A and B
+  3. Executes the body (LOCAL C becomes a WASM local)
+  4. Restores globals A and B
+  5. Returns i32 (default 0, or RETURN value)
+
+
+FOR Loop Semantics
+------------------
+
+  FOR I = 0 TO N
+
+The loop variable increments by 1 each iteration. The loop exits when
+the variable reaches the TO value (exclusive upper bound — matching the
+interpreter's behavior). FOR I = 0 TO 10 runs for I = 0, 1, ..., 9.
+
+
+Limitations
+-----------
+
+  - 256 max variables/arrays/subroutines
+  - 64 max local functions (SUBs)
+  - 8KB string constant table
+  - 64KB linear memory (1 WASM page)
+  - No nested SUB definitions
+  - RESUME is not supported (compile-time error)
+  - Array operations (SETARRAY, SHIFTARRAY, ROTATEARRAY, COPYARRAY,
+    SCALELIMITARRAY, RGBTOHSVARRAY, HSVTORGBARRAY) are not yet implemented
+  - SETLEDRGB is not yet implemented (use per-pixel LED functions instead)
