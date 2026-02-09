@@ -15,8 +15,8 @@
 // WASM runtime stack size (bytes inside wasm3 interpreter)
 #define WASM3_STACK_SIZE    (8 * 1024)
 
-// Yield to FreeRTOS every N wasm3 Call opcodes (~10K ≈ every few ms)
-#define WASM_YIELD_INTERVAL 10000
+// Yield to FreeRTOS every N wasm3 Call opcodes (~1K for responsive stop handling)
+#define WASM_YIELD_INTERVAL 1000
 
 // ---------- State ----------
 
@@ -167,6 +167,9 @@ static void wasm_run(const char *path)
         return;
     }
 
+    // Look up __line global (exported by bas2wasm-compiled programs)
+    IM3Global g_line = m3_FindGlobal(module, "__line");
+
     // Try to find and call setup() then loop(), or fall back to _start() / main()
     IM3Function func_setup = NULL;
     IM3Function func_loop = NULL;
@@ -190,6 +193,15 @@ static void wasm_run(const char *path)
         return;
     }
 
+    // Helper: read current BASIC line from __line global (0 if unavailable)
+    auto get_basic_line = [&]() -> int {
+        if (!g_line) return 0;
+        M3TaggedValue val;
+        if (m3_GetGlobal(g_line, &val) == m3Err_none)
+            return val.value.i32;
+        return 0;
+    };
+
     printfnl(SOURCE_WASM, "wasm: running %s on Core:%d\n", path, xPortGetCoreID());
 
     // Run start section if present
@@ -207,12 +219,16 @@ static void wasm_run(const char *path)
         // Arduino-style: call setup() once, then loop() repeatedly
         result = m3_CallV(func_setup);
         if (result) {
-            printfnl(SOURCE_WASM, "wasm: setup() error: %s\n", result);
+            int ln = get_basic_line();
+            if (ln) printfnl(SOURCE_WASM, "wasm: setup() error: %s (BASIC line %d)\n", result, ln);
+            else    printfnl(SOURCE_WASM, "wasm: setup() error: %s\n", result);
         } else {
             while (!wasm_stop_requested && get_basic_param(0) != 1) {
                 result = m3_CallV(func_loop);
                 if (result) {
-                    printfnl(SOURCE_WASM, "wasm: loop() error: %s\n", result);
+                    int ln = get_basic_line();
+                    if (ln) printfnl(SOURCE_WASM, "wasm: loop() error: %s (BASIC line %d)\n", result, ln);
+                    else    printfnl(SOURCE_WASM, "wasm: loop() error: %s\n", result);
                     break;
                 }
                 // Yield if loop() didn't call delay_ms
@@ -224,15 +240,20 @@ static void wasm_run(const char *path)
         // Single entry point: _start() or main()
         result = m3_CallV(func_start);
         if (result && result != m3Err_trapExit) {
-            printfnl(SOURCE_WASM, "wasm: %s error: %s\n",
-                     m3_GetFunctionName(func_start), result);
+            int ln = get_basic_line();
+            if (ln) printfnl(SOURCE_WASM, "wasm: %s error: %s (BASIC line %d)\n",
+                             m3_GetFunctionName(func_start), result, ln);
+            else    printfnl(SOURCE_WASM, "wasm: %s error: %s\n",
+                             m3_GetFunctionName(func_start), result);
         }
     } else if (func_loop) {
         // loop() only, no setup()
         while (!wasm_stop_requested && get_basic_param(0) != 1) {
             result = m3_CallV(func_loop);
             if (result) {
-                printfnl(SOURCE_WASM, "wasm: loop() error: %s\n", result);
+                int ln = get_basic_line();
+                if (ln) printfnl(SOURCE_WASM, "wasm: loop() error: %s (BASIC line %d)\n", result, ln);
+                else    printfnl(SOURCE_WASM, "wasm: loop() error: %s\n", result);
                 break;
             }
             vTaskDelay(pdMS_TO_TICKS(1));
@@ -242,7 +263,9 @@ static void wasm_run(const char *path)
         // setup() only, no loop()
         result = m3_CallV(func_setup);
         if (result) {
-            printfnl(SOURCE_WASM, "wasm: setup() error: %s\n", result);
+            int ln = get_basic_line();
+            if (ln) printfnl(SOURCE_WASM, "wasm: setup() error: %s (BASIC line %d)\n", result, ln);
+            else    printfnl(SOURCE_WASM, "wasm: setup() error: %s\n", result);
         }
     }
 

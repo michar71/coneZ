@@ -77,6 +77,10 @@ static void buf_section(Buf *out, int id, Buf *content) {
  *  WASM Opcodes & Types
  * ================================================================ */
 
+/* Global index constants */
+#define GLOBAL_LINE  0   /* __line: current BASIC source line (mut i32) */
+#define GLOBAL_HEAP  1   /* _heap_ptr: bump allocator pointer (mut i32) */
+
 #define OP_UNREACHABLE   0x00
 #define OP_BLOCK         0x02
 #define OP_LOOP          0x03
@@ -167,6 +171,9 @@ enum {
     IMP_GET_BAT_VOLTAGE, IMP_GET_SOLAR_VOLTAGE,
     IMP_GET_SUNRISE, IMP_GET_SUNSET, IMP_SUN_VALID, IMP_IS_DAYLIGHT,
     IMP_PIN_SET, IMP_PIN_CLEAR, IMP_PIN_READ, IMP_ANALOG_READ,
+    IMP_GPS_PRESENT, IMP_IMU_PRESENT,
+    IMP_GET_BATTERY_PERCENTAGE, IMP_GET_BATTERY_RUNTIME,
+    IMP_GET_SUN_AZIMUTH, IMP_GET_SUN_ELEVATION,
     IMP_COUNT
 };
 
@@ -250,6 +257,12 @@ static ImportDef imp_defs[IMP_COUNT] = {
     [IMP_PIN_CLEAR]      = {"pin_clear",      1,{_I},            0,{}},
     [IMP_PIN_READ]       = {"pin_read",       1,{_I},            1,{_I}},
     [IMP_ANALOG_READ]    = {"analog_read",    1,{_I},            1,{_I}},
+    [IMP_GPS_PRESENT]    = {"gps_present",    0,{},              1,{_I}},
+    [IMP_IMU_PRESENT]    = {"imu_present",    0,{},              1,{_I}},
+    [IMP_GET_BATTERY_PERCENTAGE]={"get_battery_percentage",0,{}, 1,{_F}},
+    [IMP_GET_BATTERY_RUNTIME]={"get_battery_runtime",0,{},       1,{_F}},
+    [IMP_GET_SUN_AZIMUTH]= {"get_sun_azimuth",0,{},             1,{_F}},
+    [IMP_GET_SUN_ELEVATION]={"get_sun_elevation",0,{},           1,{_F}},
 };
 #undef _I
 #undef _F
@@ -366,7 +379,7 @@ static int add_var(const char *name) {
     memset(&vars[nvar], 0, sizeof(Var));
     strncpy(vars[nvar].name, name, 15);
     vars[nvar].type = T_I32;
-    vars[nvar].global_idx = nvar + 1; /* global 0 = _heap_ptr */
+    vars[nvar].global_idx = nvar + 2; /* globals 0,1 = __line, _heap_ptr */
     return nvar++;
 }
 
@@ -667,6 +680,13 @@ static const SimpleBI simple_bi[] = {
     {"LUT",         1, IMP_LUT_GET,      0},
     {"PIN_READ",    1, IMP_PIN_READ,     0},
     {"ANALOG_READ", 1, IMP_ANALOG_READ,  0},
+    {"GPSPRESENT",  0, IMP_GPS_PRESENT,  0},
+    {"IMUPRESENT",  0, IMP_IMU_PRESENT,  0},
+    {"UPTIME",      0, IMP_MILLIS,       0},
+    {"BATPCT",      0, IMP_GET_BATTERY_PERCENTAGE, 1},
+    {"BATRUNTIME",  0, IMP_GET_BATTERY_RUNTIME,    1},
+    {"SUNAZ",       0, IMP_GET_SUN_AZIMUTH,        1},
+    {"SUNEL",       0, IMP_GET_SUN_ELEVATION,      1},
     /* Float-returning versions with # suffix */
     {"GPSLAT#",     0, IMP_GET_LAT,      0},
     {"GPSLON#",     0, IMP_GET_LON,      0},
@@ -684,6 +704,10 @@ static const SimpleBI simple_bi[] = {
     {"TEMP#",       0, IMP_GET_TEMP,     0},
     {"HUM#",        0, IMP_GET_HUMIDITY, 0},
     {"BRIGHT#",     0, IMP_GET_BRIGHTNESS,0},
+    {"BATPCT#",     0, IMP_GET_BATTERY_PERCENTAGE, 0},
+    {"BATRUNTIME#", 0, IMP_GET_BATTERY_RUNTIME,    0},
+    {"SUNAZ#",      0, IMP_GET_SUN_AZIMUTH,        0},
+    {"SUNEL#",      0, IMP_GET_SUN_ELEVATION,      0},
     {NULL, 0, 0, 0}
 };
 
@@ -714,6 +738,14 @@ static int compile_builtin_expr(const char *name) {
     }
 
     /* Custom builtins */
+
+    /* FIXME: get_last_comm_ms returns i64 — stub as 0 until tracked */
+    if (strcmp(name, "LASTCOMM") == 0) {
+        need(TOK_RP);
+        emit_i32_const(0); vpush(T_I32);
+        return 1;
+    }
+
     if (strcmp(name, "SETLEDCOL") == 0) {
         emit_i32_const(1); /* channel */
         expr(); coerce_i32(); need(TOK_COMMA);
@@ -1608,19 +1640,19 @@ static void compile_dim(void) {
     int n_local = alloc_local();
     emit_local_set(n_local);
     /* base = _heap_ptr */
-    emit_global_get(0); /* _heap_ptr */
+    emit_global_get(GLOBAL_HEAP); /* _heap_ptr */
     emit_global_set(vars[var].global_idx);
     /* Store size at arr[0] */
     emit_global_get(vars[var].global_idx);
     emit_local_get(n_local);
     emit_i32_store(0);
     /* Advance _heap_ptr by (n+1)*4 */
-    emit_global_get(0);
+    emit_global_get(GLOBAL_HEAP);
     emit_local_get(n_local);
     emit_i32_const(1); emit_op(OP_I32_ADD);
     emit_i32_const(4); emit_op(OP_I32_MUL);
     emit_op(OP_I32_ADD);
-    emit_global_set(0);
+    emit_global_set(GLOBAL_HEAP);
     /* TODO: zero-fill the array */
 }
 
@@ -1678,6 +1710,12 @@ static void compile_return(void) {
 static void stmt(void) {
     int t = read_tok();
     if (had_error) return;
+
+    /* Track current BASIC line number in __line global */
+    if (t != TOK_EOF) {
+        emit_i32_const(line_num);
+        emit_global_set(GLOBAL_LINE);
+    }
 
     switch (t) {
     case TOK_EOF: break;
@@ -1936,9 +1974,12 @@ static void assemble(const char *outpath) {
         int heap_start = (data_len + 3) & ~3;
 
         Buf sec; buf_init(&sec);
-        int nglobals = 1 + nvar; /* _heap_ptr + variables */
+        int nglobals = 2 + nvar; /* __line + _heap_ptr + variables */
         buf_uleb(&sec, nglobals);
-        /* Global 0: _heap_ptr (mut i32) = heap_start */
+        /* Global 0: __line (mut i32) = 0 */
+        buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01); /* mutable */
+        buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, 0); buf_byte(&sec, OP_END);
+        /* Global 1: _heap_ptr (mut i32) = heap_start */
         buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01); /* mutable */
         buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, heap_start); buf_byte(&sec, OP_END);
         /* Variable globals */
@@ -1961,7 +2002,7 @@ static void assemble(const char *outpath) {
     /* --- Export Section (7) --- */
     {
         Buf sec; buf_init(&sec);
-        buf_uleb(&sec, 2); /* setup + memory */
+        buf_uleb(&sec, 3); /* setup + memory + __line */
         /* Export setup function */
         buf_str(&sec, "setup");
         buf_byte(&sec, 0x00); /* function */
@@ -1970,6 +2011,10 @@ static void assemble(const char *outpath) {
         buf_str(&sec, "memory");
         buf_byte(&sec, 0x02); /* memory */
         buf_uleb(&sec, 0);
+        /* Export __line global */
+        buf_str(&sec, "__line");
+        buf_byte(&sec, 0x03); /* global */
+        buf_uleb(&sec, GLOBAL_LINE);
         buf_section(&out, 7, &sec);
         buf_free(&sec);
     }
@@ -2044,7 +2089,7 @@ static void assemble(const char *outpath) {
     fclose(fp);
     printf("Wrote %d bytes to %s\n", out.len, outpath);
     printf("  %d imports, %d local functions, %d globals, %d bytes string data\n",
-           num_used_imports, nfuncs, 1 + nvar, data_len);
+           num_used_imports, nfuncs, 2 + nvar, data_len);
     buf_free(&out);
 }
 
