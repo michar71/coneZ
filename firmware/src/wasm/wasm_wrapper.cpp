@@ -66,6 +66,7 @@ static M3Result link_imports(IM3Module module)
     if ((r = link_io_imports(module)))       return r;
     if ((r = link_math_imports(module)))     return r;
     if ((r = link_format_imports(module)))   return r;
+    if ((r = link_string_imports(module)))  return r;
     return m3Err_none;
 }
 
@@ -272,6 +273,7 @@ static void wasm_run(const char *path)
     // Cleanup
     wasm_close_all_files();
     wasm_reset_gamma();
+    wasm_string_pool_reset();
     wasm_current_path[0] = '\0';
     m3_FreeRuntime(runtime);
     m3_FreeEnvironment(env);

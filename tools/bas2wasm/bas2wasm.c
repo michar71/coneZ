@@ -174,6 +174,11 @@ enum {
     IMP_GPS_PRESENT, IMP_IMU_PRESENT,
     IMP_GET_BATTERY_PERCENTAGE, IMP_GET_BATTERY_RUNTIME,
     IMP_GET_SUN_AZIMUTH, IMP_GET_SUN_ELEVATION,
+    IMP_STR_ALLOC, IMP_STR_FREE, IMP_STR_LEN, IMP_STR_COPY,
+    IMP_STR_CONCAT, IMP_STR_CMP, IMP_STR_MID, IMP_STR_LEFT, IMP_STR_RIGHT,
+    IMP_STR_CHR, IMP_STR_ASC, IMP_STR_FROM_INT, IMP_STR_FROM_FLOAT,
+    IMP_STR_TO_INT, IMP_STR_TO_FLOAT, IMP_STR_UPPER, IMP_STR_LOWER,
+    IMP_STR_INSTR, IMP_STR_TRIM,
     IMP_COUNT
 };
 
@@ -263,6 +268,25 @@ static ImportDef imp_defs[IMP_COUNT] = {
     [IMP_GET_BATTERY_RUNTIME]={"get_battery_runtime",0,{},       1,{_F}},
     [IMP_GET_SUN_AZIMUTH]= {"get_sun_azimuth",0,{},             1,{_F}},
     [IMP_GET_SUN_ELEVATION]={"get_sun_elevation",0,{},           1,{_F}},
+    [IMP_STR_ALLOC]      = {"basic_str_alloc",      1,{_I},            1,{_I}},
+    [IMP_STR_FREE]       = {"basic_str_free",       1,{_I},            0,{}},
+    [IMP_STR_LEN]        = {"basic_str_len",        1,{_I},            1,{_I}},
+    [IMP_STR_COPY]       = {"basic_str_copy",       1,{_I},            1,{_I}},
+    [IMP_STR_CONCAT]     = {"basic_str_concat",     2,{_I,_I},         1,{_I}},
+    [IMP_STR_CMP]        = {"basic_str_cmp",        2,{_I,_I},         1,{_I}},
+    [IMP_STR_MID]        = {"basic_str_mid",        3,{_I,_I,_I},      1,{_I}},
+    [IMP_STR_LEFT]       = {"basic_str_left",       2,{_I,_I},         1,{_I}},
+    [IMP_STR_RIGHT]      = {"basic_str_right",      2,{_I,_I},         1,{_I}},
+    [IMP_STR_CHR]        = {"basic_str_chr",        1,{_I},            1,{_I}},
+    [IMP_STR_ASC]        = {"basic_str_asc",        1,{_I},            1,{_I}},
+    [IMP_STR_FROM_INT]   = {"basic_str_from_int",   1,{_I},            1,{_I}},
+    [IMP_STR_FROM_FLOAT] = {"basic_str_from_float", 1,{_F},            1,{_I}},
+    [IMP_STR_TO_INT]     = {"basic_str_to_int",     1,{_I},            1,{_I}},
+    [IMP_STR_TO_FLOAT]   = {"basic_str_to_float",   1,{_I},            1,{_F}},
+    [IMP_STR_UPPER]      = {"basic_str_upper",      1,{_I},            1,{_I}},
+    [IMP_STR_LOWER]      = {"basic_str_lower",      1,{_I},            1,{_I}},
+    [IMP_STR_INSTR]      = {"basic_str_instr",      3,{_I,_I,_I},      1,{_I}},
+    [IMP_STR_TRIM]       = {"basic_str_trim",       1,{_I},            1,{_I}},
 };
 #undef _I
 #undef _F
@@ -277,7 +301,7 @@ static ImportDef imp_defs[IMP_COUNT] = {
 #define MAX_STRINGS 8192
 #define FMT_BUF_SIZE 256
 
-typedef enum { T_I32 = 0, T_F32 = 1 } VType;
+typedef enum { T_I32 = 0, T_F32 = 1, T_STR = 2 } VType;
 
 #define VAR_NORMAL 0
 #define VAR_DIM    1
@@ -378,7 +402,13 @@ static int add_var(const char *name) {
     if (nvar >= MAX_VARS) { error_at("too many variables"); return 0; }
     memset(&vars[nvar], 0, sizeof(Var));
     strncpy(vars[nvar].name, name, 15);
-    vars[nvar].type = T_I32;
+    int len = strlen(name);
+    if (len > 0 && name[len-1] == '$') {
+        vars[nvar].type = T_STR;
+        vars[nvar].type_set = 1;
+    } else {
+        vars[nvar].type = T_I32;
+    }
     vars[nvar].global_idx = nvar + 2; /* globals 0,1 = __line, _heap_ptr */
     return nvar++;
 }
@@ -494,6 +524,8 @@ static int read_tok(void) {
         }
         /* Allow # suffix for float function names */
         if (*lp == '#') { if (tp - tokn < 15) *tp++ = '#'; lp++; }
+        /* Allow $ suffix for string variable/function names */
+        if (*lp == '$') { if (tp - tokn < 15) *tp++ = '$'; lp++; }
         *tp = 0;
         for (k = kwd; *k; k++)
             if (strcmp(tokn, *k) == 0) return tok = (k - kwd) + TOK_AND;
@@ -572,6 +604,10 @@ static void emit_return(void) { buf_byte(CODE, OP_RETURN); }
 
 /* Coerce top of WASM value stack to i32 */
 static void coerce_i32(void) {
+    if (vsp > 0 && vstack[vsp-1] == T_STR) {
+        error_at("cannot use string in numeric context");
+        return;
+    }
     if (vsp > 0 && vstack[vsp-1] == T_F32) {
         emit_op(OP_I32_TRUNC_F32_S);
         vstack[vsp-1] = T_I32;
@@ -580,6 +616,10 @@ static void coerce_i32(void) {
 
 /* Coerce top of WASM value stack to f32 */
 static void coerce_f32(void) {
+    if (vsp > 0 && vstack[vsp-1] == T_STR) {
+        error_at("cannot use string in numeric context");
+        return;
+    }
     if (vsp > 0 && vstack[vsp-1] == T_I32) {
         emit_op(OP_F32_CONVERT_I32_S);
         vstack[vsp-1] = T_F32;
@@ -1167,6 +1207,102 @@ static int compile_builtin_expr(const char *name) {
         emit_i32_const(0); vpush(T_I32);
         return 1;
     }
+    /* ---- String functions ---- */
+    if (strcmp(name, "LEN") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_LEN);
+        vpush(T_I32);
+        return 1;
+    }
+    if (strcmp(name, "MID$") == 0) {
+        expr(); need(TOK_COMMA);       /* string */
+        expr(); coerce_i32(); need(TOK_COMMA); /* start (1-based) */
+        expr(); coerce_i32(); need(TOK_RP);    /* length */
+        emit_call(IMP_STR_MID);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "LEFT$") == 0) {
+        expr(); need(TOK_COMMA);       /* string */
+        expr(); coerce_i32(); need(TOK_RP); /* n */
+        emit_call(IMP_STR_LEFT);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "RIGHT$") == 0) {
+        expr(); need(TOK_COMMA);       /* string */
+        expr(); coerce_i32(); need(TOK_RP); /* n */
+        emit_call(IMP_STR_RIGHT);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "CHR$") == 0) {
+        expr(); coerce_i32(); need(TOK_RP);
+        emit_call(IMP_STR_CHR);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "ASC") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_ASC);
+        vpush(T_I32);
+        return 1;
+    }
+    if (strcmp(name, "STR$") == 0) {
+        expr(); need(TOK_RP);
+        VType t = vpop();
+        if (t == T_F32) {
+            emit_call(IMP_STR_FROM_FLOAT);
+        } else {
+            emit_call(IMP_STR_FROM_INT);
+        }
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "VAL") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_TO_INT);
+        vpush(T_I32);
+        return 1;
+    }
+    if (strcmp(name, "VAL#") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_TO_FLOAT);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "UPPER$") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_UPPER);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "LOWER$") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_LOWER);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "INSTR") == 0) {
+        expr(); need(TOK_COMMA);       /* haystack */
+        expr();                         /* needle */
+        if (want(TOK_COMMA)) {
+            expr(); coerce_i32();       /* start (1-based) */
+        } else {
+            emit_i32_const(1);          /* default start = 1 */
+        }
+        need(TOK_RP);
+        emit_call(IMP_STR_INSTR);
+        vpush(T_I32);
+        return 1;
+    }
+    if (strcmp(name, "TRIM$") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_TRIM);
+        vpush(T_STR);
+        return 1;
+    }
+
     return 0;
 }
 
@@ -1185,7 +1321,7 @@ static void base_expr(void) {
         vpush(T_F32);
     } else if (want(TOK_STRING)) {
         emit_i32_const(tokv); /* offset into data section */
-        vpush(T_I32);
+        vpush(T_STR);
     } else if (want(TOK_NAME)) {
         int var = tokv;
         if (want(TOK_LP)) {
@@ -1275,6 +1411,9 @@ static void factor(void) {
         int op = tok;
         read_tok();
         base_expr();
+        if (vsp >= 2 && (vstack[vsp-1] == T_STR || vstack[vsp-2] == T_STR)) {
+            error_at("cannot use *, / or MOD on strings"); return;
+        }
         switch (op) {
         case TOK_MUL: emit_binop(OP_I32_MUL, OP_F32_MUL); break;
         case TOK_DIV: emit_binop(OP_I32_DIV_S, OP_F32_DIV); break;
@@ -1289,8 +1428,17 @@ static void addition(void) {
         int op = tok;
         read_tok();
         factor();
-        if (op == TOK_ADD) emit_binop(OP_I32_ADD, OP_F32_ADD);
-        else emit_binop(OP_I32_SUB, OP_F32_SUB);
+        if (op == TOK_ADD && vsp >= 2 && vstack[vsp-1] == T_STR && vstack[vsp-2] == T_STR) {
+            vpop(); vpop();
+            emit_call(IMP_STR_CONCAT);
+            vpush(T_STR);
+        } else if (vsp >= 2 && (vstack[vsp-1] == T_STR || vstack[vsp-2] == T_STR)) {
+            error_at("cannot mix strings and numbers with + or -");
+        } else if (op == TOK_ADD) {
+            emit_binop(OP_I32_ADD, OP_F32_ADD);
+        } else {
+            emit_binop(OP_I32_SUB, OP_F32_SUB);
+        }
     }
 }
 
@@ -1300,13 +1448,32 @@ static void relation(void) {
         int op = tok;
         read_tok();
         addition();
-        switch (op) {
-        case TOK_EQ: emit_compare(OP_I32_EQ, OP_F32_EQ); break;
-        case TOK_LT: emit_compare(OP_I32_LT_S, OP_F32_LT); break;
-        case TOK_GT: emit_compare(OP_I32_GT_S, OP_F32_GT); break;
-        case TOK_NE: emit_compare(OP_I32_NE, OP_F32_NE); break;
-        case TOK_LE: emit_compare(OP_I32_LE_S, OP_F32_LE); break;
-        case TOK_GE: emit_compare(OP_I32_GE_S, OP_F32_GE); break;
+        if (vsp >= 2 && vstack[vsp-1] == T_STR && vstack[vsp-2] == T_STR) {
+            vpop(); vpop();
+            emit_call(IMP_STR_CMP);
+            /* str_cmp returns <0, 0, or >0 (like strcmp) */
+            switch (op) {
+            case TOK_EQ: emit_op(OP_I32_EQZ); break;
+            case TOK_NE: emit_i32_const(0); emit_op(OP_I32_NE); break;
+            case TOK_LT: emit_i32_const(0); emit_op(OP_I32_LT_S); break;
+            case TOK_GT: emit_i32_const(0); emit_op(OP_I32_GT_S); break;
+            case TOK_LE: emit_i32_const(0); emit_op(OP_I32_LE_S); break;
+            case TOK_GE: emit_i32_const(0); emit_op(OP_I32_GE_S); break;
+            }
+            emit_i32_const(-1);
+            emit_op(OP_I32_MUL);
+            vpush(T_I32);
+        } else if (vsp >= 2 && (vstack[vsp-1] == T_STR || vstack[vsp-2] == T_STR)) {
+            error_at("cannot compare string with number");
+        } else {
+            switch (op) {
+            case TOK_EQ: emit_compare(OP_I32_EQ, OP_F32_EQ); break;
+            case TOK_LT: emit_compare(OP_I32_LT_S, OP_F32_LT); break;
+            case TOK_GT: emit_compare(OP_I32_GT_S, OP_F32_GT); break;
+            case TOK_NE: emit_compare(OP_I32_NE, OP_F32_NE); break;
+            case TOK_LE: emit_compare(OP_I32_LE_S, OP_F32_LE); break;
+            case TOK_GE: emit_compare(OP_I32_GE_S, OP_F32_GE); break;
+            }
         }
     }
 }
@@ -1319,7 +1486,9 @@ static void expr(void) {
         relation();
         /* AND/OR are bitwise on i32 (-1/0 values) */
         VType b = vpop(), a = vpop();
-        (void)a; (void)b;
+        if (a == T_STR || b == T_STR) {
+            error_at("cannot use AND/OR on strings");
+        }
         emit_op(op == TOK_AND ? OP_I32_AND : OP_I32_OR);
         vpush(T_I32);
     }
@@ -1575,6 +1744,7 @@ static void compile_while(void) {
 static void compile_for(void) {
     need(TOK_NAME);
     int var = tokv;
+    if (vars[var].type == T_STR) { error_at("FOR loop variable cannot be a string"); return; }
     need(TOK_EQ);
     expr(); coerce_i32(); vpop();
     emit_global_set(vars[var].global_idx);
@@ -1737,10 +1907,22 @@ static void stmt(void) {
         /* > expr — print expression */
         expr();
         VType t2 = vpop();
-        if (t2 == T_F32)
+        if (t2 == T_STR) {
+            int tmp = alloc_local();
+            emit_local_set(tmp);
+            emit_i32_const(0xF000);
+            emit_local_get(tmp);
+            emit_i32_store(0);
+            int fmt_off = add_string("%s\n", 3);
+            emit_i32_const(fmt_off);
+            emit_i32_const(0xF000);
+            emit_call(IMP_HOST_PRINTF);
+            emit_drop();
+        } else if (t2 == T_F32) {
             emit_call(IMP_PRINT_F32);
-        else
+        } else {
             emit_call(IMP_PRINT_I32);
+        }
         break;
     }
     case TOK_NAME: {
@@ -1749,15 +1931,25 @@ static void stmt(void) {
             /* Assignment: X = expr */
             expr();
             VType et = vpop();
-            if (!vars[var].type_set) {
-                vars[var].type = et;
-                vars[var].type_set = 1;
-            } else if (vars[var].type == T_I32 && et == T_F32) {
-                emit_op(OP_I32_TRUNC_F32_S);
-            } else if (vars[var].type == T_F32 && et == T_I32) {
-                emit_op(OP_F32_CONVERT_I32_S);
+            if (vars[var].type == T_STR) {
+                /* String assignment: free old value, store new */
+                int new_val = alloc_local();
+                emit_local_set(new_val);
+                emit_global_get(vars[var].global_idx);
+                emit_call(IMP_STR_FREE);
+                emit_local_get(new_val);
+                emit_global_set(vars[var].global_idx);
+            } else {
+                if (!vars[var].type_set) {
+                    vars[var].type = et;
+                    vars[var].type_set = 1;
+                } else if (vars[var].type == T_I32 && et == T_F32) {
+                    emit_op(OP_I32_TRUNC_F32_S);
+                } else if (vars[var].type == T_F32 && et == T_I32) {
+                    emit_op(OP_F32_CONVERT_I32_S);
+                }
+                emit_global_set(vars[var].global_idx);
             }
-            emit_global_set(vars[var].global_idx);
         } else if (want(TOK_LP)) {
             if (vars[var].mode == VAR_DIM) {
                 /* Array store: A(i) = v */

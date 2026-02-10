@@ -29,6 +29,13 @@ basic-scripting.txt) with the following differences:
     - Float-returning sensor functions with # suffix
     - FORMAT & placeholder for printing floats
 
+  Additions (string):
+    - String variables (A$, NAME$, etc.)
+    - String concatenation with +
+    - String comparison (=, <>, <, >, <=, >=)
+    - String functions: LEN, MID$, LEFT$, RIGHT$, CHR$, ASC, STR$,
+      VAL, VAL#, UPPER$, LOWER$, INSTR, TRIM$
+
   Unsupported:
     - RESUME (interpreter-specific, compile-time error)
 
@@ -46,12 +53,15 @@ instructions. This is a compiler-only extension — the interpreter is unchanged
 
 Type Rules:
 
-  Variables are typed i32 (integer) or f32 (float). The type is determined
-  by the first value assigned:
+  Variables are typed i32 (integer), f32 (float), or str (string). The
+  type is determined by the variable name or first value assigned:
 
     X = 42            # X is i32
     Y = 3.14          # Y is f32 (number contains a decimal point)
     Z = GPSLAT#()     # Z is f32 (# function returns float)
+    A$ = "hello"      # A$ is str ($ suffix = string variable)
+
+  String variables must have a $ suffix. Numeric variables cannot end in $.
 
   In mixed arithmetic, i32 values are promoted to f32 automatically:
 
@@ -63,6 +73,8 @@ Type Rules:
 
     X = 42            # X is i32
     X = 3.14          # 3.14 is truncated to 3
+
+  String variables cannot be assigned numeric values or vice versa.
 
 
 Float Literals:
@@ -124,13 +136,88 @@ Output with Floats:
 
   > expr
       Automatically calls print_f32 if the expression is f32,
-      or print_i32 if i32.
+      print_str if str, or print_i32 if i32.
 
   FORMAT "...", args
       Use & as a float placeholder (in addition to % for int, $ for string):
 
       LAT = GPSLAT#()
       FORMAT "Latitude: &", LAT
+
+
+String Support
+--------------
+
+The compiler extends the language with string variables and functions.
+String values are pointers into WASM linear memory (null-terminated C
+strings). The runtime manages a string pool in the 0x8000-0xEFFF region
+for dynamically allocated strings.
+
+
+String Variables:
+
+  Variables ending in $ are string-typed:
+
+    A$ = "Hello"
+    NAME$ = "ConeZ"
+
+  String variables can hold string literals, results of string functions,
+  or concatenation results. They are initialized to 0 (empty/null).
+
+
+String Concatenation:
+
+  The + operator concatenates strings:
+
+    A$ = "Hello"
+    B$ = " World"
+    C$ = A$ + B$          # C$ is "Hello World"
+
+  Both operands must be strings. Mixing strings and numbers is an error.
+
+
+String Comparison:
+
+  All six comparison operators work on strings (lexicographic order):
+
+    IF A$ = "Hello" THEN ...
+    IF A$ <> B$ THEN ...
+    IF A$ < B$ THEN ...
+    IF A$ > B$ THEN ...
+    IF A$ <= B$ THEN ...
+    IF A$ >= B$ THEN ...
+
+  Both operands must be strings.
+
+
+String Functions:
+
+  LEN(s$)                 Length of string. Returns i32.
+  MID$(s$, start, len)    Substring. start is 1-based. Returns str.
+  LEFT$(s$, n)            First n characters. Returns str.
+  RIGHT$(s$, n)           Last n characters. Returns str.
+  CHR$(n)                 Character from ASCII code. Returns str.
+  ASC(s$)                 ASCII code of first character. Returns i32.
+  STR$(x)                 Number to string (works with i32 or f32). Returns str.
+  VAL(s$)                 String to integer. Returns i32.
+  VAL#(s$)                String to float. Returns f32.
+  UPPER$(s$)              Convert to uppercase. Returns str.
+  LOWER$(s$)              Convert to lowercase. Returns str.
+  INSTR(s$, sub$)         Find substring (1-based, 0 if not found). Returns i32.
+  INSTR(s$, sub$, start)  Find substring from position. Returns i32.
+  TRIM$(s$)               Remove leading/trailing whitespace. Returns str.
+
+  Examples:
+
+    NAME$ = "ConeZ"
+    FORMAT "Length: %", LEN(NAME$)       # 5
+    FORMAT "Sub: $", MID$(NAME$, 2, 3)   # one
+    FORMAT "Upper: $", UPPER$(NAME$)     # CONEZ
+    FORMAT "Code: %", ASC("A")           # 65
+    FORMAT "Char: $", CHR$(65)           # A
+    FORMAT "Num: $", STR$(42)            # 42
+
+    IF INSTR(NAME$, "one") > 0 THEN FORMAT "Found!"
 
 
 Compiled Output
@@ -154,6 +241,7 @@ Memory layout:
 
   [0 .. data_end)       String constants
   [data_end .. heap)    Heap for DIM arrays (bump-allocated)
+  [0x8000 .. 0xEFFF)   String pool (host-managed, for runtime strings)
   [0xF000 .. 0xF100)   FORMAT argument buffer (scratch space)
 
 Variables are WASM globals (not in linear memory). Arrays are allocated

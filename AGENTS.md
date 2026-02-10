@@ -99,6 +99,7 @@ WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build fl
 | `wasm_imports_io.cpp` | Print (i32/f32/i64/f64/str), WASI stubs, LUT |
 | `wasm_imports_math.cpp` | 12 float + 12 double transcendental wrappers |
 | `wasm_format.cpp` | wasm_vformat(), wasm_vsscanf(), host_printf/snprintf/sscanf |
+| `wasm_imports_string.cpp` | BASIC string pool allocator + 19 string host imports (`basic_str_*`) |
 
 Each file contains its wrapper functions and a `link_*_imports()` function that registers them. Adding a new host import is a single-file edit: add the `m3ApiRawFunction` wrapper and a `m3_LinkRawFunction` call in the same file's link function.
 

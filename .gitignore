@@ -37,3 +37,5 @@ documentation/cue-system-design.txt
 tools/wasm/examples/rust_rainbow/target/
 tools/wasm/examples/rust_rgb_cycle/target/
 tools/__pycache__/
+tools/bas2wasm/bas2wasm
+tools/c2wasm/c2wasm

@@ -17,9 +17,11 @@ M3Result link_file_imports(IM3Module module);
 M3Result link_io_imports(IM3Module module);
 M3Result link_math_imports(IM3Module module);
 M3Result link_format_imports(IM3Module module);
+M3Result link_string_imports(IM3Module module);
 
 // Cleanup functions (called from wasm_run() on program exit)
 void wasm_close_all_files(void);   // defined in wasm_imports_file.cpp
 void wasm_reset_gamma(void);       // defined in wasm_imports_led.cpp
+void wasm_string_pool_reset(void); // defined in wasm_imports_string.cpp
 
 #endif
