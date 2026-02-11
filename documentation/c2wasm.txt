@@ -65,8 +65,9 @@ Types:
                 support; globals, locals, parameters, return values all work
   long long     64-bit signed integer (WASM i64) — full arithmetic,
                 comparisons, bitwise, ++/--, globals, locals, params, returns
+                Alternative spellings: long long int, unsigned long long int
   unsigned      accepted as qualifier, warns "all ops use signed semantics"
-  long          accepted as qualifier (single long = int)
+  long          accepted as qualifier (single long = int, with warning)
   short         accepted as qualifier, treated as int (with warning)
   signed        accepted as qualifier, silently ignored (default is signed)
   _Bool / bool  treated as int (i32)
@@ -74,10 +75,22 @@ Types:
                 literals) become compile-time constants; const float/double
                 become read-only globals with init values; const locals
                 are enforced — assignment, ++, -- on const variables is an error
+                Both 'const int' and 'int const' orderings are accepted.
   static        accepted on globals and functions
 
   Pointers (int *, char *, const char *, void *) are parsed but treated
   as i32. No pointer arithmetic or dereferencing.
+
+  Type/WASM mapping summary:
+    C type          WASM    sizeof
+    ------          ----    ------
+    void            —       1
+    char            i32     1
+    int             i32     4
+    float           f32     4
+    double          f64     8
+    long long       i64     8
+    T * (pointer)   i32     4
 
 Declarations:
   Global variables with optional initializer:
@@ -110,6 +123,7 @@ Control Flow:
   do stmt while (cond);
   for (init; cond; incr) stmt
   switch (expr) { case N: ... break; default: ... break; }
+  Case labels support constant expressions: case BASE + 2:, case (A | B):
   break
   continue
   return expr;
@@ -148,7 +162,8 @@ Expressions (full C operator precedence):
 
 Literals:
   Integer:       42, 0xFF, 0x1A, 0755, -1
-  Float:         3.14f, 0.5f, 1.0, .5, 5.
+  Float (f32):   3.14f, 0.5f (f/F suffix required for float)
+  Double (f64):  1.0, .5, 5. (unsuffixed decimal = double, per C standard)
   Character:     'A', '\n', '\t', '\\', '\0', '\x41'
   String:        "hello\n", "multi" "part" (concatenation)
 
@@ -161,7 +176,10 @@ Preprocessor:
   #undef NAME                 Remove a previously defined macro
   #ifdef NAME ... #endif      Conditional compilation
   #ifndef NAME ... #endif     Conditional compilation
-  #else                       Else branch for #ifdef/#ifndef
+  #else                       Else branch for #ifdef/#ifndef/#if
+  #elif                       Else-if chains: #if A / #elif B / #else / #endif
+  #error message              Abort compilation with error message
+  #warning message            Emit warning and continue compilation
 
   #if supports full constant expression evaluation:
   #if 0 ... #endif            Block comment via preprocessor
@@ -318,15 +336,17 @@ Source files in tools/c2wasm/:
   lexer.c       C tokenizer: identifiers, keywords, literals, operators,
                 comments, macro expansion
   preproc.c     Preprocessor: #include special-case, #define/#undef (with
-                line continuation), #ifdef/#ifndef/#else/#endif, full #if
-                constant expression evaluator, API registration
+                line continuation), #ifdef/#ifndef/#elif/#else/#endif,
+                #error/#warning, full #if constant expression evaluator,
+                API registration
   type.c        Type parsing (void/int/float/double/char/long long/unsigned/
                 short/signed/_Bool/bool/static/const) and pointer star
                 consumption
   expr.c        Precedence-climbing expression parser (15 levels),
                 short-circuit &&/||, casts, ternary, comma, printf/print builtins
   stmt.c        Statement parser: functions, if/else, for, while, do/while,
-                switch/case, break/continue/return, local/global declarations
+                switch/case (with constant expression evaluator for case
+                labels), break/continue/return, local/global declarations
   assemble.c    WASM binary assembly: type/import/function/memory/global/
                 export/code/data sections, import index remapping
   buf.c         Byte buffer primitives (from bas2wasm, with f64/i64 additions)
@@ -370,29 +390,33 @@ Test files cover: basic types, arithmetic, bitwise ops, comparisons,
 control flow (if/while/do/for/switch/break/continue), assignment ops,
 user functions (forward decls, recursion), casts and sizeof, ternary
 operator, literals (int/float/char/string/hex/octal), printf formats,
-preprocessor (#define/#ifdef/#if 0/#if N/#undef/#if defined/#if expr),
-scoping (block/for-init/shadow), math imports, trig imports,
-API calls, file I/O, WASM-native builtins (sqrtf/fabsf/floorf/ceilf/
-truncf/fminf/fmaxf and f64 equivalents), comments, setup-only and
-loop-only programs, recursive and mutual macro guards, nested #ifdef,
-sizeof without evaluation, implicit returns, ternary and for-loop
-increment with function calls (call fixup adjustment), string
-concatenation, double (f64) arithmetic/comparisons/globals/casts,
-for-loop with calls in both body and increment, const negative/char
-initializers, float %= and bitwise compound ops, switch fall-through
-and default-anywhere, comma operator, typed ternary (float/double
-branches), double pre/post increment/decrement, double %/%= via fmod,
-f64 math imports (sin/cos/tan/etc.), sizeof(type*) for pointer types,
+preprocessor (#define/#ifdef/#if 0/#if N/#undef/#if defined/#if expr/
+#elif/#elif chains/nested #elif/#error), scoping (block/for-init/shadow),
+math imports, trig imports, API calls, file I/O, WASM-native builtins
+(sqrtf/fabsf/floorf/ceilf/truncf/fminf/fmaxf and f64 equivalents),
+comments, setup-only and loop-only programs, recursive and mutual macro
+guards, nested #ifdef (including nested #else inside #if 0), sizeof
+without evaluation, implicit returns, ternary and for-loop increment
+with function calls (call fixup adjustment), string concatenation,
+double (f64) arithmetic/comparisons/globals/casts, for-loop with calls
+in both body and increment, const negative/char initializers, float %=
+and bitwise compound ops, switch fall-through and default-anywhere,
+comma operator, typed ternary (float/double/long long branches), double
+pre/post increment/decrement, double %/%= via fmod, f64 math imports
+(sin/cos/tan/etc.), sizeof(type*) for pointer types, sizeof(long long),
 #if preprocessor negation and full expressions, pointer comma-separated
 declarations (int *a, *b;), bare return in non-void functions, double
-literals (f/F suffix vs unsuffixed), long long (i64) arithmetic and
-API, short/signed/_Bool/bool type keywords, const local enforcement,
-#define line continuation, #if macro name expansion and comparison
-expressions, unnamed function parameters, forward declaration param
-matching, switch warning for statements before first case, and rejection
-of undefined forward declarations, unterminated block comments, void
-expression as operand, void/non-void ternary mismatch, const variable
-assignment, and forward declaration param mismatch.
+literals (f/F suffix vs unsuffixed), long long (i64) arithmetic/API/
+global init/ternary/printf, 'long long int' and 'unsigned long long int'
+type parsing, 'int const' trailing qualifier, 'long' bare warning,
+case labels with constant expressions, const globals (int/float/double),
+short/signed/_Bool/bool type keywords, const local enforcement, #define
+line continuation, #if macro name expansion and comparison expressions,
+unnamed function parameters, forward declaration param matching, switch
+warning for statements before first case, and rejection of undefined
+forward declarations, unterminated block comments, void expression as
+operand, void/non-void ternary mismatch, const variable assignment,
+forward declaration param mismatch, and #error directive.
 
 Adding a test: create a .c file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.c must fail compilation.

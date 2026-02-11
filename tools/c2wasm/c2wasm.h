@@ -292,6 +292,7 @@ typedef struct {
     int32_t init_ival;
     float init_fval;
     double init_dval;
+    int64_t init_llval;
 } Symbol;
 
 /* ================================================================
@@ -528,6 +529,7 @@ static inline void emit_if_void(void){ buf_byte(CODE, OP_IF);    buf_byte(CODE, 
 static inline void emit_if_i32(void) { buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_I32);  block_depth++; }
 static inline void emit_if_f32(void) { buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_F32);  block_depth++; }
 static inline void emit_if_f64(void) { buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_F64);  block_depth++; }
+static inline void emit_if_i64(void) { buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_I64);  block_depth++; }
 static inline void emit_else(void)   { buf_byte(CODE, OP_ELSE); }
 static inline void emit_end(void)    { buf_byte(CODE, OP_END); block_depth--; }
 static inline void emit_br(int d)    { buf_byte(CODE, OP_BR); buf_uleb(CODE, d); }

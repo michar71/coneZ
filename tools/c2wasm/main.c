@@ -124,16 +124,28 @@ int main(int argc, char **argv) {
         }
     }
 
+    int ret = 0;
+
     if (had_error) {
         fprintf(stderr, "c2wasm: compilation failed\n");
-        return 1;
+        ret = 1;
+        goto cleanup;
     }
 
     if (!has_setup && !has_loop) {
         fprintf(stderr, "c2wasm: no setup() or loop() function defined\n");
-        return 1;
+        ret = 1;
+        goto cleanup;
     }
 
     assemble(outfile);
-    return 0;
+
+cleanup:
+    free(source);
+    free(src_file);
+    for (int i = 0; i < MAX_FUNCS; i++) {
+        buf_free(&func_bufs[i].code);
+        free(func_bufs[i].name);
+    }
+    return ret;
 }

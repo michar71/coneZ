@@ -54,7 +54,8 @@ static CType compile_printf_call(void) {
         }
 
         /* Save to temp local */
-        uint8_t wt = (at == CT_DOUBLE) ? WASM_F64 : WASM_I32;
+        uint8_t wt = (at == CT_DOUBLE) ? WASM_F64 :
+                     (at == CT_LONG_LONG) ? WASM_I64 : WASM_I32;
         int loc = alloc_local(wt);
         emit_local_set(loc);
         arg_locals[nargs] = loc;
@@ -72,6 +73,14 @@ static CType compile_printf_call(void) {
             emit_i32_const(FMT_BUF_ADDR + arg_offset);
             emit_local_get(arg_locals[i]);
             buf_byte(CODE, OP_F64_STORE);
+            buf_uleb(CODE, 3);
+            buf_uleb(CODE, 0);
+            arg_offset += 8;
+        } else if (arg_types[i] == CT_LONG_LONG) {
+            arg_offset = (arg_offset + 7) & ~7;
+            emit_i32_const(FMT_BUF_ADDR + arg_offset);
+            emit_local_get(arg_locals[i]);
+            buf_byte(CODE, OP_I64_STORE);
             buf_uleb(CODE, 3);
             buf_uleb(CODE, 0);
             arg_offset += 8;
@@ -172,7 +181,7 @@ static CType primary_expr(void) {
             if (type_had_pointer) size = 4;
             else if (ct == CT_VOID) size = 1;
             else if (ct == CT_CHAR) size = 1;
-            else if (ct == CT_DOUBLE) size = 8;
+            else if (ct == CT_DOUBLE || ct == CT_LONG_LONG) size = 8;
             emit_i32_const(size);
         } else {
             /* sizeof(expr) — parse into temp buffer to get type, discard code */
@@ -181,6 +190,8 @@ static CType primary_expr(void) {
             int save_nlocals = sf->nlocals;
             int save_data_len = data_len;
             int save_nsym = nsym;
+            uint8_t save_imp_used[IMP_COUNT];
+            memcpy(save_imp_used, imp_used, sizeof(imp_used));
             Buf save_code = sf->code;
             Buf tmp_buf; buf_init(&tmp_buf);
             sf->code = tmp_buf;
@@ -191,11 +202,12 @@ static CType primary_expr(void) {
             sf->nlocals = save_nlocals;     /* discard any locals from expr */
             data_len = save_data_len;       /* discard any string literals from expr */
             nsym = save_nsym;               /* discard any symbols from expr */
+            memcpy(imp_used, save_imp_used, sizeof(imp_used));
             buf_free(&tmp_buf);
             int size = 4;
             if (ct == CT_VOID) size = 1;
             else if (ct == CT_CHAR) size = 1;
-            else if (ct == CT_DOUBLE) size = 8;
+            else if (ct == CT_DOUBLE || ct == CT_LONG_LONG) size = 8;
             emit_i32_const(size);
         }
         expect(TOK_RPAREN);
@@ -814,6 +826,7 @@ CType assignment_expr(void) {
         /* Emit if with correct block type */
         if (result == CT_DOUBLE) emit_if_f64();
         else if (result == CT_FLOAT) emit_if_f32();
+        else if (result == CT_LONG_LONG) emit_if_i64();
         else if (result == CT_VOID) emit_if_void();
         else emit_if_i32();
 

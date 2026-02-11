@@ -191,7 +191,7 @@ void assemble(const char *outpath) {
                 buf_f32(&sec, syms[i].init_fval);
             } else if (gt == WASM_I64) {
                 buf_byte(&sec, OP_I64_CONST);
-                buf_sleb64(&sec, 0);
+                buf_sleb64(&sec, syms[i].init_llval);
             } else {
                 buf_byte(&sec, OP_I32_CONST);
                 buf_sleb(&sec, syms[i].init_ival);

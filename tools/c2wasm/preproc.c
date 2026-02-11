@@ -13,16 +13,20 @@ static int is_ident_char(int c) { return isalnum(c) || c == '_'; }
 #define MAX_IFDEF_DEPTH 32
 static int ifdef_skip[MAX_IFDEF_DEPTH];
 static int ifdef_had_else[MAX_IFDEF_DEPTH];
+static int ifdef_taken[MAX_IFDEF_DEPTH];
 static int ifdef_depth;
+static int ifdef_overflow;  /* excess nesting beyond MAX_IFDEF_DEPTH */
 
 static int api_registered;
 
 void preproc_init(void) {
     ifdef_depth = 0;
+    ifdef_overflow = 0;
     api_registered = 0;
 }
 
 int preproc_skipping(void) {
+    if (ifdef_overflow > 0) return 1;
     for (int i = 0; i < ifdef_depth; i++)
         if (ifdef_skip[i]) return 1;
     return 0;
@@ -462,28 +466,53 @@ int preproc_line(void) {
     char directive[32];
     read_pp_word(directive, sizeof(directive));
 
-    /* Handle ifdef skip mode */
-    if (ifdef_depth > 0 && ifdef_skip[ifdef_depth - 1]) {
+    /* Handle skip mode (any level is skipping) */
+    if (preproc_skipping()) {
+        /* Check if skip is due to outer levels (not just current) */
+        int outer_skip = 0;
+        for (int i = 0; i < ifdef_depth - 1; i++)
+            if (ifdef_skip[i]) { outer_skip = 1; break; }
+
         if (strcmp(directive, "ifdef") == 0 || strcmp(directive, "ifndef") == 0 ||
             strcmp(directive, "if") == 0) {
-            /* Nested ifdef in skipped section — push another skip */
+            /* Nested #if in skipped section — push another skip level */
             if (ifdef_depth >= MAX_IFDEF_DEPTH) {
-                error_at("#ifdef too deeply nested");
-                ifdef_depth++;  /* still increment to keep #endif balanced */
+                ifdef_overflow++;
             } else {
                 ifdef_skip[ifdef_depth] = 1;
+                ifdef_taken[ifdef_depth] = 0;
                 ifdef_had_else[ifdef_depth] = 0;
                 ifdef_depth++;
             }
+        } else if (strcmp(directive, "elif") == 0) {
+            if (ifdef_depth > 0 && !outer_skip) {
+                if (ifdef_had_else[ifdef_depth - 1])
+                    error_at("#elif after #else");
+                if (!ifdef_taken[ifdef_depth - 1]) {
+                    long val = pp_eval_if();
+                    if (val) {
+                        ifdef_skip[ifdef_depth - 1] = 0;
+                        ifdef_taken[ifdef_depth - 1] = 1;
+                    }
+                } else {
+                    ifdef_skip[ifdef_depth - 1] = 1;
+                }
+            }
         } else if (strcmp(directive, "else") == 0) {
-            if (ifdef_depth > 0) {
+            if (ifdef_depth > 0 && !outer_skip) {
                 if (ifdef_had_else[ifdef_depth - 1])
                     error_at("#else after #else");
                 ifdef_had_else[ifdef_depth - 1] = 1;
-                ifdef_skip[ifdef_depth - 1] = !ifdef_skip[ifdef_depth - 1];
+                if (!ifdef_taken[ifdef_depth - 1]) {
+                    ifdef_skip[ifdef_depth - 1] = 0;
+                    ifdef_taken[ifdef_depth - 1] = 1;
+                } else {
+                    ifdef_skip[ifdef_depth - 1] = 1;
+                }
             }
         } else if (strcmp(directive, "endif") == 0) {
-            if (ifdef_depth > 0) ifdef_depth--;
+            if (ifdef_overflow > 0) ifdef_overflow--;
+            else if (ifdef_depth > 0) ifdef_depth--;
         }
         skip_to_eol();
         return 1;
@@ -562,9 +591,10 @@ int preproc_line(void) {
         int defined = (find_sym_kind(name, SYM_DEFINE) != NULL);
         if (ifdef_depth >= MAX_IFDEF_DEPTH) {
             error_at("#ifdef too deeply nested");
-            ifdef_depth++;  /* still increment to keep #endif balanced */
+            ifdef_overflow++;
         } else {
             ifdef_skip[ifdef_depth] = !defined;
+            ifdef_taken[ifdef_depth] = defined;
             ifdef_had_else[ifdef_depth] = 0;
             ifdef_depth++;
         }
@@ -577,10 +607,11 @@ int preproc_line(void) {
         read_pp_word(name, sizeof(name));
         int defined = (find_sym_kind(name, SYM_DEFINE) != NULL);
         if (ifdef_depth >= MAX_IFDEF_DEPTH) {
-            error_at("#ifdef too deeply nested");
-            ifdef_depth++;
+            error_at("#ifndef too deeply nested");
+            ifdef_overflow++;
         } else {
             ifdef_skip[ifdef_depth] = defined;
+            ifdef_taken[ifdef_depth] = !defined;
             ifdef_had_else[ifdef_depth] = 0;
             ifdef_depth++;
         }
@@ -593,11 +624,27 @@ int preproc_line(void) {
 
         if (ifdef_depth >= MAX_IFDEF_DEPTH) {
             error_at("#if too deeply nested");
-            ifdef_depth++;
+            ifdef_overflow++;
         } else {
             ifdef_skip[ifdef_depth] = (val == 0);
+            ifdef_taken[ifdef_depth] = (val != 0);
             ifdef_had_else[ifdef_depth] = 0;
             ifdef_depth++;
+        }
+        skip_to_eol();
+        return 1;
+    }
+
+    if (strcmp(directive, "elif") == 0) {
+        if (ifdef_depth > 0) {
+            if (ifdef_had_else[ifdef_depth - 1])
+                error_at("#elif after #else");
+            /* We're in normal mode = current branch is active.
+             * Mark as taken and start skipping. */
+            ifdef_taken[ifdef_depth - 1] = 1;
+            ifdef_skip[ifdef_depth - 1] = 1;
+        } else {
+            error_at("#elif without matching #if");
         }
         skip_to_eol();
         return 1;
@@ -608,7 +655,12 @@ int preproc_line(void) {
             if (ifdef_had_else[ifdef_depth - 1])
                 error_at("#else after #else");
             ifdef_had_else[ifdef_depth - 1] = 1;
-            ifdef_skip[ifdef_depth - 1] = !ifdef_skip[ifdef_depth - 1];
+            if (ifdef_taken[ifdef_depth - 1]) {
+                ifdef_skip[ifdef_depth - 1] = 1;
+            } else {
+                ifdef_skip[ifdef_depth - 1] = 0;
+                ifdef_taken[ifdef_depth - 1] = 1;
+            }
         } else {
             error_at("#else without matching #if/#ifdef");
         }
@@ -617,9 +669,25 @@ int preproc_line(void) {
     }
 
     if (strcmp(directive, "endif") == 0) {
-        if (ifdef_depth > 0) ifdef_depth--;
+        if (ifdef_overflow > 0) ifdef_overflow--;
+        else if (ifdef_depth > 0) ifdef_depth--;
         else error_at("#endif without matching #if/#ifdef");
         skip_to_eol();
+        return 1;
+    }
+
+    if (strcmp(directive, "error") == 0) {
+        char msg[256];
+        read_pp_value(msg, sizeof(msg));
+        error_fmt("#error %s", msg);
+        return 1;
+    }
+
+    if (strcmp(directive, "warning") == 0) {
+        char msg[256];
+        read_pp_value(msg, sizeof(msg));
+        fprintf(stderr, "%s:%d: warning: #warning %s\n",
+                src_file ? src_file : "<input>", line_num, msg);
         return 1;
     }
 

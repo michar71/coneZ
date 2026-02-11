@@ -39,6 +39,13 @@ CType parse_type_spec(void) {
         break;
     }
 
+    /* Consume trailing qualifiers after base type (e.g. "int const") */
+    for (;;) {
+        if (tok == TOK_CONST)  { is_const = 1; next_token(); continue; }
+        if (tok == TOK_LONG)   { long_count++; next_token(); continue; }
+        break;
+    }
+
     (void)is_static;
     (void)is_const;
 
@@ -46,10 +53,14 @@ CType parse_type_spec(void) {
         fprintf(stderr, "%s:%d: warning: 'unsigned' ignored (all ops use signed semantics)\n",
                 src_file ? src_file : "<input>", line_num);
 
-    /* 'long long' → CT_LONG_LONG (i64) */
-    if (long_count >= 2 && !has_base) {
+    /* 'long long' / 'long long int' → CT_LONG_LONG (i64) */
+    if (long_count >= 2 && (base == CT_INT || !has_base)) {
         base = CT_LONG_LONG;
-    } else if (!has_base && (is_unsigned || long_count > 0)) {
+    } else if (long_count == 1 && !has_base) {
+        fprintf(stderr, "%s:%d: warning: 'long' treated as int (32-bit on WASM)\n",
+                src_file ? src_file : "<input>", line_num);
+        base = CT_INT;
+    } else if (!has_base && is_unsigned) {
         base = CT_INT;
     }
 

@@ -12,6 +12,88 @@ static void pop_scope(int target_scope) {
         nsym--;
 }
 
+/* ---- Constant integer expression evaluator (for case labels) ---- */
+
+static int cexpr_prec(int min_prec);
+
+static int cexpr_get_prec(int t) {
+    switch (t) {
+    case TOK_OR_OR:    return 1;
+    case TOK_AND_AND:  return 2;
+    case TOK_PIPE:     return 3;
+    case TOK_CARET:    return 4;
+    case TOK_AMP:      return 5;
+    case TOK_EQ: case TOK_NE: return 6;
+    case TOK_LT: case TOK_GT: case TOK_LE: case TOK_GE: return 7;
+    case TOK_LSHIFT: case TOK_RSHIFT: return 8;
+    case TOK_PLUS: case TOK_MINUS: return 9;
+    case TOK_STAR: case TOK_SLASH: case TOK_PERCENT: return 10;
+    default: return -1;
+    }
+}
+
+static int cexpr_apply(int op, int l, int r) {
+    switch (op) {
+    case TOK_OR_OR:  return l || r;
+    case TOK_AND_AND: return l && r;
+    case TOK_PIPE:   return l | r;
+    case TOK_CARET:  return l ^ r;
+    case TOK_AMP:    return l & r;
+    case TOK_EQ:     return l == r;
+    case TOK_NE:     return l != r;
+    case TOK_LT:     return l < r;
+    case TOK_GT:     return l > r;
+    case TOK_LE:     return l <= r;
+    case TOK_GE:     return l >= r;
+    case TOK_LSHIFT: return l << r;
+    case TOK_RSHIFT: return l >> r;
+    case TOK_PLUS:   return l + r;
+    case TOK_MINUS:  return l - r;
+    case TOK_STAR:   return l * r;
+    case TOK_SLASH:  return r ? l / r : 0;
+    case TOK_PERCENT: return r ? l % r : 0;
+    default: return 0;
+    }
+}
+
+static int cexpr_primary(void) {
+    if (tok == TOK_INT_LIT) { int v = tok_ival; next_token(); return v; }
+    if (tok == TOK_CHAR_LIT) { int v = tok_ival; next_token(); return v; }
+    if (tok == TOK_LPAREN) {
+        next_token();
+        int v = cexpr_prec(1);
+        expect(TOK_RPAREN);
+        return v;
+    }
+    error_at("expected integer constant in case label");
+    next_token();
+    return 0;
+}
+
+static int cexpr_unary(void) {
+    if (tok == TOK_MINUS) { next_token(); return -cexpr_unary(); }
+    if (tok == TOK_TILDE) { next_token(); return ~cexpr_unary(); }
+    if (tok == TOK_BANG)  { next_token(); return !cexpr_unary(); }
+    if (tok == TOK_PLUS)  { next_token(); return cexpr_unary(); }
+    return cexpr_primary();
+}
+
+static int cexpr_prec(int min_prec) {
+    int left = cexpr_unary();
+    while (cexpr_get_prec(tok) >= min_prec) {
+        int op = tok;
+        int prec = cexpr_get_prec(op);
+        next_token();
+        int right = cexpr_prec(prec + 1);
+        left = cexpr_apply(op, left, right);
+    }
+    return left;
+}
+
+static int parse_case_value(void) {
+    return cexpr_prec(1);
+}
+
 /* ---- Statement parser ---- */
 
 void parse_stmt(void) {
@@ -235,10 +317,18 @@ void parse_stmt(void) {
                     next_token(); /* skip 'case' */
                     int negate = 0;
                     if (tok == TOK_MINUS) { negate = 1; next_token(); }
-                    if ((tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) && ncase_vals < 256)
-                        case_vals[ncase_vals++] = negate ? -tok_ival : tok_ival;
-                    else
+                    if ((tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) && ncase_vals < 256) {
+                        case_vals[ncase_vals] = negate ? -tok_ival : tok_ival;
+                        next_token();
+                        /* Verify simple constant (next must be ':') */
+                        if (tok == TOK_COLON)
+                            ncase_vals++;
+                        else
+                            all_cases_resolved = 0;
+                        continue; /* already advanced past value */
+                    } else {
                         all_cases_resolved = 0;
+                    }
                 }
                 next_token();
             }
@@ -283,14 +373,7 @@ void parse_stmt(void) {
             if (tok == TOK_CASE) {
                 in_case = 1;
                 next_token();
-                /* Parse constant expression */
-                int case_val = 0;
-                int negate = 0;
-                if (tok == TOK_MINUS) { negate = 1; next_token(); }
-                if (tok == TOK_INT_LIT) { case_val = tok_ival; next_token(); }
-                else if (tok == TOK_CHAR_LIT) { case_val = tok_ival; next_token(); }
-                else { error_at("expected constant in case label"); next_token(); }
-                if (negate) case_val = -case_val;
+                int case_val = parse_case_value();
                 expect(TOK_COLON);
 
                 /* Fall-through: if (matched || switch_val == case_val) */
@@ -473,6 +556,7 @@ void parse_top_level(void) {
     }
 
     CType base_type = parse_type_spec();
+    is_const |= type_had_const;
 
     if (tok != TOK_NAME) {
         error_at("expected name after type");
@@ -498,12 +582,14 @@ void parse_top_level(void) {
             if (tok == TOK_MINUS) { negate = 1; next_token(); }
             if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
                 int val = negate ? -tok_ival : tok_ival;
-                if (base_type == CT_FLOAT || base_type == CT_DOUBLE) {
+                if (base_type == CT_FLOAT || base_type == CT_DOUBLE || base_type == CT_LONG_LONG) {
                     int gidx = nglobals++;
                     Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
                     s->idx = gidx;
                     s->is_static = is_static;
+                    s->is_const = 1;
                     if (base_type == CT_DOUBLE) s->init_dval = (double)val;
+                    else if (base_type == CT_LONG_LONG) s->init_llval = (int64_t)val;
                     else s->init_fval = (float)val;
                 } else {
                     Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
@@ -517,6 +603,7 @@ void parse_top_level(void) {
                 Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
                 s->idx = gidx;
                 s->is_static = is_static;
+                s->is_const = 1;
                 if (base_type == CT_DOUBLE) s->init_dval = negate ? -tok_dval : tok_dval;
                 else s->init_fval = negate ? -tok_fval : tok_fval;
                 next_token();
@@ -541,6 +628,7 @@ void parse_top_level(void) {
         if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
             if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_ival : (double)tok_ival;
             else if (base_type == CT_FLOAT) s->init_fval = negate ? -(float)tok_ival : (float)tok_ival;
+            else if (base_type == CT_LONG_LONG) s->init_llval = negate ? -(int64_t)tok_ival : (int64_t)tok_ival;
             else s->init_ival = negate ? -tok_ival : tok_ival;
             next_token();
         } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
@@ -548,19 +636,14 @@ void parse_top_level(void) {
             else s->init_fval = negate ? -tok_fval : tok_fval;
             next_token();
         } else if (!negate && tok == TOK_NAME) {
-            /* Might be a macro — let it expand then read the value */
+            /* Unexpanded macro (depth exceeded) — use stored value directly */
             Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
-            if (mac) {
+            if (mac && mac->macro_val[0]) {
+                if (base_type == CT_DOUBLE) s->init_dval = strtod(mac->macro_val, NULL);
+                else if (base_type == CT_FLOAT) s->init_fval = strtof(mac->macro_val, NULL);
+                else if (base_type == CT_LONG_LONG) s->init_llval = strtoll(mac->macro_val, NULL, 0);
+                else s->init_ival = (int)strtol(mac->macro_val, NULL, 0);
                 next_token();
-                if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
-                    if (base_type == CT_DOUBLE) s->init_dval = (double)tok_ival;
-                    else s->init_ival = tok_ival;
-                    next_token();
-                } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
-                    if (base_type == CT_DOUBLE) s->init_dval = tok_dval;
-                    else s->init_fval = tok_fval;
-                    next_token();
-                }
             } else {
                 error_at("global initializer must be a constant");
                 next_token();
@@ -587,6 +670,7 @@ void parse_top_level(void) {
             if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
                 if (base_type == CT_DOUBLE) s->init_dval = neg ? -(double)tok_ival : (double)tok_ival;
                 else if (base_type == CT_FLOAT) s->init_fval = neg ? -(float)tok_ival : (float)tok_ival;
+                else if (base_type == CT_LONG_LONG) s->init_llval = neg ? -(int64_t)tok_ival : (int64_t)tok_ival;
                 else s->init_ival = neg ? -tok_ival : tok_ival;
                 next_token();
             } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
