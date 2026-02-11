@@ -124,7 +124,7 @@ Option 1 — **c2wasm** (self-contained, no external dependencies):
 cd tools/c2wasm && make          # build the compiler once
 ./c2wasm ../wasm/examples/rgb_cycle.c -o rgb_cycle.wasm
 ```
-c2wasm compiles a C subset (int/float/double/void/char, if/else/for/while/do/switch, full operator precedence, comma operator, `#include "conez_api.h"`, `#define`/`#undef`, `#ifdef`/`#if N`/`#if defined()`, printf, host_snprintf, file I/O, WASM-native sqrtf/fabsf/floorf/ceilf) directly to WASM. No clang, LLVM, or SDK needed. Test suite: `make test` (48 tests). See `documentation/c2wasm.txt` for the full reference.
+c2wasm compiles a C subset (int/float/double/void/char, if/else/for/while/do/switch, full operator precedence, comma operator, `#include "conez_api.h"`, `#define`/`#undef`, `#ifdef`/`#if N`/`#if defined()`, printf, host_snprintf, file I/O, WASM-native sqrtf/fabsf/floorf/ceilf, f64 math sin/cos/tan/etc.) directly to WASM. No clang, LLVM, or SDK needed. Test suite: `make test` (56 tests). See `documentation/c2wasm.txt` for the full reference.
 
 Option 2 — **clang** (full C, optimized output):
 ```bash

@@ -105,7 +105,8 @@ Control Flow:
 
   For-loop init declarations are supported: for (int i = 0; ...).
   Switch/case supports C-standard fall-through — cases without break
-  fall through to the next case body.
+  fall through to the next case body. The default label can appear
+  anywhere in the switch body (not just last).
 
 Expressions (full C operator precedence):
   Arithmetic:    +  -  *  /  %
@@ -118,6 +119,7 @@ Expressions (full C operator precedence):
   Comma:         expr1, expr2  (evaluates both, result is last)
   Cast:          (int)expr  (float)expr  (double)expr  (void)expr
   sizeof:        sizeof(int)  sizeof(float)  sizeof(double)  sizeof(void)
+                 sizeof(void*)  sizeof(int*)  etc.
                  sizeof(expr) — returns type size without evaluating expr
                  sizeof(void) returns 1 (GCC extension)
 
@@ -128,6 +130,8 @@ Expressions (full C operator precedence):
   Compound bitwise assignments (&= |= ^= <<= >>=) coerce float/double
   operands to int before the operation.
   Float %= uses fmodf import (not integer remainder).
+  Double %= uses fmod import (not integer remainder).
+  Double % uses fmod import directly.
 
 Literals:
   Integer:       42, 0xFF, 0x1A, 0755, -1
@@ -148,6 +152,8 @@ Preprocessor:
   #if defined(NAME)           Test whether a macro is defined
   #if !defined(NAME)          Test whether a macro is NOT defined
   #if defined NAME            Also works without parentheses
+  #if !0                      Logical negation (equivalent to #if 1)
+  #if !1                      Logical negation (equivalent to #if 0)
 
 Comments:
   // line comments
@@ -179,6 +185,12 @@ WASM-native math (single opcode, no import):
 
   Float (f32):   sqrtf, fabsf, floorf, ceilf
   Double (f64):  sqrt, fabs, floor, ceil
+
+Host-imported math (transcendentals via libm):
+  Float (f32):   sinf, cosf, tanf, asinf, acosf, atanf, atan2f,
+                 powf, expf, logf, log2f, fmodf
+  Double (f64):  sin, cos, tan, asin, acos, atan, atan2,
+                 pow, exp, log, log2, fmod
 
   Example:
     float r = sqrtf(x*x + y*y);
@@ -223,8 +235,10 @@ All functions declared in tools/wasm/conez_api.h are available after
 
   Output:     print_i32, print_f32, print_i64, print_f64, print_str
 
-  Math:       sinf, cosf, tanf, asinf, acosf, atanf, atan2f,
+  Math f32:   sinf, cosf, tanf, asinf, acosf, atanf, atan2f,
               powf, expf, logf, log2f, fmodf
+  Math f64:   sin, cos, tan, asin, acos, atan, atan2,
+              pow, exp, log, log2, fmod
 
   File I/O:   file_open, file_close, file_read, file_write,
               file_size, file_seek, file_tell,
@@ -339,7 +353,11 @@ ternary and for-loop increment with function calls (call fixup
 adjustment), string concatenation, double (f64) arithmetic/comparisons/
 globals/casts, for-loop with calls in both body and increment, const
 negative/char initializers, float %= and bitwise compound ops, switch
-fall-through, comma operator, and rejection of undefined forward
+fall-through, comma operator, typed ternary (float/double branches),
+double pre/post increment/decrement, double %/%= via fmod, f64 math
+imports (sin/cos/tan/etc.), sizeof(type*) for pointer types, #if !0
+preprocessor negation, pointer comma-separated declarations, bare
+return in non-void functions, and rejection of undefined forward
 declarations and unterminated block comments.
 
 Adding a test: create a .c file in test/. Positive tests must compile

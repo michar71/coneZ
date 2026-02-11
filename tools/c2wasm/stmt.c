@@ -114,8 +114,7 @@ void parse_stmt(void) {
                 /* parse_local_decl already consumed the semicolon */
             } else {
                 CType ct = expr();
-                (void)ct;
-                emit_drop();
+                if (ct != CT_VOID) emit_drop();
                 expect(TOK_SEMI);
             }
         } else {
@@ -217,6 +216,52 @@ void parse_stmt(void) {
         emit_i32_const(0);
         emit_local_set(matched_local);
 
+        expect(TOK_LBRACE);
+
+        /* Pre-scan to collect case values (needed for default-anywhere) */
+        int case_vals[256];
+        int ncase_vals = 0;
+        int has_default = 0;
+        {
+            LexerSave lsave;
+            lexer_save(&lsave);
+            int depth = 1; /* already consumed opening brace */
+            while (depth > 0 && tok != TOK_EOF) {
+                if (tok == TOK_LBRACE) depth++;
+                else if (tok == TOK_RBRACE) { depth--; if (depth <= 0) break; }
+                else if (depth == 1 && tok == TOK_DEFAULT) has_default = 1;
+                else if (depth == 1 && tok == TOK_CASE) {
+                    next_token(); /* skip 'case' */
+                    int negate = 0;
+                    if (tok == TOK_MINUS) { negate = 1; next_token(); }
+                    if ((tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) && ncase_vals < 256)
+                        case_vals[ncase_vals++] = negate ? -tok_ival : tok_ival;
+                }
+                next_token();
+            }
+            lexer_restore(&lsave);
+        }
+
+        /* If default is present, pre-compute found = (val==c1)||(val==c2)||... */
+        int found_local = -1;
+        if (has_default) {
+            found_local = alloc_local(WASM_I32);
+            if (ncase_vals > 0) {
+                emit_local_get(switch_local);
+                emit_i32_const(case_vals[0]);
+                emit_op(OP_I32_EQ);
+                for (int i = 1; i < ncase_vals; i++) {
+                    emit_local_get(switch_local);
+                    emit_i32_const(case_vals[i]);
+                    emit_op(OP_I32_EQ);
+                    emit_op(OP_I32_OR);
+                }
+            } else {
+                emit_i32_const(0);
+            }
+            emit_local_set(found_local);
+        }
+
         /* Wrap in a block for break target */
         emit_block();
 
@@ -227,9 +272,6 @@ void parse_stmt(void) {
         ctrl_stk[ctrl_sp].incr_buf = NULL;
         ctrl_sp++;
 
-        expect(TOK_LBRACE);
-
-        int had_default = 0;
         while (tok != TOK_RBRACE && tok != TOK_EOF) {
             if (tok == TOK_CASE) {
                 next_token();
@@ -263,17 +305,24 @@ void parse_stmt(void) {
             } else if (tok == TOK_DEFAULT) {
                 next_token();
                 expect(TOK_COLON);
-                had_default = 1;
-                /* Default always executes (like a matched case) */
+                /* Default: if (matched || !found)
+                 * - No case matched: found=0, !found=1 → enters default
+                 * - Later case matched: found=1, !found=0 → skips default
+                 * - Fall-through: matched=1 → enters default */
+                emit_local_get(matched_local);
+                emit_local_get(found_local);
+                emit_op(OP_I32_EQZ);
+                emit_op(OP_I32_OR);
+                emit_if_void();
                 emit_i32_const(1);
                 emit_local_set(matched_local);
                 while (tok != TOK_CASE && tok != TOK_DEFAULT && tok != TOK_RBRACE && tok != TOK_EOF)
                     parse_stmt();
+                emit_end();
             } else {
                 parse_stmt();
             }
         }
-        (void)had_default;
 
         expect(TOK_RBRACE);
         ctrl_sp--;
@@ -316,6 +365,11 @@ void parse_stmt(void) {
         if (tok != TOK_SEMI) {
             CType ct = expr();
             emit_coerce(ct, ret);
+        } else if (ret != CT_VOID) {
+            /* Bare return; in non-void function — push default value */
+            if (ret == CT_DOUBLE) emit_f64_const(0.0);
+            else if (ret == CT_FLOAT) emit_f32_const(0.0f);
+            else emit_i32_const(0);
         }
         expect(TOK_SEMI);
         emit_return();
@@ -351,26 +405,27 @@ void parse_block(void) {
 /* Parse local variable declaration(s) after type specifier */
 static void parse_local_decl(CType base_type) {
     do {
+        CType var_type = base_type;
         /* Skip const qualifier on the variable */
         while (tok == TOK_CONST) next_token();
         /* Skip pointer stars */
-        while (tok == TOK_STAR) { next_token(); base_type = CT_INT; }
+        while (tok == TOK_STAR) { next_token(); var_type = CT_INT; }
 
         if (tok != TOK_NAME) { error_at("expected variable name"); return; }
         char name[64];
         strncpy(name, tok_sval, sizeof(name) - 1); name[sizeof(name) - 1] = 0;
         next_token();
 
-        uint8_t wtype = ctype_to_wasm(base_type);
+        uint8_t wtype = ctype_to_wasm(var_type);
         int local_idx = alloc_local(wtype);
 
-        Symbol *s = add_sym(name, SYM_LOCAL, base_type);
+        Symbol *s = add_sym(name, SYM_LOCAL, var_type);
         s->idx = local_idx;
         s->scope = cur_scope;
 
         if (accept(TOK_ASSIGN)) {
             CType rhs = assignment_expr();
-            emit_coerce(rhs, base_type);
+            emit_coerce(rhs, var_type);
             emit_local_set(local_idx);
         }
     } while (accept(TOK_COMMA));
@@ -438,11 +493,12 @@ void parse_top_level(void) {
                 }
                 next_token();
             } else if (tok == TOK_FLOAT_LIT) {
+                /* const float or const double */
                 int gidx = nglobals++;
                 Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
                 s->idx = gidx;
                 s->is_static = is_static;
-                if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_fval : (double)tok_fval;
+                if (base_type == CT_DOUBLE) s->init_dval = negate ? -tok_dval : tok_dval;
                 else s->init_fval = negate ? -tok_fval : tok_fval;
                 next_token();
             } else {
@@ -469,7 +525,7 @@ void parse_top_level(void) {
             else s->init_ival = negate ? -tok_ival : tok_ival;
             next_token();
         } else if (tok == TOK_FLOAT_LIT) {
-            if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_fval : (double)tok_fval;
+            if (base_type == CT_DOUBLE) s->init_dval = negate ? -tok_dval : tok_dval;
             else s->init_fval = negate ? -tok_fval : tok_fval;
             next_token();
         } else if (!negate && tok == TOK_NAME) {
@@ -482,7 +538,7 @@ void parse_top_level(void) {
                     else s->init_ival = tok_ival;
                     next_token();
                 } else if (tok == TOK_FLOAT_LIT) {
-                    if (base_type == CT_DOUBLE) s->init_dval = (double)tok_fval;
+                    if (base_type == CT_DOUBLE) s->init_dval = tok_dval;
                     else s->init_fval = tok_fval;
                     next_token();
                 }
@@ -514,7 +570,7 @@ void parse_top_level(void) {
                 else s->init_ival = neg ? -tok_ival : tok_ival;
                 next_token();
             } else if (tok == TOK_FLOAT_LIT) {
-                if (base_type == CT_DOUBLE) s->init_dval = neg ? -(double)tok_fval : (double)tok_fval;
+                if (base_type == CT_DOUBLE) s->init_dval = neg ? -tok_dval : tok_dval;
                 else s->init_fval = neg ? -tok_fval : tok_fval;
                 next_token();
             }

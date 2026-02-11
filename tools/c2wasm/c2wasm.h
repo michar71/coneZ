@@ -201,6 +201,8 @@ enum {
     IMP_GET_EPOCH_MS, IMP_GET_UPTIME_MS, IMP_GET_LAST_COMM_MS,
     IMP_PRINT_I64, IMP_PRINT_F64,
     IMP_HOST_SNPRINTF,
+    IMP_SIN, IMP_COS, IMP_TAN, IMP_ASIN, IMP_ACOS, IMP_ATAN,
+    IMP_ATAN2, IMP_POW, IMP_EXP, IMP_LOG, IMP_LOG2, IMP_FMOD,
     IMP_COUNT
 };
 
@@ -348,6 +350,7 @@ extern char *src_file;
 extern int tok;
 extern int tok_ival;
 extern float tok_fval;
+extern double tok_dval;      /* double-precision float literal value */
 extern char tok_sval[1024];  /* string/name value */
 extern int tok_slen;         /* string literal length */
 
@@ -393,7 +396,7 @@ static inline Symbol *find_sym_kind(const char *name, SymKind kind) {
 }
 
 static inline Symbol *add_sym(const char *name, SymKind kind, CType ct) {
-    if (nsym >= MAX_SYMS) { error_at("too many symbols"); return &syms[0]; }
+    if (nsym >= MAX_SYMS) { error_at("too many symbols"); exit(1); }
     Symbol *s = &syms[nsym++];
     memset(s, 0, sizeof(*s));
     snprintf(s->name, sizeof(s->name), "%s", name);
@@ -423,7 +426,7 @@ static inline uint8_t ctype_to_wasm(CType ct) {
 
 static inline int alloc_local(uint8_t wtype) {
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= 256) { error_at("too many locals"); return 0; }
+    if (f->nlocals >= 256) { error_at("too many locals"); exit(1); }
     int idx = f->nparams + f->nlocals;
     f->local_types[f->nlocals++] = wtype;
     return idx;
@@ -483,6 +486,8 @@ static inline void emit_block(void)  { buf_byte(CODE, OP_BLOCK); buf_byte(CODE, 
 static inline void emit_loop(void)   { buf_byte(CODE, OP_LOOP);  buf_byte(CODE, WASM_VOID); block_depth++; }
 static inline void emit_if_void(void){ buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_VOID); block_depth++; }
 static inline void emit_if_i32(void) { buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_I32);  block_depth++; }
+static inline void emit_if_f32(void) { buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_F32);  block_depth++; }
+static inline void emit_if_f64(void) { buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_F64);  block_depth++; }
 static inline void emit_else(void)   { buf_byte(CODE, OP_ELSE); }
 static inline void emit_end(void)    { buf_byte(CODE, OP_END); block_depth--; }
 static inline void emit_br(int d)    { buf_byte(CODE, OP_BR); buf_uleb(CODE, d); }
@@ -526,6 +531,25 @@ int peek_token(void);
 void expect(int t);
 int accept(int t);
 const char *tok_name(int t);
+
+typedef struct {
+    char *saved_source;
+    int saved_src_pos, saved_src_len, saved_line_num;
+    int saved_tok, saved_tok_ival;
+    float saved_tok_fval;
+    double saved_tok_dval;
+    char saved_tok_sval[1024];
+    int saved_tok_slen;
+    int saved_peek_valid, saved_peek_tok, saved_peek_ival;
+    float saved_peek_fval;
+    double saved_peek_dval;
+    char saved_peek_sval[1024];
+    int saved_peek_slen;
+    int saved_macro_depth;
+} LexerSave;
+
+void lexer_save(LexerSave *s);
+void lexer_restore(LexerSave *s);
 
 /* preproc.c */
 void preproc_init(void);

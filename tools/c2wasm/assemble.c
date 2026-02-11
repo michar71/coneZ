@@ -82,6 +82,11 @@ void assemble(const char *outpath) {
                 buf_byte(&nc, f->code.data[pos++]);
             }
         }
+        if (fix != f->ncall_fixups) {
+            fprintf(stderr, "c2wasm: BUG: %d call fixups unconsumed in %s\n",
+                    f->ncall_fixups - fix, f->name ? f->name : "?");
+            exit(1);
+        }
         free(f->code.data);
         f->code = nc;
     }
@@ -148,10 +153,16 @@ void assemble(const char *outpath) {
 
     /* --- Memory Section (5) --- */
     {
+        /* Calculate minimum pages needed for data + FMT_BUF + some heap */
+        int min_bytes = FMT_BUF_ADDR + 256;  /* printf buffer area + margin */
+        if (data_len > min_bytes) min_bytes = data_len;
+        int min_pages = (min_bytes + 0xFFFF) >> 16;
+        if (min_pages < 1) min_pages = 1;
+
         Buf sec; buf_init(&sec);
         buf_uleb(&sec, 1);
         buf_byte(&sec, 0x00);
-        buf_uleb(&sec, 1);
+        buf_uleb(&sec, min_pages);
         buf_section(&out, 5, &sec);
         buf_free(&sec);
     }

@@ -28,6 +28,7 @@ char *src_file;
 int tok;
 int tok_ival;
 float tok_fval;
+double tok_dval;
 char tok_sval[1024];
 int tok_slen;
 
@@ -36,6 +37,7 @@ int nglobals;
 
 int has_setup;
 int has_loop;
+int type_had_pointer;
 
 void compile(void) {
     lex_init();
@@ -53,6 +55,7 @@ static char *read_file(const char *path, int *out_len) {
     long sz = ftell(fp);
     fseek(fp, 0, SEEK_SET);
     char *buf = malloc(sz + 1);
+    if (!buf) { fprintf(stderr, "c2wasm: out of memory\n"); fclose(fp); exit(1); }
     if ((long)fread(buf, 1, sz, fp) != sz) {
         fprintf(stderr, "c2wasm: read error on '%s'\n", path);
         fclose(fp); free(buf); exit(1);

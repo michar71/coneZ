@@ -161,9 +161,11 @@ static CType primary_expr(void) {
         next_token();
         expect(TOK_LPAREN);
         if (is_type_keyword(tok)) {
+            extern int type_had_pointer;
             CType ct = parse_type_spec();
-            int size = 4;
-            if (ct == CT_VOID) size = 1;
+            int size = 4;  /* default for int, float, and pointers */
+            if (type_had_pointer) size = 4;
+            else if (ct == CT_VOID) size = 1;
             else if (ct == CT_CHAR) size = 1;
             else if (ct == CT_DOUBLE) size = 8;
             emit_i32_const(size);
@@ -171,6 +173,7 @@ static CType primary_expr(void) {
             /* sizeof(expr) — parse into temp buffer to get type, discard code */
             FuncCtx *sf = &func_bufs[cur_func];
             int save_fixups = sf->ncall_fixups;
+            int save_nlocals = sf->nlocals;
             Buf save_code = sf->code;
             Buf tmp_buf; buf_init(&tmp_buf);
             sf->code = tmp_buf;
@@ -178,6 +181,7 @@ static CType primary_expr(void) {
             tmp_buf = sf->code;
             sf->code = save_code;
             sf->ncall_fixups = save_fixups; /* discard any fixups from expr */
+            sf->nlocals = save_nlocals;     /* discard any locals from expr */
             buf_free(&tmp_buf);
             int size = 4;
             if (ct == CT_VOID) size = 1;
@@ -213,7 +217,7 @@ static CType primary_expr(void) {
                 else if (strcmp(name, "ceil") == 0)   { opcode = OP_F64_CEIL;   btype = CT_DOUBLE; }
                 if (opcode) {
                     next_token(); /* skip '(' */
-                    CType at = expr();
+                    CType at = assignment_expr();
                     emit_coerce(at, btype);
                     expect(TOK_RPAREN);
                     emit_op(opcode);
@@ -338,7 +342,7 @@ static CType unary_expr(void) {
         next_token();
         CType t = unary_expr();
         if (t == CT_FLOAT) { emit_coerce_i32(CT_FLOAT); }
-        if (t == CT_DOUBLE) { emit_coerce_i32(CT_DOUBLE); }
+        else if (t == CT_DOUBLE) { emit_coerce_i32(CT_DOUBLE); }
         emit_op(OP_I32_EQZ);
         return CT_INT;
     }
@@ -365,7 +369,10 @@ static CType unary_expr(void) {
         Symbol *sym = find_sym(name);
         if (!sym) { error_fmt("undefined variable '%s'", name); emit_i32_const(0); return CT_INT; }
         emit_sym_load(sym);
-        if (sym->ctype == CT_FLOAT) {
+        if (sym->ctype == CT_DOUBLE) {
+            emit_f64_const(1.0);
+            emit_op(is_inc ? OP_F64_ADD : OP_F64_SUB);
+        } else if (sym->ctype == CT_FLOAT) {
             emit_f32_const(1.0f);
             emit_op(is_inc ? OP_F32_ADD : OP_F32_SUB);
         } else {
@@ -505,13 +512,7 @@ static CType prec_expr(int min_prec) {
             break;
         case TOK_PERCENT:
             if (result == CT_DOUBLE) {
-                emit_op(OP_F32_DEMOTE_F64);
-                int tmp = alloc_local(WASM_F32);
-                emit_local_set(tmp);
-                emit_op(OP_F32_DEMOTE_F64);
-                emit_local_get(tmp);
-                emit_call(IMP_FMODF);
-                result = CT_FLOAT;
+                emit_call(IMP_FMOD);
             } else if (result == CT_FLOAT) {
                 emit_call(IMP_FMODF);
             } else {
@@ -634,7 +635,8 @@ CType assignment_expr(void) {
             case TOK_SLASH_EQ:
                 emit_op(result == CT_DOUBLE ? OP_F64_DIV : result == CT_FLOAT ? OP_F32_DIV : OP_I32_DIV_S); break;
             case TOK_PERCENT_EQ:
-                if (result == CT_FLOAT) emit_call(IMP_FMODF);
+                if (result == CT_DOUBLE) emit_call(IMP_FMOD);
+                else if (result == CT_FLOAT) emit_call(IMP_FMODF);
                 else emit_op(OP_I32_REM_S);
                 break;
             case TOK_AMP_EQ:      emit_op(OP_I32_AND);    break;
@@ -663,7 +665,10 @@ CType assignment_expr(void) {
             emit_sym_load(sym);
             /* Compute new value: old ± 1 */
             emit_sym_load(sym);
-            if (sym->ctype == CT_FLOAT) {
+            if (sym->ctype == CT_DOUBLE) {
+                emit_f64_const(1.0);
+                emit_op(is_inc ? OP_F64_ADD : OP_F64_SUB);
+            } else if (sym->ctype == CT_FLOAT) {
                 emit_f32_const(1.0f);
                 emit_op(is_inc ? OP_F32_ADD : OP_F32_SUB);
             } else {
@@ -679,41 +684,68 @@ CType assignment_expr(void) {
     /* Not an assignment — parse as conditional/binary expression */
     CType t = prec_expr(1);
 
-    /* Ternary: expr ? expr : expr */
+    /* Ternary: expr ? expr : expr
+     * Compile both branches into temp buffers first to determine
+     * the common result type, then emit the if with correct block type. */
     if (tok == TOK_QUESTION) {
         next_token();
         emit_coerce(t, CT_INT);
-        /* Parse both branches to determine common type */
-        CType then_t, else_t;
-        /* Then branch */
-        emit_if_i32();
-        then_t = expr();
-        expect(TOK_COLON);
-        /* We need to know the else type to determine common type.
-         * Compile else into a temp buffer, peek at its type, then decide. */
+
         FuncCtx *ternary_f = &func_bufs[cur_func];
-        int fixups_before = ternary_f->ncall_fixups;
-        Buf save = ternary_f->code;
+
+        /* Compile then-branch into temp buffer */
+        int then_fixups_start = ternary_f->ncall_fixups;
+        Buf save_code = ternary_f->code;
+        Buf then_buf; buf_init(&then_buf);
+        ternary_f->code = then_buf;
+        CType then_t = expr();
+        then_buf = ternary_f->code;
+        ternary_f->code = save_code;
+        int then_fixups_end = ternary_f->ncall_fixups;
+
+        expect(TOK_COLON);
+
+        /* Compile else-branch into temp buffer */
+        int else_fixups_start = ternary_f->ncall_fixups;
+        save_code = ternary_f->code;
         Buf else_buf; buf_init(&else_buf);
         ternary_f->code = else_buf;
-        emit_else();
-        else_t = expr();
+        CType else_t = expr();
         else_buf = ternary_f->code;
-        ternary_f->code = save;
+        ternary_f->code = save_code;
+        int else_fixups_end = ternary_f->ncall_fixups;
+
         /* Determine common result type */
-        CType result = CT_INT;
-        if (then_t == CT_FLOAT || else_t == CT_FLOAT) result = CT_FLOAT;
-        if (then_t == CT_DOUBLE || else_t == CT_DOUBLE) result = CT_DOUBLE;
-        /* Coerce then-branch to result type */
+        CType result = promote(then_t, else_t);
+        if (then_t == CT_VOID && else_t == CT_VOID) result = CT_VOID;
+
+        /* Emit if with correct block type */
+        if (result == CT_DOUBLE) emit_if_f64();
+        else if (result == CT_FLOAT) emit_if_f32();
+        else if (result == CT_VOID) emit_if_void();
+        else emit_if_i32();
+
+        /* Splice then-branch + coercion */
+        {
+            int splice_off = ternary_f->code.len;
+            buf_bytes(CODE, then_buf.data, then_buf.len);
+            for (int fx = then_fixups_start; fx < then_fixups_end; fx++)
+                ternary_f->call_fixups[fx] += splice_off;
+        }
+        buf_free(&then_buf);
         emit_coerce(then_t, result);
-        /* Splice else-branch code — adjust call fixups recorded during else */
-        int splice_offset = ternary_f->code.len;
-        buf_bytes(CODE, else_buf.data, else_buf.len);
+
+        /* Emit else + splice else-branch + coercion */
+        emit_else();
+        {
+            int splice_off = ternary_f->code.len;
+            buf_bytes(CODE, else_buf.data, else_buf.len);
+            for (int fx = else_fixups_start; fx < else_fixups_end; fx++)
+                ternary_f->call_fixups[fx] += splice_off;
+        }
         buf_free(&else_buf);
-        for (int fx = fixups_before; fx < ternary_f->ncall_fixups; fx++)
-            ternary_f->call_fixups[fx] += splice_offset;
-        /* Coerce else-branch to result type */
         emit_coerce(else_t, result);
+
         emit_end();
         return result;
     }

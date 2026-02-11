@@ -41,7 +41,12 @@ CType parse_type_spec(void) {
         base = CT_INT;
 
     /* Skip pointer star — we treat pointers as i32 */
-    while (tok == TOK_STAR) next_token();
+    int saw_pointer = 0;
+    while (tok == TOK_STAR) { next_token(); saw_pointer = 1; }
+
+    /* Store for sizeof's benefit */
+    extern int type_had_pointer;
+    type_had_pointer = saw_pointer;
 
     return base;
 }

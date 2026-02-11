@@ -9,7 +9,9 @@ void buf_grow(Buf *b, int need) {
     if (b->len + need <= b->cap) return;
     int nc = b->cap ? b->cap * 2 : 256;
     while (nc < b->len + need) nc *= 2;
-    b->data = realloc(b->data, nc);
+    uint8_t *p = realloc(b->data, nc);
+    if (!p) { fprintf(stderr, "c2wasm: out of memory\n"); exit(1); }
+    b->data = p;
     b->cap = nc;
 }
 

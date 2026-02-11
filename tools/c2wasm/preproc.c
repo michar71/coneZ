@@ -12,6 +12,7 @@ static int is_ident_char(int c) { return isalnum(c) || c == '_'; }
 
 #define MAX_IFDEF_DEPTH 32
 static int ifdef_skip[MAX_IFDEF_DEPTH];
+static int ifdef_had_else[MAX_IFDEF_DEPTH];
 static int ifdef_depth;
 
 static int api_registered;
@@ -58,6 +59,7 @@ static ApiFunc api_funcs[] = {
     {"rgb_to_hsv",      IMP_RGB_TO_HSV,      CT_INT,   3, {CT_INT,CT_INT,CT_INT}},
     {"print_i32",       IMP_PRINT_I32,       CT_VOID,  1, {CT_INT}},
     {"print_f32",       IMP_PRINT_F32,       CT_VOID,  1, {CT_FLOAT}},
+    {"print_f64",       IMP_PRINT_F64,       CT_VOID,  1, {CT_DOUBLE}},
     {"print_str",       IMP_PRINT_STR,       CT_VOID,  2, {CT_INT,CT_INT}},
     {"gps_valid",       IMP_GPS_VALID,       CT_INT,   0, {}},
     {"has_origin",      IMP_HAS_ORIGIN,      CT_INT,   0, {}},
@@ -142,6 +144,18 @@ static ApiFunc api_funcs[] = {
     {"file_mkdir",      IMP_FILE_MKDIR,      CT_INT,   2, {CT_INT,CT_INT}},
     {"file_rmdir",      IMP_FILE_RMDIR,      CT_INT,   2, {CT_INT,CT_INT}},
     {"host_snprintf",   IMP_HOST_SNPRINTF,   CT_INT,   4, {CT_INT,CT_INT,CT_INT,CT_INT}},
+    {"sin",             IMP_SIN,             CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"cos",             IMP_COS,             CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"tan",             IMP_TAN,             CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"asin",            IMP_ASIN,            CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"acos",            IMP_ACOS,            CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"atan",            IMP_ATAN,            CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"atan2",           IMP_ATAN2,           CT_DOUBLE, 2, {CT_DOUBLE,CT_DOUBLE}},
+    {"pow",             IMP_POW,             CT_DOUBLE, 2, {CT_DOUBLE,CT_DOUBLE}},
+    {"exp",             IMP_EXP,             CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"log",             IMP_LOG,             CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"log2",            IMP_LOG2,            CT_DOUBLE, 1, {CT_DOUBLE}},
+    {"fmod",            IMP_FMOD,            CT_DOUBLE, 2, {CT_DOUBLE,CT_DOUBLE}},
     {NULL, 0, 0, 0, {}}
 };
 
@@ -207,10 +221,21 @@ int preproc_line(void) {
         if (strcmp(directive, "ifdef") == 0 || strcmp(directive, "ifndef") == 0 ||
             strcmp(directive, "if") == 0) {
             /* Nested ifdef in skipped section — push another skip */
-            if (ifdef_depth >= MAX_IFDEF_DEPTH) { error_at("#ifdef too deeply nested"); }
-            else { ifdef_skip[ifdef_depth] = 1; ifdef_depth++; }
+            if (ifdef_depth >= MAX_IFDEF_DEPTH) {
+                error_at("#ifdef too deeply nested");
+                ifdef_depth++;  /* still increment to keep #endif balanced */
+            } else {
+                ifdef_skip[ifdef_depth] = 1;
+                ifdef_had_else[ifdef_depth] = 0;
+                ifdef_depth++;
+            }
         } else if (strcmp(directive, "else") == 0) {
-            if (ifdef_depth > 0) ifdef_skip[ifdef_depth - 1] = !ifdef_skip[ifdef_depth - 1];
+            if (ifdef_depth > 0) {
+                if (ifdef_had_else[ifdef_depth - 1])
+                    error_at("#else after #else");
+                ifdef_had_else[ifdef_depth - 1] = 1;
+                ifdef_skip[ifdef_depth - 1] = !ifdef_skip[ifdef_depth - 1];
+            }
         } else if (strcmp(directive, "endif") == 0) {
             if (ifdef_depth > 0) ifdef_depth--;
         }
@@ -289,8 +314,14 @@ int preproc_line(void) {
         char name[64];
         read_pp_word(name, sizeof(name));
         int defined = (find_sym_kind(name, SYM_DEFINE) != NULL);
-        if (ifdef_depth >= MAX_IFDEF_DEPTH) error_at("#ifdef too deeply nested");
-        else { ifdef_skip[ifdef_depth] = !defined; ifdef_depth++; }
+        if (ifdef_depth >= MAX_IFDEF_DEPTH) {
+            error_at("#ifdef too deeply nested");
+            ifdef_depth++;  /* still increment to keep #endif balanced */
+        } else {
+            ifdef_skip[ifdef_depth] = !defined;
+            ifdef_had_else[ifdef_depth] = 0;
+            ifdef_depth++;
+        }
         skip_to_eol();
         return 1;
     }
@@ -299,8 +330,14 @@ int preproc_line(void) {
         char name[64];
         read_pp_word(name, sizeof(name));
         int defined = (find_sym_kind(name, SYM_DEFINE) != NULL);
-        if (ifdef_depth >= MAX_IFDEF_DEPTH) error_at("#ifdef too deeply nested");
-        else { ifdef_skip[ifdef_depth] = defined; ifdef_depth++; }
+        if (ifdef_depth >= MAX_IFDEF_DEPTH) {
+            error_at("#ifdef too deeply nested");
+            ifdef_depth++;
+        } else {
+            ifdef_skip[ifdef_depth] = defined;
+            ifdef_had_else[ifdef_depth] = 0;
+            ifdef_depth++;
+        }
         skip_to_eol();
         return 1;
     }
@@ -334,21 +371,34 @@ int preproc_line(void) {
             }
             val = (find_sym_kind(name, SYM_DEFINE) != NULL) ? 1 : 0;
             if (negate) val = !val;
-        } else if (!negate) {
-            /* Plain integer constant: #if 0, #if 1, etc. */
+        } else {
+            /* Plain integer constant: #if 0, #if 1, #if !0, #if !1, etc. */
             while (src_pos < src_len && source[src_pos] >= '0' && source[src_pos] <= '9')
                 val = val * 10 + (source[src_pos++] - '0');
+            if (negate) val = !val;
         }
 
-        if (ifdef_depth >= MAX_IFDEF_DEPTH) error_at("#if too deeply nested");
-        else { ifdef_skip[ifdef_depth] = (val == 0); ifdef_depth++; }
+        if (ifdef_depth >= MAX_IFDEF_DEPTH) {
+            error_at("#if too deeply nested");
+            ifdef_depth++;
+        } else {
+            ifdef_skip[ifdef_depth] = (val == 0);
+            ifdef_had_else[ifdef_depth] = 0;
+            ifdef_depth++;
+        }
         skip_to_eol();
         return 1;
     }
 
     if (strcmp(directive, "else") == 0) {
-        if (ifdef_depth > 0) ifdef_skip[ifdef_depth - 1] = !ifdef_skip[ifdef_depth - 1];
-        else error_at("#else without matching #if/#ifdef");
+        if (ifdef_depth > 0) {
+            if (ifdef_had_else[ifdef_depth - 1])
+                error_at("#else after #else");
+            ifdef_had_else[ifdef_depth - 1] = 1;
+            ifdef_skip[ifdef_depth - 1] = !ifdef_skip[ifdef_depth - 1];
+        } else {
+            error_at("#else without matching #if/#ifdef");
+        }
         skip_to_eol();
         return 1;
     }

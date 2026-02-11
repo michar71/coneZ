@@ -5,6 +5,7 @@
 
 #define _I WASM_I32
 #define _F WASM_F32
+#define _D WASM_F64
 ImportDef imp_defs[IMP_COUNT] = {
     [IMP_DELAY_MS]      = {"delay_ms",      1,{_I},            0,{}},
     [IMP_MILLIS]         = {"millis",         0,{},              1,{_I}},
@@ -117,8 +118,21 @@ ImportDef imp_defs[IMP_COUNT] = {
     [IMP_PRINT_I64]      = {"print_i64",            1,{WASM_I64},      0,{}},
     [IMP_PRINT_F64]      = {"print_f64",            1,{WASM_F64},      0,{}},
     [IMP_HOST_SNPRINTF]  = {"host_snprintf",        4,{_I,_I,_I,_I},   1,{_I}},
+    [IMP_SIN]            = {"sin",                  1,{_D},            1,{_D}},
+    [IMP_COS]            = {"cos",                  1,{_D},            1,{_D}},
+    [IMP_TAN]            = {"tan",                  1,{_D},            1,{_D}},
+    [IMP_ASIN]           = {"asin",                 1,{_D},            1,{_D}},
+    [IMP_ACOS]           = {"acos",                 1,{_D},            1,{_D}},
+    [IMP_ATAN]           = {"atan",                 1,{_D},            1,{_D}},
+    [IMP_ATAN2]          = {"atan2",                2,{_D,_D},         1,{_D}},
+    [IMP_POW]            = {"pow",                  2,{_D,_D},         1,{_D}},
+    [IMP_EXP]            = {"exp",                  1,{_D},            1,{_D}},
+    [IMP_LOG]            = {"log",                  1,{_D},            1,{_D}},
+    [IMP_LOG2]           = {"log2",                 1,{_D},            1,{_D}},
+    [IMP_FMOD]           = {"fmod",                 2,{_D,_D},         1,{_D}},
 };
 #undef _I
 #undef _F
+#undef _D
 
 uint8_t imp_used[IMP_COUNT];

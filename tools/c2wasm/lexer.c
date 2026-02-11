@@ -7,6 +7,7 @@ static int peek_tok;
 static int peek_valid;
 static int peek_ival;
 static float peek_fval;
+static double peek_dval;
 static char peek_sval[1024];
 static int peek_slen;
 
@@ -150,7 +151,11 @@ static int lex_raw(void) {
                 macro_depth--;
                 return result;
             }
-            return lex_raw();
+            /* Empty macro — skip it and get the next token iteratively */
+            macro_depth++;
+            int result = lex_raw();
+            macro_depth--;
+            return result;
         }
 
         return TOK_NAME;
@@ -158,7 +163,7 @@ static int lex_raw(void) {
 
     /* Numeric literals */
     if (isdigit(c) || (c == '.' && isdigit(peek_ch()))) {
-        char nbuf[64];
+        char nbuf[128];
         int len = 0;
         int is_float = 0;
 
@@ -208,6 +213,7 @@ static int lex_raw(void) {
 
         if (is_float) {
             tok_fval = strtof(nbuf, NULL);
+            tok_dval = strtod(nbuf, NULL);
             return TOK_FLOAT_LIT;
         }
         tok_ival = (int)strtol(nbuf, NULL, 10);
@@ -251,6 +257,7 @@ static int lex_raw(void) {
             }
         }
         if (ch() == '"') advance();
+        else error_at("unterminated string literal");
         tok_sval[len] = 0;
         tok_slen = len;
 
@@ -327,6 +334,7 @@ static int lex_raw(void) {
             advance();
         }
         if (ch() == '\'') advance();
+        else error_at("unterminated character literal");
         return TOK_CHAR_LIT;
     }
 
@@ -392,7 +400,21 @@ static int lex_raw(void) {
     }
 
     error_fmt("unexpected character '%c' (0x%02x)", c, c);
-    return lex_raw();
+    /* Skip unexpected chars iteratively instead of recursing */
+    while (src_pos < src_len) {
+        int nc = ch();
+        if (nc == -1) return TOK_EOF;
+        if (isalpha(nc) || nc == '_' || isdigit(nc) || nc == '"' || nc == '\'' ||
+            nc == '(' || nc == ')' || nc == '{' || nc == '}' || nc == ';' ||
+            nc == '#' || nc == '+' || nc == '-' || nc == '*' || nc == '/' ||
+            nc == '=' || nc == '<' || nc == '>' || nc == '!' || nc == '&' ||
+            nc == '|' || nc == '^' || nc == '~' || nc == '?' || nc == ':' ||
+            nc == ',' || nc == '.' || nc == '[' || nc == ']' || nc == '%')
+            return lex_raw();
+        advance();
+        error_fmt("unexpected character '%c' (0x%02x)", nc, nc);
+    }
+    return TOK_EOF;
 }
 
 int next_token(void) {
@@ -400,6 +422,7 @@ int next_token(void) {
         tok = peek_tok;
         tok_ival = peek_ival;
         tok_fval = peek_fval;
+        tok_dval = peek_dval;
         memcpy(tok_sval, peek_sval, sizeof(tok_sval));
         tok_slen = peek_slen;
         peek_valid = 0;
@@ -416,6 +439,7 @@ int peek_token(void) {
     /* Save current state */
     int save_tok = tok, save_ival = tok_ival;
     float save_fval = tok_fval;
+    double save_dval = tok_dval;
     char save_sval[1024]; int save_slen = tok_slen;
     memcpy(save_sval, tok_sval, sizeof(save_sval));
 
@@ -424,12 +448,13 @@ int peek_token(void) {
     } while (peek_tok == TOK_PP_DONE);
     peek_ival = tok_ival;
     peek_fval = tok_fval;
+    peek_dval = tok_dval;
     memcpy(peek_sval, tok_sval, sizeof(peek_sval));
     peek_slen = tok_slen;
     peek_valid = 1;
 
     /* Restore current state */
-    tok = save_tok; tok_ival = save_ival; tok_fval = save_fval;
+    tok = save_tok; tok_ival = save_ival; tok_fval = save_fval; tok_dval = save_dval;
     memcpy(tok_sval, save_sval, sizeof(tok_sval));
     tok_slen = save_slen;
 
@@ -447,6 +472,52 @@ void expect(int t) {
 int accept(int t) {
     if (tok == t) { next_token(); return 1; }
     return 0;
+}
+
+/* ---- Lexer save/restore for pre-scan ---- */
+
+void lexer_save(LexerSave *s) {
+    s->saved_source = malloc(src_len + 1);
+    memcpy(s->saved_source, source, src_len + 1);
+    s->saved_src_pos = src_pos;
+    s->saved_src_len = src_len;
+    s->saved_line_num = line_num;
+    s->saved_tok = tok;
+    s->saved_tok_ival = tok_ival;
+    s->saved_tok_fval = tok_fval;
+    s->saved_tok_dval = tok_dval;
+    memcpy(s->saved_tok_sval, tok_sval, sizeof(tok_sval));
+    s->saved_tok_slen = tok_slen;
+    s->saved_peek_valid = peek_valid;
+    s->saved_peek_tok = peek_tok;
+    s->saved_peek_ival = peek_ival;
+    s->saved_peek_fval = peek_fval;
+    s->saved_peek_dval = peek_dval;
+    memcpy(s->saved_peek_sval, peek_sval, sizeof(peek_sval));
+    s->saved_peek_slen = peek_slen;
+    s->saved_macro_depth = macro_depth;
+}
+
+void lexer_restore(LexerSave *s) {
+    free(source);
+    source = s->saved_source;
+    src_pos = s->saved_src_pos;
+    src_len = s->saved_src_len;
+    line_num = s->saved_line_num;
+    tok = s->saved_tok;
+    tok_ival = s->saved_tok_ival;
+    tok_fval = s->saved_tok_fval;
+    tok_dval = s->saved_tok_dval;
+    memcpy(tok_sval, s->saved_tok_sval, sizeof(tok_sval));
+    tok_slen = s->saved_tok_slen;
+    peek_valid = s->saved_peek_valid;
+    peek_tok = s->saved_peek_tok;
+    peek_ival = s->saved_peek_ival;
+    peek_fval = s->saved_peek_fval;
+    peek_dval = s->saved_peek_dval;
+    memcpy(peek_sval, s->saved_peek_sval, sizeof(peek_sval));
+    peek_slen = s->saved_peek_slen;
+    macro_depth = s->saved_macro_depth;
 }
 
 const char *tok_name(int t) {
