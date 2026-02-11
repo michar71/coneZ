@@ -34,7 +34,7 @@ There are standalone test projects under `tests/` (psram_test, thread_test) — 
 ### Dual-Core Threading Model
 
 - **Core 1 (main loop):** Hardware drivers — LoRa RX, GPS parsing, sensor polling, WiFi/HTTP, CLI shell, "direct effects" (speed-of-sound sync). Runs in `loop()` in `main.cpp`.
-- **Core 1 (LED render task):** Dedicated FreeRTOS task (`led_task_fun` in `led.cpp`, 4KB stack, priority 2) that calls `FastLED.show()` at ~30 FPS when the dirty flag is set. This is the **only** place `FastLED.show()` is called after `setup()`.
+- **Core 1 (LED render task):** Dedicated FreeRTOS task (`led_task_fun` in `led.cpp`, 4KB stack, priority 2) that calls `FastLED.show()` at ~30 FPS when the dirty flag is set, and at least once per second unconditionally. This is the **only** place `FastLED.show()` is called after `setup()`.
 - **Core 0 (BASIC task):** Dedicated FreeRTOS task (`basic_task_fun` in `basic_wrapper.cpp`, 65KB stack) that runs user BASIC scripts.
 
 **Critical rule:** After `setup()`, only the LED render task calls `FastLED.show()`. All other code (BASIC scripts, effects, etc.) writes to the global LED buffers (`leds1`-`leds4`) and calls `led_show()` to set the dirty flag. During `setup()` only, `led_show_now()` may be used for immediate display.
@@ -63,13 +63,13 @@ New BASIC functions are added by: (1) defining the C function that manipulates t
 - `BOARD_CONEZ_V0_1` — Custom PCB, SX1268 LoRa, GPS, buzzer, 2MB aux PSRAM
 - `BOARD_HELTEC_LORA32_V3` — Heltec dev board, SX1262 LoRa, no GPS, 8MB native PSRAM
 
-Pin assignments for the ConeZ PCB are in `board.h`. LED buffer definitions and NUM_LEDS constants are in `led.h`. The board is selected via build flags in `platformio.ini`.
+Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setup are in `led.h`/`led.cpp`; per-channel LED counts are runtime-configurable via the `[led]` config section. The board is selected via build flags in `platformio.ini`.
 
 ### Key Hardware Interfaces
 
 - **LoRa:** RadioLib, SX1262/SX1268 via SPI, configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW)
 - **GPS:** TinyGPSPlus on UART (9600 baud), with PPS pin for sync
-- **LEDs:** FastLED WS2811 on 4 GPIO pins — RGB1 (50 LEDs), RGB2/3/4 (1 LED each), BRG color order. All FastLED interaction is centralized in `led.cpp`/`led.h`.
+- **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. All FastLED interaction is centralized in `led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
 - **Temp:** TMP102 on I2C 0x48
 - **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`

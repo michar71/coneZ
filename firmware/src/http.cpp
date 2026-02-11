@@ -11,6 +11,7 @@
 #include <FS.h>
 #include "main.h"
 #include "http.h"
+#include "config.h"
 #include "gps.h"
 
 #ifdef BOARD_HAS_GPS
@@ -120,6 +121,7 @@ void http_root()
     page += getPartitionInfoHTML();
 
     page += "<hr><br>\n";
+    page += "<a href='/config'>Configuration</a><br>\n";
     page += "<a href='/dir'>List Files</a><br>\n";
     page += "<a href='/nvs'>List NVS Parameters</a><br><br>\n";
     page += "<a href='/update'>Update Firmware</a><br>\n";
@@ -265,12 +267,44 @@ void http_nvs()
 }
 
 
+void http_config_get()
+{
+    const char *msg = "";
+    if (server.hasArg("saved"))
+        msg = "Settings saved. Reboot to apply non-debug changes.";
+    else if (server.hasArg("reset"))
+        msg = "Settings reset to defaults. Reboot to apply non-debug changes.";
+
+    server.send(200, "text/html", config_get_html(msg));
+}
+
+
+void http_config_post()
+{
+    config_set_from_web(server);
+    server.sendHeader("Location", "/config?saved=1");
+    server.send(303);
+}
+
+
+void http_config_reset()
+{
+    config_reset();
+    config_apply_debug();
+    server.sendHeader("Location", "/config?reset=1");
+    server.send(303);
+}
+
+
 int http_setup()
 {
     server.on( "/", http_root );
     server.on( "/reboot", http_reboot );
     server.on( "/dir", http_dir );
     server.on( "/nvs", http_nvs );
+    server.on( "/config", HTTP_GET,  http_config_get );
+    server.on( "/config", HTTP_POST, http_config_post );
+    server.on( "/config/reset", HTTP_POST, http_config_reset );
     ElegantOTA.begin( &server );
     server.begin();
 

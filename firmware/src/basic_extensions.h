@@ -286,27 +286,28 @@ const uint8_t  gamma8[] = {
 #ifdef REAL_ESP32_HW
 
 #include "FastLED.h"
+#include "config.h"
 
 int getNumLeds()
 {
-    return NUM_LEDS1; //Return the number of LEDs in the strip
+    return config.led_count1; //Return the number of LEDs in the strip
 }
 
 void setLEDr(int pos, int val)
 {
-    if (pos < 0 || pos >= NUM_LEDS1) return;
+    if (pos < 0 || pos >= config.led_count1 || !leds1) return;
     leds1[pos].r = (uint8_t)val;
 }
 
 void setLEDg(int pos, int val)
 {
-    if (pos < 0 || pos >= NUM_LEDS1) return;
+    if (pos < 0 || pos >= config.led_count1 || !leds1) return;
     leds1[pos].g = (uint8_t)val;
 }
 
 void setLEDb(int pos, int val)
 {
-    if (pos < 0 || pos >= NUM_LEDS1) return;
+    if (pos < 0 || pos >= config.led_count1 || !leds1) return;
     leds1[pos].b = (uint8_t)val;
 }
 

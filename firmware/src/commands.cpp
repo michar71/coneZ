@@ -631,10 +631,10 @@ int cmd_led(int argc, char **argv)
 {
 #ifdef BOARD_HAS_RGB_LEDS
     printfnl(SOURCE_COMMANDS, F("LED Config:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Strip 1: %d LEDs\n"), NUM_LEDS1);
-    printfnl(SOURCE_COMMANDS, F("  Strip 2: %d LEDs\n"), NUM_LEDS2);
-    printfnl(SOURCE_COMMANDS, F("  Strip 3: %d LEDs\n"), NUM_LEDS3);
-    printfnl(SOURCE_COMMANDS, F("  Strip 4: %d LEDs\n"), NUM_LEDS4);
+    printfnl(SOURCE_COMMANDS, F("  Strip 1: %d LEDs\n"), config.led_count1);
+    printfnl(SOURCE_COMMANDS, F("  Strip 2: %d LEDs\n"), config.led_count2);
+    printfnl(SOURCE_COMMANDS, F("  Strip 3: %d LEDs\n"), config.led_count3);
+    printfnl(SOURCE_COMMANDS, F("  Strip 4: %d LEDs\n"), config.led_count4);
 #else
     printfnl(SOURCE_COMMANDS, F("RGB LEDs not available on this board\n"));
 #endif

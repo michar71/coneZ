@@ -1,6 +1,7 @@
 #include <sunset.h>
 #include "sun.h"
 #include "gps.h"
+#include "config.h"
 
 SunSet sun;
 int lastDay = -1;
@@ -15,6 +16,40 @@ float lastLat;
 float lastLong;
 
 bool dataIsValid = false;
+
+
+// Day-of-week using Zeller's congruence. Returns 0=Sunday..6=Saturday.
+static int day_of_week(int year, int month, int day)
+{
+    if (month < 3) {
+        month += 12;
+        year -= 1;
+    }
+    int k = year % 100;
+    int j = year / 100;
+    int h = (day + (13 * (month + 1)) / 5 + k + k/4 + j/4 + 5*j) % 7;
+    return ((h + 6) % 7);  // convert: 0=Sat -> 0=Sun
+}
+
+
+// US DST (since 2007): 2nd Sunday of March to 1st Sunday of November.
+bool is_us_dst(int year, int month, int day)
+{
+    if (month < 3 || month > 11) return false;   // Jan, Feb, Dec
+    if (month > 3 && month < 11) return true;    // Apr–Oct
+
+    if (month == 3) {
+        // 2nd Sunday: find day-of-week of March 1, then compute date
+        int dow_mar1 = day_of_week(year, 3, 1);  // 0=Sun
+        int second_sun = (dow_mar1 == 0) ? 8 : (15 - dow_mar1);
+        return day >= second_sun;
+    }
+
+    // month == 11
+    int dow_nov1 = day_of_week(year, 11, 1);     // 0=Sun
+    int first_sun = (dow_nov1 == 0) ? 1 : (8 - dow_nov1);
+    return day < first_sun;
+}
 
 
 bool sunSetPosition(float latitude, float longitude)
@@ -73,6 +108,12 @@ bool sunUpdateViaGPS()
     if (!validateSunData()) {
         return false; // Invalid GPS data
     }
+
+    // Compute effective timezone offset (auto-DST adds +1 during US DST)
+    int tz = config.timezone;
+    if (config.auto_dst && is_us_dst(lastYear, lastMonth, lastDay))
+        tz += 1;
+    DST_Offset = tz;
 
     if (!sunSetPosition(lastLat, lastLong)) {
         return false;

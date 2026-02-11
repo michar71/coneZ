@@ -59,7 +59,22 @@ Sections and Keys
                       When empty, hostname is auto-generated as
                       ConeZ-XXYY from the last 2 bytes of the MAC address.
   startup_script    BASIC script to auto-run       (default: /startup.bas)
-  timezone          UTC offset in hours            (default: 7)
+  timezone          Standard (winter) UTC offset   (default: -8)
+                      Set to the non-DST offset for your zone (e.g. -8 for PST).
+                      When auto_dst is on, +1 is added automatically during DST.
+  auto_dst          Automatic US DST adjustment    (default: on)
+                      When on, adds +1 to timezone during US daylight saving
+                      time (2nd Sunday of March – 1st Sunday of November).
+                      Turn off for Arizona, Hawaii, or international use.
+
+[led]
+  count1            LEDs on channel 1              (default: 50)
+  count2            LEDs on channel 2              (default: 50)
+  count3            LEDs on channel 3              (default: 50)
+  count4            LEDs on channel 4              (default: 50)
+
+  LED buffers are dynamically allocated at boot based on these values.
+  Changing LED counts requires a reboot.
 
 [debug]
   system            System messages                (default: on)
@@ -113,6 +128,7 @@ before any hardware that depends on config values is initialized:
   init_LittleFS()          LittleFS available
   list_dir()
   config_init()            Load defaults, overlay from /config.ini
+  led_setup()              Allocates LED buffers from config.led_count*
   Wire.begin()
   lora_setup()             Reads config.lora_*
   gps_setup()              Reads config.origin_*

@@ -223,26 +223,6 @@ void setup()
 
   delay( 250 );
 
-#ifdef BOARD_HAS_RGB_LEDS
-  //Setup RGB leds so we can also signal stuff there...
-  led_setup();
-
-    led_set_channel(1, 4, CRGB::Red);
-    led_show_now();
-    delay(500);
-    led_set_channel(1, 4, CRGB::Green);
-    led_show_now();
-    delay(500);
-    led_set_channel(1, 4, CRGB::Blue);
-    led_show_now();
-    delay(500);
-    led_set_channel(1, 4, CRGB::Black);
-    led_show_now();
-
-  //NOTE: After led_start_task(), only the LED render task calls FastLED.show().
-  //All other code writes to the LED buffers and calls led_show() to mark dirty.
-#endif
-
   delay(1000);
 
 #ifdef BOARD_HAS_BUZZER
@@ -301,6 +281,25 @@ void setup()
   // Load config from /config.ini (or use compiled defaults)
   config_init();
 
+#ifdef BOARD_HAS_RGB_LEDS
+  //Setup RGB leds (buffers sized from config)
+  led_setup();
+
+    led_set_channel(1, 4, CRGB::Red);
+    led_show_now();
+    delay(500);
+    led_set_channel(1, 4, CRGB::Green);
+    led_show_now();
+    delay(500);
+    led_set_channel(1, 4, CRGB::Blue);
+    led_show_now();
+    delay(500);
+    led_set_channel(1, 4, CRGB::Black);
+    led_show_now();
+
+  //NOTE: After led_start_task(), only the LED render task calls FastLED.show().
+  //All other code writes to the LED buffers and calls led_show() to mark dirty.
+#endif
 
   // I2C
   Wire.begin( I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ );
