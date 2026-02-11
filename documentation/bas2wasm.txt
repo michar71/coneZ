@@ -154,20 +154,19 @@ Comments:
 
 NEXT and WEND:
 
-  FOR loops can be closed with NEXT (QuickBASIC syntax) or END FOR:
+  FOR loops are closed with NEXT:
 
     FOR I = 1 TO 10
       ...
     NEXT
 
-  WHILE loops can be closed with WEND (QuickBASIC syntax) or END WHILE:
+  WHILE loops are closed with WEND:
 
     WHILE condition
       ...
     WEND
 
-  Both forms are equivalent. NEXT and WEND are supported in both the
-  interpreter and compiler.
+  NEXT and WEND are supported in both the interpreter and compiler.
 
 
 FUNCTION:

@@ -368,19 +368,9 @@ void stmt()
 			inst(RETURN_, *csp++);
 			prg[*csp++]=(Code)cpc;						/* PATCH JUMP */
 		} 
-		else if (csp[-1]==WHILE) 
-		{
-			prg[*csp++]=(Code)(cpc+2);					/* PATCH TEST */
-			inst(JMP_, *csp++);							/* LOOP TO TEST */
-		} 
-		else if (csp[-1]==FOR) 
-		{
-			prg[*csp++]=(Code)(cpc+4);					/* PATCH TEST */
-			inst(NEXT_, *csp++);						/* INCREMENT */
-			inst(JMP_, *csp++);							/* LOOP TO TEST */
-			temp--;										/* ONE LESS TEMP */
-		} 
-		else if (csp[-1]==IF) 
+		else if (csp[-1]==WHILE) bad((char*)"USE WEND, NOT END WHILE");
+		else if (csp[-1]==FOR)   bad((char*)"USE NEXT, NOT END FOR");
+		else if (csp[-1]==IF)
 		{
 			for (n=*csp++; n--; )						/* PATCH BLOCK ENDS */
 				prg[*csp++]=(Code)cpc;

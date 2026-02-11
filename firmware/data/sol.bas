@@ -5,7 +5,7 @@ SUB STROBE R,G,B
     FOR I = 0 TO 255
         S = SETLEDCOL(255-I,255-I,255-I)
         S = WAIT(3)
-    END FOR
+    NEXT
     'set all LEDs to preselected color
     S = SETLEDCOL(R,G,B)
 END SUB
@@ -23,7 +23,7 @@ WHILE (GPS = 0)
         FORMAT "GPS TIMEOUT"
         BYE
     END IF
-END WHILE
+WEND
 FORMAT "GPS OK"
 
 'check if we have an origin location
@@ -39,7 +39,7 @@ WHILE (ORG = 0)
         FORMAT "ORG TIMEOUT"
         BYE
     END IF
-END WHILE
+WEND
 FORMAT "ORG OK"
 
 'Strobe one green
@@ -67,6 +67,6 @@ WHILE (GETPARAM(0) = 0)
         DIST = ORIGINDIST()
         TDMS = (DIST * 1000) /343
     END IF
-END WHILE
+WEND
 FORMAT "STOPPED"
 BYE

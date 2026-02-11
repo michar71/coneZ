@@ -37,8 +37,8 @@ Control Flow
   ---------             --------------                --------
   IF single-line        IF...THEN                     IF...THEN
   IF multi-line         IF/ELSEIF/ELSE/END IF         IF/ELSE IF/ELSE/END IF
-  FOR loop              FOR...NEXT, STEP, EXIT FOR    FOR...NEXT or END FOR, STEP, EXIT FOR
-  WHILE                 WHILE...WEND                  WHILE...WEND or END WHILE, EXIT WHILE
+  FOR loop              FOR...NEXT, STEP, EXIT FOR    FOR...NEXT, STEP, EXIT FOR
+  WHILE                 WHILE...WEND                  WHILE...WEND, EXIT WHILE
   DO/LOOP               DO WHILE/UNTIL...LOOP         All 5 variants, EXIT DO
   SELECT CASE           Yes                           Yes (CASE, CASE IS, CASE ELSE)
   GOTO / labels         Yes, line numbers and labels  No

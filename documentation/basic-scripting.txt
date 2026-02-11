@@ -43,7 +43,7 @@ Comments:
   X = 42  ' inline comment
 
 Operators:
-  Arithmetic:   +  -  *  /  \ (modulus)
+  Arithmetic:   +  -  *  /  \ (integer division)  MOD (modulo)
   Comparison:   =  <  >  <>  <=  >=
   Logical:      AND  OR
 
@@ -94,15 +94,11 @@ WHILE / WEND:
       X = X + 1
   WEND
 
-  END WHILE is also accepted.
-
 FOR / NEXT:
 
   FOR I = 0 TO 9
       > I
   NEXT
-
-  END FOR is also accepted.
 
   The loop variable increments by 1 each iteration. The loop runs while
   the variable is less than or equal to the TO value.

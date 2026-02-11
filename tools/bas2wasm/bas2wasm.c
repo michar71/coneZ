@@ -1885,7 +1885,7 @@ static void close_sub(void) {
 
 static void close_while(void) {
     ctrl_sp--;
-    if (ctrl_stk[ctrl_sp].kind != CTRL_WHILE) { error_at("WEND/END WHILE without WHILE"); return; }
+    if (ctrl_stk[ctrl_sp].kind != CTRL_WHILE) { error_at("WEND without WHILE"); return; }
     emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
     emit_end(); /* loop end */
     emit_end(); /* block end */
@@ -1893,7 +1893,7 @@ static void close_while(void) {
 
 static void close_for(void) {
     ctrl_sp--;
-    if (ctrl_stk[ctrl_sp].kind != CTRL_FOR) { error_at("NEXT/END FOR without FOR"); return; }
+    if (ctrl_stk[ctrl_sp].kind != CTRL_FOR) { error_at("NEXT without FOR"); return; }
     /* Increment loop variable by step (or 1 if no STEP) */
     int var = ctrl_stk[ctrl_sp].for_var;
     emit_global_get(vars[var].global_idx);
@@ -1914,10 +1914,6 @@ static void compile_end(void) {
     int kw = read_tok();
     if (kw == TOK_KW_SUB || kw == TOK_FUNCTION) {
         close_sub();
-    } else if (kw == TOK_WHILE) {
-        close_while();
-    } else if (kw == TOK_FOR) {
-        close_for();
     } else if (kw == TOK_IF) {
         ctrl_sp--;
         if (ctrl_stk[ctrl_sp].kind != CTRL_IF) { error_at("END IF without IF"); return; }
