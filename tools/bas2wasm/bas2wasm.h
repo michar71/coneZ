@@ -4,6 +4,13 @@
 #ifndef BAS2WASM_H
 #define BAS2WASM_H
 
+#define BAS2WASM_VERSION_MAJOR 0
+#define BAS2WASM_VERSION_MINOR 1
+
+#ifndef BUILD_NUMBER
+#define BUILD_NUMBER 0
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

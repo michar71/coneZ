@@ -57,7 +57,9 @@ Subroutines & Functions
   SUB             SUB...END SUB                   SUB...END SUB
   FUNCTION        FUNCTION...END FUNCTION         Yes (alias for SUB, returns via RETURN expr)
   Parameters      By reference (default), BYVAL   By value (globals saved/restored)
-  LOCAL           DIM inside sub, STATIC          LOCAL keyword
+  Param types     Integer, float, string           All three (i32, f32, str via suffix)
+  Return types    By function name suffix          Same (no suffix=i32, #=f32, $=str)
+  LOCAL           DIM inside sub, STATIC          LOCAL keyword (i32, f32, str via suffix)
   DECLARE         Yes (forward declarations)      No (SUBs visible everywhere)
   SHARED          SHARED, COMMON                  All variables are global by default
   Recursion       Yes                             Yes

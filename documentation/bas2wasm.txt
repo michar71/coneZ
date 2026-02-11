@@ -204,6 +204,37 @@ FUNCTION:
       RETURN X * 2
     END SUB
 
+  SUB/FUNCTION supports all three types for parameters, locals, and
+  return values. The type follows the normal naming convention:
+
+    SUB GREET$ NAME$           ' string param, string return
+      RETURN "Hello, " + NAME$
+    END SUB
+
+    SUB AVERAGE# X#, Y#       ' float params, float return
+      RETURN (X# + Y#) / 2.0
+    END SUB
+
+    SUB COUNTCHARS S$, C$      ' string params, integer return
+      LOCAL I
+      LOCAL N
+      N = 0
+      FOR I = 1 TO LEN(S$)
+        IF MID$(S$, I, 1) = C$ THEN N = N + 1
+      NEXT I
+      RETURN N
+    END SUB
+
+  LOCAL variables also support all three types:
+
+    SUB EXAMPLE X
+      LOCAL TEMP#              ' float local
+      LOCAL MSG$               ' string local
+      TEMP# = FLOAT(X) * 1.5
+      MSG$ = "Value: " + STR$(TEMP#)
+      PRINTS MSG$
+    END SUB
+
   FUNCTION is supported in both the interpreter and compiler.
 
 
@@ -690,7 +721,26 @@ Compiles to a WASM function that:
   2. Installs parameter values into globals A and B
   3. Executes the body (LOCAL C becomes a WASM local)
   4. Restores globals A and B
-  5. Returns i32 (default 0, or RETURN value)
+  5. Returns (default 0/0.0/"", or RETURN value)
+
+The return type is determined by the SUB name suffix:
+  - No suffix: returns i32 (e.g. SUB COUNT)
+  - # suffix:  returns f32 (e.g. SUB AVERAGE#)
+  - $ suffix:  returns str (e.g. SUB GREET$)
+
+All three types are supported for parameters and LOCAL variables.
+At the WASM level, strings are i32 pointers, so string parameters
+use WASM i32 type.
+
+String parameter handling:
+  - On entry, each string parameter is copied via str_copy to prevent
+    the callee from aliasing the caller's string
+  - On exit, all string parameter copies are freed via str_free
+
+String LOCAL handling:
+  - On entry, the global is saved and zeroed (starts as empty string)
+  - On exit, the local string is freed via str_free, then the global
+    is restored
 
 
 FOR Loop Semantics

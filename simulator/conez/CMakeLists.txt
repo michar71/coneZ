@@ -5,6 +5,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+# ---- Version / build number ----
+set(VERSION_MAJOR 0)
+set(VERSION_MINOR 1)
+set(BUILDNUM_FILE "${CMAKE_SOURCE_DIR}/../../tools/buildnum.txt")
+if(EXISTS "${BUILDNUM_FILE}")
+    file(READ "${BUILDNUM_FILE}" _BUILDNUM)
+    string(STRIP "${_BUILDNUM}" _BUILDNUM)
+else()
+    set(_BUILDNUM 0)
+endif()
+math(EXPR BUILD_NUMBER "${_BUILDNUM} + 1")
+
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 # ---- wasm3 static library (pure C) ----
@@ -54,4 +66,16 @@ target_include_directories(conez-simulator PRIVATE
     thirdparty/wasm3/source
 )
 
+target_compile_definitions(conez-simulator PRIVATE
+    VERSION_MAJOR=${VERSION_MAJOR}
+    VERSION_MINOR=${VERSION_MINOR}
+    BUILD_NUMBER=${BUILD_NUMBER}
+)
+
 target_link_libraries(conez-simulator PRIVATE Qt6::Widgets m3 m)
+
+# Increment build number after successful build
+add_custom_command(TARGET conez-simulator POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "${BUILD_NUMBER}" > "${BUILDNUM_FILE}"
+    COMMENT "Build number: ${BUILD_NUMBER}"
+)
