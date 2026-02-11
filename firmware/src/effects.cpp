@@ -94,9 +94,6 @@ void SOS_effect(void)
     int sec = get_sec();
     static int prev_sec = 0;
 
-    float origin_lat = 40.762173;
-    float origin_lon = -119.193672;
-
     //Calulate Offset From Equator/0-meridian in Meters
     float lat_m;
     float lon_m;
@@ -106,7 +103,7 @@ void SOS_effect(void)
 
     //Calulate distance from Origin
     latlon_to_meters(lat, lon,&lat_m,&lon_m);
-    latlon_to_meters(origin_lat, origin_lon,&lat_o_m,&lon_o_m);
+    latlon_to_meters(get_org_lat(), get_org_lon(),&lat_o_m,&lon_o_m);
     GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);
     dist_meters = res.distance;
 
@@ -154,102 +151,134 @@ void SOS_effect(void)
 
 void SOS_effect2(void)
 {
-    CRGB col;
+    enum State { IDLE, WAIT_OFFSET, RAMP_UP, RAMP_DOWN };
+
+    static State state = IDLE;
+    static int prev_sec = 0;
+    static unsigned long target_ms = 0;
+    static int step = 0;
+    static float offset_ms = 0;
+
     int ms_per_cycle = 3000;
     float sos_speed_scaling = 0.5;
 
-    //Get Lat/Lon/Time
-    float lat = get_lat();
-    float lon = get_lon();
-    int sec = get_sec();
-    static int prev_sec = 0;
+    switch (state) {
 
-    float origin_lat = 40.762173;
-    float origin_lon = -119.193672;
+    case IDLE: {
+        int sec = get_sec();
 
-    //Calulate Offset From Equator/0-meridian in Meters
-    float lat_m;
-    float lon_m;
-    float lat_o_m;
-    float lon_o_m;
-    float dist_meters;
-
-    //Calulate distance from Origin
-    latlon_to_meters(lat, lon,&lat_m,&lon_m);
-    latlon_to_meters(origin_lat, origin_lon,&lat_o_m,&lon_o_m);
-    GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);
-    dist_meters = res.distance;
-
-    Serial.print("Dist: ");
-    Serial.println(dist_meters);
-
-    // Calulate offset in ms with speed of sound being approximately 343m/s
-    const float sos_mps = 343.0 * sos_speed_scaling;
-    
-    float offset_ms = dist_meters / sos_mps * 1000;
- 
-    offset_ms = fmod( offset_ms, ms_per_cycle );
- 
-    OutputStream->print("Offset ");
-    OutputStream->println(offset_ms);
-
-    OutputStream->print("sec = ");
-    OutputStream->println( sec );
-
-    //Wait for sec to roll over Mod 10;
-    if (sec != prev_sec && sec % 3 == 0)
-    {
-        prev_sec = sec;
-
-        //Wait Offset MS
-        delay((int)round(offset_ms));
-        OutputStream->print("PING - sec = ");
-        OutputStream->println( sec );
-      
-        //Flash Light - Ramp up
-        for (int ii = 0; ii<255; ii=ii+16)
+        if (sec != prev_sec && sec % 3 == 0)
         {
-          CRGB col;
-          col.r = ii;
-          col.g = ii;
-          col.b = ii;
-          led_set_channel(1, 50, col);
-          led_show();
-          delay (20);
-        }
+            prev_sec = sec;
 
-        //Flash Light - Ramp down
-        for (int ii = 255; ii>=0; ii=ii-8)
-        {
-          CRGB col;
-          col.r = ii;
-          col.g = ii;
-          col.b = ii;
-          led_set_channel(1, 50, col);
-          led_show();
-          delay (20);
-        }
+            //Get Lat/Lon/Time
+            float lat = get_lat();
+            float lon = get_lon();
 
-        // Baseline green glow (or blue if not valid GPS)
-        if( gps_pos_valid )
-        {
-          col.r = 0;
-          col.g = 4;
-          col.b = 0;
+            //Calulate distance from Origin
+            float lat_m, lon_m, lat_o_m, lon_o_m;
+            latlon_to_meters(lat, lon, &lat_m, &lon_m);
+            latlon_to_meters(get_org_lat(), get_org_lon(), &lat_o_m, &lon_o_m);
+            GeoResult res = xy_to_polar(lat_m, lon_m, lat_o_m, lon_o_m);
+            float dist_meters = res.distance;
+
+            Serial.print("Dist: ");
+            Serial.println(dist_meters);
+
+            // Calulate offset in ms with speed of sound being approximately 343m/s
+            const float sos_mps = 343.0 * sos_speed_scaling;
+            offset_ms = dist_meters / sos_mps * 1000;
+            offset_ms = fmod(offset_ms, ms_per_cycle);
+
+            OutputStream->print("Offset ");
+            OutputStream->println(offset_ms);
+            OutputStream->print("sec = ");
+            OutputStream->println(sec);
+
+            target_ms = millis() + (unsigned long)round(offset_ms);
+            state = WAIT_OFFSET;
         }
-        else
+        break;
+    }
+
+    case WAIT_OFFSET:
+        if (millis() >= target_ms)
         {
-            col.r = 0;
-            col.g = 0;
-            col.b = 10;
+            OutputStream->print("PING - offset_ms = ");
+            OutputStream->println(offset_ms);
+
+            step = 0;
+            target_ms = millis();
+            state = RAMP_UP;
         }
-        led_set_channel( 1, 50, col );
+        break;
+
+    case RAMP_UP: {
+        if (millis() < target_ms)
+            break;
+
+        // step 0..15 → brightness 0,16,32,...,240
+        int brightness = step * 16;
+        CRGB col;
+        col.r = brightness;
+        col.g = brightness;
+        col.b = brightness;
+        led_set_channel(1, 50, col);
         led_show();
-        delay( 20 );
-        led_set_channel( 1, 50, col );
+
+        step++;
+        target_ms = millis() + 20;
+
+        if (step >= 16)
+        {
+            step = 0;
+            state = RAMP_DOWN;
+        }
+        break;
+    }
+
+    case RAMP_DOWN: {
+        if (millis() < target_ms)
+            break;
+
+        // step 0..31 → brightness 255,247,239,...,7 (255 - step*8)
+        int brightness = 255 - step * 8;
+        if (brightness < 0) brightness = 0;
+        CRGB col;
+        col.r = brightness;
+        col.g = brightness;
+        col.b = brightness;
+        led_set_channel(1, 50, col);
         led_show();
-        delay( 20 );
-      }
+
+        step++;
+        target_ms = millis() + 20;
+
+        if (step >= 32)
+        {
+            // Baseline green glow (or blue if not valid GPS)
+            CRGB baseline;
+            if (gps_pos_valid)
+            {
+                baseline.r = 0;
+                baseline.g = 4;
+                baseline.b = 0;
+            }
+            else
+            {
+                baseline.r = 0;
+                baseline.g = 0;
+                baseline.b = 10;
+            }
+            led_set_channel(1, 50, baseline);
+            led_show();
+
+            state = IDLE;
+        }
+        break;
+    }
+
+    } // switch
 }
 
 //Set cones up in a circle around camp
@@ -268,9 +297,6 @@ void CIRCLE_effect(void)
     static int prev_sec = 0;
     static int offset_cnt = 0;
 
-    float origin_lat = 40.762173;
-    float origin_lon = -119.193672;
-
     //Calulate Offset From Equator/0-meridian in Meters
     float lat_m;
     float lon_m;
@@ -280,7 +306,7 @@ void CIRCLE_effect(void)
 
     //Calulate distance from Origin
     latlon_to_meters(lat, lon,&lat_m,&lon_m);
-    latlon_to_meters(origin_lat, origin_lon,&lat_o_m,&lon_o_m);
+    latlon_to_meters(get_org_lat(), get_org_lon(),&lat_o_m,&lon_o_m);
     GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);
     deg = res.bearing_deg;
     int offset_ms = (int)(deg * 10);

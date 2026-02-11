@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents working with code in this reposi
 
 ## Project Overview
 
-ConeZ is an ESP32-S3 embedded system that powers networked LED light displays ("cones") for events like Burning Man. It combines GPS positioning, LoRa radio communication, IMU sensors, and RGB LED control via a BASIC interpreter running on a dedicated FreeRTOS thread.
+ConeZ is an ESP32-S3 embedded system that powers networked LED light displays on traffic cones for fun and interesting playa events. It combines GPS positioning, LoRa radio communication, IMU sensors, and RGB LED control via a BASIC interpreter running on a dedicated FreeRTOS thread.
 
 ## Build Commands
 

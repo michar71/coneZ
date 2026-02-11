@@ -21,20 +21,14 @@ HIGH
     on Core 1. All other code writes to LED buffers and calls led_show()
     to set a dirty flag. The render task runs at ~30 FPS.
 
-#10 SOS_effect2() blocks main loop for 3+ seconds
-    effects.cpp:153-247
-    When the trigger fires, delay() calls block for 3+ seconds total.
-    During this time LoRa RX, GPS, HTTP, CLI, and sensors all stop.
-    FIX: Rewrite as a non-blocking state machine that returns to loop()
-    each iteration, or move effects to their own FreeRTOS task.
+#10 FIXED -- SOS_effect2() rewritten as non-blocking state machine.
+    All delay() calls removed; uses millis()-based state machine
+    (IDLE, WAIT_OFFSET, RAMP_UP, RAMP_DOWN) that returns to loop()
+    each iteration. No new FreeRTOS task needed.
 
-#11 Effects use hardcoded origin coordinates
-    effects.cpp:96-97, 165-166, 265-266
-    Each effect declares local origin_lat/origin_lon set to Playa
-    coordinates (40.762173, -119.193672) that shadow the GPS module's
-    globals (ESE: 36.236735, -118.025373). The accessor functions
-    get_org_lat()/get_org_lon() are never called by effects.
-    FIX: Replace local origin variables with get_org_lat()/get_org_lon().
+#11 FIXED -- Effects now use get_org_lat()/get_org_lon() instead of
+    hardcoded origin coordinates. All three effects (SOS_effect, SOS_effect2,
+    CIRCLE_effect) updated.
 
 #12 FIXED -- SCALE_() returns input instead of scaled result
 
