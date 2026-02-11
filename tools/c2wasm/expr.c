@@ -11,11 +11,13 @@ static CType postfix_expr(void);
 static CType primary_expr(void);
 static CType prec_expr(int min_prec);
 
-/* Promote two operands to a common type */
+/* Promote two operands to a common type (C unsigned promotion rules) */
 static CType promote(CType a, CType b) {
     if (a == CT_DOUBLE || b == CT_DOUBLE) return CT_DOUBLE;
     if (a == CT_FLOAT  || b == CT_FLOAT)  return CT_FLOAT;
+    if (a == CT_ULONG_LONG || b == CT_ULONG_LONG) return CT_ULONG_LONG;
     if (a == CT_LONG_LONG || b == CT_LONG_LONG) return CT_LONG_LONG;
+    if (a == CT_UINT || b == CT_UINT) return CT_UINT;
     return CT_INT;
 }
 
@@ -55,7 +57,7 @@ static CType compile_printf_call(void) {
 
         /* Save to temp local */
         uint8_t wt = (at == CT_DOUBLE) ? WASM_F64 :
-                     (at == CT_LONG_LONG) ? WASM_I64 : WASM_I32;
+                     (at == CT_LONG_LONG || at == CT_ULONG_LONG) ? WASM_I64 : WASM_I32;
         int loc = alloc_local(wt);
         emit_local_set(loc);
         arg_locals[nargs] = loc;
@@ -76,7 +78,7 @@ static CType compile_printf_call(void) {
             buf_uleb(CODE, 3);
             buf_uleb(CODE, 0);
             arg_offset += 8;
-        } else if (arg_types[i] == CT_LONG_LONG) {
+        } else if (arg_types[i] == CT_LONG_LONG || arg_types[i] == CT_ULONG_LONG) {
             arg_offset = (arg_offset + 7) & ~7;
             emit_i32_const(FMT_BUF_ADDR + arg_offset);
             emit_local_get(arg_locals[i]);
@@ -176,12 +178,15 @@ static CType primary_expr(void) {
         next_token();
         expect(TOK_LPAREN);
         if (is_type_keyword(tok)) {
+            int size_tok = tok;  /* remember original token for stdint sizes */
             CType ct = parse_type_spec();
             int size = 4;  /* default for int, float, and pointers */
             if (type_had_pointer) size = 4;
             else if (ct == CT_VOID) size = 1;
             else if (ct == CT_CHAR) size = 1;
-            else if (ct == CT_DOUBLE || ct == CT_LONG_LONG) size = 8;
+            else if (ct == CT_DOUBLE || ct == CT_LONG_LONG || ct == CT_ULONG_LONG) size = 8;
+            else if (size_tok == TOK_INT8 || size_tok == TOK_UINT8) size = 1;
+            else if (size_tok == TOK_INT16 || size_tok == TOK_UINT16) size = 2;
             emit_i32_const(size);
         } else {
             /* sizeof(expr) — parse into temp buffer to get type, discard code */
@@ -207,7 +212,7 @@ static CType primary_expr(void) {
             int size = 4;
             if (ct == CT_VOID) size = 1;
             else if (ct == CT_CHAR) size = 1;
-            else if (ct == CT_DOUBLE || ct == CT_LONG_LONG) size = 8;
+            else if (ct == CT_DOUBLE || ct == CT_LONG_LONG || ct == CT_ULONG_LONG) size = 8;
             emit_i32_const(size);
         }
         expect(TOK_RPAREN);
@@ -366,37 +371,37 @@ static CType unary_expr(void) {
         CType t = unary_expr();
         if (t == CT_FLOAT) { emit_op(OP_F32_NEG); return CT_FLOAT; }
         if (t == CT_DOUBLE) { emit_op(OP_F64_NEG); return CT_DOUBLE; }
-        if (t == CT_LONG_LONG) {
+        if (t == CT_LONG_LONG || t == CT_ULONG_LONG) {
             emit_i64_const(-1);
             emit_op(OP_I64_MUL);
-            return CT_LONG_LONG;
+            return t;
         }
         /* i32: val * -1 */
         emit_i32_const(-1);
         emit_op(OP_I32_MUL);
-        return CT_INT;
+        return (t == CT_UINT) ? CT_UINT : CT_INT;
     }
     if (tok == TOK_BANG) {
         next_token();
         CType t = unary_expr();
         if (t == CT_FLOAT) { emit_coerce_i32(CT_FLOAT); }
         else if (t == CT_DOUBLE) { emit_coerce_i32(CT_DOUBLE); }
-        else if (t == CT_LONG_LONG) { emit_op(OP_I64_EQZ); return CT_INT; }
+        else if (t == CT_LONG_LONG || t == CT_ULONG_LONG) { emit_op(OP_I64_EQZ); return CT_INT; }
         emit_op(OP_I32_EQZ);
         return CT_INT;
     }
     if (tok == TOK_TILDE) {
         next_token();
         CType t = unary_expr();
-        if (t == CT_LONG_LONG) {
+        if (t == CT_LONG_LONG || t == CT_ULONG_LONG) {
             emit_i64_const(-1);
             emit_op(OP_I64_XOR);
-            return CT_LONG_LONG;
+            return t;
         }
-        emit_coerce(t, CT_INT);
+        if (t != CT_INT && t != CT_UINT) emit_coerce(t, CT_INT);
         emit_i32_const(-1);
         emit_op(OP_I32_XOR);
-        return CT_INT;
+        return (t == CT_UINT) ? CT_UINT : CT_INT;
     }
     if (tok == TOK_INC || tok == TOK_DEC) {
         /* Pre-increment/decrement */
@@ -420,7 +425,7 @@ static CType unary_expr(void) {
         } else if (sym->ctype == CT_FLOAT) {
             emit_f32_const(1.0f);
             emit_op(is_inc ? OP_F32_ADD : OP_F32_SUB);
-        } else if (sym->ctype == CT_LONG_LONG) {
+        } else if (sym->ctype == CT_LONG_LONG || sym->ctype == CT_ULONG_LONG) {
             emit_i64_const(1);
             emit_op(is_inc ? OP_I64_ADD : OP_I64_SUB);
         } else {
@@ -532,7 +537,8 @@ static CType prec_expr(int min_prec) {
             emit_local_set(tmp);
             emit_coerce_i32(left);
             emit_local_get(tmp);
-            result = CT_INT;
+            /* Preserve unsigned if either operand was unsigned */
+            result = (ctype_is_unsigned(left) || ctype_is_unsigned(right)) ? CT_UINT : CT_INT;
         } else {
         /* Coerce both sides to common type */
         if (result == CT_FLOAT) {
@@ -553,10 +559,12 @@ static CType prec_expr(int min_prec) {
                 emit_promote_f64(left);
                 emit_local_get(tmp);
             }
-        } else if (result == CT_LONG_LONG) {
-            if (right != CT_LONG_LONG && left == CT_LONG_LONG) {
+        } else if (result == CT_LONG_LONG || result == CT_ULONG_LONG) {
+            int left_is_i64 = (left == CT_LONG_LONG || left == CT_ULONG_LONG);
+            int right_is_i64 = (right == CT_LONG_LONG || right == CT_ULONG_LONG);
+            if (!right_is_i64 && left_is_i64) {
                 emit_coerce_i64(right);
-            } else if (left != CT_LONG_LONG && right == CT_LONG_LONG) {
+            } else if (!left_is_i64 && right_is_i64) {
                 int tmp = alloc_local(WASM_I64);
                 emit_local_set(tmp);
                 emit_coerce_i64(left);
@@ -568,66 +576,95 @@ static CType prec_expr(int min_prec) {
         switch (op) {
         case TOK_PLUS:
             emit_op(result == CT_DOUBLE ? OP_F64_ADD : result == CT_FLOAT ? OP_F32_ADD :
-                    result == CT_LONG_LONG ? OP_I64_ADD : OP_I32_ADD);
+                    (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_ADD : OP_I32_ADD);
             break;
         case TOK_MINUS:
             emit_op(result == CT_DOUBLE ? OP_F64_SUB : result == CT_FLOAT ? OP_F32_SUB :
-                    result == CT_LONG_LONG ? OP_I64_SUB : OP_I32_SUB);
+                    (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_SUB : OP_I32_SUB);
             break;
         case TOK_STAR:
             emit_op(result == CT_DOUBLE ? OP_F64_MUL : result == CT_FLOAT ? OP_F32_MUL :
-                    result == CT_LONG_LONG ? OP_I64_MUL : OP_I32_MUL);
+                    (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_MUL : OP_I32_MUL);
             break;
         case TOK_SLASH:
-            emit_op(result == CT_DOUBLE ? OP_F64_DIV : result == CT_FLOAT ? OP_F32_DIV :
-                    result == CT_LONG_LONG ? OP_I64_DIV_S : OP_I32_DIV_S);
+            if (result == CT_DOUBLE) emit_op(OP_F64_DIV);
+            else if (result == CT_FLOAT) emit_op(OP_F32_DIV);
+            else if (result == CT_ULONG_LONG) emit_op(OP_I64_DIV_U);
+            else if (result == CT_LONG_LONG) emit_op(OP_I64_DIV_S);
+            else if (result == CT_UINT) emit_op(OP_I32_DIV_U);
+            else emit_op(OP_I32_DIV_S);
             break;
         case TOK_PERCENT:
             if (result == CT_DOUBLE) {
                 emit_call(IMP_FMOD);
             } else if (result == CT_FLOAT) {
                 emit_call(IMP_FMODF);
+            } else if (result == CT_ULONG_LONG) {
+                emit_op(OP_I64_REM_U);
             } else if (result == CT_LONG_LONG) {
                 emit_op(OP_I64_REM_S);
+            } else if (result == CT_UINT) {
+                emit_op(OP_I32_REM_U);
             } else {
                 emit_op(OP_I32_REM_S);
             }
             break;
         case TOK_EQ:
             emit_op(result == CT_DOUBLE ? OP_F64_EQ : result == CT_FLOAT ? OP_F32_EQ :
-                    result == CT_LONG_LONG ? OP_I64_EQ : OP_I32_EQ);
+                    (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_EQ : OP_I32_EQ);
             result = CT_INT;
             break;
         case TOK_NE:
             emit_op(result == CT_DOUBLE ? OP_F64_NE : result == CT_FLOAT ? OP_F32_NE :
-                    result == CT_LONG_LONG ? OP_I64_NE : OP_I32_NE);
+                    (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_NE : OP_I32_NE);
             result = CT_INT;
             break;
         case TOK_LT:
-            emit_op(result == CT_DOUBLE ? OP_F64_LT : result == CT_FLOAT ? OP_F32_LT :
-                    result == CT_LONG_LONG ? OP_I64_LT_S : OP_I32_LT_S);
+            if (result == CT_DOUBLE) emit_op(OP_F64_LT);
+            else if (result == CT_FLOAT) emit_op(OP_F32_LT);
+            else if (result == CT_ULONG_LONG) emit_op(OP_I64_LT_U);
+            else if (result == CT_LONG_LONG) emit_op(OP_I64_LT_S);
+            else if (result == CT_UINT) emit_op(OP_I32_LT_U);
+            else emit_op(OP_I32_LT_S);
             result = CT_INT;
             break;
         case TOK_GT:
-            emit_op(result == CT_DOUBLE ? OP_F64_GT : result == CT_FLOAT ? OP_F32_GT :
-                    result == CT_LONG_LONG ? OP_I64_GT_S : OP_I32_GT_S);
+            if (result == CT_DOUBLE) emit_op(OP_F64_GT);
+            else if (result == CT_FLOAT) emit_op(OP_F32_GT);
+            else if (result == CT_ULONG_LONG) emit_op(OP_I64_GT_U);
+            else if (result == CT_LONG_LONG) emit_op(OP_I64_GT_S);
+            else if (result == CT_UINT) emit_op(OP_I32_GT_U);
+            else emit_op(OP_I32_GT_S);
             result = CT_INT;
             break;
         case TOK_LE:
-            emit_op(result == CT_DOUBLE ? OP_F64_LE : result == CT_FLOAT ? OP_F32_LE :
-                    result == CT_LONG_LONG ? OP_I64_LE_S : OP_I32_LE_S);
+            if (result == CT_DOUBLE) emit_op(OP_F64_LE);
+            else if (result == CT_FLOAT) emit_op(OP_F32_LE);
+            else if (result == CT_ULONG_LONG) emit_op(OP_I64_LE_U);
+            else if (result == CT_LONG_LONG) emit_op(OP_I64_LE_S);
+            else if (result == CT_UINT) emit_op(OP_I32_LE_U);
+            else emit_op(OP_I32_LE_S);
             result = CT_INT;
             break;
         case TOK_GE:
-            emit_op(result == CT_DOUBLE ? OP_F64_GE : result == CT_FLOAT ? OP_F32_GE :
-                    result == CT_LONG_LONG ? OP_I64_GE_S : OP_I32_GE_S);
+            if (result == CT_DOUBLE) emit_op(OP_F64_GE);
+            else if (result == CT_FLOAT) emit_op(OP_F32_GE);
+            else if (result == CT_ULONG_LONG) emit_op(OP_I64_GE_U);
+            else if (result == CT_LONG_LONG) emit_op(OP_I64_GE_S);
+            else if (result == CT_UINT) emit_op(OP_I32_GE_U);
+            else emit_op(OP_I32_GE_S);
             result = CT_INT;
             break;
-        case TOK_AMP:    emit_op(result == CT_LONG_LONG ? OP_I64_AND : OP_I32_AND); break;
-        case TOK_PIPE:   emit_op(result == CT_LONG_LONG ? OP_I64_OR  : OP_I32_OR);  break;
-        case TOK_CARET:  emit_op(result == CT_LONG_LONG ? OP_I64_XOR : OP_I32_XOR); break;
-        case TOK_LSHIFT: emit_op(result == CT_LONG_LONG ? OP_I64_SHL : OP_I32_SHL); break;
-        case TOK_RSHIFT: emit_op(result == CT_LONG_LONG ? OP_I64_SHR_S : OP_I32_SHR_S); break;
+        case TOK_AMP:    emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_AND : OP_I32_AND); break;
+        case TOK_PIPE:   emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_OR  : OP_I32_OR);  break;
+        case TOK_CARET:  emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_XOR : OP_I32_XOR); break;
+        case TOK_LSHIFT: emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_SHL : OP_I32_SHL); break;
+        case TOK_RSHIFT:
+            if (result == CT_ULONG_LONG) emit_op(OP_I64_SHR_U);
+            else if (result == CT_LONG_LONG) emit_op(OP_I64_SHR_S);
+            else if (result == CT_UINT) emit_op(OP_I32_SHR_U);
+            else emit_op(OP_I32_SHR_S);
+            break;
         }
 
         left = result;
@@ -693,10 +730,12 @@ CType assignment_expr(void) {
                 emit_promote_f64(sym->ctype);
                 emit_local_get(tmp);
             }
-            if (result == CT_LONG_LONG && rhs != CT_LONG_LONG) {
+            if ((result == CT_LONG_LONG || result == CT_ULONG_LONG) &&
+                rhs != CT_LONG_LONG && rhs != CT_ULONG_LONG) {
                 emit_coerce_i64(rhs);
             }
-            if (result == CT_LONG_LONG && sym->ctype != CT_LONG_LONG) {
+            if ((result == CT_LONG_LONG || result == CT_ULONG_LONG) &&
+                sym->ctype != CT_LONG_LONG && sym->ctype != CT_ULONG_LONG) {
                 int tmp = alloc_local(WASM_I64);
                 emit_local_set(tmp);
                 emit_coerce_i64(sym->ctype);
@@ -719,27 +758,39 @@ CType assignment_expr(void) {
             switch (aop) {
             case TOK_PLUS_EQ:
                 emit_op(result == CT_DOUBLE ? OP_F64_ADD : result == CT_FLOAT ? OP_F32_ADD :
-                        result == CT_LONG_LONG ? OP_I64_ADD : OP_I32_ADD); break;
+                        (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_ADD : OP_I32_ADD); break;
             case TOK_MINUS_EQ:
                 emit_op(result == CT_DOUBLE ? OP_F64_SUB : result == CT_FLOAT ? OP_F32_SUB :
-                        result == CT_LONG_LONG ? OP_I64_SUB : OP_I32_SUB); break;
+                        (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_SUB : OP_I32_SUB); break;
             case TOK_STAR_EQ:
                 emit_op(result == CT_DOUBLE ? OP_F64_MUL : result == CT_FLOAT ? OP_F32_MUL :
-                        result == CT_LONG_LONG ? OP_I64_MUL : OP_I32_MUL); break;
+                        (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_MUL : OP_I32_MUL); break;
             case TOK_SLASH_EQ:
-                emit_op(result == CT_DOUBLE ? OP_F64_DIV : result == CT_FLOAT ? OP_F32_DIV :
-                        result == CT_LONG_LONG ? OP_I64_DIV_S : OP_I32_DIV_S); break;
+                if (result == CT_DOUBLE) emit_op(OP_F64_DIV);
+                else if (result == CT_FLOAT) emit_op(OP_F32_DIV);
+                else if (result == CT_ULONG_LONG) emit_op(OP_I64_DIV_U);
+                else if (result == CT_LONG_LONG) emit_op(OP_I64_DIV_S);
+                else if (result == CT_UINT) emit_op(OP_I32_DIV_U);
+                else emit_op(OP_I32_DIV_S);
+                break;
             case TOK_PERCENT_EQ:
                 if (result == CT_DOUBLE) emit_call(IMP_FMOD);
                 else if (result == CT_FLOAT) emit_call(IMP_FMODF);
+                else if (result == CT_ULONG_LONG) emit_op(OP_I64_REM_U);
                 else if (result == CT_LONG_LONG) emit_op(OP_I64_REM_S);
+                else if (result == CT_UINT) emit_op(OP_I32_REM_U);
                 else emit_op(OP_I32_REM_S);
                 break;
-            case TOK_AMP_EQ:      emit_op(result == CT_LONG_LONG ? OP_I64_AND   : OP_I32_AND);    break;
-            case TOK_PIPE_EQ:     emit_op(result == CT_LONG_LONG ? OP_I64_OR    : OP_I32_OR);     break;
-            case TOK_CARET_EQ:    emit_op(result == CT_LONG_LONG ? OP_I64_XOR   : OP_I32_XOR);    break;
-            case TOK_LSHIFT_EQ:   emit_op(result == CT_LONG_LONG ? OP_I64_SHL   : OP_I32_SHL);    break;
-            case TOK_RSHIFT_EQ:   emit_op(result == CT_LONG_LONG ? OP_I64_SHR_S : OP_I32_SHR_S);  break;
+            case TOK_AMP_EQ:      emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_AND   : OP_I32_AND);    break;
+            case TOK_PIPE_EQ:     emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_OR    : OP_I32_OR);     break;
+            case TOK_CARET_EQ:    emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_XOR   : OP_I32_XOR);    break;
+            case TOK_LSHIFT_EQ:   emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_SHL   : OP_I32_SHL);    break;
+            case TOK_RSHIFT_EQ:
+                if (result == CT_ULONG_LONG) emit_op(OP_I64_SHR_U);
+                else if (result == CT_LONG_LONG) emit_op(OP_I64_SHR_S);
+                else if (result == CT_UINT) emit_op(OP_I32_SHR_U);
+                else emit_op(OP_I32_SHR_S);
+                break;
             }
 
             /* Coerce result back to variable type */
@@ -768,7 +819,7 @@ CType assignment_expr(void) {
             } else if (sym->ctype == CT_FLOAT) {
                 emit_f32_const(1.0f);
                 emit_op(is_inc ? OP_F32_ADD : OP_F32_SUB);
-            } else if (sym->ctype == CT_LONG_LONG) {
+            } else if (sym->ctype == CT_LONG_LONG || sym->ctype == CT_ULONG_LONG) {
                 emit_i64_const(1);
                 emit_op(is_inc ? OP_I64_ADD : OP_I64_SUB);
             } else {
@@ -826,7 +877,7 @@ CType assignment_expr(void) {
         /* Emit if with correct block type */
         if (result == CT_DOUBLE) emit_if_f64();
         else if (result == CT_FLOAT) emit_if_f32();
-        else if (result == CT_LONG_LONG) emit_if_i64();
+        else if (result == CT_LONG_LONG || result == CT_ULONG_LONG) emit_if_i64();
         else if (result == CT_VOID) emit_if_void();
         else emit_if_i32();
 

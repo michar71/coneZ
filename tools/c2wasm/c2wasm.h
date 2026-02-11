@@ -97,9 +97,13 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_I64_EQ        0x51
 #define OP_I64_NE        0x52
 #define OP_I64_LT_S      0x53
+#define OP_I64_LT_U      0x54
 #define OP_I64_GT_S      0x55
+#define OP_I64_GT_U      0x56
 #define OP_I64_LE_S      0x57
+#define OP_I64_LE_U      0x58
 #define OP_I64_GE_S      0x59
+#define OP_I64_GE_U      0x5A
 
 #define OP_F32_EQ        0x5B
 #define OP_F32_NE        0x5C
@@ -133,12 +137,15 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_I64_SUB       0x7D
 #define OP_I64_MUL       0x7E
 #define OP_I64_DIV_S     0x7F
+#define OP_I64_DIV_U     0x80
 #define OP_I64_REM_S     0x81
+#define OP_I64_REM_U     0x82
 #define OP_I64_AND       0x83
 #define OP_I64_OR        0x84
 #define OP_I64_XOR       0x85
 #define OP_I64_SHL       0x86
 #define OP_I64_SHR_S     0x87
+#define OP_I64_SHR_U     0x88
 
 #define OP_F32_ABS       0x8B
 #define OP_F32_NEG       0x8C
@@ -168,16 +175,25 @@ void buf_section(Buf *out, int id, Buf *content);
 
 #define OP_I32_WRAP_I64      0xA7
 #define OP_I32_TRUNC_F32_S   0xA8
+#define OP_I32_TRUNC_F32_U   0xA9
 #define OP_I32_TRUNC_F64_S   0xAA
+#define OP_I32_TRUNC_F64_U   0xAB
 #define OP_I64_EXTEND_I32_S  0xAC
+#define OP_I64_EXTEND_I32_U  0xAD
 #define OP_I64_TRUNC_F32_S   0xAE
+#define OP_I64_TRUNC_F32_U   0xAF
 #define OP_I64_TRUNC_F64_S   0xB0
+#define OP_I64_TRUNC_F64_U   0xB1
 #define OP_F32_CONVERT_I32_S 0xB2
+#define OP_F32_CONVERT_I32_U 0xB3
 #define OP_F32_CONVERT_I64_S 0xB4
-#define OP_F64_CONVERT_I32_S 0xB7
-#define OP_F64_CONVERT_I64_S 0xB9
-#define OP_F64_PROMOTE_F32   0xBB
+#define OP_F32_CONVERT_I64_U 0xB5
 #define OP_F32_DEMOTE_F64    0xB6
+#define OP_F64_CONVERT_I32_S 0xB7
+#define OP_F64_CONVERT_I32_U 0xB8
+#define OP_F64_CONVERT_I64_S 0xB9
+#define OP_F64_CONVERT_I64_U 0xBA
+#define OP_F64_PROMOTE_F32   0xBB
 
 #define WASM_I32  0x7F
 #define WASM_I64  0x7E
@@ -253,6 +269,8 @@ typedef enum {
     CT_FLOAT,      /* f32 */
     CT_DOUBLE,     /* f64 */
     CT_CONST_STR,  /* pointer to string literal (i32) */
+    CT_UINT,       /* unsigned i32 */
+    CT_ULONG_LONG, /* unsigned i64 */
 } CType;
 
 /* ================================================================
@@ -353,6 +371,8 @@ enum {
     TOK_INT, TOK_FLOAT, TOK_DOUBLE, TOK_VOID, TOK_CHAR,
     TOK_STATIC, TOK_CONST, TOK_UNSIGNED, TOK_LONG,
     TOK_SHORT, TOK_SIGNED, TOK_BOOL,
+    TOK_INT8, TOK_INT16, TOK_INT32, TOK_INT64, TOK_SIZE_T,
+    TOK_UINT8, TOK_UINT16, TOK_UINT32, TOK_UINT64,
     TOK_SIZEOF,
     /* preprocessor (returned by preproc layer) */
     TOK_PP_DONE,  /* preprocessor line consumed, get next token */
@@ -397,6 +417,7 @@ extern int has_setup;
 extern int has_loop;
 extern int type_had_pointer;
 extern int type_had_const;
+extern int type_had_unsigned;
 
 /* ================================================================
  *  Helpers
@@ -454,12 +475,17 @@ static inline int add_string(const char *s, int len) {
     return off;
 }
 
+static inline int ctype_is_unsigned(CType ct) {
+    return ct == CT_UINT || ct == CT_ULONG_LONG;
+}
+
 static inline uint8_t ctype_to_wasm(CType ct) {
     switch (ct) {
-    case CT_LONG_LONG: return WASM_I64;
-    case CT_FLOAT:     return WASM_F32;
-    case CT_DOUBLE:    return WASM_F64;
-    default:           return WASM_I32;
+    case CT_LONG_LONG:
+    case CT_ULONG_LONG: return WASM_I64;
+    case CT_FLOAT:      return WASM_F32;
+    case CT_DOUBLE:     return WASM_F64;
+    default:            return WASM_I32;
     }
 }
 
@@ -538,25 +564,33 @@ static inline void emit_br_if(int d) { buf_byte(CODE, OP_BR_IF); buf_uleb(CODE, 
 static inline void emit_drop(void)   { buf_byte(CODE, OP_DROP); }
 static inline void emit_return(void) { buf_byte(CODE, OP_RETURN); }
 
-/* Coerce top of wasm stack to i32 */
+/* Coerce top of wasm stack to i32 (signed target) */
 static inline void emit_coerce_i32(CType from) {
     if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_S);
     else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_S);
-    else if (from == CT_LONG_LONG) emit_op(OP_I32_WRAP_I64);
+    else if (from == CT_LONG_LONG || from == CT_ULONG_LONG) emit_op(OP_I32_WRAP_I64);
+    /* CT_UINT → already i32, no-op */
 }
-/* Coerce top of wasm stack to i64 */
+/* Coerce top of wasm stack to i64 (sign/zero-extend based on source) */
 static inline void emit_coerce_i64(CType from) {
     if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
         emit_op(OP_I64_EXTEND_I32_S);
+    else if (from == CT_UINT)
+        emit_op(OP_I64_EXTEND_I32_U);
     else if (from == CT_FLOAT) emit_op(OP_I64_TRUNC_F32_S);
     else if (from == CT_DOUBLE) emit_op(OP_I64_TRUNC_F64_S);
+    /* CT_ULONG_LONG → already i64, no-op */
 }
 /* Coerce top of wasm stack to f32 */
 static inline void emit_coerce_f32(CType from) {
     if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
         emit_op(OP_F32_CONVERT_I32_S);
+    else if (from == CT_UINT)
+        emit_op(OP_F32_CONVERT_I32_U);
     else if (from == CT_LONG_LONG)
         emit_op(OP_F32_CONVERT_I64_S);
+    else if (from == CT_ULONG_LONG)
+        emit_op(OP_F32_CONVERT_I64_U);
     else if (from == CT_DOUBLE)
         emit_op(OP_F32_DEMOTE_F64);
 }
@@ -564,15 +598,35 @@ static inline void emit_coerce_f32(CType from) {
 static inline void emit_promote_f64(CType from) {
     if (from == CT_FLOAT) emit_op(OP_F64_PROMOTE_F32);
     else if (from == CT_INT || from == CT_CHAR) emit_op(OP_F64_CONVERT_I32_S);
+    else if (from == CT_UINT) emit_op(OP_F64_CONVERT_I32_U);
     else if (from == CT_LONG_LONG) emit_op(OP_F64_CONVERT_I64_S);
+    else if (from == CT_ULONG_LONG) emit_op(OP_F64_CONVERT_I64_U);
 }
 /* General coerce between any two types */
 static inline void emit_coerce(CType from, CType to) {
     if (from == to) return;
-    if (to == CT_INT || to == CT_CHAR) emit_coerce_i32(from);
-    else if (to == CT_LONG_LONG) emit_coerce_i64(from);
-    else if (to == CT_FLOAT) emit_coerce_f32(from);
-    else if (to == CT_DOUBLE) emit_promote_f64(from);
+    if (to == CT_UINT) {
+        /* float→uint: unsigned trunc */
+        if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_U);
+        else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_U);
+        else if (from == CT_LONG_LONG || from == CT_ULONG_LONG) emit_op(OP_I32_WRAP_I64);
+        /* CT_INT/CT_CHAR/CT_CONST_STR → already i32 */
+    } else if (to == CT_ULONG_LONG) {
+        if (from == CT_UINT) emit_op(OP_I64_EXTEND_I32_U);
+        else if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
+            emit_op(OP_I64_EXTEND_I32_S);
+        else if (from == CT_FLOAT) emit_op(OP_I64_TRUNC_F32_U);
+        else if (from == CT_DOUBLE) emit_op(OP_I64_TRUNC_F64_U);
+        /* CT_LONG_LONG → already i64, same bit pattern */
+    } else if (to == CT_INT || to == CT_CHAR) {
+        emit_coerce_i32(from);
+    } else if (to == CT_LONG_LONG) {
+        emit_coerce_i64(from);
+    } else if (to == CT_FLOAT) {
+        emit_coerce_f32(from);
+    } else if (to == CT_DOUBLE) {
+        emit_promote_f64(from);
+    }
 }
 
 /* ================================================================

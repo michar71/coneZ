@@ -7,7 +7,11 @@ int is_type_keyword(int t) {
     return t == TOK_INT || t == TOK_FLOAT || t == TOK_DOUBLE ||
            t == TOK_VOID || t == TOK_CHAR || t == TOK_STATIC ||
            t == TOK_CONST || t == TOK_UNSIGNED || t == TOK_LONG ||
-           t == TOK_SHORT || t == TOK_SIGNED || t == TOK_BOOL;
+           t == TOK_SHORT || t == TOK_SIGNED || t == TOK_BOOL ||
+           t == TOK_INT8 || t == TOK_INT16 || t == TOK_INT32 ||
+           t == TOK_INT64 || t == TOK_SIZE_T ||
+           t == TOK_UINT8 || t == TOK_UINT16 || t == TOK_UINT32 ||
+           t == TOK_UINT64;
 }
 
 CType parse_type_spec(void) {
@@ -36,6 +40,12 @@ CType parse_type_spec(void) {
         if (tok == TOK_DOUBLE) { base = CT_DOUBLE; has_base = 1; next_token(); break; }
         if (tok == TOK_VOID)   { base = CT_VOID; has_base = 1; next_token(); break; }
         if (tok == TOK_CHAR)   { base = CT_CHAR; has_base = 1; next_token(); break; }
+        if (tok == TOK_INT8 || tok == TOK_INT16 || tok == TOK_INT32)
+                               { base = CT_INT; has_base = 1; next_token(); break; }
+        if (tok == TOK_INT64)  { base = CT_LONG_LONG; has_base = 1; next_token(); break; }
+        if (tok == TOK_UINT8 || tok == TOK_UINT16 || tok == TOK_UINT32 || tok == TOK_SIZE_T)
+                               { is_unsigned = 1; base = CT_INT; has_base = 1; next_token(); break; }
+        if (tok == TOK_UINT64) { is_unsigned = 1; base = CT_LONG_LONG; has_base = 1; next_token(); break; }
         break;
     }
 
@@ -49,10 +59,6 @@ CType parse_type_spec(void) {
     (void)is_static;
     (void)is_const;
 
-    if (is_unsigned)
-        fprintf(stderr, "%s:%d: warning: 'unsigned' ignored (all ops use signed semantics)\n",
-                src_file ? src_file : "<input>", line_num);
-
     /* 'long long' / 'long long int' → CT_LONG_LONG (i64) */
     if (long_count >= 2 && (base == CT_INT || !has_base)) {
         base = CT_LONG_LONG;
@@ -64,6 +70,12 @@ CType parse_type_spec(void) {
         base = CT_INT;
     }
 
+    /* Apply unsigned: CT_INT→CT_UINT, CT_LONG_LONG→CT_ULONG_LONG, CT_CHAR→CT_UINT */
+    if (is_unsigned) {
+        if (base == CT_INT || base == CT_CHAR) base = CT_UINT;
+        else if (base == CT_LONG_LONG) base = CT_ULONG_LONG;
+    }
+
     /* Skip pointer star — we treat pointers as i32 */
     int saw_pointer = 0;
     while (tok == TOK_STAR) { next_token(); saw_pointer = 1; }
@@ -71,6 +83,7 @@ CType parse_type_spec(void) {
     /* Store for callers' benefit */
     type_had_pointer = saw_pointer;
     type_had_const = is_const;
+    type_had_unsigned = is_unsigned;
 
     return base;
 }

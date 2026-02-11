@@ -65,8 +65,17 @@ Types:
                 support; globals, locals, parameters, return values all work
   long long     64-bit signed integer (WASM i64) — full arithmetic,
                 comparisons, bitwise, ++/--, globals, locals, params, returns
-                Alternative spellings: long long int, unsigned long long int
-  unsigned      accepted as qualifier, warns "all ops use signed semantics"
+                Alternative spellings: long long int
+  unsigned int  32-bit unsigned integer (WASM i32) — uses unsigned opcodes
+                for division, remainder, comparisons (<, >, <=, >=), and
+                right shift. Also: unsigned, unsigned char.
+  unsigned long long
+                64-bit unsigned integer (WASM i64) — same unsigned opcode
+                selection. Also: unsigned long long int.
+  uint8_t, uint16_t, uint32_t
+                Unsigned i32 (same as unsigned int). sizeof returns 1, 2, 4.
+  uint64_t      Unsigned i64 (same as unsigned long long). sizeof returns 8.
+  size_t        Unsigned i32 (equivalent to uint32_t on WASM32).
   long          accepted as qualifier (single long = int, with warning)
   short         accepted as qualifier, treated as int (with warning)
   signed        accepted as qualifier, silently ignored (default is signed)
@@ -82,15 +91,23 @@ Types:
   as i32. No pointer arithmetic or dereferencing.
 
   Type/WASM mapping summary:
-    C type          WASM    sizeof
-    ------          ----    ------
-    void            —       1
-    char            i32     1
-    int             i32     4
-    float           f32     4
-    double          f64     8
-    long long       i64     8
-    T * (pointer)   i32     4
+    C type              WASM    sizeof
+    ------              ----    ------
+    void                —       1
+    char                i32     1
+    int                 i32     4
+    unsigned int        i32     4     (unsigned opcodes for / % < > <= >= >>)
+    float               f32     4
+    double              f64     8
+    long long           i64     8
+    unsigned long long  i64     8     (unsigned opcodes for / % < > <= >= >>)
+    T * (pointer)       i32     4
+
+  Unsigned promotion rules follow the C standard:
+  - unsigned int + int → unsigned int
+  - unsigned long long + any integer → unsigned long long
+  - float/double win over all integer types (signed or unsigned)
+  - int-to-unsigned-i64 sign-extends; uint-to-i64 zero-extends
 
 Declarations:
   Global variables with optional initializer:
@@ -347,9 +364,9 @@ Source files in tools/c2wasm/:
                 line continuation), #ifdef/#ifndef/#elif/#else/#endif,
                 #error/#warning, full #if constant expression evaluator,
                 API registration
-  type.c        Type parsing (void/int/float/double/char/long long/unsigned/
-                short/signed/_Bool/bool/static/const) and pointer star
-                consumption
+  type.c        Type parsing (void/int/float/double/char/long long/unsigned int/
+                unsigned long long/uint8_t..uint64_t/size_t/short/signed/
+                _Bool/bool/static/const) and pointer star consumption
   expr.c        Precedence-climbing expression parser (15 levels),
                 short-circuit &&/||, casts, ternary, comma, printf/print builtins
   stmt.c        Statement parser: functions, if/else, for, while, do/while,
@@ -421,10 +438,12 @@ case labels with constant expressions, const globals (int/float/double),
 short/signed/_Bool/bool type keywords, const local enforcement, #define
 line continuation, #if macro name expansion and comparison expressions,
 unnamed function parameters, forward declaration param matching, switch
-warning for statements before first case, and rejection of undefined
-forward declarations, unterminated block comments, void expression as
-operand, void/non-void ternary mismatch, const variable assignment,
-forward declaration param mismatch, and #error directive.
+warning for statements before first case, unsigned integer operations
+(uint32_t/uint64_t comparison, division, remainder, right shift, mixed
+signed/unsigned promotion, compound assignment, conversions), and
+rejection of undefined forward declarations, unterminated block comments,
+void expression as operand, void/non-void ternary mismatch, const variable
+assignment, forward declaration param mismatch, and #error directive.
 
 Adding a test: create a .c file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.c must fail compilation.

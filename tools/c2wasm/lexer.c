@@ -92,6 +92,15 @@ static struct kw keywords[] = {
     {"signed",   TOK_SIGNED},
     {"_Bool",    TOK_BOOL},
     {"bool",     TOK_BOOL},
+    {"int8_t",   TOK_INT8},
+    {"uint8_t",  TOK_UINT8},
+    {"int16_t",  TOK_INT16},
+    {"uint16_t", TOK_UINT16},
+    {"int32_t",  TOK_INT32},
+    {"uint32_t", TOK_UINT32},
+    {"int64_t",  TOK_INT64},
+    {"uint64_t", TOK_UINT64},
+    {"size_t",   TOK_SIZE_T},
     {"sizeof",   TOK_SIZEOF},
     {NULL, 0}
 };

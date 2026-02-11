@@ -464,7 +464,7 @@ void parse_stmt(void) {
             /* Bare return; in non-void function — push default value */
             if (ret == CT_DOUBLE) emit_f64_const(0.0);
             else if (ret == CT_FLOAT) emit_f32_const(0.0f);
-            else if (ret == CT_LONG_LONG) emit_i64_const(0);
+            else if (ret == CT_LONG_LONG || ret == CT_ULONG_LONG) emit_i64_const(0);
             else emit_i32_const(0);
         }
         expect(TOK_SEMI);
@@ -582,14 +582,14 @@ void parse_top_level(void) {
             if (tok == TOK_MINUS) { negate = 1; next_token(); }
             if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
                 int val = negate ? -tok_ival : tok_ival;
-                if (base_type == CT_FLOAT || base_type == CT_DOUBLE || base_type == CT_LONG_LONG) {
+                if (base_type == CT_FLOAT || base_type == CT_DOUBLE || base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) {
                     int gidx = nglobals++;
                     Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
                     s->idx = gidx;
                     s->is_static = is_static;
                     s->is_const = 1;
                     if (base_type == CT_DOUBLE) s->init_dval = (double)val;
-                    else if (base_type == CT_LONG_LONG) s->init_llval = (int64_t)val;
+                    else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = (int64_t)val;
                     else s->init_fval = (float)val;
                 } else {
                     Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
@@ -628,7 +628,7 @@ void parse_top_level(void) {
         if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
             if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_ival : (double)tok_ival;
             else if (base_type == CT_FLOAT) s->init_fval = negate ? -(float)tok_ival : (float)tok_ival;
-            else if (base_type == CT_LONG_LONG) s->init_llval = negate ? -(int64_t)tok_ival : (int64_t)tok_ival;
+            else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = negate ? -(int64_t)tok_ival : (int64_t)tok_ival;
             else s->init_ival = negate ? -tok_ival : tok_ival;
             next_token();
         } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
@@ -641,7 +641,7 @@ void parse_top_level(void) {
             if (mac && mac->macro_val[0]) {
                 if (base_type == CT_DOUBLE) s->init_dval = strtod(mac->macro_val, NULL);
                 else if (base_type == CT_FLOAT) s->init_fval = strtof(mac->macro_val, NULL);
-                else if (base_type == CT_LONG_LONG) s->init_llval = strtoll(mac->macro_val, NULL, 0);
+                else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = strtoll(mac->macro_val, NULL, 0);
                 else s->init_ival = (int)strtol(mac->macro_val, NULL, 0);
                 next_token();
             } else {
@@ -670,7 +670,7 @@ void parse_top_level(void) {
             if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
                 if (base_type == CT_DOUBLE) s->init_dval = neg ? -(double)tok_ival : (double)tok_ival;
                 else if (base_type == CT_FLOAT) s->init_fval = neg ? -(float)tok_ival : (float)tok_ival;
-                else if (base_type == CT_LONG_LONG) s->init_llval = neg ? -(int64_t)tok_ival : (int64_t)tok_ival;
+                else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = neg ? -(int64_t)tok_ival : (int64_t)tok_ival;
                 else s->init_ival = neg ? -tok_ival : tok_ival;
                 next_token();
             } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
@@ -832,7 +832,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
     } else {
         if (ret_type == CT_DOUBLE) emit_f64_const(0.0);
         else if (ret_type == CT_FLOAT) emit_f32_const(0.0f);
-        else if (ret_type == CT_LONG_LONG) emit_i64_const(0);
+        else if (ret_type == CT_LONG_LONG || ret_type == CT_ULONG_LONG) emit_i64_const(0);
         else emit_i32_const(0);
         emit_return();
     }

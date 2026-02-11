@@ -39,6 +39,7 @@ int has_setup;
 int has_loop;
 int type_had_pointer;
 int type_had_const;
+int type_had_unsigned;
 
 void compile(void) {
     lex_init();
