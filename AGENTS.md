@@ -81,8 +81,25 @@ INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-ta
 
 ### Filesystem
 
-LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), LUT data files (`LUT_N.csv`), and optionally `/config.ini`. The configured startup script (default `/startup.bas`) auto-executes on boot if present.
+LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), LUT data files (`LUT_N.csv`), binary cue files (`.cue`), and optionally `/config.ini`. The configured startup script (default `/startup.bas`) auto-executes on boot if present.
 
 ### Firmware Versioning
 
 `patch_firmware_ver.py` runs post-build to embed version/timestamp into the firmware binary. Configured via `custom_prog_*` fields in `platformio.ini`.
+
+### Cue System
+
+GPS-time-synced LED cueing engine for music-synchronized light shows across geographically distributed cones. Binary `.cue` files on LittleFS contain a sorted timeline of cue entries (fill, blackout, stop, effect) that the engine walks during playback. Each cue supports group targeting (per-cone, per-group, bitmask) and spatial delay modes (radial ripple, directional waves) computed from GPS position.
+
+**Firmware files:** `cue.h`, `cue.cpp`. Initialized via `cue_setup()` in `setup()`, ticked via `cue_loop()` in the main loop.
+
+**Binary format:** 64-byte header (magic `0x43554530`, version, num_cues, record_size) followed by 64-byte cue entries sorted by start_ms. See `cue_header` and `cue_entry` structs in `cue.h`.
+
+**CLI commands:** `cue load <path>`, `cue start [ms]`, `cue stop`, `cue status`.
+
+**Authoring tool:** `tools/cuetool.py` compiles human-editable YAML show descriptions into binary `.cue` files. Also supports dumping `.cue` files back to readable text. Requires PyYAML. See `tools/example_show.yaml` for the input format.
+
+```bash
+python3 tools/cuetool.py build tools/example_show.yaml -o firmware/data/show.cue
+python3 tools/cuetool.py dump firmware/data/show.cue
+```

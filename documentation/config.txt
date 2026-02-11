@@ -66,6 +66,10 @@ Sections and Keys
                       When on, adds +1 to timezone during US daylight saving
                       time (2nd Sunday of March – 1st Sunday of November).
                       Turn off for Arizona, Hawaii, or international use.
+  cone_id           Unique cone identifier (0-4095) (default: 0)
+                      Used by the cue system for per-cone targeting.
+  cone_group        Cone group number (0-4095)      (default: 0)
+                      Used by the cue system for group-based targeting.
 
 [led]
   count1            LEDs on channel 1              (default: 50)
@@ -128,6 +132,7 @@ before any hardware that depends on config values is initialized:
   init_LittleFS()          LittleFS available
   list_dir()
   config_init()            Load defaults, overlay from /config.ini
+  cue_setup()              Initialize cue engine (no file loaded yet)
   led_setup()              Allocates LED buffers from config.led_count*
   Wire.begin()
   lora_setup()             Reads config.lora_*
