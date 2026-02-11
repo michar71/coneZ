@@ -1,0 +1,138 @@
+ConeZ Configuration System
+==========================
+
+All device settings (WiFi credentials, GPS origin, LoRa radio parameters,
+timezone, debug defaults, startup script) are configurable via an INI file
+stored on the LittleFS flash filesystem.
+
+
+Config File
+-----------
+
+Path: /config.ini on LittleFS
+
+The file is optional. If it does not exist, all settings use compiled
+defaults. Only settings you want to override need to be present — missing
+keys silently fall back to defaults.
+
+An example file with all keys and their defaults is provided at:
+  firmware/data/config.ini.example
+
+
+File Format
+-----------
+
+Standard INI format with [section] headers and key=value pairs.
+Blank lines and lines starting with # or ; are ignored as comments.
+Whitespace around the = sign is trimmed.
+
+  [section]
+  key=value
+  key = value       ; also valid
+
+
+Sections and Keys
+-----------------
+
+[wifi]
+  ssid              WiFi network name              (default: RN-ConeZ)
+  password          WiFi password                  (default: conezconez)
+
+[gps]
+  origin_lat        Origin latitude in degrees     (default: 40.762173)
+  origin_lon        Origin longitude in degrees    (default: -119.193672)
+
+[lora]
+  ssid              LoRa network identifier        (default: ConeZ)
+  frequency         Frequency in MHz               (default: 431.250)
+  bandwidth         Bandwidth in kHz               (default: 500.0)
+  sf                Spreading factor (7-12)        (default: 9)
+  cr                Coding rate (5-8)              (default: 6)
+  preamble          Preamble symbols               (default: 8)
+  tx_power          Transmit power in dBm          (default: 10)
+  sync_word         Sync word, hex format          (default: 0x12)
+                      0x12 = LoRa default
+                      0x1424 = LoRa private network
+
+[system]
+  device_name       DHCP hostname (blank = auto)   (default: empty)
+                      When empty, hostname is auto-generated as
+                      ConeZ-XXYY from the last 2 bytes of the MAC address.
+  startup_script    BASIC script to auto-run       (default: /startup.bas)
+  timezone          UTC offset in hours            (default: 7)
+
+[debug]
+  system            System messages                (default: on)
+  basic             BASIC interpreter output       (default: on)
+  commands          CLI command output             (default: on)
+  gps               GPS position updates           (default: off)
+  gps_raw           Raw NMEA sentences             (default: off)
+  lora              LoRa packet events             (default: off)
+  lora_raw          Raw LoRa data                  (default: off)
+  fsync             Frame sync messages            (default: off)
+  wifi              WiFi events                    (default: off)
+  sensors           Sensor readings                (default: off)
+  other             Uncategorized messages          (default: off)
+
+Boolean values accept: on/off, true/false, 1/0
+Integer values accept decimal (18) or hex (0x12) format.
+
+
+CLI Commands
+------------
+
+  config
+      Show all current settings and their values.
+
+  config set section.key value
+      Set a configuration value and save to flash.
+      Debug settings take effect immediately.
+      All other settings require a reboot.
+      Examples:
+        config set wifi.ssid MyNetwork
+        config set lora.sync_word 0x1424
+        config set debug.gps on
+
+  config unset section.key
+      Revert a single key to its compiled default and save.
+      Examples:
+        config unset wifi.ssid
+        config unset lora.frequency
+
+  config reset
+      Delete /config.ini and revert all settings to compiled defaults.
+      Debug settings take effect immediately; reboot for the rest.
+
+
+Boot Sequence
+-------------
+
+The config system loads early in setup(), after LittleFS is mounted but
+before any hardware that depends on config values is initialized:
+
+  init_LittleFS()          LittleFS available
+  list_dir()
+  config_init()            Load defaults, overlay from /config.ini
+  Wire.begin()
+  lora_setup()             Reads config.lora_*
+  gps_setup()              Reads config.origin_*
+  sensors_setup()
+  WiFi.begin()             Reads config.wifi_*
+  printManagerInit()
+  config_apply_debug()     Applies config.dbg_* settings
+  sunSetTZOffset()         Reads config.timezone
+
+
+Adding a New Config Key
+-----------------------
+
+1. Add the field to conez_config_t in config.h
+2. Add a DEFAULT_* constant in config.h
+3. Add a CFG_ENTRY() row to cfg_table[] in config.cpp
+4. Add the default assignment in config_fill_defaults() in config.cpp
+5. Use config.field_name in the consuming code
+
+The descriptor table drives parsing, saving, display, set, and unset
+automatically — no per-field logic needed anywhere else.
+
+Available types: CFG_STR, CFG_FLOAT, CFG_INT, CFG_HEX, CFG_BOOL
