@@ -61,11 +61,13 @@ Types:
   float         32-bit float (WASM f32)
   void          no value
   char          8-bit integer (treated as i32)
-  double        64-bit float (WASM f64, only for printf promotion)
+  double        64-bit float (WASM f64) — full arithmetic and comparison
+                support; globals, locals, parameters, return values all work
   unsigned      accepted as qualifier, treated as int
   long          accepted as qualifier (long long = int)
-  const         accepted; const int globals with literal initializers
-                become compile-time constants
+  const         accepted; const int globals (including negative and char
+                literals) become compile-time constants; const float/double
+                become read-write globals with init values
   static        accepted on globals and functions
 
   Pointers (int *, char *, const char *, void *) are parsed but treated
@@ -85,7 +87,7 @@ Declarations:
     static void helper(int channel, int brightness) { ... }
     static int clamp(int val, int lo, int hi) { ... }
 
-  Forward declarations:
+  Forward declarations (must have a matching definition):
     static void helper(int channel, int brightness);
 
 Control Flow:
@@ -102,7 +104,8 @@ Control Flow:
   { compound statements }
 
   For-loop init declarations are supported: for (int i = 0; ...).
-  Switch/case uses sequential if-comparisons (no fall-through).
+  Switch/case supports C-standard fall-through — cases without break
+  fall through to the next case body.
 
 Expressions (full C operator precedence):
   Arithmetic:    +  -  *  /  %
@@ -112,13 +115,19 @@ Expressions (full C operator precedence):
   Assignment:    =  +=  -=  *=  /=  %=  &=  |=  ^=  <<=  >>=
   Increment:     ++var  --var  var++  var--
   Ternary:       cond ? then : else
+  Comma:         expr1, expr2  (evaluates both, result is last)
   Cast:          (int)expr  (float)expr  (double)expr  (void)expr
-  sizeof:        sizeof(int)  sizeof(float)  sizeof(double)
+  sizeof:        sizeof(int)  sizeof(float)  sizeof(double)  sizeof(void)
                  sizeof(expr) — returns type size without evaluating expr
+                 sizeof(void) returns 1 (GCC extension)
 
   Operator precedence follows the C standard (15 levels).
   Mixed int/float expressions promote to float automatically.
+  Mixed int/double or float/double expressions promote to double.
   Bitwise operators coerce operands to int.
+  Compound bitwise assignments (&= |= ^= <<= >>=) coerce float/double
+  operands to int before the operation.
+  Float %= uses fmodf import (not integer remainder).
 
 Literals:
   Integer:       42, 0xFF, 0x1A, 0755, -1
@@ -130,11 +139,15 @@ Preprocessor:
   #include "conez_api.h"      Register all ConeZ API imports
   #include <stdint.h>         Silently ignored (standard headers)
   #define NAME value          Simple text macros (no function-like macros)
+  #undef NAME                 Remove a previously defined macro
   #ifdef NAME ... #endif      Conditional compilation
   #ifndef NAME ... #endif     Conditional compilation
   #else                       Else branch for #ifdef/#ifndef
   #if 0 ... #endif            Block comment via preprocessor
   #if N ... #endif            Any integer (0 = skip, nonzero = keep)
+  #if defined(NAME)           Test whether a macro is defined
+  #if !defined(NAME)          Test whether a macro is NOT defined
+  #if defined NAME            Also works without parentheses
 
 Comments:
   // line comments
@@ -238,7 +251,6 @@ The following C features are NOT in scope:
   - Multi-file compilation (#include of user headers)
   - Variadic functions (except printf builtin)
   - Bitfields
-  - Comma operator in expressions
   - String operations at runtime (strlen, strcmp, etc.)
 
 For programs requiring these features, use clang --target=wasm32 instead.
@@ -267,12 +279,12 @@ Source files in tools/c2wasm/:
   main.c        Driver: global state, argument parsing, top-level compile
   lexer.c       C tokenizer: identifiers, keywords, literals, operators,
                 comments, macro expansion
-  preproc.c     Minimal preprocessor: #include special-case, #define,
-                #ifdef/#ifndef/#else/#endif, #if N, API registration
+  preproc.c     Minimal preprocessor: #include special-case, #define/#undef,
+                #ifdef/#ifndef/#else/#endif, #if N/defined(), API registration
   type.c        Type parsing (void/int/float/double/char/unsigned/long/
                 static/const) and pointer star consumption
   expr.c        Precedence-climbing expression parser (15 levels),
-                short-circuit &&/||, casts, ternary, printf/print builtins
+                short-circuit &&/||, casts, ternary, comma, printf/print builtins
   stmt.c        Statement parser: functions, if/else, for, while, do/while,
                 switch/case, break/continue/return, local/global declarations
   assemble.c    WASM binary assembly: type/import/function/memory/global/
@@ -297,7 +309,7 @@ All three examples in tools/wasm/examples/ compile with c2wasm:
   ./c2wasm ../wasm/examples/sos_flash.c -o sos_flash.wasm
 
 Output sizes (unstripped):
-  rgb_cycle.wasm       314 bytes   (5 imports, 2 functions)
+  rgb_cycle.wasm       341 bytes   (5 imports, 2 functions)
   hsv_rainbow.wasm     316 bytes   (5 imports, 2 functions)
   sos_flash.wasm       633 bytes   (9 imports, 3 functions)
 
@@ -310,7 +322,7 @@ The test suite is in tools/c2wasm/test/. Run with:
   cd tools/c2wasm
   make test
 
-Tests compile each .c file to .wasm and validate with wasm-objdump.
+Tests compile each .c file to .wasm and validate with wasm-validate.
 Reject tests (reject_*.c) verify that the compiler correctly reports
 errors. The three examples in tools/wasm/examples/ are also compiled.
 
@@ -318,13 +330,17 @@ Test files cover: basic types, arithmetic, bitwise ops, comparisons,
 control flow (if/while/do/for/switch/break/continue), assignment ops,
 user functions (forward decls, recursion), casts and sizeof, ternary
 operator, literals (int/float/char/string/hex/octal), printf formats,
-preprocessor (#define/#ifdef/#if 0/#if N), scoping (block/for-init/shadow),
-math imports, trig imports (asinf/acosf/atanf), API calls, file I/O,
-WASM-native builtins (sqrtf/fabsf/floorf/ceilf), comments, setup-only
-and loop-only programs, recursive and mutual macro guards, nested #ifdef,
-sizeof without evaluation, implicit returns, ternary and for-loop
-increment with function calls (call fixup adjustment), and string
-concatenation.
+preprocessor (#define/#ifdef/#if 0/#if N/#undef/#if defined), scoping
+(block/for-init/shadow), math imports, trig imports (asinf/acosf/atanf),
+API calls, file I/O, WASM-native builtins (sqrtf/fabsf/floorf/ceilf),
+comments, setup-only and loop-only programs, recursive and mutual macro
+guards, nested #ifdef, sizeof without evaluation, implicit returns,
+ternary and for-loop increment with function calls (call fixup
+adjustment), string concatenation, double (f64) arithmetic/comparisons/
+globals/casts, for-loop with calls in both body and increment, const
+negative/char initializers, float %= and bitwise compound ops, switch
+fall-through, comma operator, and rejection of undefined forward
+declarations and unterminated block comments.
 
 Adding a test: create a .c file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.c must fail compilation.

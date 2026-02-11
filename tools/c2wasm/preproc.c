@@ -273,6 +273,18 @@ int preproc_line(void) {
         return 1;
     }
 
+    if (strcmp(directive, "undef") == 0) {
+        char name[64];
+        read_pp_word(name, sizeof(name));
+        Symbol *existing = find_sym_kind(name, SYM_DEFINE);
+        if (existing) {
+            /* Clear the name so it won't be found by find_sym_kind */
+            existing->name[0] = 0;
+        }
+        skip_to_eol();
+        return 1;
+    }
+
     if (strcmp(directive, "ifdef") == 0) {
         char name[64];
         read_pp_word(name, sizeof(name));
@@ -294,12 +306,40 @@ int preproc_line(void) {
     }
 
     if (strcmp(directive, "if") == 0) {
-        /* Support #if <integer> — evaluates as boolean (0 = skip, nonzero = keep) */
         while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
             src_pos++;
         int val = 0;
-        while (src_pos < src_len && source[src_pos] >= '0' && source[src_pos] <= '9')
-            val = val * 10 + (source[src_pos++] - '0');
+
+        /* Check for !defined(...) or defined(...) */
+        int negate = 0;
+        if (src_pos < src_len && source[src_pos] == '!') {
+            negate = 1;
+            src_pos++;
+            while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
+                src_pos++;
+        }
+        if (src_pos + 7 <= src_len && strncmp(source + src_pos, "defined", 7) == 0 &&
+            !is_ident_char(source[src_pos + 7])) {
+            src_pos += 7;
+            while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
+                src_pos++;
+            int has_paren = 0;
+            if (src_pos < src_len && source[src_pos] == '(') { has_paren = 1; src_pos++; }
+            char name[64];
+            read_pp_word(name, sizeof(name));
+            if (has_paren) {
+                while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
+                    src_pos++;
+                if (src_pos < src_len && source[src_pos] == ')') src_pos++;
+            }
+            val = (find_sym_kind(name, SYM_DEFINE) != NULL) ? 1 : 0;
+            if (negate) val = !val;
+        } else if (!negate) {
+            /* Plain integer constant: #if 0, #if 1, etc. */
+            while (src_pos < src_len && source[src_pos] >= '0' && source[src_pos] <= '9')
+                val = val * 10 + (source[src_pos++] - '0');
+        }
+
         if (ifdef_depth >= MAX_IFDEF_DEPTH) error_at("#if too deeply nested");
         else { ifdef_skip[ifdef_depth] = (val == 0); ifdef_depth++; }
         skip_to_eol();
@@ -308,12 +348,14 @@ int preproc_line(void) {
 
     if (strcmp(directive, "else") == 0) {
         if (ifdef_depth > 0) ifdef_skip[ifdef_depth - 1] = !ifdef_skip[ifdef_depth - 1];
+        else error_at("#else without matching #if/#ifdef");
         skip_to_eol();
         return 1;
     }
 
     if (strcmp(directive, "endif") == 0) {
         if (ifdef_depth > 0) ifdef_depth--;
+        else error_at("#endif without matching #if/#ifdef");
         skip_to_eol();
         return 1;
     }

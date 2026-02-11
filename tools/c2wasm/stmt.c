@@ -212,6 +212,11 @@ void parse_stmt(void) {
         int switch_local = alloc_local(WASM_I32);
         emit_local_set(switch_local);
 
+        /* Fall-through tracking: matched=1 once any case body is entered */
+        int matched_local = alloc_local(WASM_I32);
+        emit_i32_const(0);
+        emit_local_set(matched_local);
+
         /* Wrap in a block for break target */
         emit_block();
 
@@ -238,11 +243,17 @@ void parse_stmt(void) {
                 if (negate) case_val = -case_val;
                 expect(TOK_COLON);
 
-                /* Compare switch value with case value */
+                /* Fall-through: if (matched || switch_val == case_val) */
+                emit_local_get(matched_local);
                 emit_local_get(switch_local);
                 emit_i32_const(case_val);
                 emit_op(OP_I32_EQ);
+                emit_op(OP_I32_OR);
                 emit_if_void();
+
+                /* Mark as matched for fall-through into next case */
+                emit_i32_const(1);
+                emit_local_set(matched_local);
 
                 /* Parse case body */
                 while (tok != TOK_CASE && tok != TOK_DEFAULT && tok != TOK_RBRACE && tok != TOK_EOF)
@@ -253,6 +264,9 @@ void parse_stmt(void) {
                 next_token();
                 expect(TOK_COLON);
                 had_default = 1;
+                /* Default always executes (like a matched case) */
+                emit_i32_const(1);
+                emit_local_set(matched_local);
                 while (tok != TOK_CASE && tok != TOK_DEFAULT && tok != TOK_RBRACE && tok != TOK_EOF)
                     parse_stmt();
             } else {
@@ -406,18 +420,30 @@ void parse_top_level(void) {
     if (is_const) {
         /* const int X = value → treat as #define for simple constants */
         if (accept(TOK_ASSIGN)) {
-            if (tok == TOK_INT_LIT) {
-                Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
-                snprintf(s->macro_val, sizeof(s->macro_val), "%d", tok_ival);
-                s->scope = 0;
+            int negate = 0;
+            if (tok == TOK_MINUS) { negate = 1; next_token(); }
+            if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
+                int val = negate ? -tok_ival : tok_ival;
+                if (base_type == CT_FLOAT || base_type == CT_DOUBLE) {
+                    int gidx = nglobals++;
+                    Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
+                    s->idx = gidx;
+                    s->is_static = is_static;
+                    if (base_type == CT_DOUBLE) s->init_dval = (double)val;
+                    else s->init_fval = (float)val;
+                } else {
+                    Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
+                    snprintf(s->macro_val, sizeof(s->macro_val), "%d", val);
+                    s->scope = 0;
+                }
                 next_token();
             } else if (tok == TOK_FLOAT_LIT) {
-                /* For float constants, allocate a global with the init value */
                 int gidx = nglobals++;
                 Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
                 s->idx = gidx;
                 s->is_static = is_static;
-                s->init_fval = tok_fval;
+                if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_fval : (double)tok_fval;
+                else s->init_fval = negate ? -tok_fval : tok_fval;
                 next_token();
             } else {
                 error_at("expected constant value");
@@ -435,32 +461,29 @@ void parse_top_level(void) {
 
     /* Parse and store initializer value */
     if (accept(TOK_ASSIGN)) {
+        int negate = 0;
+        if (tok == TOK_MINUS) { negate = 1; next_token(); }
         if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
-            s->init_ival = tok_ival;
+            if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_ival : (double)tok_ival;
+            else if (base_type == CT_FLOAT) s->init_fval = negate ? -(float)tok_ival : (float)tok_ival;
+            else s->init_ival = negate ? -tok_ival : tok_ival;
             next_token();
         } else if (tok == TOK_FLOAT_LIT) {
-            s->init_fval = tok_fval;
+            if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_fval : (double)tok_fval;
+            else s->init_fval = negate ? -tok_fval : tok_fval;
             next_token();
-        } else if (tok == TOK_MINUS) {
-            next_token();
-            if (tok == TOK_INT_LIT) {
-                s->init_ival = -tok_ival;
-                next_token();
-            } else if (tok == TOK_FLOAT_LIT) {
-                s->init_fval = -tok_fval;
-                next_token();
-            }
-        } else if (tok == TOK_NAME) {
+        } else if (!negate && tok == TOK_NAME) {
             /* Might be a macro — let it expand then read the value */
             Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
             if (mac) {
-                /* Macro will be expanded by lexer; re-lex to get the literal */
                 next_token();
                 if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
-                    s->init_ival = tok_ival;
+                    if (base_type == CT_DOUBLE) s->init_dval = (double)tok_ival;
+                    else s->init_ival = tok_ival;
                     next_token();
                 } else if (tok == TOK_FLOAT_LIT) {
-                    s->init_fval = tok_fval;
+                    if (base_type == CT_DOUBLE) s->init_dval = (double)tok_fval;
+                    else s->init_fval = tok_fval;
                     next_token();
                 }
             } else {
@@ -483,14 +506,17 @@ void parse_top_level(void) {
         s->idx = gidx;
         s->is_static = is_static;
         if (accept(TOK_ASSIGN)) {
+            int neg = 0;
+            if (tok == TOK_MINUS) { neg = 1; next_token(); }
             if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
-                s->init_ival = tok_ival; next_token();
-            } else if (tok == TOK_FLOAT_LIT) {
-                s->init_fval = tok_fval; next_token();
-            } else if (tok == TOK_MINUS) {
+                if (base_type == CT_DOUBLE) s->init_dval = neg ? -(double)tok_ival : (double)tok_ival;
+                else if (base_type == CT_FLOAT) s->init_fval = neg ? -(float)tok_ival : (float)tok_ival;
+                else s->init_ival = neg ? -tok_ival : tok_ival;
                 next_token();
-                if (tok == TOK_INT_LIT) { s->init_ival = -tok_ival; next_token(); }
-                else if (tok == TOK_FLOAT_LIT) { s->init_fval = -tok_fval; next_token(); }
+            } else if (tok == TOK_FLOAT_LIT) {
+                if (base_type == CT_DOUBLE) s->init_dval = neg ? -(double)tok_fval : (double)tok_fval;
+                else s->init_fval = neg ? -tok_fval : tok_fval;
+                next_token();
             }
         }
     }
@@ -513,6 +539,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
     fc->ncall_fixups = 0;
 
     fc->return_type = ret_type;
+    free(fc->name);
     fc->name = strdup(name);
 
     /* Parse parameter list */
@@ -576,6 +603,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
         /* Update the function context to the right slot */
         fc = &func_bufs[func_idx - IMP_COUNT];
         fc->return_type = ret_type;
+        free(fc->name);
         fc->name = strdup(name);
         fc->nparams = 0;
         fc->nlocals = 0;
@@ -620,7 +648,8 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
     if (ret_type == CT_VOID) {
         emit_return();
     } else {
-        if (ret_type == CT_FLOAT) emit_f32_const(0.0f);
+        if (ret_type == CT_DOUBLE) emit_f64_const(0.0);
+        else if (ret_type == CT_FLOAT) emit_f32_const(0.0f);
         else emit_i32_const(0);
         emit_return();
     }

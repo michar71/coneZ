@@ -50,10 +50,12 @@ static void skip_ws(void) {
         /* block comment */
         if (c == '/' && peek_ch() == '*') {
             advance(); advance();
+            int found = 0;
             while (src_pos < src_len) {
-                if (ch() == '*' && peek_ch() == '/') { advance(); advance(); break; }
+                if (ch() == '*' && peek_ch() == '/') { advance(); advance(); found = 1; break; }
                 advance();
             }
+            if (!found) error_at("unterminated block comment");
             continue;
         }
         break;

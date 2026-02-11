@@ -52,6 +52,15 @@ void assemble(const char *outpath) {
     for (int i = 0; i < nfuncs; i++) {
         FuncCtx *f = &func_bufs[i];
         if (f->ncall_fixups == 0) continue;
+        /* Sort fixups by code position (for-loop increment splicing can
+         * produce out-of-order entries) */
+        for (int a = 0; a < f->ncall_fixups - 1; a++)
+            for (int b = a + 1; b < f->ncall_fixups; b++)
+                if (f->call_fixups[a] > f->call_fixups[b]) {
+                    int tmp = f->call_fixups[a];
+                    f->call_fixups[a] = f->call_fixups[b];
+                    f->call_fixups[b] = tmp;
+                }
         Buf nc; buf_init(&nc);
         int fix = 0;
         for (int pos = 0; pos < f->code.len; ) {
@@ -163,7 +172,10 @@ void assemble(const char *outpath) {
             if (syms[i].kind != SYM_GLOBAL) continue;
             uint8_t gt = ctype_to_wasm(syms[i].ctype);
             buf_byte(&sec, gt); buf_byte(&sec, 0x01);
-            if (gt == WASM_F32) {
+            if (gt == WASM_F64) {
+                buf_byte(&sec, OP_F64_CONST);
+                buf_f64(&sec, syms[i].init_dval);
+            } else if (gt == WASM_F32) {
                 buf_byte(&sec, OP_F32_CONST);
                 buf_f32(&sec, syms[i].init_fval);
             } else {

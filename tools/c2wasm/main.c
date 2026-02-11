@@ -111,6 +111,15 @@ int main(int argc, char **argv) {
 
     compile();
 
+    /* Check for forward-declared but undefined functions */
+    for (int i = 0; i < nsym; i++) {
+        if (syms[i].kind == SYM_FUNC && !syms[i].is_defined) {
+            fprintf(stderr, "%s: error: function '%s' declared but not defined\n",
+                    src_file ? src_file : "<input>", syms[i].name);
+            had_error = 1;
+        }
+    }
+
     if (had_error) {
         fprintf(stderr, "c2wasm: compilation failed\n");
         return 1;

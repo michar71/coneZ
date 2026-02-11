@@ -163,7 +163,8 @@ static CType primary_expr(void) {
         if (is_type_keyword(tok)) {
             CType ct = parse_type_spec();
             int size = 4;
-            if (ct == CT_CHAR) size = 1;
+            if (ct == CT_VOID) size = 1;
+            else if (ct == CT_CHAR) size = 1;
             else if (ct == CT_DOUBLE) size = 8;
             emit_i32_const(size);
         } else {
@@ -179,7 +180,8 @@ static CType primary_expr(void) {
             sf->ncall_fixups = save_fixups; /* discard any fixups from expr */
             buf_free(&tmp_buf);
             int size = 4;
-            if (ct == CT_CHAR) size = 1;
+            if (ct == CT_VOID) size = 1;
+            else if (ct == CT_CHAR) size = 1;
             else if (ct == CT_DOUBLE) size = 8;
             emit_i32_const(size);
         }
@@ -456,27 +458,33 @@ static CType prec_expr(int min_prec) {
 
         /* Coerce both sides to common type */
         if (result == CT_FLOAT) {
-            /* Right is on top of stack, left is below */
             if (right != CT_FLOAT && left == CT_FLOAT) {
-                /* Need to convert right (top of stack) to float */
                 emit_coerce(right, CT_FLOAT);
             } else if (left != CT_FLOAT && right == CT_FLOAT) {
-                /* Need to convert left (below top) to float — use temp */
                 int tmp = alloc_local(WASM_F32);
-                emit_local_set(tmp);  /* save right */
+                emit_local_set(tmp);
                 emit_coerce(left, CT_FLOAT);
-                emit_local_get(tmp);  /* restore right */
+                emit_local_get(tmp);
+            }
+        } else if (result == CT_DOUBLE) {
+            if (right != CT_DOUBLE && left == CT_DOUBLE) {
+                emit_promote_f64(right);
+            } else if (left != CT_DOUBLE && right == CT_DOUBLE) {
+                int tmp = alloc_local(WASM_F64);
+                emit_local_set(tmp);
+                emit_promote_f64(left);
+                emit_local_get(tmp);
             }
         }
 
-        /* Bitwise and shift ops: always int */
+        /* Bitwise and shift ops: coerce promoted operands to int */
         if (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET ||
             op == TOK_LSHIFT || op == TOK_RSHIFT) {
-            if (right == CT_FLOAT) emit_coerce_i32(CT_FLOAT);
-            if (left == CT_FLOAT) {
+            if (result == CT_FLOAT || result == CT_DOUBLE) {
+                emit_coerce_i32(result);
                 int tmp = alloc_local(WASM_I32);
                 emit_local_set(tmp);
-                emit_coerce_i32(CT_FLOAT);
+                emit_coerce_i32(result);
                 emit_local_get(tmp);
             }
             result = CT_INT;
@@ -484,47 +492,54 @@ static CType prec_expr(int min_prec) {
 
         switch (op) {
         case TOK_PLUS:
-            emit_op(result == CT_FLOAT ? OP_F32_ADD : OP_I32_ADD);
+            emit_op(result == CT_DOUBLE ? OP_F64_ADD : result == CT_FLOAT ? OP_F32_ADD : OP_I32_ADD);
             break;
         case TOK_MINUS:
-            emit_op(result == CT_FLOAT ? OP_F32_SUB : OP_I32_SUB);
+            emit_op(result == CT_DOUBLE ? OP_F64_SUB : result == CT_FLOAT ? OP_F32_SUB : OP_I32_SUB);
             break;
         case TOK_STAR:
-            emit_op(result == CT_FLOAT ? OP_F32_MUL : OP_I32_MUL);
+            emit_op(result == CT_DOUBLE ? OP_F64_MUL : result == CT_FLOAT ? OP_F32_MUL : OP_I32_MUL);
             break;
         case TOK_SLASH:
-            emit_op(result == CT_FLOAT ? OP_F32_DIV : OP_I32_DIV_S);
+            emit_op(result == CT_DOUBLE ? OP_F64_DIV : result == CT_FLOAT ? OP_F32_DIV : OP_I32_DIV_S);
             break;
         case TOK_PERCENT:
-            if (result == CT_FLOAT) {
-                /* fmodf — use import */
+            if (result == CT_DOUBLE) {
+                emit_op(OP_F32_DEMOTE_F64);
+                int tmp = alloc_local(WASM_F32);
+                emit_local_set(tmp);
+                emit_op(OP_F32_DEMOTE_F64);
+                emit_local_get(tmp);
+                emit_call(IMP_FMODF);
+                result = CT_FLOAT;
+            } else if (result == CT_FLOAT) {
                 emit_call(IMP_FMODF);
             } else {
                 emit_op(OP_I32_REM_S);
             }
             break;
         case TOK_EQ:
-            emit_op(result == CT_FLOAT ? OP_F32_EQ : OP_I32_EQ);
+            emit_op(result == CT_DOUBLE ? OP_F64_EQ : result == CT_FLOAT ? OP_F32_EQ : OP_I32_EQ);
             result = CT_INT;
             break;
         case TOK_NE:
-            emit_op(result == CT_FLOAT ? OP_F32_NE : OP_I32_NE);
+            emit_op(result == CT_DOUBLE ? OP_F64_NE : result == CT_FLOAT ? OP_F32_NE : OP_I32_NE);
             result = CT_INT;
             break;
         case TOK_LT:
-            emit_op(result == CT_FLOAT ? OP_F32_LT : OP_I32_LT_S);
+            emit_op(result == CT_DOUBLE ? OP_F64_LT : result == CT_FLOAT ? OP_F32_LT : OP_I32_LT_S);
             result = CT_INT;
             break;
         case TOK_GT:
-            emit_op(result == CT_FLOAT ? OP_F32_GT : OP_I32_GT_S);
+            emit_op(result == CT_DOUBLE ? OP_F64_GT : result == CT_FLOAT ? OP_F32_GT : OP_I32_GT_S);
             result = CT_INT;
             break;
         case TOK_LE:
-            emit_op(result == CT_FLOAT ? OP_F32_LE : OP_I32_LE_S);
+            emit_op(result == CT_DOUBLE ? OP_F64_LE : result == CT_FLOAT ? OP_F32_LE : OP_I32_LE_S);
             result = CT_INT;
             break;
         case TOK_GE:
-            emit_op(result == CT_FLOAT ? OP_F32_GE : OP_I32_GE_S);
+            emit_op(result == CT_DOUBLE ? OP_F64_GE : result == CT_FLOAT ? OP_F32_GE : OP_I32_GE_S);
             result = CT_INT;
             break;
         case TOK_AMP:    emit_op(OP_I32_AND); break;
@@ -576,29 +591,52 @@ CType assignment_expr(void) {
             CType rhs = assignment_expr();
             CType result = promote(sym->ctype, rhs);
 
-            /* Coerce both operands */
+            /* Coerce both operands to common type */
             if (result == CT_FLOAT && rhs != CT_FLOAT) {
                 emit_coerce(rhs, CT_FLOAT);
             }
             if (result == CT_FLOAT && sym->ctype != CT_FLOAT) {
-                /* Left (already on stack below right) needs conversion.
-                 * Save right, convert left, restore right. */
                 int tmp = alloc_local(ctype_to_wasm(result));
                 emit_local_set(tmp);
                 emit_coerce(sym->ctype, result);
                 emit_local_get(tmp);
             }
+            if (result == CT_DOUBLE && rhs != CT_DOUBLE) {
+                emit_promote_f64(rhs);
+            }
+            if (result == CT_DOUBLE && sym->ctype != CT_DOUBLE) {
+                int tmp = alloc_local(WASM_F64);
+                emit_local_set(tmp);
+                emit_promote_f64(sym->ctype);
+                emit_local_get(tmp);
+            }
+
+            /* Bitwise/shift compound ops: coerce promoted operands to int */
+            if (aop == TOK_AMP_EQ || aop == TOK_PIPE_EQ || aop == TOK_CARET_EQ ||
+                aop == TOK_LSHIFT_EQ || aop == TOK_RSHIFT_EQ) {
+                if (result == CT_FLOAT || result == CT_DOUBLE) {
+                    emit_coerce_i32(result);
+                    int tmp = alloc_local(WASM_I32);
+                    emit_local_set(tmp);
+                    emit_coerce_i32(result);
+                    emit_local_get(tmp);
+                    result = CT_INT;
+                }
+            }
 
             switch (aop) {
             case TOK_PLUS_EQ:
-                emit_op(result == CT_FLOAT ? OP_F32_ADD : OP_I32_ADD); break;
+                emit_op(result == CT_DOUBLE ? OP_F64_ADD : result == CT_FLOAT ? OP_F32_ADD : OP_I32_ADD); break;
             case TOK_MINUS_EQ:
-                emit_op(result == CT_FLOAT ? OP_F32_SUB : OP_I32_SUB); break;
+                emit_op(result == CT_DOUBLE ? OP_F64_SUB : result == CT_FLOAT ? OP_F32_SUB : OP_I32_SUB); break;
             case TOK_STAR_EQ:
-                emit_op(result == CT_FLOAT ? OP_F32_MUL : OP_I32_MUL); break;
+                emit_op(result == CT_DOUBLE ? OP_F64_MUL : result == CT_FLOAT ? OP_F32_MUL : OP_I32_MUL); break;
             case TOK_SLASH_EQ:
-                emit_op(result == CT_FLOAT ? OP_F32_DIV : OP_I32_DIV_S); break;
-            case TOK_PERCENT_EQ:  emit_op(OP_I32_REM_S);  break;
+                emit_op(result == CT_DOUBLE ? OP_F64_DIV : result == CT_FLOAT ? OP_F32_DIV : OP_I32_DIV_S); break;
+            case TOK_PERCENT_EQ:
+                if (result == CT_FLOAT) emit_call(IMP_FMODF);
+                else emit_op(OP_I32_REM_S);
+                break;
             case TOK_AMP_EQ:      emit_op(OP_I32_AND);    break;
             case TOK_PIPE_EQ:     emit_op(OP_I32_OR);     break;
             case TOK_CARET_EQ:    emit_op(OP_I32_XOR);    break;
@@ -683,7 +721,12 @@ CType assignment_expr(void) {
     return t;
 }
 
-/* Top-level expression (comma operator — we just parse one assignment_expr) */
+/* Top-level expression with comma operator support */
 CType expr(void) {
-    return assignment_expr();
+    CType t = assignment_expr();
+    while (accept(TOK_COMMA)) {
+        if (t != CT_VOID) emit_drop();
+        t = assignment_expr();
+    }
+    return t;
 }

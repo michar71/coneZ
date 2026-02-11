@@ -256,6 +256,7 @@ typedef struct {
     /* global init value (for SYM_GLOBAL) */
     int32_t init_ival;
     float init_fval;
+    double init_dval;
 } Symbol;
 
 /* ================================================================
