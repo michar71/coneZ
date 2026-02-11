@@ -21,7 +21,7 @@ Arrays
         
 
 STATEMENTS:
-	#	COMMENT ...
+	'	COMMENT ...
 	>	EXPR
 	DIM	VAR(LENGTH)
 	LOCAL	[VAR [, VAR ...]]

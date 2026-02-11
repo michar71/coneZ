@@ -382,7 +382,7 @@ m3ApiRawFunction(m3_str_instr)
     m3ApiReturn((int32_t)(found - h) + 1);  // 1-based result
 }
 
-// i32 str_trim(i32 src) -> new pool string (whitespace trimmed)
+// i32 basic_str_trim(i32 src) -> new pool string (whitespace trimmed both sides)
 m3ApiRawFunction(m3_str_trim)
 {
     m3ApiReturnType(int32_t);
@@ -401,6 +401,47 @@ m3ApiRawFunction(m3_str_trim)
     mem = m3_GetMemory(runtime, &mem_size, 0);
     memcpy(mem + dst, mem + (uint32_t)src + start, n);
     mem[dst + n] = 0;
+    m3ApiReturn((int32_t)dst);
+}
+
+// i32 basic_str_ltrim(i32 src) -> new pool string (leading whitespace trimmed)
+m3ApiRawFunction(m3_str_ltrim)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, src);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    if (!mem || src == 0) m3ApiReturn(0);
+    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    const uint8_t *p = mem + (uint32_t)src;
+    int start = 0;
+    while (start < slen && isspace(p[start])) start++;
+    int n = slen - start;
+    uint32_t dst = pool_alloc(runtime, n + 1);
+    if (dst == 0) m3ApiReturn(0);
+    mem = m3_GetMemory(runtime, &mem_size, 0);
+    memcpy(mem + dst, mem + (uint32_t)src + start, n);
+    mem[dst + n] = 0;
+    m3ApiReturn((int32_t)dst);
+}
+
+// i32 basic_str_rtrim(i32 src) -> new pool string (trailing whitespace trimmed)
+m3ApiRawFunction(m3_str_rtrim)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, src);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    if (!mem || src == 0) m3ApiReturn(0);
+    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    const uint8_t *p = mem + (uint32_t)src;
+    int end = slen;
+    while (end > 0 && isspace(p[end - 1])) end--;
+    uint32_t dst = pool_alloc(runtime, end + 1);
+    if (dst == 0) m3ApiReturn(0);
+    mem = m3_GetMemory(runtime, &mem_size, 0);
+    memcpy(mem + dst, mem + (uint32_t)src, end);
+    mem[dst + end] = 0;
     m3ApiReturn((int32_t)dst);
 }
 
@@ -539,6 +580,8 @@ M3Result link_string_imports(IM3Module module)
     LINK("basic_str_lower",      "i(i)",   m3_str_lower);
     LINK("basic_str_instr",      "i(iii)", m3_str_instr);
     LINK("basic_str_trim",       "i(i)",   m3_str_trim);
+    LINK("basic_str_ltrim",      "i(i)",   m3_str_ltrim);
+    LINK("basic_str_rtrim",      "i(i)",   m3_str_rtrim);
     LINK("basic_str_repeat",     "i(ii)",  m3_str_repeat);
     LINK("basic_str_space",      "i(i)",   m3_str_space);
     LINK("basic_str_hex",        "i(i)",   m3_str_hex);

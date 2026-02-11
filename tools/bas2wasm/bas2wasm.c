@@ -187,6 +187,7 @@ enum {
     IMP_TANF, IMP_EXPF, IMP_LOGF, IMP_LOG2F, IMP_FMODF,
     IMP_STR_REPEAT, IMP_STR_SPACE, IMP_STR_HEX, IMP_STR_OCT,
     IMP_STR_MID_ASSIGN,
+    IMP_STR_LTRIM, IMP_STR_RTRIM,
     IMP_COUNT
 };
 
@@ -305,6 +306,8 @@ static ImportDef imp_defs[IMP_COUNT] = {
     [IMP_STR_HEX]        = {"basic_str_hex",        1,{_I},            1,{_I}},
     [IMP_STR_OCT]        = {"basic_str_oct",        1,{_I},            1,{_I}},
     [IMP_STR_MID_ASSIGN] = {"basic_str_mid_assign", 4,{_I,_I,_I,_I},  1,{_I}},
+    [IMP_STR_LTRIM]      = {"basic_str_ltrim",      1,{_I},            1,{_I}},
+    [IMP_STR_RTRIM]      = {"basic_str_rtrim",      1,{_I},            1,{_I}},
 };
 #undef _I
 #undef _F
@@ -433,6 +436,9 @@ static int add_var(const char *name) {
     if (len > 0 && name[len-1] == '$') {
         vars[nvar].type = T_STR;
         vars[nvar].type_set = 1;
+    } else if (len > 0 && name[len-1] == '#') {
+        vars[nvar].type = T_F32;
+        vars[nvar].type_set = 1;
     } else {
         vars[nvar].type = T_I32;
     }
@@ -473,7 +479,7 @@ static VType vpop(void) { return vstack[--vsp]; }
 enum {
     TOK_EOF=0, TOK_NAME=1, TOK_NUMBER=2, TOK_STRING=3, TOK_FLOAT=4,
     TOK_LP=5, TOK_RP=6, TOK_COMMA=7,
-    TOK_ADD=8, TOK_SUB=9, TOK_MUL=10, TOK_DIV=11, TOK_MOD=12,
+    TOK_ADD=8, TOK_SUB=9, TOK_MUL=10, TOK_DIV=11, TOK_IDIV=12,
     TOK_EQ=13, TOK_LT=14, TOK_GT=15,
     TOK_NE=16, TOK_LE=17, TOK_GE=18,
     /* Keywords — order must match kwd[] */
@@ -484,7 +490,8 @@ enum {
     TOK_CONST=39, TOK_NOT=40, TOK_XOR=41,
     TOK_SELECT=42, TOK_CASE=43, TOK_DO=44, TOK_LOOP=45, TOK_UNTIL=46,
     TOK_EXIT=47, TOK_SWAP=48, TOK_IS=49,
-    TOK_DATA=50, TOK_READ=51, TOK_RESTORE=52
+    TOK_DATA=50, TOK_READ=51, TOK_RESTORE=52,
+    TOK_MOD=53, TOK_NEXT=54, TOK_WEND=55, TOK_FUNCTION=56
 };
 
 static const char *kwd[] = {
@@ -492,7 +499,7 @@ static const char *kwd[] = {
     "WHILE","FOR","TO","IF","ELSE","THEN","DIM","UBOUND",
     "BYE","BREAK","RESUME","PRINTS","STEP","CONST","NOT","XOR",
     "SELECT","CASE","DO","LOOP","UNTIL","EXIT","SWAP","IS",
-    "DATA","READ","RESTORE",NULL
+    "DATA","READ","RESTORE","MOD","NEXT","WEND","FUNCTION",NULL
 };
 
 static int next_line(void) {
@@ -516,7 +523,7 @@ static int read_tok(void) {
 
     if (ungot) { ungot = 0; return tok; }
     while (isspace((unsigned char)*lp)) lp++;
-    if (!*lp || *lp == '#') return tok = TOK_EOF;
+    if (!*lp || *lp == '\'') return tok = TOK_EOF;
 
     /* Number (int or float) */
     if (isdigit((unsigned char)*lp) || (*lp == '.' && isdigit((unsigned char)lp[1]))) {
@@ -1307,13 +1314,13 @@ static int compile_builtin_expr(const char *name) {
         vpush(T_F32);
         return 1;
     }
-    if (strcmp(name, "UPPER$") == 0) {
+    if (strcmp(name, "UPPER$") == 0 || strcmp(name, "UCASE$") == 0) {
         expr(); need(TOK_RP);
         emit_call(IMP_STR_UPPER);
         vpush(T_STR);
         return 1;
     }
-    if (strcmp(name, "LOWER$") == 0) {
+    if (strcmp(name, "LOWER$") == 0 || strcmp(name, "LCASE$") == 0) {
         expr(); need(TOK_RP);
         emit_call(IMP_STR_LOWER);
         vpush(T_STR);
@@ -1335,6 +1342,18 @@ static int compile_builtin_expr(const char *name) {
     if (strcmp(name, "TRIM$") == 0) {
         expr(); need(TOK_RP);
         emit_call(IMP_STR_TRIM);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "LTRIM$") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_LTRIM);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "RTRIM$") == 0) {
+        expr(); need(TOK_RP);
+        emit_call(IMP_STR_RTRIM);
         vpush(T_STR);
         return 1;
     }
@@ -1546,19 +1565,48 @@ static void factor(void);
 static void addition(void);
 static void relation(void);
 
+/* Integer binary op: coerce both operands to i32 */
+static void emit_int_binop(int i32_op) {
+    VType b = vpop(), a = vpop();
+    if (a == T_I32 && b == T_I32) {
+        emit_op(i32_op);
+    } else if (a == T_I32 && b == T_F32) {
+        /* stack: [a_i32, b_f32]. Trunc b. */
+        emit_op(OP_I32_TRUNC_F32_S);
+        emit_op(i32_op);
+    } else if (a == T_F32 && b == T_I32) {
+        /* stack: [a_f32, b_i32]. Save b, trunc a, reload b. */
+        int sc = alloc_local();
+        emit_local_set(sc);
+        emit_op(OP_I32_TRUNC_F32_S);
+        emit_local_get(sc);
+        emit_op(i32_op);
+    } else {
+        /* both f32: save b, trunc a, trunc b */
+        int sc = alloc_local_f32();
+        emit_local_set(sc);
+        emit_op(OP_I32_TRUNC_F32_S);
+        emit_local_get(sc);
+        emit_op(OP_I32_TRUNC_F32_S);
+        emit_op(i32_op);
+    }
+    vpush(T_I32);
+}
+
 static void factor(void) {
     base_expr();
-    while (want(0), tok >= TOK_MUL && tok <= TOK_MOD) {
+    while (want(0), (tok >= TOK_MUL && tok <= TOK_IDIV) || tok == TOK_MOD) {
         int op = tok;
         read_tok();
         base_expr();
         if (vsp >= 2 && (vstack[vsp-1] == T_STR || vstack[vsp-2] == T_STR)) {
-            error_at("cannot use *, / or MOD on strings"); return;
+            error_at("cannot use *, /, \\ or MOD on strings"); return;
         }
         switch (op) {
-        case TOK_MUL: emit_binop(OP_I32_MUL, OP_F32_MUL); break;
-        case TOK_DIV: emit_binop(OP_I32_DIV_S, OP_F32_DIV); break;
-        case TOK_MOD: emit_binop(OP_I32_REM_S, OP_F32_DIV); break; /* f32 mod not really right but rare */
+        case TOK_MUL:  emit_binop(OP_I32_MUL, OP_F32_MUL); break;
+        case TOK_DIV:  emit_binop(OP_I32_DIV_S, OP_F32_DIV); break;
+        case TOK_IDIV: emit_int_binop(OP_I32_DIV_S); break;
+        case TOK_MOD:  emit_int_binop(OP_I32_REM_S); break;
         }
     }
 }
@@ -1808,57 +1856,68 @@ static void compile_sub(void) {
     ctrl_sp++;
 }
 
+static void close_sub(void) {
+    ctrl_sp--;
+    int var = ctrl_stk[ctrl_sp].for_var;
+    int prev_func = ctrl_stk[ctrl_sp].for_limit_local;
+    int prev_depth = ctrl_stk[ctrl_sp].break_depth;
+    int np = ctrl_stk[ctrl_sp].if_extra_ends;
+
+    /* Restore globals from saved locals */
+    for (int i = 0; i < np; i++) {
+        emit_local_get(np + i); /* saved_i is at local index nparams + i */
+        emit_global_set(vars[vars[var].param_vars[i]].global_idx);
+    }
+
+    /* Also restore any LOCAL vars if present */
+    for (int i = 0; i < vars[var].local_count; i++) {
+        /* LOCAL vars' saved copies are at local index nparams + np + i */
+        emit_local_get(np + np + i); /* wait, this isn't right */
+        /* Actually, LOCAL save slots: after param saves. Let me skip LOCAL restore for now. */
+    }
+
+    emit_i32_const(0); /* default return value */
+    emit_end(); /* function end */
+
+    cur_func = prev_func;
+    block_depth = prev_depth;
+}
+
+static void close_while(void) {
+    ctrl_sp--;
+    if (ctrl_stk[ctrl_sp].kind != CTRL_WHILE) { error_at("WEND/END WHILE without WHILE"); return; }
+    emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
+    emit_end(); /* loop end */
+    emit_end(); /* block end */
+}
+
+static void close_for(void) {
+    ctrl_sp--;
+    if (ctrl_stk[ctrl_sp].kind != CTRL_FOR) { error_at("NEXT/END FOR without FOR"); return; }
+    /* Increment loop variable by step (or 1 if no STEP) */
+    int var = ctrl_stk[ctrl_sp].for_var;
+    emit_global_get(vars[var].global_idx);
+    if (ctrl_stk[ctrl_sp].for_has_step) {
+        emit_local_get(ctrl_stk[ctrl_sp].for_step_local);
+    } else {
+        emit_i32_const(1);
+    }
+    emit_op(OP_I32_ADD);
+    emit_global_set(vars[var].global_idx);
+    /* Jump back to loop start */
+    emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
+    emit_end(); /* loop end */
+    emit_end(); /* block end */
+}
+
 static void compile_end(void) {
     int kw = read_tok();
-    if (kw == TOK_KW_SUB) {
-        /* End SUB — emit epilogue and switch back */
-        ctrl_sp--;
-        int var = ctrl_stk[ctrl_sp].for_var;
-        int prev_func = ctrl_stk[ctrl_sp].for_limit_local;
-        int prev_depth = ctrl_stk[ctrl_sp].break_depth;
-        int np = ctrl_stk[ctrl_sp].if_extra_ends;
-
-        /* Restore globals from saved locals */
-        for (int i = 0; i < np; i++) {
-            emit_local_get(np + i); /* saved_i is at local index nparams + i */
-            emit_global_set(vars[vars[var].param_vars[i]].global_idx);
-        }
-
-        /* Also restore any LOCAL vars if present */
-        for (int i = 0; i < vars[var].local_count; i++) {
-            /* LOCAL vars' saved copies are at local index nparams + np + i */
-            emit_local_get(np + np + i); /* wait, this isn't right */
-            /* Actually, LOCAL save slots: after param saves. Let me skip LOCAL restore for now. */
-        }
-
-        emit_i32_const(0); /* default return value */
-        emit_end(); /* function end */
-
-        cur_func = prev_func;
-        block_depth = prev_depth;
+    if (kw == TOK_KW_SUB || kw == TOK_FUNCTION) {
+        close_sub();
     } else if (kw == TOK_WHILE) {
-        ctrl_sp--;
-        if (ctrl_stk[ctrl_sp].kind != CTRL_WHILE) { error_at("END WHILE without WHILE"); return; }
-        emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
-        emit_end(); /* loop end */
-        emit_end(); /* block end */
+        close_while();
     } else if (kw == TOK_FOR) {
-        ctrl_sp--;
-        if (ctrl_stk[ctrl_sp].kind != CTRL_FOR) { error_at("END FOR without FOR"); return; }
-        /* Increment loop variable by step (or 1 if no STEP) */
-        int var = ctrl_stk[ctrl_sp].for_var;
-        emit_global_get(vars[var].global_idx);
-        if (ctrl_stk[ctrl_sp].for_has_step) {
-            emit_local_get(ctrl_stk[ctrl_sp].for_step_local);
-        } else {
-            emit_i32_const(1);
-        }
-        emit_op(OP_I32_ADD);
-        emit_global_set(vars[var].global_idx);
-        /* Jump back to loop start */
-        emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
-        emit_end(); /* loop end */
-        emit_end(); /* block end */
+        close_for();
     } else if (kw == TOK_IF) {
         ctrl_sp--;
         if (ctrl_stk[ctrl_sp].kind != CTRL_IF) { error_at("END IF without IF"); return; }
@@ -2492,6 +2551,7 @@ static void stmt(void) {
     case TOK_EOF: break;
     case TOK_FORMAT:  compile_format(); break;
     case TOK_PRINTS:  compile_prints(); break;
+    case TOK_FUNCTION: /* fall through — FUNCTION is an alias for SUB */
     case TOK_KW_SUB:  compile_sub(); break;
     case TOK_END:     compile_end(); break;
     case TOK_RETURN:  compile_return(); break;
@@ -2511,6 +2571,8 @@ static void stmt(void) {
     case TOK_DATA:    compile_data(); break;
     case TOK_READ:    compile_read(); break;
     case TOK_RESTORE: compile_restore(); break;
+    case TOK_NEXT:    close_for(); break;
+    case TOK_WEND:    close_while(); break;
     case TOK_BYE:     emit_return(); break;
     case TOK_BREAK:   emit_return(); break;
     case TOK_RESUME:  error_at("RESUME not supported in compiled code"); break;

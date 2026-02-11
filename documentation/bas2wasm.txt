@@ -43,8 +43,8 @@ basic-scripting.txt) with the following differences:
     - String concatenation with +
     - String comparison (=, <>, <, >, <=, >=)
     - String functions: LEN, MID$, LEFT$, RIGHT$, CHR$, ASC, STR$,
-      VAL, VAL#, UPPER$, LOWER$, INSTR, TRIM$, STRING$, SPACE$,
-      HEX$, OCT$
+      VAL, VAL#, UPPER$/UCASE$, LOWER$/LCASE$, INSTR, TRIM$,
+      LTRIM$, RTRIM$, STRING$, SPACE$, HEX$, OCT$
     - MID$ assignment for in-place string modification
 
   Unsupported:
@@ -67,23 +67,25 @@ Type Rules:
   Variables are typed i32 (integer), f32 (float), or str (string). The
   type is determined by the variable name or first value assigned:
 
-    X = 42            # X is i32
-    Y = 3.14          # Y is f32 (number contains a decimal point)
-    Z = GPSLAT#()     # Z is f32 (# function returns float)
-    A$ = "hello"      # A$ is str ($ suffix = string variable)
+    X = 42            ' X is i32
+    Y = 3.14          ' Y is f32 (number contains a decimal point)
+    Z = GPSLAT#()     ' Z is f32 (# function returns float)
+    A$ = "hello"      ' A$ is str ($ suffix = string variable)
+    PI# = 3.14159     ' PI# is f32 (# suffix = float variable)
 
-  String variables must have a $ suffix. Numeric variables cannot end in $.
+  String variables must have a $ suffix. Float variables can use a # suffix.
+  Numeric variables without a suffix default to i32.
 
   In mixed arithmetic, i32 values are promoted to f32 automatically:
 
-    A = 10            # i32
-    B = 2.5           # f32
-    C = A * B         # C is f32 (A promoted to f32 for multiply)
+    A = 10            ' i32
+    B = 2.5           ' f32
+    C = A * B         ' C is f32 (A promoted to f32 for multiply)
 
   Assignment to a typed variable coerces the value:
 
-    X = 42            # X is i32
-    X = 3.14          # 3.14 is truncated to 3
+    X = 42            ' X is i32
+    X = 3.14          ' 3.14 is truncated to 3
 
   String variables cannot be assigned numeric values or vice versa.
 
@@ -94,7 +96,7 @@ Float Literals:
 
     X = 3.14
     Y = 0.5
-    Z = 1.0           # float, not integer (has decimal point)
+    Z = 1.0           ' float, not integer (has decimal point)
 
 
 Math Functions (compiler-only):
@@ -129,6 +131,65 @@ Operators (compiler-only):
     -1 XOR -1 = 0     -1 XOR 0 = -1     0 XOR 0 = 0
 
 
+Integer Division and Modulo:
+
+  \                   Integer division (QuickBASIC compatible).
+  MOD                 Modulo / integer remainder (QuickBASIC keyword).
+
+  Both operators coerce their operands to i32 before the operation:
+
+    17 \ 3 = 5        ' integer division
+    17 MOD 3 = 2      ' remainder
+
+  In the interpreter, \ and MOD are also available.
+
+
+Comments:
+
+  Comments use the apostrophe (') character, matching QuickBASIC syntax:
+
+    ' This is a comment
+    X = 42  ' inline comment
+
+
+NEXT and WEND:
+
+  FOR loops can be closed with NEXT (QuickBASIC syntax) or END FOR:
+
+    FOR I = 1 TO 10
+      ...
+    NEXT
+
+  WHILE loops can be closed with WEND (QuickBASIC syntax) or END WHILE:
+
+    WHILE condition
+      ...
+    WEND
+
+  Both forms are equivalent. NEXT and WEND are supported in both the
+  interpreter and compiler.
+
+
+FUNCTION:
+
+  FUNCTION is an alias for SUB. Both define a callable subroutine that
+  can return a value via RETURN:
+
+    FUNCTION DOUBLE X
+      RETURN X * 2
+    END FUNCTION
+
+    FORMAT "result=%", DOUBLE(5)
+
+  This is equivalent to:
+
+    SUB DOUBLE X
+      RETURN X * 2
+    END SUB
+
+  FUNCTION is supported in both the interpreter and compiler.
+
+
 Constants (compiler-only):
 
   CONST name = value
@@ -139,7 +200,7 @@ Constants (compiler-only):
     CONST PI = 3.14159
     CONST MAX = 100
     CONST GREETING$ = "Hello"
-    PI = 2.0              # ERROR: cannot assign to CONST
+    PI = 2.0              ' ERROR: cannot assign to CONST
 
 
 Float Sensor Functions:
@@ -213,7 +274,7 @@ String Concatenation:
 
     A$ = "Hello"
     B$ = " World"
-    C$ = A$ + B$          # C$ is "Hello World"
+    C$ = A$ + B$          ' C$ is "Hello World"
 
   Both operands must be strings. Mixing strings and numbers is an error.
 
@@ -244,10 +305,14 @@ String Functions:
   VAL(s$)                 String to integer. Returns i32.
   VAL#(s$)                String to float. Returns f32.
   UPPER$(s$)              Convert to uppercase. Returns str.
+  UCASE$(s$)              Alias for UPPER$.
   LOWER$(s$)              Convert to lowercase. Returns str.
+  LCASE$(s$)              Alias for LOWER$.
   INSTR(s$, sub$)         Find substring (1-based, 0 if not found). Returns i32.
   INSTR(s$, sub$, start)  Find substring from position. Returns i32.
   TRIM$(s$)               Remove leading/trailing whitespace. Returns str.
+  LTRIM$(s$)              Remove leading whitespace. Returns str.
+  RTRIM$(s$)              Remove trailing whitespace. Returns str.
   STRING$(n, code)        String of n copies of CHR$(code). Returns str.
   SPACE$(n)               String of n spaces. Returns str.
   HEX$(n)                 Integer to hex string (e.g. 255 -> "FF"). Returns str.
@@ -256,12 +321,12 @@ String Functions:
   Examples:
 
     NAME$ = "ConeZ"
-    FORMAT "Length: %", LEN(NAME$)       # 5
-    FORMAT "Sub: $", MID$(NAME$, 2, 3)   # one
-    FORMAT "Upper: $", UPPER$(NAME$)     # CONEZ
-    FORMAT "Code: %", ASC("A")           # 65
-    FORMAT "Char: $", CHR$(65)           # A
-    FORMAT "Num: $", STR$(42)            # 42
+    FORMAT "Length: %", LEN(NAME$)       ' 5
+    FORMAT "Sub: $", MID$(NAME$, 2, 3)   ' one
+    FORMAT "Upper: $", UPPER$(NAME$)     ' CONEZ
+    FORMAT "Code: %", ASC("A")           ' 65
+    FORMAT "Char: $", CHR$(65)           ' A
+    FORMAT "Num: $", STR$(42)            ' 42
 
     IF INSTR(NAME$, "one") > 0 THEN FORMAT "Found!"
 
@@ -379,8 +444,8 @@ EXIT Statement (compiler-only)
 
     FOR I = 0 TO 1000
       IF I = 42 THEN EXIT FOR
-    END FOR
-    > I              # prints 42
+    NEXT
+    > I              ' prints 42
 
 
 SWAP (compiler-only)
@@ -398,7 +463,7 @@ SWAP (compiler-only)
     A = 10
     B = 20
     SWAP A, B
-    FORMAT "A=%, B=%", A, B    # A=20, B=10
+    FORMAT "A=%, B=%", A, B    ' A=20, B=10
 
 
 DATA/READ/RESTORE (compiler-only)
@@ -411,7 +476,7 @@ DATA/READ/RESTORE (compiler-only)
 
     DATA 10, 20, 30
     READ A, B, C
-    FORMAT "%, %, %", A, B, C    # 10, 20, 30
+    FORMAT "%, %, %", A, B, C    ' 10, 20, 30
 
   All DATA statements across the program form a single sequential table.
   READ advances through the table one item at a time. The type of each
@@ -420,7 +485,7 @@ DATA/READ/RESTORE (compiler-only)
 
     DATA 42, 3.14, "hello"
     READ I, F, S$
-    FORMAT "%, &, $", I, F, S$   # 42, 3.14, hello
+    FORMAT "%, &, $", I, F, S$   ' 42, 3.14, hello
 
   Type conversion happens automatically on READ:
     - Reading a float into an i32 variable truncates it
@@ -432,7 +497,7 @@ DATA/READ/RESTORE (compiler-only)
     DATA 1, 2, 3
     READ A, B, C
     RESTORE
-    READ X              # X = 1 (first item again)
+    READ X              ' X = 1 (first item again)
 
   Negative numbers are supported in DATA:
 
@@ -451,7 +516,7 @@ DATA/READ/RESTORE (compiler-only)
       READ R, G, B
       SETLEDCOL(R, G, B)
       WAIT(500)
-    END FOR
+    NEXT
 
 
 MID$ Assignment (compiler-only)
@@ -475,15 +540,15 @@ MID$ Assignment (compiler-only)
 
     A$ = "Hello World"
     MID$(A$, 7, 5) = "Earth"
-    FORMAT "$", A$               # Hello Earth
+    FORMAT "$", A$               ' Hello Earth
 
     B$ = "ABCDEF"
     MID$(B$, 3, 2) = "XX"
-    FORMAT "$", B$               # ABXXEF
+    FORMAT "$", B$               ' ABXXEF
 
     C$ = "0123456789"
     MID$(C$, 1, 3) = "ABC"
-    FORMAT "$", C$               # ABC3456789
+    FORMAT "$", C$               ' ABC3456789
 
 
 Compiled Output

@@ -14,7 +14,7 @@ Data Types
   Float                 SINGLE (!), DOUBLE (#)      f32 (32-bit only, compiler-only)
   String                STRING ($)                  str ($, compiler-only)
   User-defined types    TYPE...END TYPE             No
-  Type suffixes         %, &, !, #, $               $ (string), # (float return)
+  Type suffixes         %, &, !, #, $               $ (string), # (float variable/return)
   Type declaration      DIM AS, DEFINT/DEFSNG/etc.  Inferred from first assignment or $
   Constants             CONST                       CONST (compiler-only)
 
@@ -24,7 +24,7 @@ Operators
 
   Category        QuickBASIC 4.5                  bas2wasm
   --------        --------------                  --------
-  Arithmetic      + - * / \ MOD ^                 + - * / \ (\ = MOD). No ^ (use POW())
+  Arithmetic      + - * / \ MOD ^                 + - * / \ MOD. No ^ (use POW())
   Comparison      = <> < > <= >=                  Same
   Logical         AND OR NOT XOR EQV IMP          AND OR NOT XOR. No EQV, IMP
   String concat   +                               + (compiler-only)
@@ -37,8 +37,8 @@ Control Flow
   ---------             --------------                --------
   IF single-line        IF...THEN                     IF...THEN
   IF multi-line         IF/ELSEIF/ELSE/END IF         IF/ELSE IF/ELSE/END IF
-  FOR loop              FOR...NEXT, STEP, EXIT FOR    FOR...END FOR, STEP, EXIT FOR
-  WHILE                 WHILE...WEND                  WHILE...END WHILE, EXIT WHILE
+  FOR loop              FOR...NEXT, STEP, EXIT FOR    FOR...NEXT or END FOR, STEP, EXIT FOR
+  WHILE                 WHILE...WEND                  WHILE...WEND or END WHILE, EXIT WHILE
   DO/LOOP               DO WHILE/UNTIL...LOOP         All 5 variants, EXIT DO
   SELECT CASE           Yes                           Yes (CASE, CASE IS, CASE ELSE)
   GOTO / labels         Yes, line numbers and labels  No
@@ -55,7 +55,7 @@ Subroutines & Functions
   Feature         QuickBASIC 4.5                  bas2wasm
   -------         --------------                  --------
   SUB             SUB...END SUB                   SUB...END SUB
-  FUNCTION        FUNCTION...END FUNCTION         No (SUBs return via RETURN expr)
+  FUNCTION        FUNCTION...END FUNCTION         Yes (alias for SUB, returns via RETURN expr)
   Parameters      By reference (default), BYVAL   By value (globals saved/restored)
   LOCAL           DIM inside sub, STATIC          LOCAL keyword
   DECLARE         Yes (forward declarations)      No (SUBs visible everywhere)
@@ -91,9 +91,9 @@ String Functions
   LEFT$, RIGHT$     Yes               Yes
   CHR$, ASC         Yes               Yes
   STR$, VAL         Yes               Yes, plus VAL# (returns f32)
-  UCASE$, LCASE$    Yes               UPPER$, LOWER$
+  UCASE$, LCASE$    Yes               Yes (also UPPER$, LOWER$)
   INSTR             Yes (opt start)   Yes (opt start)
-  LTRIM$, RTRIM$    Separate          Combined as TRIM$
+  LTRIM$, RTRIM$    Separate          Yes (also combined TRIM$)
   STRING$           STRING$(n, char)  Yes
   SPACE$            SPACE$(n)         Yes
   HEX$, OCT$        Yes               Yes
@@ -179,11 +179,14 @@ Summary
 -------
 
 bas2wasm is a small, purpose-built BASIC targeting an embedded LED controller.
-It covers the core control flow (IF, FOR, WHILE, SUB) and has strings and
-floats, but omits many QB45 features that don't apply to its domain (graphics,
-file I/O, screen modes, GOTO/GOSUB, user-defined types, error handling). In
-exchange it has hardware-specific builtins (GPS, IMU, LEDs, LoRa params, LUT
-tables) that QB45 obviously doesn't have.
+It covers the core control flow (IF, FOR/NEXT, WHILE/WEND, SUB/FUNCTION) and
+has strings and floats, with QuickBASIC-compatible syntax for operators
+(\ for integer division, MOD keyword), loop closing (NEXT, WEND), comments
+(apostrophe), type suffixes ($ for string, # for float), and string functions
+(UCASE$, LCASE$, LTRIM$, RTRIM$). It omits QB45 features that don't apply to
+its domain (graphics, file I/O, screen modes, GOTO/GOSUB, user-defined types,
+error handling). In exchange it has hardware-specific builtins (GPS, IMU, LEDs,
+LoRa params, LUT tables) that QB45 obviously doesn't have.
 
 The biggest remaining gaps vs QB45 are: no EQV/IMP operators, no INPUT,
 and no GOTO/GOSUB.

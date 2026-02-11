@@ -39,11 +39,13 @@ void registerhook();
 typedef ptrdiff_t	Val;	/* SIGNED INT/POINTER */
 typedef int		(*Code)();	/* BYTE-CODE */
 
-enum {	NAME=1,NUMBER,STRING,LP,RP,COMMA,ADD,SUBS,MUL,DIV,MOD,
+enum {	NAME=1,NUMBER,STRING,LP,RP,COMMA,ADD,SUBS,MUL,DIV,IDIV,
 	EQ,LT,GT, NE,LE,GE,AND,OR,FORMAT,SUB,END,RETURN,LOCAL,
-	WHILE,FOR,TO,IF,ELSE,THEN,DIM,UBOUND,BYE,BREAK,RESUME };
+	WHILE,FOR,TO,IF,ELSE,THEN,DIM,UBOUND,BYE,BREAK,RESUME,
+	KWMOD,NEXTKW,WENDKW,FUNCTION };
 char	*kwd[]={ (char*)"AND",(char*)"OR",(char*)"FORMAT",(char*)"SUB",(char*)"END",(char*)"RETURN",(char*)"LOCAL",(char*)"WHILE",
-	(char*)"FOR",(char*)"TO",(char*)"IF",(char*)"ELSE",(char*)"THEN",(char*)"DIM",(char*)"UBOUND",(char*)"BYE",(char*)"BREAK",(char*)"RESUME",0 };
+	(char*)"FOR",(char*)"TO",(char*)"IF",(char*)"ELSE",(char*)"THEN",(char*)"DIM",(char*)"UBOUND",(char*)"BYE",(char*)"BREAK",(char*)"RESUME",
+	(char*)"MOD",(char*)"NEXT",(char*)"WEND",(char*)"FUNCTION",0 };
 
 static EXT_RAM_ATTR char lbuf[256],tokn[SYMSZ];		 				/* LEXER STATE */
 char *lp;															/* LEXER POINTER */
@@ -162,6 +164,7 @@ int ADD_() { A+=B; sp++; STEP; };
 int SUBS_() { A-=B; sp++; STEP; };
 int MUL_() { A*=B; sp++; STEP; };
 int DIV_() { if (!B) sp+=2,err((char*)"DIVISION BY ZERO"); A/=B; sp++; STEP; };
+int IDIV_() { if (!B) sp+=2,err((char*)"DIVISION BY ZERO"); A/=B; sp++; STEP; };
 int MOD_() { if (!B) sp+=2,err((char*)"MODULUS OF ZERO"); A%=B; sp++; STEP; };
 int EQ_() { A=(A==B)? -1: 0; sp++; STEP; };
 int LT_() { A=(A<B)? -1: 0; sp++; STEP; };
@@ -217,7 +220,7 @@ int read()
 	char *p,*d,**k, *pun=(char*)"(),+-*/\\=<>", *dub=(char*)"<><==>";
 	if (ungot) return ungot=0, tok;	/* UNGOT PREVIOUS */
 	while (isspace(*lp)) lp++;	/* SKIP SPACE */
-	if (!*lp || *lp=='#') return tok=0; /* END OF LINE */
+	if (!*lp || *lp=='\'') return tok=0; /* END OF LINE */
 	if (isdigit(*lp))		/* NUMBER */
 		return tokv=strtol(lp,&lp,0), tok=NUMBER;
 	if ((p=strchr(pun,*lp)) && lp++) { /* PUNCTUATION */
@@ -226,6 +229,8 @@ int read()
 		return lp++, tok=(d-dub)/2+NE;
 	} else if (isalpha(*lp)) {	/* IDENTIFIER */
 		for (p=tokn; isalnum(*lp); ) *p++=toupper(*lp++);
+		if (*lp == '#') *p++ = *lp++;
+		if (*lp == '$') *p++ = *lp++;
 		for (*p=0, k=kwd; *k && strcmp(tokn,*k); k++);
 		if (*k) return tok=(k-kwd)+AND;
 		return tokv=find(tokn), tok=NAME;
@@ -249,14 +254,18 @@ void need(int type)
 }
 
 
-int (*bin[])()={ADD_,SUBS_,MUL_,DIV_,MOD_,EQ_,LT_,GT_, NE_,LE_,GE_,AND_,OR_};
+int (*bin[])()={ADD_,SUBS_,MUL_,DIV_,IDIV_,EQ_,LT_,GT_, NE_,LE_,GE_,AND_,OR_};
 
 #define BINN(NAME,LO,HI,ELEM)  int NAME() { int (*o)(); \
 	ELEM(); \
 	while (want(0), LO<=tok && tok<=HI) \
 		o=bin[tok-ADD], read(), ELEM(), emit(o); \
 	return 0; }
-BINN(factor,MUL,MOD,base)
+int factor() { int (*o)(); \
+	base(); \
+	while (want(0), (MUL<=tok && tok<=IDIV) || tok==KWMOD) \
+		o=(tok==KWMOD)? MOD_ : bin[tok-ADD], read(), base(), emit(o); \
+	return 0; }
 BINN(addition,ADD,SUBS,factor)
 BINN(relation,EQ,GE,addition)
 BINN(expr,AND,OR,relation)
@@ -306,6 +315,7 @@ void stmt()
 		n=0; if (want(COMMA)) LIST(expr(); n++);
 		inst(FORMAT_, n);
 		break;
+	case FUNCTION:										/* FUNCTION = SUB alias */
 	case SUB:											/* CSTK: {SUB,INDEX,JMP} */
 		if (!compile) bad((char*)"SUB MUST BE COMPILED");
 		compile++;										/* MUST BALANCE WITH END */
@@ -315,7 +325,7 @@ void stmt()
 		 inst(JMP_,0);						
 		sub[var][0]=sub[var][1]=n;						/* LOCAL=PARAM COUNT */
 		value[var]=cpc;									/* ADDRESS */
-		*--csp=var, *--csp=SUB;							/* FOR "END" CLAUSE */
+		*--csp=var, *--csp=i;							/* FOR "END" CLAUSE */
 		break;
 	case LOCAL:
 		LIST(need(NAME); sub[cursub][sub[cursub][0]+++2]=tokv;);
@@ -353,7 +363,7 @@ void stmt()
 		break;
 	case END:
 		need(*csp++), compile--;						/* MATCH BLOCK */
-		if (csp[-1]==SUB) 
+		if (csp[-1]==SUB || csp[-1]==FUNCTION)
 		{
 			inst(RETURN_, *csp++);
 			prg[*csp++]=(Code)cpc;						/* PATCH JUMP */
@@ -396,6 +406,24 @@ void stmt()
 	case DIM:
 		need(NAME), mode[var=tokv]=1;					/* SET VAR MODE TO DIM */
 		need(LP), expr(), need(RP), inst((int (*)())DIM_, var);
+		break;
+	case NEXTKW:										/* NEXT = END FOR */
+		compile--;
+		if (*csp++ != FOR) bad((char*)"NEXT WITHOUT FOR");
+		else {
+			prg[*csp++]=(Code)(cpc+4);
+			inst(NEXT_, *csp++);
+			inst(JMP_, *csp++);
+			temp--;
+		}
+		break;
+	case WENDKW:										/* WEND = END WHILE */
+		compile--;
+		if (*csp++ != WHILE) bad((char*)"WEND WITHOUT WHILE");
+		else {
+			prg[*csp++]=(Code)(cpc+2);
+			inst(JMP_, *csp++);
+		}
 		break;
 	case RESUME: if (!want(0)) expr(); emit(RESUME_); break;
 	case BREAK:		emit((int (*)())BREAK_); break;

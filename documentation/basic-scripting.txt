@@ -36,9 +36,11 @@ Strings:
   FORMAT "hello world"
 
 Comments:
-  Lines starting with # are ignored.
+  Lines starting with ' (apostrophe) are comments. Inline comments are
+  also supported after code on the same line.
 
-  # this is a comment
+  ' this is a comment
+  X = 42  ' inline comment
 
 Operators:
   Arithmetic:   +  -  *  /  \ (modulus)
@@ -86,17 +88,21 @@ IF / ELSE / ELSE IF / END IF (multi-line):
       > 0
   END IF
 
-WHILE / END WHILE:
+WHILE / WEND:
 
   WHILE X < 100
       X = X + 1
-  END WHILE
+  WEND
 
-FOR / END FOR:
+  END WHILE is also accepted.
+
+FOR / NEXT:
 
   FOR I = 0 TO 9
       > I
-  END FOR
+  NEXT
+
+  END FOR is also accepted.
 
   The loop variable increments by 1 each iteration. The loop runs while
   the variable is less than or equal to the TO value.
@@ -122,7 +128,7 @@ Use LOCAL to declare local variables within the subroutine.
       FOR I = 0 TO 255
           S = SETLEDCOL(255 - I, 255 - I, 255 - I)
           S = WAIT(3)
-      END FOR
+      NEXT
       S = SETLEDCOL(R, G, B)
   END SUB
 
@@ -178,9 +184,9 @@ Stopping a Program
       this in their main loop for graceful shutdown:
 
       WHILE (GETPARAM(0) = 0)
-          # ... your effect loop ...
-      END WHILE
-      # cleanup here
+          ' ... your effect loop ...
+      WEND
+      ' cleanup here
       BYE
 
 
@@ -192,7 +198,7 @@ can be used in expressions. Functions that don't return a meaningful value
 return 0 (assign to a dummy variable).
 
   VAL = FUNCTION(args)
-  S = FUNCTION(args)       # S is a dummy for void-like functions
+  S = FUNCTION(args)       ' S is a dummy for void-like functions
 
 
 General / Math
@@ -233,7 +239,7 @@ System
       Returns millis() / divider. Useful for timing.
       divider must not be 0 (division by zero error).
 
-      T = TIMESTAMP(1000)    # seconds since boot
+      T = TIMESTAMP(1000)    ' seconds since boot
 
   WAIT(ms)
       Delay for ms milliseconds. Yields to FreeRTOS scheduler.
@@ -568,7 +574,7 @@ RGB Cycle
   Cycles through red, green, blue, and off. Uses a subroutine
   to set the color and wait.
 
-      # Define a subroutine to set color and pause
+      ' Define a subroutine to set color and pause
       SUB SETCOL R,G,B
           S = SETLEDCOL(R,G,B)
           S = WAIT(500)
@@ -582,7 +588,7 @@ RGB Cycle
           SETCOL 0,0,0
           CNT = CNT + 1
           FORMAT "LOOPS: %",CNT
-      END WHILE
+      WEND
       FORMAT "TEST DONE"
 
 
@@ -593,32 +599,32 @@ Speed-of-Sound Strobe (sol.bas)
   point. Calculates sound propagation delay and triggers a strobe at the
   appropriate offset after each 4-second GPS time mark.
 
-      # Strobe subroutine: flash white then fade to color
+      ' Strobe subroutine: flash white then fade to color
       SUB STROBE R,G,B
           FOR I = 0 TO 255
               S = SETLEDCOL(255-I,255-I,255-I)
               S = WAIT(3)
-          END FOR
+          NEXT
           S = SETLEDCOL(R,G,B)
       END SUB
 
-      # Wait for GPS
+      ' Wait for GPS
       FORMAT "WAITING FOR GPS"
       STARTTIME = TIMESTAMP(1000)
       GPS = 0
       WHILE (GPS = 0)
           GPS = HASGPS()
           S = WAIT(1000)
-      END WHILE
+      WEND
       FORMAT "GPS OK"
 
-      # Wait for origin
+      ' Wait for origin
       FORMAT "WAITING FOR ORIGIN"
       ORG = 0
       WHILE (ORG = 0)
           ORG = HASORIGIN()
           S = WAIT(1000)
-      END WHILE
+      WEND
       FORMAT "ORG OK"
 
       STROBE 0,32,0
@@ -627,10 +633,10 @@ Speed-of-Sound Strobe (sol.bas)
       DIST = 0
       TDMS = 0
 
-      # Main loop: strobe every 4th second with distance-based delay
+      ' Main loop: strobe every 4th second with distance-based delay
       WHILE (GETPARAM(0) = 0)
           SEC = SECOND()
-          IF (SEC <> LASTSEC) AND (SEC \ 4 = 0)
+          IF (SEC <> LASTSEC) AND (SEC MOD 4 = 0)
               S = WAIT(TDMS)
               STROBE 8,0,0
               FORMAT "PING"
@@ -638,7 +644,7 @@ Speed-of-Sound Strobe (sol.bas)
               DIST = ORIGINDIST()
               TDMS = (DIST * 1000) / 343
           END IF
-      END WHILE
+      WEND
       FORMAT "STOPPED"
       BYE
 
