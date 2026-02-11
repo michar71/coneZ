@@ -61,14 +61,14 @@ void SOS_effect(void)
     int sec = get_sec();
     static int prev_sec = 0;
 
-    //Calulate Offset From Equator/0-meridian in Meters
+    //Calculate Offset From Equator/0-meridian in Meters
     float lat_m;
     float lon_m;
     float lat_o_m;
     float lon_o_m;
     float dist_meters;
 
-    //Calulate distance from Origin
+    //Calculate distance from Origin
     latlon_to_meters(lat, lon,&lat_m,&lon_m);
     latlon_to_meters(get_org_lat(), get_org_lon(),&lat_o_m,&lon_o_m);
     GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);
@@ -76,7 +76,7 @@ void SOS_effect(void)
 
     printfnl(SOURCE_OTHER, "Dist: %.2f", dist_meters);
 
-    //calulate offset in MS wth speed ofd sound being 343m/s
+    //Calculate offset in MS with speed of sound being 343m/s
     float sos_ms = 343.0;
 
     float offset_ms = dist_meters / sos_ms * 1000;
@@ -137,7 +137,7 @@ void SOS_effect2(void)
             float lat = get_lat();
             float lon = get_lon();
 
-            //Calulate distance from Origin
+            //Calculate distance from Origin
             float lat_m, lon_m, lat_o_m, lon_o_m;
             latlon_to_meters(lat, lon, &lat_m, &lon_m);
             latlon_to_meters(get_org_lat(), get_org_lon(), &lat_o_m, &lon_o_m);
@@ -146,7 +146,7 @@ void SOS_effect2(void)
 
             printfnl(SOURCE_OTHER, "Dist: %.2f", dist_meters);
 
-            // Calulate offset in ms with speed of sound being approximately 343m/s
+            // Calculate offset in ms with speed of sound being approximately 343m/s
             const float sos_mps = 343.0 * sos_speed_scaling;
             offset_ms = dist_meters / sos_mps * 1000;
             offset_ms = fmod(offset_ms, ms_per_cycle);
@@ -255,14 +255,14 @@ void CIRCLE_effect(void)
     static int prev_sec = 0;
     static int offset_cnt = 0;
 
-    //Calulate Offset From Equator/0-meridian in Meters
+    //Calculate Offset From Equator/0-meridian in Meters
     float lat_m;
     float lon_m;
     float lat_o_m;
     float lon_o_m;
     float deg;
 
-    //Calulate distance from Origin
+    //Calculate distance from Origin
     latlon_to_meters(lat, lon,&lat_m,&lon_m);
     latlon_to_meters(get_org_lat(), get_org_lon(),&lat_o_m,&lon_o_m);
     GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);

@@ -24,13 +24,13 @@ volatile float v_accX = 0, v_accY = 0, v_accZ = 0;
 volatile float v_pitch = 0, v_roll = 0, v_yaw = 0;
 volatile int adc_bat_mv = 0;
 volatile int adc_solar_mv = 0;
-bool IMU_avaliable = false;
+bool IMU_available = false;
 
 
 void sensors_setup(void)
 {
     tmp.begin(TMP102_ADDR);
-    Serial.println("TMP102 initalized");
+    Serial.println("TMP102 initialized");
 
     if(!mpu.init())
     {
@@ -46,7 +46,7 @@ void sensors_setup(void)
         mpu.setAccRange(MPU6500_ACC_RANGE_2G);
         mpu.enableAccDLPF(true);
         mpu.setAccDLPF(MPU6500_DLPF_6);
-        IMU_avaliable = true;
+        IMU_available = true;
     }
 
     //Setup ADC's
@@ -70,16 +70,18 @@ void sensors_loop(void)
     //printfnl(SOURCE_SENSORS, "TMP102 Temperature: %.2f C", temperature);
 
     // Read accelerometer data from MPU6500
-    gValue = mpu.getGValues();
-    gyr = mpu.getGyrValues();
-    mpu_temp = mpu.getTemperature();
-    angle = mpu.getAngles();
-    resultantG = mpu.getResultantG(gValue);
+    if (IMU_available) {
+        gValue = mpu.getGValues();
+        gyr = mpu.getGyrValues();
+        mpu_temp = mpu.getTemperature();
+        angle = mpu.getAngles();
+        resultantG = mpu.getResultantG(gValue);
 
-    // Cache volatile copies for cross-core reads
-    v_accX = gValue.x;
-    v_accY = gValue.y;
-    v_accZ = gValue.z;
+        // Cache volatile copies for cross-core reads
+        v_accX = gValue.x;
+        v_accY = gValue.y;
+        v_accZ = gValue.z;
+    }
     //printfnl(SOURCE_SENSORS, "MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f", accX, accY, accZ);
 
     //Read ADC's
@@ -129,9 +131,9 @@ float getYaw(void)
     return atan2(ay, ax) * 180.0 / M_PI;
 }
 
-bool imuAvaialble(void)
+bool imuAvailable(void)
 {
-    return IMU_avaliable;
+    return IMU_available;
 }
 
 
@@ -154,24 +156,24 @@ float getMaxAccXYZ(bool resetMax)
         maxAcc = 0;
     }
 
-    if (accX > maxAcc) {
-        maxAcc = accX;
+    if (fabs(accX) > maxAcc) {
+        maxAcc = fabs(accX);
     }
-    if (accY > maxAcc) {
-        maxAcc = accY;
+    if (fabs(accY) > maxAcc) {
+        maxAcc = fabs(accY);
     }
-    if (accZ > maxAcc) {
-        maxAcc = accZ;
+    if (fabs(accZ) > maxAcc) {
+        maxAcc = fabs(accZ);
     }
 
     return maxAcc;
 }
-    // Placeholder for temperature reading logic
 
 float bat_voltage(void)
 {
-    static int last_val = 0;
+    static int last_val = -1;
 
+    if (last_val < 0) last_val = adc_bat_mv;
     int newval = (last_val + adc_bat_mv)/2;
     last_val = adc_bat_mv;
     return (newval / 1000.0); // Convert millivolts to volts
@@ -179,8 +181,9 @@ float bat_voltage(void)
 
 float solar_voltage(void)
 {
-    static int last_val = 0;
+    static int last_val = -1;
 
+    if (last_val < 0) last_val = adc_solar_mv;
     int newval = (last_val + adc_solar_mv)/2;
     last_val = adc_solar_mv;
     return (newval / 1000.0); // Convert millivolts to volts

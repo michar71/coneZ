@@ -124,3 +124,34 @@ MEDIUM
 #47 FIXED -- sensors.cpp IMU structs (gValue, gyr, angle) not safe for
     cross-core reads. Cached acceleration values in volatile floats,
     updated in sensors_loop(). Accessors now use cached volatile copies.
+
+
+LOW
+---
+
+#48 FIXED -- GPS get_speed()/get_dir() already use volatile globals
+    (gps_speed, gps_dir). No change needed; confirmed correct.
+
+#49 FIXED -- LittleFS mount failure not tracked.
+    Added bool littlefs_mounted flag set on successful mount.
+    Guarded startup.bas check and http FS page with flag.
+
+#50 FIXED -- params[] array shared between BASIC task and main loop
+    without volatile qualifier. Added volatile to declaration.
+
+#51 FIXED -- Typos in identifiers and comments.
+    IMU_avaliable -> IMU_available, imuAvaialble -> imuAvailable,
+    "initalized" -> "initialized", "Calulate" -> "Calculate".
+    Fixed across sensors.cpp, sensors.h, basic_wrapper.cpp,
+    main.cpp, effects.cpp, basic_extensions.h.
+
+#52 FIXED -- sensors_loop() read MPU6500 even when IMU init failed.
+    Guarded accelerometer/gyro reads with IMU_available check.
+
+#53 FIXED -- bat_voltage()/solar_voltage() returned half value on
+    first call due to static last_val initialized to 0.
+    Changed to -1 sentinel; first call now returns actual reading.
+
+#54 FIXED -- getMaxAccXYZ() only tracked positive acceleration.
+    Changed comparisons to use fabs() so negative values are
+    correctly tracked by magnitude.

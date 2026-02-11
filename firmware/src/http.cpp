@@ -217,6 +217,12 @@ void http_dir()
     
     out += "<h3>LittleFS directory listing:</h3><hr>\n<pre>";
 
+    if (!littlefs_mounted) {
+        out += "LittleFS not mounted.</pre>";
+        server.send( 200, "text/html", out );
+        return;
+    }
+
     // Start from the root directory.
     out += http_dir_list( FSLINK, "/" );
 

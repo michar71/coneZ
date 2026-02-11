@@ -19,14 +19,13 @@
 TaskHandle_t basic_task;
 SemaphoreHandle_t basic_mutex;
 char next_code[256] = {0};
-int params[MAX_PARAMS];
+volatile int params[MAX_PARAMS];
 
 void set_basic_param(uint8_t paramID, int val)
 {
   if (paramID > MAX_PARAMS-1)
      paramID = MAX_PARAMS-1;
 
-  //This is probably atomic....   
   params[paramID] = val;
 }
 
@@ -35,7 +34,6 @@ int get_basic_param(int paramID)
       if (paramID > MAX_PARAMS-1)
      paramID = MAX_PARAMS-1;
 
-  //This is probably atomic....   
   return params[paramID];
 }
 
@@ -75,11 +73,11 @@ int8_t getDateTimeData(bool *hasDate, bool *hasTime, int *day, int *month, int *
         *hour = get_hour();
         *minute = get_minute();
         *second = get_second();
-        //Calulate day of week
+        //Calculate day of week
 
-        //Calulate day of year
+        //Calculate day of year
 
-        //calulate leap year
+        //Calculate leap year
         *dayOfWeek = get_day_of_week();
         *dayOfYear = get_dayofyear();
         *isLeapYear = get_isleapyear();
@@ -104,7 +102,7 @@ int8_t getDateTimeData(bool *hasDate, bool *hasTime, int *day, int *month, int *
 
 int8_t getIMUdata(float* roll,float* pitch,float* yaw,float* accX,float* accY,float* accZ)
 {
-    if (imuAvaialble())
+    if (imuAvailable())
     {
         *roll = getRoll();
         *pitch = getPitch();

@@ -116,8 +116,8 @@ DONE int ARRAYTOLUT(array) -> Copies array to LUT.
 DONE int LUT(int)  -> Returns the value of the LUT at index. If no LUT is loaded it will return 0. If the index is larger then the LUT size it will return 0.
 
 Location Based Functions. All Distances in meters, angles in Degrees:
-DONE int HASORIGIN()    ->Origin Data is avaliable
-DONE int HASGPS()       ->Speed/Dir are avialable
+DONE int HASORIGIN()    ->Origin Data is available
+DONE int HASGPS()       ->Speed/Dir are available
 DONE int ORIGINDIST()   ->Distance in m to Origin
 DONE int ORIGINANGLE()  ->Angle in Deg to Origin
 DONE int GPSSPEED()     ->Speed derived from GPS in m/s
@@ -127,9 +127,9 @@ DONE int DIST(int X1, int Y1, int X2, int Y2). ->Distanve between two points
 DONE int ANGLE(int X1, int Y1, int X2, int Y2) -> Angle in degree between two points
 
 IMU based Functions:
-DONE int HASGYRO()  ->IMU Gyro Data is avaliable
-DONE int HASACC()   ->IMU Acc Data is avaliable
-DONE int HASMAG()   ->IMU Mag data is avialable
+DONE int HASGYRO()  ->IMU Gyro Data is available
+DONE int HASACC()   ->IMU Acc Data is available
+DONE int HASMAG()   ->IMU Mag data is available
 DONE int PITCH()    ->Pitch in degrees
 DONE int ROLL()     ->Roll in degrees
 DONE int YAW()      ->Yaw in degrees
