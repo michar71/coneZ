@@ -1,0 +1,316 @@
+ConeZ Desktop Simulator
+========================
+
+The desktop simulator runs ConeZ WASM programs on a Linux desktop without
+hardware. It provides an LED visualizer, interactive sensor sliders, and a
+console — everything needed to develop and debug scripts offline.
+
+The simulator uses the same wasm3 interpreter and the same host import API
+as the firmware, so programs that work in the simulator work on hardware.
+
+
+Building
+--------
+
+Requirements: Qt6 Widgets, CMake >= 3.16, C++17 compiler.
+
+  cd simulator/conez
+  mkdir build && cd build
+  cmake -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/cmake ..
+  make -j$(nproc)
+
+On systems where Qt6 is in the default search path the PREFIX_PATH flag
+can be omitted. The build produces a single binary: conez-simulator.
+
+
+Running
+-------
+
+  ./conez-simulator                        # launch empty
+  ./conez-simulator --leds 100             # 100 LEDs per channel
+  ./conez-simulator test.bas               # launch and run a script
+
+Once the window opens, type a command in the console at the bottom:
+
+  run test.bas                   compile + run a BASIC script
+  run module.c                   compile + run a C module
+  run module.wasm                run a pre-compiled WASM binary
+  stop                           stop the running program
+  open                           file dialog
+  ?                              show all commands
+
+Or use the toolbar buttons: Open, Run (re-run last file), Stop.
+
+File paths can be absolute, relative to the current directory, or bare
+filenames resolved against the data directory (see below).
+
+
+Command-Line Options
+--------------------
+
+  --leds <count>       LED count per channel (default 50, all 4 channels)
+  --sandbox <path>     Directory for file I/O and script storage
+  --bas2wasm <path>    Path to bas2wasm compiler (default: bas2wasm on PATH)
+  --clang <path>       Path to clang compiler (default: clang on PATH)
+  --api-dir <path>     Directory containing conez_api.h (auto-detected from
+                       bas2wasm location if not set)
+  <file>               Positional argument: script to run on startup
+
+
+Data Directory
+--------------
+
+The simulator ships with a data/ directory alongside the source
+(simulator/conez/data/) containing example scripts and files copied from
+the firmware's data/ directory. This mirrors the firmware's LittleFS
+filesystem.
+
+At startup the simulator auto-detects the data/ directory relative to
+the binary (../data/ from the build directory). If --sandbox is given,
+that path is used instead. If neither is found, /tmp/conez_sandbox is
+used as a fallback.
+
+The data directory is used by:
+  - CLI commands (dir, list, del, ren) to manage files
+  - WASM file I/O imports for runtime read/write
+  - The run command for path resolution of bare filenames
+
+
+Compilation
+-----------
+
+The simulator auto-detects file type by extension and compiles as needed:
+
+  .bas   Runs bas2wasm to produce a temporary .wasm, then executes it.
+  .c     Runs clang --target=wasm32 with the same flags used for firmware
+         modules (see wasm-api.txt). Includes conez_api.h automatically
+         if --api-dir is set or auto-detected.
+  .wasm  Executed directly.
+
+Compiler output (stdout and stderr) appears in the console widget.
+
+
+GUI Layout
+----------
+
+  +--------------------------------------------+
+  | Toolbar: [Open] [Run] [Stop]               |
+  +--------------------------------------------+
+  |                       |                     |
+  |   LED Strips          |   Sensor Panel      |
+  |   4 horizontal rows   |   (scrollable)      |
+  |   of colored pixels   |   GPS, IMU, Env,    |
+  |   ~30 FPS refresh     |   Power, Sun, Cue   |
+  |                       |                     |
+  +-----------------------+---------------------+
+  |                                             |
+  |   Console                                   |
+  |   output + command input                    |
+  +---------------------------------------------+
+
+Panes are resizable via QSplitter drag handles.
+
+LED Strips: Black background, one row per channel (CH1-CH4). Pixel width
+scales to fill available space. The display refreshes at ~30 FPS whenever
+the WASM program calls led_show().
+
+Sensor Panel: Grouped sliders with spin boxes for every mock sensor value.
+Adjusting a slider immediately updates the value that WASM imports read.
+Groups: GPS, Origin, IMU, Environment, Power, Sun, Cue.
+
+Console: Dark-themed terminal with monospace font. Shows compiler output,
+WASM print output (print_i32, printf, WASI fd_write, FORMAT, etc.), and
+runtime messages (start, stop, errors with BASIC line numbers).
+
+Console Commands:
+
+  ?                    Show available commands
+  run <file>           Run script (.bas, .c, .wasm)
+  stop                 Stop running program
+  open                 Open file dialog
+  dir                  List files in data directory
+  del <file>           Delete file from data directory
+  list <file>          Show file contents
+  ren <old> <new>      Rename file
+  param <id> [value]   Get/set script parameter (0-15)
+  led                  Show LED channel configuration
+  sensors              Show current sensor mock values
+  time                 Show current date/time and epoch
+  uptime               Show time since simulator start
+  version              Show simulator version and build info
+  wasm [status]        Show WASM runtime status
+  wasm info <file>     Show WASM file size
+
+These commands mirror the firmware CLI where applicable. Hardware-only
+commands (config, cue, debug, gps, load, lora, mem, ps, reboot, tc,
+wifi) are not available in the simulator.
+
+
+Architecture
+------------
+
+Threading:
+
+  Main thread     Qt event loop, all widgets, QTimer for LED refresh,
+                  QProcess for compilation.
+  WasmWorker      QThread that owns SimWasmRuntime. Runs setup()/loop()
+                  until stop or error.
+
+Communication between threads uses Qt signals/slots with queued connections.
+
+Shared state:
+
+  LedState        4 channels of vector<RGB>, std::mutex, atomic dirty flag.
+                  WASM thread writes pixels, GUI thread snapshots for paint.
+  SensorMock      Struct of all sensor values, std::mutex.
+                  GUI sliders write, WASM imports read.
+
+WASM runtime:
+
+  The simulator reuses wasm3 (vendored in thirdparty/wasm3/source/) and
+  mirrors the firmware's runtime lifecycle:
+
+    1. m3_NewEnvironment() + m3_NewRuntime(env, 8K stack, userdata)
+    2. m3_ParseModule() + m3_LoadModule()
+    3. link_*_imports() for all 10 categories
+    4. Find setup/loop or _start/main entry points
+    5. Run setup() once, then loop() repeatedly until stop
+    6. Cleanup: close files, reset string pool, reset gamma
+
+  m3_Yield() is overridden (wasm3 declares it M3_WEAK). The simulator's
+  version sleeps 1ms every ~1000 Call opcodes and checks the stop flag,
+  returning m3Err_trapExit to abort.
+
+
+Host Imports
+------------
+
+All 145 firmware host imports are implemented. Behavior differences from
+hardware are noted below.
+
+  LED (14 functions)
+    Identical API. Writes to LedState buffers. HSV-to-RGB conversion uses
+    the same algorithm as FastLED's hsv2rgb_rainbow. Gamma table is
+    identical to firmware.
+
+  Sensors (33 functions)
+    All values come from the sensor panel sliders instead of real hardware.
+    Default values simulate a playa environment (BRC GPS coords, 22C, etc.).
+
+  DateTime (15 functions)
+    Uses std::chrono::system_clock. get_epoch_ms(), calendar fields, and
+    uptime all reflect the host system's real time. time_valid() always
+    returns 1.
+
+  System (6 functions)
+    get_param/set_param use a local int[16] array. random_int uses
+    std::mt19937. wait_pps simulates a 1-second PPS interval.
+    wait_param polls the param array every 10ms.
+
+  I/O (15 functions)
+    print_i32/f32/i64/f64/str emit to the console widget via signal.
+    WASI fd_write (stdout/stderr) also routes to the console.
+    LUT load/save use CSV files in the sandbox directory.
+
+  File I/O (17 functions)
+    Uses stdio (fopen/fread/fwrite) in the sandbox directory. Path
+    validation is identical to firmware: must start with /, no ..,
+    /config.ini is blocked. Max 4 open files. Parent directories are
+    created automatically for write/append.
+
+  Math (24 functions)
+    Direct libm calls for both float and double transcendentals.
+
+  Strings (26 functions)
+    Free-list pool allocator on WASM linear memory (0x8000-0xF000),
+    identical to firmware. 128 max simultaneous allocations.
+
+  Format (3 functions)
+    Portable wasm_vformat engine reads printf format strings and va_list
+    pointers from WASM linear memory. Handles %d %i %u %x %s %f %c %p
+    with width, precision, flags, and length modifiers. wasm_vsscanf
+    handles %d %u %x %f %s %c %n.
+
+  GPIO (4 functions)
+    Stubs that log to the console: "[GPIO] pin_set(N)".
+
+
+Source Layout
+-------------
+
+  simulator/conez/
+  ├── CMakeLists.txt
+  ├── data/                        example scripts (mirrors firmware/data/)
+  ├── thirdparty/wasm3/source/     vendored wasm3 (pure C)
+  └── src/
+      ├── main.cpp                 QApplication entry, CLI parsing
+      ├── mainwindow.h/cpp         layout, toolbar, command dispatch
+      ├── gui/
+      │   ├── led_strip_widget     4 LED rows, 30 FPS QTimer
+      │   ├── console_widget       output + input
+      │   └── sensor_panel         grouped sliders
+      ├── state/
+      │   ├── led_state            4-channel RGB buffers, mutex
+      │   ├── sensor_state         mock values, mutex
+      │   └── sim_config           LED counts, paths
+      ├── wasm/
+      │   ├── sim_wasm_runtime     wasm3 lifecycle, m3_Yield
+      │   ├── sim_wasm_imports.h   link function declarations
+      │   └── sim_wasm_imports_*   10 import category files
+      └── worker/
+          ├── wasm_worker          QThread: runs WASM programs
+          └── compiler_worker      QProcess: bas2wasm / clang
+
+
+Keeping Firmware and Simulator in Sync
+---------------------------------------
+
+The simulator mirrors the firmware's WASM host imports. When the firmware
+API changes, the simulator must be updated to match so that programs behave
+identically in both environments.
+
+  Adding a new host import:
+    1. Add the m3ApiRawFunction wrapper and m3_LinkRawFunction call to the
+       firmware file (e.g. firmware/src/wasm/wasm_imports_sensors.cpp).
+    2. Add the equivalent wrapper and link call to the matching simulator
+       file (e.g. simulator/conez/src/wasm/sim_wasm_imports_sensors.cpp).
+    3. The function name and wasm3 type signature must be identical.
+
+  Adding a new import category:
+    1. Create the firmware file (wasm_imports_foo.cpp) and its link
+       function (link_foo_imports).
+    2. Create sim_wasm_imports_foo.cpp in the simulator with the same
+       link function.
+    3. Add the new .cpp to CMakeLists.txt.
+    4. Add the link_foo_imports() call in sim_wasm_runtime.cpp.
+    5. Add the forward declaration in sim_wasm_imports.h.
+
+  Adding a new sensor:
+    1. Add the field to the firmware's sensor code.
+    2. Add the field to SensorMock in simulator/conez/src/state/sensor_state.h.
+    3. Add a slider for it in simulator/conez/src/gui/sensor_panel.cpp.
+    4. Add the WASM import wrapper in sim_wasm_imports_sensors.cpp.
+
+  Changing a type signature:
+    The wasm3 type string (e.g. "f()" or "v(iii)") must match exactly
+    between firmware and simulator, or the module will fail to link.
+
+  Updating wasm3:
+    Re-vendor by copying all .c and .h files from
+    firmware/.pio/libdeps/conez-v0-1/Wasm3/src/ into
+    simulator/conez/thirdparty/wasm3/source/.
+
+The general rule: if a change would make a WASM program behave differently
+in the simulator than on hardware, both must be updated together.
+
+
+Limitations
+-----------
+
+  - No LoRa, WiFi, or HTTP. Network-dependent features are stubbed.
+  - GPIO operations log to console but do not affect real pins.
+  - PSRAM is not emulated (modules use regular wasm3 linear memory).
+  - Cue engine is stub-only: cue_playing and cue_elapsed come from the
+    sensor panel sliders, not an actual timeline player.
+  - No multi-program support. Only one WASM program runs at a time.
+  - PPS simulation is approximate (1-second sleep, not a real interrupt).

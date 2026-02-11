@@ -136,6 +136,49 @@ Both use `cdylib` crate type, `opt-level = "z"`, LTO, strip, `panic = "abort"`. 
 
 See `tools/wasm/examples/` for sample modules (C and Rust). Use `make -C tools/wasm` to build all examples and `make -C tools/wasm install` to copy them to `firmware/data/` for LittleFS upload.
 
+### Desktop Simulator
+
+Qt6-based simulator in `simulator/conez/` that runs WASM programs on a Linux desktop without hardware. Provides an LED visualizer (4 channels, 30 FPS), interactive sensor sliders, and a console. Uses the same vendored wasm3 interpreter and the same 145 host imports as the firmware, so programs that work in the simulator work on hardware.
+
+```bash
+# Build (requires Qt6 Widgets, CMake >= 3.16, C++17)
+cd simulator/conez && mkdir build && cd build
+cmake -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/cmake ..
+make -j$(nproc)
+
+# Run
+./conez-simulator
+./conez-simulator --leds 100 --bas2wasm /path/to/bas2wasm
+./conez-simulator test.bas               # run a script on startup
+```
+
+**Data directory:** `simulator/conez/data/` ships example scripts copied from `firmware/data/`. Auto-detected at startup relative to the binary; overridable with `--sandbox`. CLI commands (`dir`, `list`, `del`, `ren`) and WASM file I/O operate in this directory. Bare filenames in `run` resolve here.
+
+**Console commands:** `?`, `run`, `stop`, `open`, `dir`, `del`, `list`, `ren`, `param`, `led`, `sensors`, `time`, `uptime`, `version`, `wasm`. These mirror the firmware CLI; hardware-only commands (config, cue, debug, gps, load, lora, mem, ps, reboot, tc, wifi) are not available.
+
+**Source layout:** `src/gui/` (LED strip, console, sensor panel widgets), `src/state/` (LED buffers, sensor mock, config), `src/wasm/` (runtime + 10 import files mirroring firmware), `src/worker/` (QThread for WASM, QProcess for compilation). Vendored wasm3 in `thirdparty/wasm3/source/`. Example data in `data/`.
+
+**Threading:** Main thread runs Qt event loop and all widgets. WasmWorker QThread runs the wasm3 interpreter. Communication via Qt signals/slots with queued connections. Shared state (LedState, SensorState) is mutex-protected.
+
+**Differences from firmware:** Sensors come from GUI sliders (not real hardware). GPIO stubs log to console. No LoRa, WiFi, PSRAM, or cue timeline player. File I/O uses the data directory. DateTime uses host system clock.
+
+See `documentation/simulator.txt` for full reference.
+
+**Keeping firmware and simulator in sync:** The simulator mirrors the firmware's WASM host imports and must be updated whenever the firmware API changes. When making changes to the firmware, apply the corresponding change to the simulator:
+
+| Firmware change | Simulator counterpart |
+|---|---|
+| Add/modify host import in `firmware/src/wasm/wasm_imports_*.cpp` | Update matching `simulator/conez/src/wasm/sim_wasm_imports_*.cpp` |
+| Add new import category file | Create new `sim_wasm_imports_*.cpp`, add to `CMakeLists.txt`, add `link_*_imports()` call in `sim_wasm_runtime.cpp` |
+| Change `m3_LinkRawFunction` signature (type string) | Change the same signature in the simulator's link function |
+| Add/change sensor field in firmware | Add field to `SensorMock` in `sensor_state.h`, add slider in `sensor_panel.cpp` |
+| Update `conez_api.h` | No simulator change needed (header is for module authors, not the runtime) |
+| Change wasm3 version | Re-vendor: copy `firmware/.pio/libdeps/conez-v0-1/Wasm3/src/*.{c,h}` to `simulator/conez/thirdparty/wasm3/source/` |
+| Add/change CLI command | Add/change in `mainwindow.cpp` `onCommand()` dispatch and corresponding `cmd*()` method |
+| Add/change data files in `firmware/data/` | Copy updated files to `simulator/conez/data/` |
+
+The general rule: if a WASM program's behavior would differ between firmware and simulator after a change, both must be updated together.
+
 ### Build Flags
 
 `INCLUDE_BASIC` and `INCLUDE_WASM` in `platformio.ini` build_flags control which scripting runtimes are compiled in. Both are enabled by default. Remove either flag to exclude that runtime and save flash space (~67KB for wasm3).

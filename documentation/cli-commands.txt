@@ -5,6 +5,11 @@ The CLI is available via Telnet (default) or USB Serial. After boot the
 CLI listens on Telnet; pressing any key on the USB Serial port switches
 the CLI back to Serial.
 
+The desktop simulator (see simulator.txt) supports a subset of these
+commands in its console: ?, run, stop, open, dir, del, list, ren, param,
+led, sensors, time, uptime, version, wasm. Hardware-only commands are
+not available in the simulator.
+
 
 Quick Reference
 ---------------

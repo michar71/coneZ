@@ -1,0 +1,55 @@
+#ifndef MAINWINDOW_H
+#define MAINWINDOW_H
+
+#include <QMainWindow>
+
+class LedStripWidget;
+class ConsoleWidget;
+class SensorPanel;
+class WasmWorker;
+class CompilerWorker;
+
+class MainWindow : public QMainWindow {
+    Q_OBJECT
+public:
+    explicit MainWindow(QWidget *parent = nullptr);
+
+public slots:
+    Q_INVOKABLE void runFileFromArg(const QString &path);
+
+private slots:
+    void onCommand(const QString &cmd);
+    void onOpen();
+    void onRun();
+    void onStop();
+    void onCompiled(const QString &wasmPath);
+    void onWasmFinished();
+
+private:
+    void runFile(const QString &path);
+    QString resolvePath(const QString &path) const;
+
+    // CLI commands
+    void cmdHelp();
+    void cmdDir();
+    void cmdDel(const QStringList &args);
+    void cmdList(const QStringList &args);
+    void cmdRen(const QStringList &args);
+    void cmdParam(const QStringList &args);
+    void cmdLed();
+    void cmdSensors();
+    void cmdTime();
+    void cmdUptime();
+    void cmdVersion();
+    void cmdWasm(const QStringList &args);
+
+    LedStripWidget *m_leds;
+    ConsoleWidget *m_console;
+    SensorPanel *m_sensors;
+    WasmWorker *m_wasmWorker;
+    CompilerWorker *m_compilerWorker;
+
+    QString m_lastFile;
+};
+
+#endif

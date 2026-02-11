@@ -1,0 +1,51 @@
+; ConeZ configuration file
+; Copy to /config.ini and edit as needed.
+; Only include settings you want to override — missing keys use compiled defaults.
+
+[wifi]
+ssid=RN-ConeZ
+password=conezconez
+
+[gps]
+origin_lat=40.762173
+origin_lon=-119.193672
+
+[lora]
+ssid=ConeZ
+frequency=431.250
+bandwidth=500.0
+sf=9
+cr=6
+preamble=8
+tx_power=10
+sync_word=0x12
+callsign=
+
+[system]
+device_name=
+startup_script=/startup.bas
+timezone=-8
+auto_dst=on
+cone_id=0
+cone_group=0
+; ntp_server=192.168.1.100   ; local NTP server (blank = pool.ntp.org)
+
+[led]
+count1=50
+count2=50
+count3=50
+count4=50
+
+[debug]
+system=on
+basic=on
+wasm=on
+commands=on
+gps=off
+gps_raw=off
+lora=off
+lora_raw=off
+fsync=off
+wifi=off
+sensors=off
+other=off
