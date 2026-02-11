@@ -294,16 +294,19 @@ int getNumLeds()
 
 void setLEDr(int pos, int val)
 {
+    if (pos < 0 || pos >= NUM_LEDS1) return;
     leds1[pos].r = (uint8_t)val;
 }
 
 void setLEDg(int pos, int val)
 {
+    if (pos < 0 || pos >= NUM_LEDS1) return;
     leds1[pos].g = (uint8_t)val;
 }
 
 void setLEDb(int pos, int val)
 {
+    if (pos < 0 || pos >= NUM_LEDS1) return;
     leds1[pos].b = (uint8_t)val;
 }
 
@@ -349,83 +352,7 @@ unsigned long getTimestamp()
 //------------------------
 //Location-based Functions
 //------------------------
-
-#define EARTH_RADIUS_METERS 6378137.0
-
-// Converts latitude and longitude (in degrees) into x/y offsets (in meters)
-// from the Equator and Prime Meridian.
-// x = east-west offset (longitude), y = north-south offset (latitude)
-void latlon_to_meters(float latitude_deg, float longitude_deg,
-                      float *x_offset_meters, float *y_offset_meters) {
-    // Convert latitude to radians for cosine calculation
-    double lat_rad = latitude_deg * (M_PI / 180.0);
-
-    // North-south offset from equator (meters)
-    *y_offset_meters = EARTH_RADIUS_METERS * (M_PI / 180.0) * latitude_deg;
-
-    // East-west offset from Prime Meridian (meters), adjusted by latitude
-    *x_offset_meters = EARTH_RADIUS_METERS * cos(lat_rad) * (M_PI / 180.0) * longitude_deg;
-}
-
-// Structure to hold result
-//typedef struct {
-//    float distance;   // Distance in meters
-//    float bearing_deg;  // Bearing in degrees
-//} GeoResult;
-
-
-//For large distsnces this is the correct formula
-GeoResult calculate_geo(float lat1, float lon1, float lat2, float lon2) {
-    GeoResult result;
-
-    // Convert degrees to radians
-    float lat1_rad = lat1 * DEG_TO_RAD;
-    float lat2_rad = lat2 * DEG_TO_RAD;
-    float delta_lat = (lat2 - lat1) * DEG_TO_RAD;
-    float delta_lon = (lon2 - lon1) * DEG_TO_RAD;
-
-    // Haversine formula for distance
-    float a = sinf(delta_lat / 2.0f) * sinf(delta_lat / 2.0f) +
-              cosf(lat1_rad) * cosf(lat2_rad) *
-              sinf(delta_lon / 2.0f) * sinf(delta_lon / 2.0f);
-    float c = 2.0f * atanf(sqrtf(a) / sqrtf(1.0f - a));
-    result.distance = EARTH_RADIUS_METERS * c;
-
-    // Formula for initial bearing
-    float y = sinf(delta_lon) * cosf(lat2_rad);
-    float x = cosf(lat1_rad) * sinf(lat2_rad) -
-              sinf(lat1_rad) * cosf(lat2_rad) * cosf(delta_lon);
-    float bearing_rad = atan2f(y, x);
-    float bearing_deg = bearing_rad * RAD_TO_DEG;
-
-    // Normalize to 0–360
-    if (bearing_deg < 0.0f) {
-        bearing_deg += 360.0f;
-    }
-    result.bearing_deg = bearing_deg;
-
-    return result;
-}
-
-//For small distances or flat-earthers this is totally fine (Ignoring that earth is a sphere)
-GeoResult xy_to_polar(float x1, float y1, float x2, float y2) 
-{
-    GeoResult result;
-
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-
-    result.distance = sqrtf(dx * dx + dy * dy);
-    float angle_rad = atan2f(dy, dx);
-    float angle_deg = angle_rad * (180.0f / 3.14159265f);
-
-    // Normalize to 0–360 degrees
-    if (angle_deg < 0.0f)
-        angle_deg += 360.0f;
-
-    result.bearing_deg = angle_deg;
-    return result;
-}
+// Defined in effects.cpp; declared in main.h (already included).
 //-------------------------------------
 //LUTs
 //-------------------------------------
@@ -740,19 +667,15 @@ int ABS_()
     STEP;
 }
 
-int WAIT_() 
-{ 
+int WAIT_()
+{
     int val = *sp;  //Pull value from Stack and rewind stack
-    if (val<0)
+    if (val < 0)
         val = 0;
 
-    unsigned long start = getTimestamp();
-    do
-    {
-        yield();    
-    } 
-    while (getTimestamp() < (start + val));
-     
+    if (val > 0)
+        vTaskDelay(val / portTICK_PERIOD_MS);
+
     *sp=0; //Push back to to the stack
     STEP;
 }
@@ -793,9 +716,9 @@ int SETLEDRGB_()
         }
         else
         {
-            setLEDr(ii, arr_r[ii+1]);
-            setLEDg(ii, arr_g[ii+1]);
-            setLEDb(ii, arr_b[ii+1]);
+            setLEDr(ii, constrain(arr_r[ii+1], 0, 255));
+            setLEDg(ii, constrain(arr_g[ii+1], 0, 255));
+            setLEDb(ii, constrain(arr_b[ii+1], 0, 255));
         }
     }
     //Show LED 
@@ -1211,27 +1134,19 @@ int HASORIGIN_()
 {
     if (NULL == Loc_Func)
     {
-        *sp=0; //Push back to to the stack
+        *sp=0;
         STEP;
     }
-    else
-    {
-        float oLat = 0;
-        float oLon = 0;
-        float lat = 0;
-        float lon = 0;
-        float alt = 0;
-        float speed = 0;
-        float dir = 0;
 
-        int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-        if (((oLat == 0) && (oLon == 0)) || (res != 1))
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
+    float oLat = 0, oLon = 0, lat = 0, lon = 0, alt = 0, speed = 0, dir = 0;
+    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
+    if (((oLat == 0) && (oLon == 0)) || (res != 1))
+    {
+        *sp=0;
+        STEP;
     }
-    *sp=1; //Push back to to the stack
+
+    *sp=1;
     STEP;
 }
 
@@ -1239,27 +1154,19 @@ int HASGPS_()
 {
     if (NULL == Loc_Func)
     {
-        *sp=0; //Push back to to the stack
+        *sp=0;
         STEP;
     }
-    else
-    {
-        float oLat = 0;
-        float oLon = 0;
-        float lat = 0;
-        float lon = 0;
-        float alt = 0;
-        float speed = 0;
-        float dir = 0;
 
-        int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
-        if (((lat == 0) && (lon == 0)) || (res != 1))
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
+    float oLat = 0, oLon = 0, lat = 0, lon = 0, alt = 0, speed = 0, dir = 0;
+    int8_t res = Loc_Func(&oLat,&oLon,&lat,&lon,&alt,&speed,&dir);
+    if (((lat == 0) && (lon == 0)) || (res != 1))
+    {
+        *sp=0;
+        STEP;
     }
-    *sp=1; //Push back to to the stack
+
+    *sp=1;
     STEP;
 }
 
@@ -1439,26 +1346,19 @@ int HASGYRO_()
 {
     if (NULL == IMU_Func)
     {
-        *sp=0; //Push back to to the stack
+        *sp=0;
         STEP;
     }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
 
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if ((res & GYRO_BIT) == 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
+    float roll = 0, pitch = 0, yaw = 0, accX = 0, accY = 0, accZ = 0;
+    int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
+    if ((res & GYRO_BIT) == 0)
+    {
+        *sp=0;
+        STEP;
     }
-    *sp=1; //Push back to to the stack
+
+    *sp=1;
     STEP;
 }
 
@@ -1466,26 +1366,19 @@ int HASACC_()
 {
     if (NULL == IMU_Func)
     {
-        *sp=0; //Push back to to the stack
+        *sp=0;
         STEP;
     }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
 
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if ((res & ACC_BIT) == 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
+    float roll = 0, pitch = 0, yaw = 0, accX = 0, accY = 0, accZ = 0;
+    int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
+    if ((res & ACC_BIT) == 0)
+    {
+        *sp=0;
+        STEP;
     }
-    *sp=1; //Push back to to the stack
+
+    *sp=1;
     STEP;
 }
 
@@ -1493,26 +1386,19 @@ int HASMAG_()
 {
     if (NULL == IMU_Func)
     {
-        *sp=0; //Push back to to the stack
+        *sp=0;
         STEP;
     }
-    else
-    {
-        float roll = 0;
-        float pitch = 0;
-        float yaw = 0;
-        float accX = 0;
-        float accY = 0;
-        float accZ = 0;
 
-        int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
-        if ((res & MAG_BIT) == 0)
-        {
-            *sp=0; //Push back to to the stack
-            STEP;
-        }
+    float roll = 0, pitch = 0, yaw = 0, accX = 0, accY = 0, accZ = 0;
+    int8_t res = IMU_Func(&roll,&pitch,&yaw,&accX,&accY,&accZ);
+    if ((res & MAG_BIT) == 0)
+    {
+        *sp=0;
+        STEP;
     }
-    *sp=1; //Push back to to the stack
+
+    *sp=1;
     STEP;
 }
 
@@ -2278,7 +2164,7 @@ int funhook_exec_(char *msg, int n)
             if (n != function_hook_data[ii].param_count)
             {
                 char bad_msg[128];
-                sprintf(bad_msg,"%s: %d ARGUMENTS REQUIRED",function_hook_data[ii].command_name,function_hook_data[ii].param_count);
+                snprintf(bad_msg, sizeof(bad_msg), "%s: %d ARGUMENTS REQUIRED",function_hook_data[ii].command_name,function_hook_data[ii].param_count);
                 bad((char*)bad_msg);
                 return 0;
             }
@@ -2287,14 +2173,23 @@ int funhook_exec_(char *msg, int n)
         }
     }
     char bad_msg[128];
-    sprintf(bad_msg,"%s: UNKNOWN FUNCTION",msg);
+    snprintf(bad_msg, sizeof(bad_msg), "%s: UNKNOWN FUNCTION",msg);
     bad((char*)bad_msg);
     return 0;  //Hmmm, should we return 1 on unknown function???
 }
 
 //Register hooks for keyword and function processing
-void registerhook() 
+void registerhook()
 {
+    // Clean up LUT state from previous program
+    if (pLUT != NULL)
+    {
+        free(pLUT);
+        pLUT = NULL;
+    }
+    lutSize = 0;
+    currentLUTIndex = -1;
+
     kwdhook=kwdhook_;
     funhook=funhook_exec_;
 }

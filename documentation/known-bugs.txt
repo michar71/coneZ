@@ -12,6 +12,18 @@ CRITICAL
 
 #8  FIXED -- GPS_RX_PIN was a typo (40 instead of 44). LED_PIN=40 is correct.
 
+#30 FIXED -- Duplicate geo function definitions (ODR violation).
+    latlon_to_meters(), calculate_geo(), xy_to_polar() were defined in both
+    basic_extensions.h and effects.cpp. Removed duplicates from header;
+    also removed unused calculate_geo().
+
+#31 FIXED -- setLEDr/g/b had no bounds checking on LED index.
+    BASIC scripts with out-of-range indices could corrupt memory.
+    Added bounds guards to all three functions.
+
+#32 FIXED -- LUT globals (pLUT, lutSize, currentLUTIndex) not cleaned up
+    between BASIC programs. Added cleanup in registerhook().
+
 
 HIGH
 ----
@@ -40,6 +52,24 @@ HIGH
 
 #16 FIXED -- EVENT_SYS_TIMER logic broken
 
+#33 FIXED -- HAS*() functions had fragile fall-through logic.
+    HASORIGIN_, HASGPS_, HASGYRO_, HASACC_, HASMAG_ rewritten with
+    flat guard pattern to eliminate ambiguous fall-through.
+
+#34 FIXED -- SETLEDRGB_() missing value clamp in non-gamma path.
+    Array values were passed directly to LEDs without constraining to 0-255.
+
+#35 FIXED -- FORMAT_() strncat buffer overflow.
+    Third argument didn't account for existing buffer content.
+    Also added bounds check on format argument pointer to prevent
+    out-of-bounds stack reads when format has more specifiers than args.
+
+#36 FIXED -- funhook_exec_() used unbounded sprintf().
+    Replaced with snprintf() to prevent stack buffer overflow.
+
+#37 FIXED -- WAIT_() busy-waited with yield() instead of vTaskDelay().
+    Replaced with proper FreeRTOS delay to avoid burning 100% CPU.
+
 
 MEDIUM
 ------
@@ -63,3 +93,34 @@ MEDIUM
 #28 FIXED -- DAY/MONTH/YEAR/GPSALT registered in funhook_(), GPSALT_T defined
 
 #29 FIXED -- sunSetPosition() header signature matches implementation
+
+#38 FIXED -- extern gps_pos_valid in effects.cpp missing volatile qualifier.
+
+#39 FIXED -- Duplicate #include "basic_wrapper.h" in main.cpp.
+
+#40 FIXED -- I2C_FREQ comment said 400 kHz but value was 100 kHz.
+
+#41 FIXED -- threadLoopCount[] not volatile for cross-core access.
+
+#42 FIXED -- GPS date/time accessors read TinyGPSPlus object cross-core.
+    Cached day/month/year/hour/minute/second in volatile variables,
+    updated in gps_loop(). All accessors now use cached values.
+
+#43 FIXED -- basic.h/basic_extensions.h define globals and functions in headers.
+    Added BASIC_WRAPPER_TU compile guard to basic.h ensuring it can only
+    be included from basic_wrapper.cpp.
+
+#44 FIXED -- main.cpp local hostname[16] shadowed unused static hostname[17].
+    Removed the unused static global.
+
+#45 FIXED -- vTaskDelay(1 / portTICK_PERIOD_MS) integer division yields 0
+    if tick period > 1ms. Replaced all instances with pdMS_TO_TICKS()
+    across main.cpp, basic.h, basic_wrapper.cpp, and led.cpp.
+
+#46 FIXED -- Effects used Serial.print()/OutputStream directly, bypassing
+    printManager mutex. Replaced with printfnl(SOURCE_OTHER, ...) calls
+    in all three effects. Removed extern OutputStream from effects.cpp.
+
+#47 FIXED -- sensors.cpp IMU structs (gValue, gyr, angle) not safe for
+    cross-core reads. Cached acceleration values in volatile floats,
+    updated in sensors_loop(). Accessors now use cached volatile copies.

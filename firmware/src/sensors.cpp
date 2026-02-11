@@ -13,11 +13,15 @@ Sensor_TMP102 tmp;
 
 // Marked volatile for cross-core visibility (Core 1 writes, Core 0 reads).
 volatile float temperature = -500;
-xyzFloat gValue ;
+xyzFloat gValue;
 xyzFloat gyr;
 xyzFloat angle;
 volatile float mpu_temp;
 volatile float resultantG = 0;
+
+// Cached volatile copies of IMU data for cross-core reads
+volatile float v_accX = 0, v_accY = 0, v_accZ = 0;
+volatile float v_pitch = 0, v_roll = 0, v_yaw = 0;
 volatile int adc_bat_mv = 0;
 volatile int adc_solar_mv = 0;
 bool IMU_avaliable = false;
@@ -71,6 +75,11 @@ void sensors_loop(void)
     mpu_temp = mpu.getTemperature();
     angle = mpu.getAngles();
     resultantG = mpu.getResultantG(gValue);
+
+    // Cache volatile copies for cross-core reads
+    v_accX = gValue.x;
+    v_accY = gValue.y;
+    v_accZ = gValue.z;
     //printfnl(SOURCE_SENSORS, "MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f", accX, accY, accZ);
 
     //Read ADC's
@@ -89,32 +98,35 @@ float getTemp(void)
 
 float getAccX(void)
 {
-    return gValue.x;
+    return v_accX;
 }
 
 float getAccY(void)
 {
-    return gValue.y;
+    return v_accY;
 }
 
 float getAccZ(void)
 {
-    return gValue.z;
+    return v_accZ;
 }
 
 float getPitch(void)
 {
-    return atan2(gValue.y, sqrt(gValue.x * gValue.x + gValue.z * gValue.z)) * 180.0 / M_PI;
+    float ax = v_accX, ay = v_accY, az = v_accZ;
+    return atan2(ay, sqrt(ax * ax + az * az)) * 180.0 / M_PI;
 }
 
 float getRoll(void)
 {
-    return atan2(-gValue.x, gValue.z) * 180.0 / M_PI;
+    float ax = v_accX, az = v_accZ;
+    return atan2(-ax, az) * 180.0 / M_PI;
 }
 
 float getYaw(void)
 {
-    return atan2(gValue.y, gValue.x) * 180.0 / M_PI;
+    float ax = v_accX, ay = v_accY;
+    return atan2(ay, ax) * 180.0 / M_PI;
 }
 
 bool imuAvaialble(void)

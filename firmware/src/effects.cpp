@@ -3,10 +3,10 @@
 #include "led.h"
 #include "util.h"
 #include "gps.h"
+#include "printManager.h"
 
 
-extern Stream *OutputStream;
-extern bool gps_pos_valid;
+extern volatile bool gps_pos_valid;
 
 
 
@@ -31,39 +31,6 @@ void latlon_to_meters(float latitude_deg, float longitude_deg,
     *x_offset_meters = EARTH_RADIUS_METERS * cos(lat_rad) * (M_PI / 180.0) * longitude_deg;
 }
 
-
-//For large distsnces this is the correct formula
-GeoResult calculate_geo(float lat1, float lon1, float lat2, float lon2) {
-    GeoResult result;
-
-    // Convert degrees to radians
-    float lat1_rad = lat1 * DEG_TO_RAD;
-    float lat2_rad = lat2 * DEG_TO_RAD;
-    float delta_lat = (lat2 - lat1) * DEG_TO_RAD;
-    float delta_lon = (lon2 - lon1) * DEG_TO_RAD;
-
-    // Haversine formula for distance
-    float a = sinf(delta_lat / 2.0f) * sinf(delta_lat / 2.0f) +
-              cosf(lat1_rad) * cosf(lat2_rad) *
-              sinf(delta_lon / 2.0f) * sinf(delta_lon / 2.0f);
-    float c = 2.0f * atanf(sqrtf(a) / sqrtf(1.0f - a));
-    result.distance = EARTH_RADIUS_METERS * c;
-
-    // Formula for initial bearing
-    float y = sinf(delta_lon) * cosf(lat2_rad);
-    float x = cosf(lat1_rad) * sinf(lat2_rad) -
-              sinf(lat1_rad) * cosf(lat2_rad) * cosf(delta_lon);
-    float bearing_rad = atan2f(y, x);
-    float bearing_deg = bearing_rad * RAD_TO_DEG;
-
-    // Normalize to 0–360
-    if (bearing_deg < 0.0f) {
-        bearing_deg += 360.0f;
-    }
-    result.bearing_deg = bearing_deg;
-
-    return result;
-}
 
 //For small distances or flat-earthers this is totally fine (Ignoring that earth is a sphere)
 GeoResult xy_to_polar(float x1, float y1, float x2, float y2) 
@@ -107,18 +74,14 @@ void SOS_effect(void)
     GeoResult res = xy_to_polar(lat_m,lon_m, lat_o_m,lon_o_m);
     dist_meters = res.distance;
 
-    Serial.print("Dist: ");
-    Serial.println(dist_meters);
+    printfnl(SOURCE_OTHER, "Dist: %.2f", dist_meters);
 
     //calulate offset in MS wth speed ofd sound being 343m/s
     float sos_ms = 343.0;
-    
-    float offset_ms = dist_meters / sos_ms * 1000;
-    OutputStream->print("Offset ");
-    OutputStream->println(offset_ms);
 
-    OutputStream->print("sec = ");
-    OutputStream->println( sec );
+    float offset_ms = dist_meters / sos_ms * 1000;
+    printfnl(SOURCE_OTHER, "Offset %.2f", offset_ms);
+    printfnl(SOURCE_OTHER, "sec = %d", sec);
 
     //Wait for sec to roll over Mod 10;
     if (sec != prev_sec && sec%10 == 0)
@@ -127,8 +90,7 @@ void SOS_effect(void)
 
         //Wait Offset MS
         delay((int)round(offset_ms));
-        OutputStream->print("PING - sec = ");
-        OutputStream->println( sec );
+        printfnl(SOURCE_OTHER, "PING - sec = %d", sec);
       
         //Flash Light
         for (int ii = 255; ii>=0; ii=ii-32)
@@ -182,18 +144,15 @@ void SOS_effect2(void)
             GeoResult res = xy_to_polar(lat_m, lon_m, lat_o_m, lon_o_m);
             float dist_meters = res.distance;
 
-            Serial.print("Dist: ");
-            Serial.println(dist_meters);
+            printfnl(SOURCE_OTHER, "Dist: %.2f", dist_meters);
 
             // Calulate offset in ms with speed of sound being approximately 343m/s
             const float sos_mps = 343.0 * sos_speed_scaling;
             offset_ms = dist_meters / sos_mps * 1000;
             offset_ms = fmod(offset_ms, ms_per_cycle);
 
-            OutputStream->print("Offset ");
-            OutputStream->println(offset_ms);
-            OutputStream->print("sec = ");
-            OutputStream->println(sec);
+            printfnl(SOURCE_OTHER, "Offset %.2f", offset_ms);
+            printfnl(SOURCE_OTHER, "sec = %d", sec);
 
             target_ms = millis() + (unsigned long)round(offset_ms);
             state = WAIT_OFFSET;
@@ -204,8 +163,7 @@ void SOS_effect2(void)
     case WAIT_OFFSET:
         if (millis() >= target_ms)
         {
-            OutputStream->print("PING - offset_ms = ");
-            OutputStream->println(offset_ms);
+            printfnl(SOURCE_OTHER, "PING - offset_ms = %.2f", offset_ms);
 
             step = 0;
             target_ms = millis();
@@ -311,8 +269,7 @@ void CIRCLE_effect(void)
     deg = res.bearing_deg;
     int offset_ms = (int)(deg * 10);
 
-    Serial.print("Deg: ");
-    Serial.println(deg);
+    printfnl(SOURCE_OTHER, "Deg: %.2f", deg);
 
     //Wait for sec to roll over Mod 10;
     if (sec != prev_sec /*&& sec%2 == 0*/ )
@@ -321,8 +278,7 @@ void CIRCLE_effect(void)
 
         //Wait Offset MS
         delay((int)round(offset_ms));
-        OutputStream->print("PING - sec = ");
-        OutputStream->println( sec );
+        printfnl(SOURCE_OTHER, "PING - sec = %d", sec);
       
         int hue = (int)map(deg,0,360,0,255);
         //hue = hue + offset_cnt;

@@ -73,7 +73,7 @@ static void led_task_fun( void *param )
     (void)param;
     for (;;)
     {
-        vTaskDelay(33 / portTICK_PERIOD_MS);   // ~30 FPS
+        vTaskDelay(pdMS_TO_TICKS(33));   // ~30 FPS
         if (led_dirty)
         {
             led_dirty = false;

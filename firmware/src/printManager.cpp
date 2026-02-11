@@ -8,7 +8,7 @@ SemaphoreHandle_t print_mutex;
 uint32_t debug = 0;
 bool ts = false;
 
-long threadLoopCount[4] = {0, 0, 0, 0}; // For debugging thread loops
+volatile long threadLoopCount[4] = {0, 0, 0, 0}; // For debugging thread loops
 
 void printManagerInit(Stream* defaultStream)
 {

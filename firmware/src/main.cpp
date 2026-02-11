@@ -20,7 +20,6 @@
 #include "fwupdate.h"
 #include "http.h"
 #include "gps.h"
-#include "basic_wrapper.h"
 #include "effects.h"
 #include "printManager.h"
 #include "sensors.h"
@@ -41,7 +40,7 @@
 //                 DEBUG_MSG_GPS | DEBUG_MSG_GPS_RAW;
 
 //I2C speed
-#define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal
+#define I2C_FREQ      100000 // 100 kHz standard-mode
 
 
 #ifndef BUILD_VERSION
@@ -57,7 +56,6 @@
 
 const char *wifi_ssid = "RN-ConeZ";
 const char *wifi_psk = "conezconez";
-static char hostname[17];
 
 
 void init_LittleFS()
@@ -398,7 +396,7 @@ void setup()
 
 void loop()
 {
-  vTaskDelay(1 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(1));
 
   inc_thread_count(xPortGetCoreID());
 

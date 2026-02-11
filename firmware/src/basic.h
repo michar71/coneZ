@@ -1,6 +1,12 @@
 #ifndef basic_h
 #define basic_h
 
+// basic.h and basic_extensions.h define globals and functions in the header.
+// They must only be included from one translation unit (basic_wrapper.cpp).
+#ifndef BASIC_WRAPPER_TU
+#error "basic.h must only be included from basic_wrapper.cpp (define BASIC_WRAPPER_TU first)"
+#endif
+
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,7 +79,7 @@ void DRIVER()
 {
 	while (((*pc++)()) && (globalerror == 0))
 	{
-		vTaskDelay(1 / portTICK_PERIOD_MS);
+		vTaskDelay(pdMS_TO_TICKS(1));
 	}
 }
 
@@ -123,30 +129,33 @@ void ECHO_()
 }
 
 
-int FORMAT_() 
-{ 
-	char *f; 
+int FORMAT_()
+{
+	char *f;
 	Val n=PCV, *ap=(sp+=n)-1;
+	int consumed = 0;
 	char buf[256];
 	buf[0] = 0;
 	for (f=stab + *sp++; *f; f++)
 	{
 		char local[255];
 		local[0] = 0;
-		if (*f=='%') 
+		if (*f=='%' && consumed < n)
 		{
 			snprintf(local, sizeof(local)-1, "%d", (int)*ap--);
+			consumed++;
 		}
-		else if (*f=='$') 
+		else if (*f=='$' && consumed < n)
 		{
 			snprintf(local, sizeof(local)-1, "%s", (char*)*ap--);
+			consumed++;
 		}
 		else
-		{ 
+		{
 			snprintf(local, sizeof(local)-1, "%c", *f);
 		}
-		strncat(buf,local,sizeof(buf)-1);
-	}		
+		strncat(buf, local, sizeof(buf) - strlen(buf) - 1);
+	}
 	getLock();
 	getStream()->println(buf);
 	releaseLock();
@@ -440,11 +449,11 @@ int interp(char* filen)
 	}
 	for (;;) 
 	{
-		vTaskDelay(5 / portTICK_PERIOD_MS);
+		vTaskDelay(pdMS_TO_TICKS(5));
 		globalerror=0;
 		for (;;) 
 		{
-			vTaskDelay(5 / portTICK_PERIOD_MS);
+			vTaskDelay(pdMS_TO_TICKS(5));
 			if (filen==NULL)
 			{ 
 				printfnl(SOURCE_BASIC,"> \n",lnum+1);
@@ -461,7 +470,7 @@ int interp(char* filen)
 			{
 				do
 				{
-					vTaskDelay(5 / portTICK_PERIOD_MS);
+					vTaskDelay(pdMS_TO_TICKS(5));
 					len  = getStream()->readBytesUntil('\n', lp=lbuf,sizeof lbuf);
 				}
 				while (len == 0);

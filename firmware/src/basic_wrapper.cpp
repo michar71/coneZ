@@ -7,6 +7,7 @@
 #include "FS.h"
 #include <LittleFS.h>
 #define FSLINK LittleFS
+#define BASIC_WRAPPER_TU
 #define REAL_ESP32_HW
 #include "basic.h"
 #include "gps.h"
@@ -144,7 +145,7 @@ void basic_task_fun( void * parameter )
 {
     for(;;)
     {
-        vTaskDelay(5 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(5));
         inc_thread_count(xPortGetCoreID());
         if (xSemaphoreTake(basic_mutex, portMAX_DELAY) == pdTRUE)
         {
@@ -236,7 +237,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
             long deadline = start + duration_ms;
             while (millis() < deadline)
             {
-                vTaskDelay(1 / portTICK_PERIOD_MS);
+                vTaskDelay(pdMS_TO_TICKS(1));
                 inc_thread_count(xPortGetCoreID());
                 if (timeout_ms > 0 && (millis() - start) > timeout_ms)
                 {
@@ -260,7 +261,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
             {
                 do{
                     last_pps = pps;
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
                     pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
@@ -274,7 +275,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
             {
                 do{
                     last_pps = pps;
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
                     pps = get_pps();
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
@@ -296,7 +297,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
             if (condition == CONDITON_LARGER)
             {
                 do{
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
@@ -308,7 +309,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
             if (condition == CONDITON_SMALLER)
             {
                 do{
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
@@ -320,7 +321,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
             else if (condition == CONDITON_EQUAL)
             {
                 do{
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
@@ -332,7 +333,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
             else if (condition == CONDITON_NOT_EQUAL)
             {
                 do{
-                    vTaskDelay(1 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
                     if (timeout_ms > 0 && (millis() - t) > timeout_ms)
                     {
