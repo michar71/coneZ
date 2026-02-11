@@ -488,6 +488,12 @@ File I/O
       Rename a file. Returns 1 on success, 0 on failure.
       Same path restrictions apply to both paths.
 
+  int  file_mkdir(char *path, int path_len)
+      Create a directory. Returns 1 on success, 0 on failure.
+
+  int  file_rmdir(char *path, int path_len)
+      Remove an empty directory. Returns 1 on success, 0 on failure.
+
 
 Inline Functions (compiled into module, not host imports)
 ---------------------------------------------------------
@@ -623,6 +629,12 @@ File I/O Helpers
 
   int file_rename_str(const char *old_path, const char *new_path)
       Convenience wrapper for file_rename().
+
+  int file_mkdir_str(const char *path)
+      Convenience wrapper for file_mkdir().
+
+  int file_rmdir_str(const char *path)
+      Convenience wrapper for file_rmdir().
 
 
 C Standard Library Helpers

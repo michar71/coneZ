@@ -469,6 +469,14 @@ int file_delete(const char *path, int path_len);
 __attribute__((import_module("env"), import_name("file_rename")))
 int file_rename(const char *old_path, int old_len, const char *new_path, int new_len);
 
+/* Create a directory. Returns 1 on success, 0 on failure. */
+__attribute__((import_module("env"), import_name("file_mkdir")))
+int file_mkdir(const char *path, int path_len);
+
+/* Remove an empty directory. Returns 1 on success, 0 on failure. */
+__attribute__((import_module("env"), import_name("file_rmdir")))
+int file_rmdir(const char *path, int path_len);
+
 /* ---- Math (transcendentals — host-imported, backed by platform libm) ---- */
 
 __attribute__((import_module("env"), import_name("sinf")))
@@ -929,6 +937,12 @@ static inline int file_delete_str(const char *path) {
 }
 static inline int file_rename_str(const char *old_path, const char *new_path) {
     return file_rename(old_path, (int)strlen(old_path), new_path, (int)strlen(new_path));
+}
+static inline int file_mkdir_str(const char *path) {
+    return file_mkdir(path, (int)strlen(path));
+}
+static inline int file_rmdir_str(const char *path) {
+    return file_rmdir(path, (int)strlen(path));
 }
 
 /* ---- Math / Utility Helpers ---- */

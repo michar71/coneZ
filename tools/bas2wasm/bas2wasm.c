@@ -188,6 +188,8 @@ enum {
     IMP_STR_REPEAT, IMP_STR_SPACE, IMP_STR_HEX, IMP_STR_OCT,
     IMP_STR_MID_ASSIGN,
     IMP_STR_LTRIM, IMP_STR_RTRIM,
+    IMP_FILE_OPEN, IMP_FILE_CLOSE, IMP_FILE_PRINT, IMP_FILE_READLN, IMP_FILE_EOF,
+    IMP_FILE_DELETE, IMP_FILE_RENAME, IMP_FILE_MKDIR, IMP_FILE_RMDIR,
     IMP_COUNT
 };
 
@@ -308,6 +310,15 @@ static ImportDef imp_defs[IMP_COUNT] = {
     [IMP_STR_MID_ASSIGN] = {"basic_str_mid_assign", 4,{_I,_I,_I,_I},  1,{_I}},
     [IMP_STR_LTRIM]      = {"basic_str_ltrim",      1,{_I},            1,{_I}},
     [IMP_STR_RTRIM]      = {"basic_str_rtrim",      1,{_I},            1,{_I}},
+    [IMP_FILE_OPEN]      = {"basic_file_open",      2,{_I,_I},         1,{_I}},
+    [IMP_FILE_CLOSE]     = {"basic_file_close",     1,{_I},            0,{}},
+    [IMP_FILE_PRINT]     = {"basic_file_print",     2,{_I,_I},         1,{_I}},
+    [IMP_FILE_READLN]    = {"basic_file_readln",    1,{_I},            1,{_I}},
+    [IMP_FILE_EOF]       = {"basic_file_eof",       1,{_I},            1,{_I}},
+    [IMP_FILE_DELETE]    = {"file_delete",          2,{_I,_I},         1,{_I}},
+    [IMP_FILE_RENAME]    = {"file_rename",          4,{_I,_I,_I,_I},   1,{_I}},
+    [IMP_FILE_MKDIR]     = {"file_mkdir",           2,{_I,_I},         1,{_I}},
+    [IMP_FILE_RMDIR]     = {"file_rmdir",           2,{_I,_I},         1,{_I}},
 };
 #undef _I
 #undef _F
@@ -321,6 +332,7 @@ static ImportDef imp_defs[IMP_COUNT] = {
 #define MAX_CTRL    64
 #define MAX_STRINGS 8192
 #define FMT_BUF_SIZE 256
+#define FILE_TABLE_BASE 0xF100  /* 4 i32 handles at 0xF100..0xF10F */
 
 typedef enum { T_I32 = 0, T_F32 = 1, T_STR = 2 } VType;
 
@@ -491,7 +503,11 @@ enum {
     TOK_SELECT=42, TOK_CASE=43, TOK_DO=44, TOK_LOOP=45, TOK_UNTIL=46,
     TOK_EXIT=47, TOK_SWAP=48, TOK_IS=49,
     TOK_DATA=50, TOK_READ=51, TOK_RESTORE=52,
-    TOK_MOD=53, TOK_NEXT=54, TOK_WEND=55, TOK_FUNCTION=56
+    TOK_MOD=53, TOK_NEXT=54, TOK_WEND=55, TOK_FUNCTION=56,
+    TOK_OPEN=57, TOK_CLOSE_FILE=58, TOK_AS=59,
+    TOK_KILL=60, TOK_MKDIR=61, TOK_RMDIR=62, TOK_ELSEIF=63,
+    TOK_HASH=64,  /* standalone # (file channel prefix) */
+    TOK_POW=65    /* ^ (exponentiation) */
 };
 
 static const char *kwd[] = {
@@ -499,7 +515,8 @@ static const char *kwd[] = {
     "WHILE","FOR","TO","IF","ELSE","THEN","DIM","UBOUND",
     "BYE","BREAK","RESUME","PRINTS","STEP","CONST","NOT","XOR",
     "SELECT","CASE","DO","LOOP","UNTIL","EXIT","SWAP","IS",
-    "DATA","READ","RESTORE","MOD","NEXT","WEND","FUNCTION",NULL
+    "DATA","READ","RESTORE","MOD","NEXT","WEND","FUNCTION",
+    "OPEN","CLOSE","AS","KILL","MKDIR","RMDIR","ELSEIF",NULL
 };
 
 static int next_line(void) {
@@ -545,6 +562,10 @@ static int read_tok(void) {
         tokv = (int)strtol(start, NULL, 10);
         return tok = TOK_NUMBER;
     }
+
+    /* Hash (file channel prefix) and caret (exponentiation) — before punctuation check */
+    if (*lp == '#') { lp++; return tok = TOK_HASH; }
+    if (*lp == '^') { lp++; return tok = TOK_POW; }
 
     /* Punctuation */
     if ((p = strchr(pun, *lp)) != NULL) {
@@ -1457,6 +1478,34 @@ static int compile_builtin_expr(const char *name) {
         return 1;
     }
 
+    /* ---- File I/O ---- */
+    if (strcmp(name, "LBOUND") == 0) {
+        /* LBOUND(array) — always 1 (arrays are 1-based) */
+        need(TOK_NAME); need(TOK_RP);
+        emit_i32_const(1);
+        vpush(T_I32);
+        return 1;
+    }
+    if (strcmp(name, "EOF") == 0) {
+        /* EOF(channel_number) — returns -1 at EOF, 0 otherwise (QB convention) */
+        need(TOK_NUMBER);
+        int ch = tokv;
+        if (ch < 1 || ch > 4) error_at("channel must be 1-4");
+        need(TOK_RP);
+        /* Load handle from file table, call eof */
+        emit_i32_const(FILE_TABLE_BASE + (ch - 1) * 4);
+        emit_i32_load(0);
+        emit_call(IMP_FILE_EOF);
+        /* Host returns 1/0. QB convention: -1 (true) / 0 (false). Negate: 0 - result */
+        int tmp = alloc_local();
+        emit_local_set(tmp);
+        emit_i32_const(0);
+        emit_local_get(tmp);
+        emit_op(OP_I32_SUB);
+        vpush(T_I32);
+        return 1;
+    }
+
     return 0;
 }
 
@@ -1593,12 +1642,23 @@ static void emit_int_binop(int i32_op) {
     vpush(T_I32);
 }
 
-static void factor(void) {
+static void power(void) {
     base_expr();
+    if (want(TOK_POW)) {
+        coerce_f32();
+        power();  /* right-associative: 2^3^2 = 2^(3^2) */
+        coerce_f32();
+        emit_call(IMP_POWF);
+        vpush(T_F32);
+    }
+}
+
+static void factor(void) {
+    power();
     while (want(0), (tok >= TOK_MUL && tok <= TOK_IDIV) || tok == TOK_MOD) {
         int op = tok;
         read_tok();
-        base_expr();
+        power();
         if (vsp >= 2 && (vstack[vsp-1] == T_STR || vstack[vsp-2] == T_STR)) {
             error_at("cannot use *, /, \\ or MOD on strings"); return;
         }
@@ -2533,6 +2593,211 @@ static void compile_mid_assign(void) {
     emit_global_set(vars[target].global_idx);
 }
 
+/* ================================================================
+ *  File I/O Statements
+ * ================================================================ */
+
+/* OPEN expr$ FOR INPUT|OUTPUT|APPEND AS #n */
+static void compile_open(void) {
+    /* Filename expression (must be string) */
+    expr();
+    VType ft = vpop();
+    if (ft != T_STR) { error_at("OPEN filename must be a string"); return; }
+
+    /* FOR */
+    need(TOK_FOR);
+
+    /* Mode: INPUT, OUTPUT, or APPEND (parsed as identifiers) */
+    read_tok();
+    int mode = -1;
+    if (tok == TOK_NAME) {
+        if (strcmp(vars[tokv].name, "INPUT") == 0) mode = 0;
+        else if (strcmp(vars[tokv].name, "OUTPUT") == 0) mode = 1;
+        else if (strcmp(vars[tokv].name, "APPEND") == 0) mode = 2;
+    }
+    if (mode < 0) { error_at("expected INPUT, OUTPUT, or APPEND"); return; }
+
+    /* AS */
+    need(TOK_AS);
+
+    /* #n */
+    need(TOK_HASH);
+    need(TOK_NUMBER);
+    int ch = tokv;
+    if (ch < 1 || ch > 4) { error_at("channel must be 1-4"); return; }
+
+    /* Stack has: str_ptr. Push mode, call basic_file_open → handle */
+    emit_i32_const(mode);
+    emit_call(IMP_FILE_OPEN);
+
+    /* Store handle at FILE_TABLE_BASE + (ch-1)*4 */
+    int tmp = alloc_local();
+    emit_local_set(tmp);
+    emit_i32_const(FILE_TABLE_BASE + (ch - 1) * 4);
+    emit_local_get(tmp);
+    emit_i32_store(0);
+}
+
+/* CLOSE #n */
+static void compile_close_file(void) {
+    need(TOK_HASH);
+    need(TOK_NUMBER);
+    int ch = tokv;
+    if (ch < 1 || ch > 4) { error_at("channel must be 1-4"); return; }
+
+    /* Load handle, call close */
+    emit_i32_const(FILE_TABLE_BASE + (ch - 1) * 4);
+    emit_i32_load(0);
+    emit_call(IMP_FILE_CLOSE);
+
+    /* Store -1 back (mark closed) */
+    emit_i32_const(FILE_TABLE_BASE + (ch - 1) * 4);
+    emit_i32_const(-1);
+    emit_i32_store(0);
+}
+
+/* Helper: emit (ptr, len) pair from a string expression already on the WASM stack.
+ * After calling, stack has: [ptr, len] ready for a raw file_* import. */
+static void emit_str_ptr_len(void) {
+    int tmp = alloc_local();
+    emit_local_set(tmp);           /* save ptr */
+    emit_local_get(tmp);           /* ptr (arg 1) */
+    emit_local_get(tmp);           /* ptr (for str_len) */
+    emit_call(IMP_STR_LEN);       /* → len (arg 2) */
+}
+
+/* KILL expr$ — delete a file */
+static void compile_kill(void) {
+    expr();
+    VType t = vpop();
+    if (t != T_STR) { error_at("KILL requires a string path"); return; }
+    emit_str_ptr_len();
+    emit_call(IMP_FILE_DELETE);
+    emit_drop();
+}
+
+/* NAME expr$ AS expr$ — rename a file */
+static void compile_name_stmt(void) {
+    expr();
+    VType t1 = vpop();
+    if (t1 != T_STR) { error_at("NAME requires a string path"); return; }
+    int old_ptr = alloc_local();
+    emit_local_set(old_ptr);
+
+    need(TOK_AS);
+
+    expr();
+    VType t2 = vpop();
+    if (t2 != T_STR) { error_at("NAME requires a string path"); return; }
+    int new_ptr = alloc_local();
+    emit_local_set(new_ptr);
+
+    /* file_rename(old_ptr, old_len, new_ptr, new_len) */
+    emit_local_get(old_ptr);
+    emit_local_get(old_ptr);
+    emit_call(IMP_STR_LEN);
+    emit_local_get(new_ptr);
+    emit_local_get(new_ptr);
+    emit_call(IMP_STR_LEN);
+    emit_call(IMP_FILE_RENAME);
+    emit_drop();
+}
+
+/* MKDIR expr$ — create a directory */
+static void compile_mkdir(void) {
+    expr();
+    VType t = vpop();
+    if (t != T_STR) { error_at("MKDIR requires a string path"); return; }
+    emit_str_ptr_len();
+    emit_call(IMP_FILE_MKDIR);
+    emit_drop();
+}
+
+/* RMDIR expr$ — remove an empty directory */
+static void compile_rmdir(void) {
+    expr();
+    VType t = vpop();
+    if (t != T_STR) { error_at("RMDIR requires a string path"); return; }
+    emit_str_ptr_len();
+    emit_call(IMP_FILE_RMDIR);
+    emit_drop();
+}
+
+/* PRINT #n, expr — write value + newline to file */
+static void compile_print_file(void) {
+    /* # already consumed by caller. Parse channel number. */
+    need(TOK_NUMBER);
+    int ch = tokv;
+    if (ch < 1 || ch > 4) { error_at("channel must be 1-4"); return; }
+    need(TOK_COMMA);
+
+    /* Load handle from file table */
+    emit_i32_const(FILE_TABLE_BASE + (ch - 1) * 4);
+    emit_i32_load(0);
+    int handle = alloc_local();
+    emit_local_set(handle);
+
+    /* Parse expression */
+    expr();
+    VType t = vpop();
+
+    /* Coerce to string if needed */
+    if (t == T_I32) {
+        emit_call(IMP_STR_FROM_INT);
+    } else if (t == T_F32) {
+        emit_call(IMP_STR_FROM_FLOAT);
+    }
+    /* t == T_STR: already a string pointer */
+
+    int str = alloc_local();
+    emit_local_set(str);
+
+    /* Call basic_file_print(handle, str_ptr) */
+    emit_local_get(handle);
+    emit_local_get(str);
+    emit_call(IMP_FILE_PRINT);
+    emit_drop();  /* discard bytes-written return value */
+}
+
+/* INPUT #n, var — read line from file into variable */
+static void compile_input_file(void) {
+    /* # already consumed by caller. Parse channel number. */
+    need(TOK_NUMBER);
+    int ch = tokv;
+    if (ch < 1 || ch > 4) { error_at("channel must be 1-4"); return; }
+    need(TOK_COMMA);
+
+    /* Target variable */
+    need(TOK_NAME);
+    int var = tokv;
+
+    /* Load handle, call readln → str_ptr */
+    emit_i32_const(FILE_TABLE_BASE + (ch - 1) * 4);
+    emit_i32_load(0);
+    emit_call(IMP_FILE_READLN);
+
+    /* Convert and store based on target variable type */
+    if (vars[var].type == T_STR) {
+        /* String: free old, store new */
+        int new_val = alloc_local();
+        emit_local_set(new_val);
+        emit_global_get(vars[var].global_idx);
+        emit_call(IMP_STR_FREE);
+        emit_local_get(new_val);
+        emit_global_set(vars[var].global_idx);
+    } else if (vars[var].type == T_F32) {
+        /* Float: str_to_float, store */
+        emit_call(IMP_STR_TO_FLOAT);
+        if (!vars[var].type_set) { vars[var].type = T_F32; vars[var].type_set = 1; }
+        emit_global_set(vars[var].global_idx);
+    } else {
+        /* Integer: str_to_int, store */
+        emit_call(IMP_STR_TO_INT);
+        if (!vars[var].type_set) { vars[var].type = T_I32; vars[var].type_set = 1; }
+        emit_global_set(vars[var].global_idx);
+    }
+}
+
 static void stmt(void) {
     int t = read_tok();
     if (had_error) return;
@@ -2556,6 +2821,16 @@ static void stmt(void) {
     case TOK_FOR:     compile_for(); break;
     case TOK_IF:      compile_if(); break;
     case TOK_ELSE:    compile_else(); break;
+    case TOK_ELSEIF:
+        if (ctrl_sp == 0 || ctrl_stk[ctrl_sp-1].kind != CTRL_IF) {
+            error_at("ELSEIF without IF"); break;
+        }
+        emit_else();
+        expr(); coerce_i32(); vpop();
+        want(TOK_THEN);  /* optional THEN */
+        emit_if_void();
+        ctrl_stk[ctrl_sp-1].if_extra_ends++;
+        break;
     case TOK_DIM:     compile_dim(); break;
     case TOK_CONST:   compile_const(); break;
     case TOK_SELECT:  compile_select(); break;
@@ -2572,6 +2847,11 @@ static void stmt(void) {
     case TOK_BYE:     emit_return(); break;
     case TOK_BREAK:   emit_return(); break;
     case TOK_RESUME:  error_at("RESUME not supported in compiled code"); break;
+    case TOK_OPEN:       compile_open(); break;
+    case TOK_CLOSE_FILE: compile_close_file(); break;
+    case TOK_KILL:       compile_kill(); break;
+    case TOK_MKDIR:      compile_mkdir(); break;
+    case TOK_RMDIR:      compile_rmdir(); break;
     case TOK_GT: {
         /* > expr — print expression */
         expr();
@@ -2598,6 +2878,18 @@ static void stmt(void) {
         int var = tokv;
         if (strcmp(vars[var].name, "MID$") == 0) {
             compile_mid_assign();
+            break;
+        }
+        if (strcmp(vars[var].name, "PRINT") == 0 && want(TOK_HASH)) {
+            compile_print_file();
+            break;
+        }
+        if (strcmp(vars[var].name, "INPUT") == 0 && want(TOK_HASH)) {
+            compile_input_file();
+            break;
+        }
+        if (strcmp(vars[var].name, "NAME") == 0) {
+            compile_name_stmt();
             break;
         }
         if (want(TOK_EQ)) {
@@ -3020,6 +3312,13 @@ static void compile(void) {
     nftypes = 0;
     line_num = 0;
     src_pos = 0;
+
+    /* Initialize file handle table to -1 (closed) */
+    for (int i = 0; i < 4; i++) {
+        emit_i32_const(FILE_TABLE_BASE + i * 4);
+        emit_i32_const(-1);
+        emit_i32_store(0);
+    }
 
     while (next_line()) {
         ungot = 0;

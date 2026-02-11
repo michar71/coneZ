@@ -24,7 +24,7 @@ Operators
 
   Category        QuickBASIC 4.5                  bas2wasm
   --------        --------------                  --------
-  Arithmetic      + - * / \ MOD ^                 + - * / \ MOD. No ^ (use POW())
+  Arithmetic      + - * / \ MOD ^                 + - * / \ MOD ^ (compiler-only)
   Comparison      = <> < > <= >=                  Same
   Logical         AND OR NOT XOR EQV IMP          AND OR NOT XOR. No EQV, IMP
   String concat   +                               + (compiler-only)
@@ -36,7 +36,7 @@ Control Flow
   Construct             QuickBASIC 4.5                bas2wasm
   ---------             --------------                --------
   IF single-line        IF...THEN                     IF...THEN
-  IF multi-line         IF/ELSEIF/ELSE/END IF         IF/ELSE IF/ELSE/END IF
+  IF multi-line         IF/ELSEIF/ELSE/END IF         IF/ELSEIF/ELSE IF/ELSE/END IF
   FOR loop              FOR...NEXT, STEP, EXIT FOR    FOR...NEXT, STEP, EXIT FOR
   WHILE                 WHILE...WEND                  WHILE...WEND, EXIT WHILE
   DO/LOOP               DO WHILE/UNTIL...LOOP         All 5 variants, EXIT DO
@@ -71,7 +71,7 @@ Arrays
   -------         --------------                  --------
   DIM             Multi-dimensional, custom bounds 1D only, 1-indexed
   REDIM           Yes (dynamic resize)            No
-  UBOUND/LBOUND   Both                            UBOUND only
+  UBOUND/LBOUND   Both                            Both (LBOUND always 1)
   OPTION BASE     0 or 1                          Always 1
   ERASE           Yes                             No
   Array ops       No built-in                     SETARRAY, SHIFTARRAY, ROTATEARRAY,
@@ -109,8 +109,11 @@ I/O
   PRINT             PRINT, ; / , fmt        > expr (one value + newline)
   Formatted output  PRINT USING             FORMAT "...", args (% int, $ str, & flt)
   String print      PRINT a$               PRINTS (interp), > a$ (compiler)
-  INPUT             INPUT, LINE INPUT       No
-  File I/O          OPEN, CLOSE, etc.       No (WASM runtime has file I/O)
+  INPUT             INPUT, LINE INPUT       INPUT #n (file only, compiler-only)
+  File I/O          OPEN, CLOSE, etc.       OPEN/CLOSE/PRINT#/INPUT#/EOF
+                                            (compiler-only, channels 1-4)
+  File mgmt         KILL, NAME AS           KILL, NAME AS, MKDIR, RMDIR
+                    MKDIR, RMDIR            (compiler-only)
   Screen            LOCATE, COLOR, CLS      n/a (embedded LED system)
 
 
@@ -123,7 +126,7 @@ Math Functions
   TAN               Yes               Yes (compiler-only, f32)
   ATN               ATN(x) (1-arg)    ATAN2(y, x) (2-arg, compiler-only)
   SQR               Yes               SQRT (compiler-only)
-  ^ / POW           x ^ y operator    POW(x, y) function (compiler-only)
+  ^ / POW           x ^ y operator    x ^ y and POW(x, y) (compiler-only)
   ABS               Yes               Yes
   SGN               Yes               Yes (compiler-only, returns i32)
   INT, FIX, CINT    Type conversion   INT(), FLOAT()
@@ -184,9 +187,9 @@ has strings and floats, with QuickBASIC-compatible syntax for operators
 (\ for integer division, MOD keyword), loop closing (NEXT, WEND), comments
 (apostrophe), type suffixes ($ for string, # for float), and string functions
 (UCASE$, LCASE$, LTRIM$, RTRIM$). It omits QB45 features that don't apply to
-its domain (graphics, file I/O, screen modes, GOTO/GOSUB, user-defined types,
+its domain (graphics, screen modes, GOTO/GOSUB, user-defined types,
 error handling). In exchange it has hardware-specific builtins (GPS, IMU, LEDs,
 LoRa params, LUT tables) that QB45 obviously doesn't have.
 
-The biggest remaining gaps vs QB45 are: no EQV/IMP operators, no INPUT,
-and no GOTO/GOSUB.
+The biggest remaining gaps vs QB45 are: no EQV/IMP operators, no console
+INPUT (file INPUT is supported), no GOTO/GOSUB, and no multi-dimensional arrays.

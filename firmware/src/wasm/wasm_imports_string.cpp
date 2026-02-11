@@ -25,7 +25,7 @@ static int str_nallocs = 0;
 static uint32_t str_bump = STR_POOL_START;
 
 // Bounded strlen in WASM memory
-static int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr)
+int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr)
 {
     if (ptr == 0 || ptr >= mem_size) return 0;
     int len = 0;
@@ -34,7 +34,7 @@ static int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr)
     return len;
 }
 
-static uint32_t pool_alloc(IM3Runtime runtime, int size)
+uint32_t pool_alloc(IM3Runtime runtime, int size)
 {
     if (size <= 0) size = 1;
     size = (size + 3) & ~3;  // 4-byte align

@@ -24,4 +24,8 @@ void wasm_close_all_files(void);   // defined in wasm_imports_file.cpp
 void wasm_reset_gamma(void);       // defined in wasm_imports_led.cpp
 void wasm_string_pool_reset(void); // defined in wasm_imports_string.cpp
 
+// String pool helpers (defined in wasm_imports_string.cpp, used by file imports)
+uint32_t pool_alloc(IM3Runtime runtime, int size);
+int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr);
+
 #endif

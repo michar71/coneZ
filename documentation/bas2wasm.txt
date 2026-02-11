@@ -37,6 +37,11 @@ basic-scripting.txt) with the following differences:
     - EXIT FOR, EXIT WHILE, EXIT DO, EXIT SELECT
     - SWAP (numeric and string variables)
     - DATA/READ/RESTORE for embedded data tables
+    - File I/O: OPEN/CLOSE, PRINT#/INPUT#, EOF
+    - File management: KILL, NAME...AS, MKDIR, RMDIR
+    - Exponentiation operator: ^ (right-associative, returns f32)
+    - ELSEIF keyword (equivalent to ELSE IF)
+    - LBOUND() function (always returns 1)
 
   Additions (string):
     - String variables (A$, NAME$, etc.)
@@ -129,6 +134,19 @@ Operators (compiler-only):
 
     NOT -1 = 0        NOT 0 = -1
     -1 XOR -1 = 0     -1 XOR 0 = -1     0 XOR 0 = 0
+
+
+Exponentiation:
+
+  x ^ y               Power (x raised to y). Right-associative.
+                       Both operands coerced to f32, result is f32.
+
+    2 ^ 3 = 8.0       ' 2 cubed
+    2 ^ 0.5 = 1.414   ' square root of 2
+    2 ^ 3 ^ 2 = 512   ' right-associative: 2^(3^2) = 2^9
+
+  The ^ operator has higher precedence than * / \ MOD.
+  The POW(x, y) function is equivalent.
 
 
 Integer Division and Modulo:
@@ -328,6 +346,44 @@ String Functions:
     FORMAT "Num: $", STR$(42)            ' 42
 
     IF INSTR(NAME$, "one") > 0 THEN FORMAT "Found!"
+
+
+ELSEIF (compiler-only)
+---------------------
+
+  ELSEIF provides a shorthand for ELSE IF in multi-line IF blocks.
+  An optional THEN keyword is accepted but not required.
+
+    IF x = 1
+        FORMAT "one"
+    ELSEIF x = 2
+        FORMAT "two"
+    ELSEIF x = 3
+        FORMAT "three"
+    ELSE
+        FORMAT "other"
+    END IF
+
+  This is equivalent to nested ELSE IF:
+
+    IF x = 1
+        FORMAT "one"
+    ELSE IF x = 2
+        FORMAT "two"
+    ELSE
+        FORMAT "other"
+    END IF
+
+
+LBOUND (compiler-only)
+----------------------
+
+  LBOUND(array) returns the lower bound of an array. Since all arrays in
+  ConeZ BASIC are 1-based, this always returns 1.
+
+    DIM A(100)
+    FORMAT "Lower: %", LBOUND(A)   ' 1
+    FORMAT "Upper: %", UBOUND(A)   ' 100
 
 
 SELECT CASE (compiler-only)
@@ -573,6 +629,7 @@ Memory layout:
   [data_end .. heap)    Heap for DIM arrays (bump-allocated)
   [0x8000 .. 0xEFFF)   String pool (host-managed, for runtime strings)
   [0xF000 .. 0xF100)   FORMAT argument buffer (scratch space)
+  [0xF100 .. 0xF110)   File handle table (4 x i32, init to -1)
 
 Variables are WASM globals (not in linear memory). Arrays are allocated
 from the heap in linear memory.
@@ -620,6 +677,89 @@ Without STEP, FOR I = 0 TO 10 runs for I = 0, 1, ..., 9.
 With a positive STEP, the loop exits when I >= limit.
 With a negative STEP, the loop exits when I <= limit. The direction
 check is automatic at runtime based on the sign of the step value.
+
+
+File I/O (compiler-only)
+------------------------
+
+The compiler supports QuickBASIC-compatible file I/O using channels 1-4
+(matching the WASM runtime's 4-file limit).
+
+Syntax:
+
+  OPEN "/data.txt" FOR INPUT AS #1      ' open for reading
+  OPEN "/data.txt" FOR OUTPUT AS #2     ' open for writing (creates/truncates)
+  OPEN "/data.txt" FOR APPEND AS #3     ' open for appending
+
+  CLOSE #1                              ' close a channel
+
+  PRINT #1, expr                        ' write value + newline
+  PRINT #1, A$                          ' write string + newline
+  PRINT #1, 42                          ' write "42\n"
+  PRINT #1, 3.14                        ' write "3.14\n"
+
+  INPUT #1, A$                          ' read line into string variable
+  INPUT #1, X                           ' read line, convert to integer
+  INPUT #1, F#                          ' read line, convert to float
+
+  IF EOF(1) THEN ...                    ' -1 at EOF, 0 otherwise (QB convention)
+
+Modes:
+  INPUT    Open for reading. File must exist.
+  OUTPUT   Open for writing. Creates file or truncates existing.
+  APPEND   Open for appending. Creates file if it doesn't exist.
+
+Channels:
+  Channels 1-4 are available (# prefix required). Each channel holds one
+  open file handle. Opening a new file on an already-open channel does not
+  automatically close the previous file — use CLOSE first.
+
+Path rules (same as WASM runtime):
+  - Paths must start with /
+  - No .. (path traversal blocked)
+  - /config.ini is protected (cannot be opened)
+  - Maximum path length: 127 characters
+
+PRINT # writes the expression value as a string followed by a newline.
+Numeric values are automatically converted to strings (integers via STR$,
+floats via STR$).
+
+INPUT # reads one line from the file (up to 255 characters). The line is
+converted to the target variable's type: strings are stored directly,
+integers use VAL(), floats use VAL#().
+
+EOF(n) returns -1 (true) when channel n has no more data, 0 (false)
+otherwise. This follows the QuickBASIC convention where true = -1.
+
+File management statements (QuickBASIC-compatible):
+
+  KILL "/file.txt"                      ' delete a file
+  NAME "/old.txt" AS "/new.txt"         ' rename a file
+  MKDIR "/subdir"                       ' create a directory
+  RMDIR "/subdir"                       ' remove an empty directory
+
+All take string expressions (not just literals):
+
+  PATH$ = "/data"
+  MKDIR PATH$
+  KILL PATH$ + "/temp.txt"
+
+Example:
+
+  ' Write data
+  OPEN "/test_io.txt" FOR OUTPUT AS #1
+  PRINT #1, "Hello World"
+  PRINT #1, 42
+  PRINT #1, 3.14
+  CLOSE #1
+
+  ' Read it back
+  OPEN "/test_io.txt" FOR INPUT AS #2
+  WHILE NOT EOF(2)
+      INPUT #2, LINE$
+      FORMAT "Read: $", LINE$
+  WEND
+  CLOSE #2
 
 
 Limitations
