@@ -4,16 +4,7 @@
 #include "main.h"
 #include "util.h"
 #include "printManager.h"
-
-
-// Default LoRa parameters
-#define DOWNSTREAM_FREQUENCY    431.250         // 431.250MHz
-#define DOWNSTREAM_BANDWIDTH    500.0           // 500kHz
-#define DOWNSTREAM_SF           9               // SF7...SF12
-#define DOWNSTREAM_CR           6               // 4/6 coding rate
-#define DOWNSTREAM_PREAMBLE     8               // 8 preamble symbols
-#define DOWNSTREAM_TXPOWER      10              // Transmit power
-#define LORA_SYNC_WORD          0x1424          // LoRa private sync word
+#include "config.h"
 
 #define LORA_SPI_FREQ           1000000
 
@@ -47,8 +38,7 @@ int lora_setup( void )
   radio.setTCXO( 1.8, 5000 );
   radio.setDio2AsRfSwitch();
 
-  //int status = radio.begin( DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_SF, DOWNSTREAM_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, DOWNSTREAM_TXPOWER, DOWNSTREAM_PREAMBLE );
-  int status = radio.begin( DOWNSTREAM_FREQUENCY );
+  int status = radio.begin( config.lora_frequency );
 
   if( status != RADIOLIB_ERR_NONE )
   {
@@ -64,11 +54,11 @@ int lora_setup( void )
 
   // Set misc LoRa parameters.
   //radio.setSyncWord( 0xDE, 0xAD );
-  radio.setSpreadingFactor( DOWNSTREAM_SF );
-  radio.setBandwidth( DOWNSTREAM_BANDWIDTH );
-  radio.setCodingRate( DOWNSTREAM_CR );
-  radio.setPreambleLength( DOWNSTREAM_PREAMBLE );
-  radio.setSyncWord( 0x12 );
+  radio.setSpreadingFactor( config.lora_sf );
+  radio.setBandwidth( config.lora_bandwidth );
+  radio.setCodingRate( config.lora_cr );
+  radio.setPreambleLength( config.lora_preamble );
+  radio.setSyncWord( config.lora_sync_word );
   radio.setCRC( true );
 
   radio.setDio1Action( lora_rxdone );
@@ -134,15 +124,15 @@ float lora_get_snr(void)
 
 float lora_get_frequency(void)
 {
-    return DOWNSTREAM_FREQUENCY;
+    return config.lora_frequency;
 }
 
 float lora_get_bandwidth(void)
 {
-    return DOWNSTREAM_BANDWIDTH;
+    return config.lora_bandwidth;
 }
 
 int lora_get_sf(void)
 {
-    return DOWNSTREAM_SF;
+    return config.lora_sf;
 }
