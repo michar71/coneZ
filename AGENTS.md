@@ -117,8 +117,16 @@ Each file contains its wrapper functions and a `link_*_imports()` function that 
 
 **Automatic yield:** The `m3_Yield()` hook fires every ~10K WASM Call opcodes, yielding to FreeRTOS and checking the stop flag. This prevents runaway modules from starving the watchdog even if they never call `delay_ms()`. Explicit `delay_ms()` calls are still recommended in loops for predictable timing.
 
-**Authoring modules (C):** Header at `tools/wasm/conez_api.h` declares all imports and provides libc-equivalent functions. Build with clang:
+**Authoring modules (C):** Header at `tools/wasm/conez_api.h` declares all imports and provides libc-equivalent functions. Two compilation options:
 
+Option 1 — **c2wasm** (self-contained, no external dependencies):
+```bash
+cd tools/c2wasm && make          # build the compiler once
+./c2wasm ../wasm/examples/rgb_cycle.c -o rgb_cycle.wasm
+```
+c2wasm compiles a C subset (int/float/void/char, if/else/for/while/do/switch, full operator precedence, `#include "conez_api.h"`, `#define`, `#ifdef`/`#if N`, printf, host_snprintf, file I/O, WASM-native sqrtf/fabsf/floorf/ceilf) directly to WASM. No clang, LLVM, or SDK needed. Test suite: `make test` (38 tests). See `documentation/c2wasm.txt` for the full reference.
+
+Option 2 — **clang** (full C, optimized output):
 ```bash
 cd tools/wasm
 clang --target=wasm32 -mbulk-memory -O2 -nostdlib \
@@ -135,6 +143,8 @@ llvm-strip module.wasm
 Both use `cdylib` crate type, `opt-level = "z"`, LTO, strip, `panic = "abort"`. Post-process with `wasm-opt --enable-bulk-memory -Oz` to reduce binary size.
 
 See `tools/wasm/examples/` for sample modules (C and Rust). Use `make -C tools/wasm` to build all examples and `make -C tools/wasm install` to copy them to `firmware/data/` for LittleFS upload.
+
+**Offline compiler tools:** `tools/bas2wasm/` (BASIC→WASM) and `tools/c2wasm/` (C→WASM) are self-contained compilers with no external dependencies beyond libc. Both share `tools/buildnum.txt` for version tracking. Build each with `make` from its directory. See `documentation/bas2wasm.txt` and `documentation/c2wasm.txt` for full references.
 
 ### Desktop Simulator
 

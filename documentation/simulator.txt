@@ -51,6 +51,7 @@ Command-Line Options
   --leds <count>       LED count per channel (default 50, all 4 channels)
   --sandbox <path>     Directory for file I/O and script storage
   --bas2wasm <path>    Path to bas2wasm compiler (default: bas2wasm on PATH)
+  --c2wasm <path>      Path to c2wasm compiler (default: c2wasm on PATH)
   --clang <path>       Path to clang compiler (default: clang on PATH)
   --api-dir <path>     Directory containing conez_api.h (auto-detected from
                        bas2wasm location if not set)
@@ -82,7 +83,9 @@ Compilation
 The simulator auto-detects file type by extension and compiles as needed:
 
   .bas   Runs bas2wasm to produce a temporary .wasm, then executes it.
-  .c     Runs clang --target=wasm32 with the same flags used for firmware
+  .c     Runs c2wasm (if available) or clang --target=wasm32 to compile.
+         c2wasm is preferred as it has no external dependencies.
+         clang is used as a fallback with the same flags used for firmware
          modules (see wasm-api.txt). Includes conez_api.h automatically
          if --api-dir is set or auto-detected.
   .wasm  Executed directly.

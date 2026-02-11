@@ -1,0 +1,349 @@
+c2wasm — C to WASM Compiler for ConeZ
+======================================
+
+c2wasm is a self-contained C-to-WASM compiler for the ConeZ platform.
+It compiles a subset of C directly to WASM 1.0 binaries targeting the
+ConeZ wasm3 host API. No external dependencies beyond libc — usable
+when clang/LLVM is unavailable, just like bas2wasm.
+
+
+Building the Compiler
+---------------------
+
+  cd tools/c2wasm
+  make
+
+Produces the c2wasm binary. Requires only a C compiler (cc/gcc/clang).
+
+
+Usage
+-----
+
+  ./c2wasm input.c -o output.wasm
+  ./c2wasm input.c                   # output defaults to input.wasm
+  ./c2wasm --version                 # show version and build number
+
+The compiler reads a single .c source file and produces a WASM binary
+that exports setup(), loop(), and memory — matching the ConeZ runtime's
+expected entry points.
+
+
+Source File Structure
+---------------------
+
+A typical c2wasm program:
+
+  #include "conez_api.h"
+
+  static int counter = 0;
+
+  void setup(void) {
+      print("hello\n");
+  }
+
+  void loop(void) {
+      counter++;
+      delay_ms(100);
+  }
+
+The #include "conez_api.h" directive is special-cased: it registers all
+ConeZ API functions as known imports with their C types. No actual file
+reading or header parsing is performed.
+
+At least one of setup() or loop() must be defined. Both are exported.
+
+
+Supported C Features
+--------------------
+
+Types:
+  int           32-bit signed integer (WASM i32)
+  float         32-bit float (WASM f32)
+  void          no value
+  char          8-bit integer (treated as i32)
+  double        64-bit float (WASM f64, only for printf promotion)
+  unsigned      accepted as qualifier, treated as int
+  long          accepted as qualifier (long long = int)
+  const         accepted; const int globals with literal initializers
+                become compile-time constants
+  static        accepted on globals and functions
+
+  Pointers (int *, char *, const char *, void *) are parsed but treated
+  as i32. No pointer arithmetic or dereferencing.
+
+Declarations:
+  Global variables with optional initializer:
+    static int frame = 0;
+    static float brightness = 1.0f;
+    int x = 42, y = 0;
+
+  Local variables with optional initializer:
+    int i = 0;
+    float dist = origin_dist();
+
+  Function definitions with parameters and return types:
+    static void helper(int channel, int brightness) { ... }
+    static int clamp(int val, int lo, int hi) { ... }
+
+  Forward declarations:
+    static void helper(int channel, int brightness);
+
+Control Flow:
+  if (cond) stmt
+  if (cond) stmt else stmt
+  while (cond) stmt
+  do stmt while (cond);
+  for (init; cond; incr) stmt
+  switch (expr) { case N: ... break; default: ... break; }
+  break
+  continue
+  return expr;
+  return;
+  { compound statements }
+
+  For-loop init declarations are supported: for (int i = 0; ...).
+  Switch/case uses sequential if-comparisons (no fall-through).
+
+Expressions (full C operator precedence):
+  Arithmetic:    +  -  *  /  %
+  Comparison:    ==  !=  <  >  <=  >=
+  Logical:       &&  ||  !          (short-circuit evaluation)
+  Bitwise:       &  |  ^  ~  <<  >>
+  Assignment:    =  +=  -=  *=  /=  %=  &=  |=  ^=  <<=  >>=
+  Increment:     ++var  --var  var++  var--
+  Ternary:       cond ? then : else
+  Cast:          (int)expr  (float)expr  (double)expr  (void)expr
+  sizeof:        sizeof(int)  sizeof(float)  sizeof(double)
+                 sizeof(expr) — returns type size without evaluating expr
+
+  Operator precedence follows the C standard (15 levels).
+  Mixed int/float expressions promote to float automatically.
+  Bitwise operators coerce operands to int.
+
+Literals:
+  Integer:       42, 0xFF, 0x1A, 0755, -1
+  Float:         3.14f, 0.5f, 1.0, .5, 5.
+  Character:     'A', '\n', '\t', '\\', '\0', '\x41'
+  String:        "hello\n", "multi" "part" (concatenation)
+
+Preprocessor:
+  #include "conez_api.h"      Register all ConeZ API imports
+  #include <stdint.h>         Silently ignored (standard headers)
+  #define NAME value          Simple text macros (no function-like macros)
+  #ifdef NAME ... #endif      Conditional compilation
+  #ifndef NAME ... #endif     Conditional compilation
+  #else                       Else branch for #ifdef/#ifndef
+  #if 0 ... #endif            Block comment via preprocessor
+  #if N ... #endif            Any integer (0 = skip, nonzero = keep)
+
+Comments:
+  // line comments
+  /* block comments */
+
+
+Builtins
+--------
+
+printf(fmt, args...):
+  Compiles to host_printf(fmt_ptr, args_ptr). The format string is stored
+  in the data section. Arguments are saved to temporary WASM locals, then
+  stored sequentially at memory address 0xF000. Float arguments are
+  promoted to double per C's default argument promotion rules.
+
+  Supported format specifiers: %d %i %u %x %X %c %s %f %p %%
+  With width, precision, flags (as handled by the host's snprintf).
+
+  Example:
+    printf("dist: %.1f m\n", (double)dist);
+
+print(str):
+  Shorthand for print_str(ptr, len). Only accepts string literals:
+    print("hello world\n");
+
+WASM-native math (single opcode, no import):
+  These functions compile directly to WASM opcodes with zero overhead.
+  No host import is needed — the WASM engine executes them natively.
+
+  Float (f32):   sqrtf, fabsf, floorf, ceilf
+  Double (f64):  sqrt, fabs, floor, ceil
+
+  Example:
+    float r = sqrtf(x*x + y*y);
+    float a = fabsf(value);
+
+
+ConeZ API Functions
+-------------------
+
+All functions declared in tools/wasm/conez_api.h are available after
+#include "conez_api.h". These include:
+
+  LED:        led_set_pixel, led_fill, led_show, led_count,
+              led_set_pixel_hsv, led_fill_hsv, led_gamma8, led_set_gamma,
+              led_set_buffer, led_shift, led_rotate, led_reverse,
+              hsv_to_rgb, rgb_to_hsv
+
+  GPIO:       pin_set, pin_clear, pin_read, analog_read
+
+  GPS:        get_lat, get_lon, get_alt, get_speed, get_dir,
+              gps_valid, gps_present, has_origin, origin_dist,
+              origin_bearing, get_origin_lat, get_origin_lon
+
+  IMU:        get_roll, get_pitch, get_yaw, get_acc_x/y/z,
+              imu_valid, imu_present
+
+  Sensors:    get_temp, get_humidity, get_brightness,
+              get_bat_voltage, get_solar_voltage,
+              get_battery_percentage, get_battery_runtime
+
+  Sun:        get_sunrise, get_sunset, sun_valid, is_daylight,
+              get_sun_azimuth, get_sun_elevation
+
+  Time:       millis, delay_ms, time_valid, get_second, get_minute,
+              get_hour, get_day, get_month, get_year,
+              get_day_of_week, get_day_of_year, get_is_leap_year,
+              get_epoch_ms, get_uptime_ms, get_last_comm_ms
+
+  Params:     get_param, set_param, should_stop, random_int
+
+  Sync:       wait_pps, wait_param, cue_playing, cue_elapsed
+
+  Output:     print_i32, print_f32, print_i64, print_f64, print_str
+
+  Math:       sinf, cosf, tanf, asinf, acosf, atanf, atan2f,
+              powf, expf, logf, log2f, fmodf
+
+  File I/O:   file_open, file_close, file_read, file_write,
+              file_size, file_seek, file_tell,
+              file_exists, file_delete, file_rename,
+              file_mkdir, file_rmdir
+
+  LUT:        lut_load, lut_save, lut_check, lut_get, lut_set, lut_size
+
+  Format:     host_snprintf (low-level snprintf to WASM memory)
+
+See documentation/wasm-api.txt for full API documentation.
+
+
+NOT Supported
+-------------
+
+The following C features are NOT in scope:
+
+  - struct, union, enum, typedef
+  - Arrays and pointer arithmetic
+  - malloc/free (dynamic memory allocation)
+  - goto, labels
+  - Function pointers
+  - Multi-file compilation (#include of user headers)
+  - Variadic functions (except printf builtin)
+  - Bitfields
+  - Comma operator in expressions
+  - String operations at runtime (strlen, strcmp, etc.)
+
+For programs requiring these features, use clang --target=wasm32 instead.
+
+
+Memory Layout
+-------------
+
+  0x0000 - data_len      String literal data section
+  data_len - heap_start  Padding (4-byte aligned)
+  heap_start+            Heap (available for host_printf args, etc.)
+  0xF000 - 0xF0FF        Printf argument buffer (256 bytes)
+
+  WASM globals:
+    global[0]   _heap_ptr    Bump allocator pointer (initialized to heap_start)
+    global[1+]  User globals (static int, static float, etc.)
+
+
+Compiler Architecture
+---------------------
+
+Source files in tools/c2wasm/:
+
+  c2wasm.h      Shared header: WASM opcodes, C type system, symbol table,
+                emit helpers, token definitions
+  main.c        Driver: global state, argument parsing, top-level compile
+  lexer.c       C tokenizer: identifiers, keywords, literals, operators,
+                comments, macro expansion
+  preproc.c     Minimal preprocessor: #include special-case, #define,
+                #ifdef/#ifndef/#else/#endif, #if N, API registration
+  type.c        Type parsing (void/int/float/double/char/unsigned/long/
+                static/const) and pointer star consumption
+  expr.c        Precedence-climbing expression parser (15 levels),
+                short-circuit &&/||, casts, ternary, printf/print builtins
+  stmt.c        Statement parser: functions, if/else, for, while, do/while,
+                switch/case, break/continue/return, local/global declarations
+  assemble.c    WASM binary assembly: type/import/function/memory/global/
+                export/code/data sections, import index remapping
+  buf.c         Byte buffer primitives (from bas2wasm, with f64/i64 additions)
+  imports.c     ConeZ API import definition table (from bas2wasm)
+
+The compiler makes a single pass over the source, emitting WASM bytecode
+directly into per-function buffers. Import call targets are recorded as
+fixups and remapped during assembly to account for import compaction
+(only used imports are included in the output).
+
+
+Examples
+--------
+
+All three examples in tools/wasm/examples/ compile with c2wasm:
+
+  cd tools/c2wasm
+  ./c2wasm ../wasm/examples/rgb_cycle.c -o rgb_cycle.wasm
+  ./c2wasm ../wasm/examples/hsv_rainbow.c -o hsv_rainbow.wasm
+  ./c2wasm ../wasm/examples/sos_flash.c -o sos_flash.wasm
+
+Output sizes (unstripped):
+  rgb_cycle.wasm       314 bytes   (5 imports, 2 functions)
+  hsv_rainbow.wasm     316 bytes   (5 imports, 2 functions)
+  sos_flash.wasm       633 bytes   (9 imports, 3 functions)
+
+
+Testing
+-------
+
+The test suite is in tools/c2wasm/test/. Run with:
+
+  cd tools/c2wasm
+  make test
+
+Tests compile each .c file to .wasm and validate with wasm-objdump.
+Reject tests (reject_*.c) verify that the compiler correctly reports
+errors. The three examples in tools/wasm/examples/ are also compiled.
+
+Test files cover: basic types, arithmetic, bitwise ops, comparisons,
+control flow (if/while/do/for/switch/break/continue), assignment ops,
+user functions (forward decls, recursion), casts and sizeof, ternary
+operator, literals (int/float/char/string/hex/octal), printf formats,
+preprocessor (#define/#ifdef/#if 0/#if N), scoping (block/for-init/shadow),
+math imports, trig imports (asinf/acosf/atanf), API calls, file I/O,
+WASM-native builtins (sqrtf/fabsf/floorf/ceilf), comments, setup-only
+and loop-only programs, recursive and mutual macro guards, nested #ifdef,
+sizeof without evaluation, implicit returns, ternary and for-loop
+increment with function calls (call fixup adjustment), and string
+concatenation.
+
+Adding a test: create a .c file in test/. Positive tests must compile
+to valid WASM. Files named reject_*.c must fail compilation.
+
+
+Comparison with clang
+---------------------
+
+  Feature              c2wasm              clang
+  -------              ------              -----
+  Dependencies         libc only           LLVM/clang toolchain
+  Build time           <1ms per file       ~100ms per file
+  Optimization         None (direct emit)  -O2 (dead code, inlining, etc.)
+  Output size          Slightly larger     Smaller (optimized)
+  C coverage           Subset (see above)  Full C11/C17
+  bulk-memory          Not used            -mbulk-memory for memcpy/memset
+  Debug info           None                Optional (-g)
+  Portability          Any C compiler      Requires LLVM target support
+
+For simple LED/sensor programs, c2wasm produces functionally identical
+output. For programs requiring structs, arrays, pointer arithmetic, or
+advanced optimization, use clang.

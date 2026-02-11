@@ -11,7 +11,18 @@ the C header at tools/wasm/conez_api.h.
 Building Modules
 ----------------
 
-C modules:
+C modules (Option 1 — c2wasm, no external dependencies):
+
+  cd tools/c2wasm && make       # build the compiler once
+  ./c2wasm input.c -o output.wasm
+
+  c2wasm is a self-contained C-to-WASM compiler that requires only libc.
+  It compiles a C subset (int/float/void/char, control flow, full operator
+  precedence, printf, #include "conez_api.h", #define, #ifdef) directly to
+  WASM. Useful when clang/LLVM is unavailable. See documentation/c2wasm.txt
+  for the full language reference and limitations.
+
+C modules (Option 2 — clang, full C with optimization):
 
   cd tools/wasm
   clang --target=wasm32 -mbulk-memory -O2 -nostdlib \
