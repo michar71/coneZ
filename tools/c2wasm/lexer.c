@@ -88,6 +88,10 @@ static struct kw keywords[] = {
     {"const",    TOK_CONST},
     {"unsigned", TOK_UNSIGNED},
     {"long",     TOK_LONG},
+    {"short",    TOK_SHORT},
+    {"signed",   TOK_SIGNED},
+    {"_Bool",    TOK_BOOL},
+    {"bool",     TOK_BOOL},
     {"sizeof",   TOK_SIZEOF},
     {NULL, 0}
 };
@@ -205,16 +209,18 @@ static int lex_raw(void) {
         }
         nbuf[len] = 0;
 
-        /* Skip f/F suffix */
+        /* Check for f/F suffix — explicit float vs implicit double */
+        int has_f_suffix = 0;
         if (src_pos < src_len && (ch() == 'f' || ch() == 'F')) {
             advance();
             is_float = 1;
+            has_f_suffix = 1;
         }
 
         if (is_float) {
             tok_fval = strtof(nbuf, NULL);
             tok_dval = strtod(nbuf, NULL);
-            return TOK_FLOAT_LIT;
+            return has_f_suffix ? TOK_FLOAT_LIT : TOK_DOUBLE_LIT;
         }
         tok_ival = (int)strtol(nbuf, NULL, 10);
         /* Skip U/L suffixes */
@@ -526,6 +532,7 @@ const char *tok_name(int t) {
     case TOK_NAME: return "identifier";
     case TOK_INT_LIT: return "integer literal";
     case TOK_FLOAT_LIT: return "float literal";
+    case TOK_DOUBLE_LIT: return "double literal";
     case TOK_STR_LIT: return "string literal";
     case TOK_CHAR_LIT: return "char literal";
     case TOK_LPAREN: return "'('";

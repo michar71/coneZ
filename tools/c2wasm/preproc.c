@@ -156,6 +156,10 @@ static ApiFunc api_funcs[] = {
     {"log",             IMP_LOG,             CT_DOUBLE, 1, {CT_DOUBLE}},
     {"log2",            IMP_LOG2,            CT_DOUBLE, 1, {CT_DOUBLE}},
     {"fmod",            IMP_FMOD,            CT_DOUBLE, 2, {CT_DOUBLE,CT_DOUBLE}},
+    {"get_epoch_ms",    IMP_GET_EPOCH_MS,    CT_LONG_LONG, 0, {}},
+    {"get_uptime_ms",   IMP_GET_UPTIME_MS,   CT_LONG_LONG, 0, {}},
+    {"get_last_comm_ms",IMP_GET_LAST_COMM_MS,CT_LONG_LONG, 0, {}},
+    {"print_i64",       IMP_PRINT_I64,       CT_VOID,  1, {CT_LONG_LONG}},
     {NULL, 0, 0, 0, {}}
 };
 
@@ -198,11 +202,253 @@ static void read_pp_value(char *buf, int max) {
     int i = 0;
     while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
         src_pos++;
-    while (src_pos < src_len && source[src_pos] != '\n' && i < max - 1)
-        buf[i++] = source[src_pos++];
+    for (;;) {
+        while (src_pos < src_len && source[src_pos] != '\n' && i < max - 1)
+            buf[i++] = source[src_pos++];
+        /* Check for line continuation: backslash before newline */
+        if (i > 0 && buf[i-1] == '\\' && src_pos < src_len && source[src_pos] == '\n') {
+            i--;  /* remove backslash */
+            src_pos++;  /* skip newline */
+            line_num++;
+            /* Skip leading whitespace on continuation line */
+            while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
+                src_pos++;
+            continue;
+        }
+        break;
+    }
     /* Trim trailing whitespace */
     while (i > 0 && (buf[i-1] == ' ' || buf[i-1] == '\t')) i--;
     buf[i] = 0;
+}
+
+/* ================================================================
+ *  #if constant expression evaluator
+ *
+ *  Recursive descent with full C operator precedence:
+ *    ||  &&  |  ^  &  == !=  < > <= >=  << >>  + -  * / %
+ *  Unary: ! ~ - +, defined(), integer literals, macro expansion.
+ *  Undefined identifiers evaluate to 0 (per C standard).
+ * ================================================================ */
+
+static void pp_skip_ws(void) {
+    while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
+        src_pos++;
+}
+
+static long pp_primary(void);
+static long pp_unary(void);
+static long pp_expr(int min_prec);
+
+static long pp_primary(void) {
+    pp_skip_ws();
+    if (src_pos >= src_len || source[src_pos] == '\n') return 0;
+
+    /* Parenthesized expression */
+    if (source[src_pos] == '(') {
+        src_pos++;
+        long val = pp_expr(0);
+        pp_skip_ws();
+        if (src_pos < src_len && source[src_pos] == ')') src_pos++;
+        return val;
+    }
+
+    /* Character literal: 'x' or '\n' */
+    if (source[src_pos] == '\'') {
+        src_pos++;
+        long val = 0;
+        if (src_pos < src_len && source[src_pos] == '\\') {
+            src_pos++;
+            if (src_pos < src_len) {
+                switch (source[src_pos]) {
+                case 'n': val = '\n'; break;
+                case 't': val = '\t'; break;
+                case 'r': val = '\r'; break;
+                case '0': val = '\0'; break;
+                case '\\': val = '\\'; break;
+                case '\'': val = '\''; break;
+                default: val = source[src_pos]; break;
+                }
+                src_pos++;
+            }
+        } else if (src_pos < src_len) {
+            val = (unsigned char)source[src_pos++];
+        }
+        if (src_pos < src_len && source[src_pos] == '\'') src_pos++;
+        return val;
+    }
+
+    /* Integer literal (decimal, hex, octal) */
+    if (isdigit(source[src_pos])) {
+        char nbuf[64];
+        int len = 0;
+        if (source[src_pos] == '0' && src_pos + 1 < src_len &&
+            (source[src_pos + 1] == 'x' || source[src_pos + 1] == 'X')) {
+            nbuf[len++] = source[src_pos++];
+            nbuf[len++] = source[src_pos++];
+            while (src_pos < src_len && isxdigit(source[src_pos]) && len < 62)
+                nbuf[len++] = source[src_pos++];
+        } else {
+            while (src_pos < src_len && isdigit(source[src_pos]) && len < 62)
+                nbuf[len++] = source[src_pos++];
+        }
+        nbuf[len] = 0;
+        /* Skip integer suffixes */
+        while (src_pos < src_len && (source[src_pos] == 'u' || source[src_pos] == 'U' ||
+               source[src_pos] == 'l' || source[src_pos] == 'L'))
+            src_pos++;
+        return strtol(nbuf, NULL, 0);
+    }
+
+    /* Identifier: defined(), macro name, or unknown (→ 0) */
+    if (isalpha(source[src_pos]) || source[src_pos] == '_') {
+        char name[64];
+        int ni = 0;
+        while (src_pos < src_len && is_ident_char(source[src_pos]) && ni < 63)
+            name[ni++] = source[src_pos++];
+        name[ni] = 0;
+
+        if (strcmp(name, "defined") == 0) {
+            pp_skip_ws();
+            int has_paren = 0;
+            if (src_pos < src_len && source[src_pos] == '(') { has_paren = 1; src_pos++; }
+            char dname[64];
+            read_pp_word(dname, sizeof(dname));
+            if (has_paren) {
+                pp_skip_ws();
+                if (src_pos < src_len && source[src_pos] == ')') src_pos++;
+            }
+            return (find_sym_kind(dname, SYM_DEFINE) != NULL) ? 1 : 0;
+        }
+
+        /* Macro expansion */
+        Symbol *mac = find_sym_kind(name, SYM_DEFINE);
+        if (mac && mac->macro_val[0])
+            return strtol(mac->macro_val, NULL, 0);
+        return 0;  /* undefined identifiers → 0 per C standard */
+    }
+
+    return 0;
+}
+
+static long pp_unary(void) {
+    pp_skip_ws();
+    if (src_pos >= src_len || source[src_pos] == '\n') return 0;
+
+    if (source[src_pos] == '!') { src_pos++; return !pp_unary(); }
+    if (source[src_pos] == '~') { src_pos++; return ~pp_unary(); }
+    if (source[src_pos] == '-') { src_pos++; return -pp_unary(); }
+    if (source[src_pos] == '+') { src_pos++; return pp_unary(); }
+    return pp_primary();
+}
+
+/* Operator precedence table (higher = tighter binding) */
+static int pp_get_prec(void) {
+    pp_skip_ws();
+    if (src_pos >= src_len || source[src_pos] == '\n') return -1;
+    char c = source[src_pos];
+    char c2 = (src_pos + 1 < src_len) ? source[src_pos + 1] : 0;
+    if (c == '|' && c2 == '|') return 1;
+    if (c == '&' && c2 == '&') return 2;
+    if (c == '|' && c2 != '|') return 3;
+    if (c == '^')              return 4;
+    if (c == '&' && c2 != '&') return 5;
+    if (c == '=' && c2 == '=') return 6;
+    if (c == '!' && c2 == '=') return 6;
+    if (c == '<' && c2 == '<') return 8;
+    if (c == '>' && c2 == '>') return 8;
+    if (c == '<')              return 7;  /* < or <= */
+    if (c == '>')              return 7;  /* > or >= */
+    if (c == '+' || c == '-')  return 9;
+    if (c == '*' || c == '/' || c == '%') return 10;
+    return -1;
+}
+
+/* Read and consume the operator, return an ID */
+#define PP_OP_OR     1
+#define PP_OP_AND    2
+#define PP_OP_BIT_OR 3
+#define PP_OP_XOR    4
+#define PP_OP_BIT_AND 5
+#define PP_OP_EQ     6
+#define PP_OP_NE     7
+#define PP_OP_LT     8
+#define PP_OP_GT     9
+#define PP_OP_LE    10
+#define PP_OP_GE    11
+#define PP_OP_SHL   12
+#define PP_OP_SHR   13
+#define PP_OP_ADD   14
+#define PP_OP_SUB   15
+#define PP_OP_MUL   16
+#define PP_OP_DIV   17
+#define PP_OP_MOD   18
+
+static int pp_read_op(void) {
+    pp_skip_ws();
+    char c = source[src_pos];
+    char c2 = (src_pos + 1 < src_len) ? source[src_pos + 1] : 0;
+    if (c == '|' && c2 == '|') { src_pos += 2; return PP_OP_OR; }
+    if (c == '&' && c2 == '&') { src_pos += 2; return PP_OP_AND; }
+    if (c == '|')              { src_pos += 1; return PP_OP_BIT_OR; }
+    if (c == '^')              { src_pos += 1; return PP_OP_XOR; }
+    if (c == '&')              { src_pos += 1; return PP_OP_BIT_AND; }
+    if (c == '=' && c2 == '=') { src_pos += 2; return PP_OP_EQ; }
+    if (c == '!' && c2 == '=') { src_pos += 2; return PP_OP_NE; }
+    if (c == '<' && c2 == '<') { src_pos += 2; return PP_OP_SHL; }
+    if (c == '>' && c2 == '>') { src_pos += 2; return PP_OP_SHR; }
+    if (c == '<' && c2 == '=') { src_pos += 2; return PP_OP_LE; }
+    if (c == '>' && c2 == '=') { src_pos += 2; return PP_OP_GE; }
+    if (c == '<')              { src_pos += 1; return PP_OP_LT; }
+    if (c == '>')              { src_pos += 1; return PP_OP_GT; }
+    if (c == '+')              { src_pos += 1; return PP_OP_ADD; }
+    if (c == '-')              { src_pos += 1; return PP_OP_SUB; }
+    if (c == '*')              { src_pos += 1; return PP_OP_MUL; }
+    if (c == '/')              { src_pos += 1; return PP_OP_DIV; }
+    if (c == '%')              { src_pos += 1; return PP_OP_MOD; }
+    return -1;
+}
+
+static long pp_apply(int op, long l, long r) {
+    switch (op) {
+    case PP_OP_OR:      return l || r;
+    case PP_OP_AND:     return l && r;
+    case PP_OP_BIT_OR:  return l | r;
+    case PP_OP_XOR:     return l ^ r;
+    case PP_OP_BIT_AND: return l & r;
+    case PP_OP_EQ:      return l == r;
+    case PP_OP_NE:      return l != r;
+    case PP_OP_LT:      return l < r;
+    case PP_OP_GT:      return l > r;
+    case PP_OP_LE:      return l <= r;
+    case PP_OP_GE:      return l >= r;
+    case PP_OP_SHL:     return l << r;
+    case PP_OP_SHR:     return l >> r;
+    case PP_OP_ADD:     return l + r;
+    case PP_OP_SUB:     return l - r;
+    case PP_OP_MUL:     return l * r;
+    case PP_OP_DIV:     return r ? l / r : 0;
+    case PP_OP_MOD:     return r ? l % r : 0;
+    default:            return 0;
+    }
+}
+
+static long pp_expr(int min_prec) {
+    long left = pp_unary();
+    for (;;) {
+        int prec = pp_get_prec();
+        if (prec < min_prec) break;
+        int op = pp_read_op();
+        if (op < 0) break;
+        long right = pp_expr(prec + 1);
+        left = pp_apply(op, left, right);
+    }
+    return left;
+}
+
+/* Evaluate the rest of the current line as a #if expression */
+static long pp_eval_if(void) {
+    return pp_expr(0);
 }
 
 int preproc_line(void) {
@@ -343,40 +589,7 @@ int preproc_line(void) {
     }
 
     if (strcmp(directive, "if") == 0) {
-        while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
-            src_pos++;
-        int val = 0;
-
-        /* Check for !defined(...) or defined(...) */
-        int negate = 0;
-        if (src_pos < src_len && source[src_pos] == '!') {
-            negate = 1;
-            src_pos++;
-            while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
-                src_pos++;
-        }
-        if (src_pos + 7 <= src_len && strncmp(source + src_pos, "defined", 7) == 0 &&
-            !is_ident_char(source[src_pos + 7])) {
-            src_pos += 7;
-            while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
-                src_pos++;
-            int has_paren = 0;
-            if (src_pos < src_len && source[src_pos] == '(') { has_paren = 1; src_pos++; }
-            char name[64];
-            read_pp_word(name, sizeof(name));
-            if (has_paren) {
-                while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
-                    src_pos++;
-                if (src_pos < src_len && source[src_pos] == ')') src_pos++;
-            }
-            val = (find_sym_kind(name, SYM_DEFINE) != NULL) ? 1 : 0;
-            if (negate) val = !val;
-        } else {
-            /* Plain integer constant: #if 0, #if 1, #if !0, #if !1, etc. */
-            while (src_pos < src_len && source[src_pos] >= '0' && source[src_pos] <= '9')
-                val = val * 10 + (source[src_pos++] - '0');
-            if (negate) val = !val;
-        }
+        long val = pp_eval_if();
 
         if (ifdef_depth >= MAX_IFDEF_DEPTH) {
             error_at("#if too deeply nested");

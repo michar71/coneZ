@@ -93,6 +93,14 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_I32_GE_S      0x4E
 #define OP_I32_GE_U      0x4F
 
+#define OP_I64_EQZ       0x50
+#define OP_I64_EQ        0x51
+#define OP_I64_NE        0x52
+#define OP_I64_LT_S      0x53
+#define OP_I64_GT_S      0x55
+#define OP_I64_LE_S      0x57
+#define OP_I64_GE_S      0x59
+
 #define OP_F32_EQ        0x5B
 #define OP_F32_NE        0x5C
 #define OP_F32_LT        0x5D
@@ -121,30 +129,53 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_I32_SHR_S     0x75
 #define OP_I32_SHR_U     0x76
 
+#define OP_I64_ADD       0x7C
+#define OP_I64_SUB       0x7D
+#define OP_I64_MUL       0x7E
+#define OP_I64_DIV_S     0x7F
+#define OP_I64_REM_S     0x81
+#define OP_I64_AND       0x83
+#define OP_I64_OR        0x84
+#define OP_I64_XOR       0x85
+#define OP_I64_SHL       0x86
+#define OP_I64_SHR_S     0x87
+
 #define OP_F32_ABS       0x8B
 #define OP_F32_NEG       0x8C
 #define OP_F32_CEIL      0x8D
 #define OP_F32_FLOOR     0x8E
+#define OP_F32_TRUNC     0x8F
 #define OP_F32_SQRT      0x91
 #define OP_F32_ADD       0x92
 #define OP_F32_SUB       0x93
 #define OP_F32_MUL       0x94
 #define OP_F32_DIV       0x95
+#define OP_F32_MIN       0x96
+#define OP_F32_MAX       0x97
 
 #define OP_F64_ABS       0x99
 #define OP_F64_NEG       0x9A
 #define OP_F64_CEIL      0x9B
 #define OP_F64_FLOOR     0x9C
+#define OP_F64_TRUNC     0x9D
 #define OP_F64_SQRT      0x9F
 #define OP_F64_ADD       0xA0
 #define OP_F64_SUB       0xA1
 #define OP_F64_MUL       0xA2
 #define OP_F64_DIV       0xA3
+#define OP_F64_MIN       0xA4
+#define OP_F64_MAX       0xA5
 
+#define OP_I32_WRAP_I64      0xA7
 #define OP_I32_TRUNC_F32_S   0xA8
 #define OP_I32_TRUNC_F64_S   0xAA
+#define OP_I64_EXTEND_I32_S  0xAC
+#define OP_I64_TRUNC_F32_S   0xAE
+#define OP_I64_TRUNC_F64_S   0xB0
 #define OP_F32_CONVERT_I32_S 0xB2
+#define OP_F32_CONVERT_I64_S 0xB4
 #define OP_F64_CONVERT_I32_S 0xB7
+#define OP_F64_CONVERT_I64_S 0xB9
 #define OP_F64_PROMOTE_F32   0xBB
 #define OP_F32_DEMOTE_F64    0xB6
 
@@ -217,8 +248,9 @@ typedef enum {
     CT_VOID = 0,
     CT_CHAR,       /* i32 */
     CT_INT,        /* i32 */
+    CT_LONG_LONG,  /* i64 */
     CT_FLOAT,      /* f32 */
-    CT_DOUBLE,     /* f64 — only for printf promotion */
+    CT_DOUBLE,     /* f64 */
     CT_CONST_STR,  /* pointer to string literal (i32) */
 } CType;
 
@@ -251,6 +283,7 @@ typedef struct {
     int param_count;
     CType param_types[8];
     int is_static;
+    int is_const;       /* 1 if variable is const-qualified */
     int is_defined;     /* 1 if function body has been compiled */
     /* macro value */
     char macro_val[128];
@@ -297,7 +330,7 @@ typedef struct {
  * ================================================================ */
 
 enum {
-    TOK_EOF = 0, TOK_NAME, TOK_INT_LIT, TOK_FLOAT_LIT, TOK_STR_LIT, TOK_CHAR_LIT,
+    TOK_EOF = 0, TOK_NAME, TOK_INT_LIT, TOK_FLOAT_LIT, TOK_DOUBLE_LIT, TOK_STR_LIT, TOK_CHAR_LIT,
     /* punctuation */
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
     TOK_SEMI, TOK_COMMA, TOK_DOT, TOK_ARROW,
@@ -317,6 +350,7 @@ enum {
     TOK_CASE, TOK_DEFAULT, TOK_BREAK, TOK_CONTINUE, TOK_RETURN,
     TOK_INT, TOK_FLOAT, TOK_DOUBLE, TOK_VOID, TOK_CHAR,
     TOK_STATIC, TOK_CONST, TOK_UNSIGNED, TOK_LONG,
+    TOK_SHORT, TOK_SIGNED, TOK_BOOL,
     TOK_SIZEOF,
     /* preprocessor (returned by preproc layer) */
     TOK_PP_DONE,  /* preprocessor line consumed, get next token */
@@ -359,6 +393,8 @@ extern int nglobals;    /* number of WASM globals (0=_heap_ptr, 1+=user) */
 
 extern int has_setup;
 extern int has_loop;
+extern int type_had_pointer;
+extern int type_had_const;
 
 /* ================================================================
  *  Helpers
@@ -418,9 +454,10 @@ static inline int add_string(const char *s, int len) {
 
 static inline uint8_t ctype_to_wasm(CType ct) {
     switch (ct) {
-    case CT_FLOAT:  return WASM_F32;
-    case CT_DOUBLE: return WASM_F64;
-    default:        return WASM_I32;
+    case CT_LONG_LONG: return WASM_I64;
+    case CT_FLOAT:     return WASM_F32;
+    case CT_DOUBLE:    return WASM_F64;
+    default:           return WASM_I32;
     }
 }
 
@@ -447,10 +484,13 @@ static inline void emit_f32_const(float v) {
 static inline void emit_f64_const(double v) {
     buf_byte(CODE, OP_F64_CONST); buf_f64(CODE, v);
 }
+static inline void emit_i64_const(int64_t v) {
+    buf_byte(CODE, OP_I64_CONST); buf_sleb64(CODE, v);
+}
 static inline void emit_call(int func_idx) {
     buf_byte(CODE, OP_CALL);
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->ncall_fixups >= 1024) { error_at("too many call sites"); }
+    if (f->ncall_fixups >= 1024) { error_at("too many call sites"); return; }
     else f->call_fixups[f->ncall_fixups++] = f->code.len;
     buf_uleb(CODE, func_idx);
     if (func_idx < IMP_COUNT) imp_used[func_idx] = 1;
@@ -495,27 +535,39 @@ static inline void emit_br_if(int d) { buf_byte(CODE, OP_BR_IF); buf_uleb(CODE, 
 static inline void emit_drop(void)   { buf_byte(CODE, OP_DROP); }
 static inline void emit_return(void) { buf_byte(CODE, OP_RETURN); }
 
-/* Coerce top of wasm stack from float to int */
+/* Coerce top of wasm stack to i32 */
 static inline void emit_coerce_i32(CType from) {
     if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_S);
     else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_S);
+    else if (from == CT_LONG_LONG) emit_op(OP_I32_WRAP_I64);
 }
-/* Coerce top of wasm stack from int to float */
+/* Coerce top of wasm stack to i64 */
+static inline void emit_coerce_i64(CType from) {
+    if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
+        emit_op(OP_I64_EXTEND_I32_S);
+    else if (from == CT_FLOAT) emit_op(OP_I64_TRUNC_F32_S);
+    else if (from == CT_DOUBLE) emit_op(OP_I64_TRUNC_F64_S);
+}
+/* Coerce top of wasm stack to f32 */
 static inline void emit_coerce_f32(CType from) {
     if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
         emit_op(OP_F32_CONVERT_I32_S);
+    else if (from == CT_LONG_LONG)
+        emit_op(OP_F32_CONVERT_I64_S);
     else if (from == CT_DOUBLE)
         emit_op(OP_F32_DEMOTE_F64);
 }
-/* Promote to f64 for printf */
+/* Coerce top of wasm stack to f64 */
 static inline void emit_promote_f64(CType from) {
     if (from == CT_FLOAT) emit_op(OP_F64_PROMOTE_F32);
     else if (from == CT_INT || from == CT_CHAR) emit_op(OP_F64_CONVERT_I32_S);
+    else if (from == CT_LONG_LONG) emit_op(OP_F64_CONVERT_I64_S);
 }
 /* General coerce between any two types */
 static inline void emit_coerce(CType from, CType to) {
     if (from == to) return;
     if (to == CT_INT || to == CT_CHAR) emit_coerce_i32(from);
+    else if (to == CT_LONG_LONG) emit_coerce_i64(from);
     else if (to == CT_FLOAT) emit_coerce_f32(from);
     else if (to == CT_DOUBLE) emit_promote_f64(from);
 }

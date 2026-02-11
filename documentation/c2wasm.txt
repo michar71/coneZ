@@ -63,11 +63,17 @@ Types:
   char          8-bit integer (treated as i32)
   double        64-bit float (WASM f64) — full arithmetic and comparison
                 support; globals, locals, parameters, return values all work
-  unsigned      accepted as qualifier, treated as int
-  long          accepted as qualifier (long long = int)
+  long long     64-bit signed integer (WASM i64) — full arithmetic,
+                comparisons, bitwise, ++/--, globals, locals, params, returns
+  unsigned      accepted as qualifier, warns "all ops use signed semantics"
+  long          accepted as qualifier (single long = int)
+  short         accepted as qualifier, treated as int (with warning)
+  signed        accepted as qualifier, silently ignored (default is signed)
+  _Bool / bool  treated as int (i32)
   const         accepted; const int globals (including negative and char
                 literals) become compile-time constants; const float/double
-                become read-write globals with init values
+                become read-only globals with init values; const locals
+                are enforced — assignment, ++, -- on const variables is an error
   static        accepted on globals and functions
 
   Pointers (int *, char *, const char *, void *) are parsed but treated
@@ -83,11 +89,18 @@ Declarations:
     int i = 0;
     float dist = origin_dist();
 
+  Comma-separated declarations (including pointer types):
+    int x = 42, y = 0;
+    int *a, *b;
+
   Function definitions with parameters and return types:
     static void helper(int channel, int brightness) { ... }
     static int clamp(int val, int lo, int hi) { ... }
 
-  Forward declarations (must have a matching definition):
+  Unnamed function parameters (counted but not referenceable):
+    void callback(int, int, int code) { print_i32(code); }
+
+  Forward declarations (must have matching definition with same params):
     static void helper(int channel, int brightness);
 
 Control Flow:
@@ -143,17 +156,28 @@ Preprocessor:
   #include "conez_api.h"      Register all ConeZ API imports
   #include <stdint.h>         Silently ignored (standard headers)
   #define NAME value          Simple text macros (no function-like macros)
+  #define LONG value \        Backslash line continuation in #define
+          continuation
   #undef NAME                 Remove a previously defined macro
   #ifdef NAME ... #endif      Conditional compilation
   #ifndef NAME ... #endif     Conditional compilation
   #else                       Else branch for #ifdef/#ifndef
+
+  #if supports full constant expression evaluation:
   #if 0 ... #endif            Block comment via preprocessor
   #if N ... #endif            Any integer (0 = skip, nonzero = keep)
+  #if MACRO_NAME              Macro expanded to integer; undefined = 0
   #if defined(NAME)           Test whether a macro is defined
   #if !defined(NAME)          Test whether a macro is NOT defined
   #if defined NAME            Also works without parentheses
-  #if !0                      Logical negation (equivalent to #if 1)
-  #if !1                      Logical negation (equivalent to #if 0)
+  #if A > B                   Comparison: <  >  <=  >=  ==  !=
+  #if A && B                  Logical:    &&  ||  !
+  #if A + B == C              Arithmetic: +  -  *  /  %
+  #if A & B                   Bitwise:    &  |  ^  ~  <<  >>
+  #if (A + 1) * 2             Parenthesized subexpressions
+  #if 'A'                     Character literals
+  #if VERSION > 2 && defined(FEATURE)
+                              Complex expressions combining all of the above
 
 Comments:
   // line comments
@@ -183,8 +207,8 @@ WASM-native math (single opcode, no import):
   These functions compile directly to WASM opcodes with zero overhead.
   No host import is needed — the WASM engine executes them natively.
 
-  Float (f32):   sqrtf, fabsf, floorf, ceilf
-  Double (f64):  sqrt, fabs, floor, ceil
+  Float (f32):   sqrtf, fabsf, floorf, ceilf, truncf, fminf, fmaxf
+  Double (f64):  sqrt, fabs, floor, ceil, trunc, fmin, fmax
 
 Host-imported math (transcendentals via libm):
   Float (f32):   sinf, cosf, tanf, asinf, acosf, atanf, atan2f,
@@ -293,10 +317,12 @@ Source files in tools/c2wasm/:
   main.c        Driver: global state, argument parsing, top-level compile
   lexer.c       C tokenizer: identifiers, keywords, literals, operators,
                 comments, macro expansion
-  preproc.c     Minimal preprocessor: #include special-case, #define/#undef,
-                #ifdef/#ifndef/#else/#endif, #if N/defined(), API registration
-  type.c        Type parsing (void/int/float/double/char/unsigned/long/
-                static/const) and pointer star consumption
+  preproc.c     Preprocessor: #include special-case, #define/#undef (with
+                line continuation), #ifdef/#ifndef/#else/#endif, full #if
+                constant expression evaluator, API registration
+  type.c        Type parsing (void/int/float/double/char/long long/unsigned/
+                short/signed/_Bool/bool/static/const) and pointer star
+                consumption
   expr.c        Precedence-climbing expression parser (15 levels),
                 short-circuit &&/||, casts, ternary, comma, printf/print builtins
   stmt.c        Statement parser: functions, if/else, for, while, do/while,
@@ -344,21 +370,29 @@ Test files cover: basic types, arithmetic, bitwise ops, comparisons,
 control flow (if/while/do/for/switch/break/continue), assignment ops,
 user functions (forward decls, recursion), casts and sizeof, ternary
 operator, literals (int/float/char/string/hex/octal), printf formats,
-preprocessor (#define/#ifdef/#if 0/#if N/#undef/#if defined), scoping
-(block/for-init/shadow), math imports, trig imports (asinf/acosf/atanf),
-API calls, file I/O, WASM-native builtins (sqrtf/fabsf/floorf/ceilf),
-comments, setup-only and loop-only programs, recursive and mutual macro
-guards, nested #ifdef, sizeof without evaluation, implicit returns,
-ternary and for-loop increment with function calls (call fixup
-adjustment), string concatenation, double (f64) arithmetic/comparisons/
-globals/casts, for-loop with calls in both body and increment, const
-negative/char initializers, float %= and bitwise compound ops, switch
-fall-through, comma operator, typed ternary (float/double branches),
-double pre/post increment/decrement, double %/%= via fmod, f64 math
-imports (sin/cos/tan/etc.), sizeof(type*) for pointer types, #if !0
-preprocessor negation, pointer comma-separated declarations, bare
-return in non-void functions, and rejection of undefined forward
-declarations and unterminated block comments.
+preprocessor (#define/#ifdef/#if 0/#if N/#undef/#if defined/#if expr),
+scoping (block/for-init/shadow), math imports, trig imports,
+API calls, file I/O, WASM-native builtins (sqrtf/fabsf/floorf/ceilf/
+truncf/fminf/fmaxf and f64 equivalents), comments, setup-only and
+loop-only programs, recursive and mutual macro guards, nested #ifdef,
+sizeof without evaluation, implicit returns, ternary and for-loop
+increment with function calls (call fixup adjustment), string
+concatenation, double (f64) arithmetic/comparisons/globals/casts,
+for-loop with calls in both body and increment, const negative/char
+initializers, float %= and bitwise compound ops, switch fall-through
+and default-anywhere, comma operator, typed ternary (float/double
+branches), double pre/post increment/decrement, double %/%= via fmod,
+f64 math imports (sin/cos/tan/etc.), sizeof(type*) for pointer types,
+#if preprocessor negation and full expressions, pointer comma-separated
+declarations (int *a, *b;), bare return in non-void functions, double
+literals (f/F suffix vs unsuffixed), long long (i64) arithmetic and
+API, short/signed/_Bool/bool type keywords, const local enforcement,
+#define line continuation, #if macro name expansion and comparison
+expressions, unnamed function parameters, forward declaration param
+matching, switch warning for statements before first case, and rejection
+of undefined forward declarations, unterminated block comments, void
+expression as operand, void/non-void ternary mismatch, const variable
+assignment, and forward declaration param mismatch.
 
 Adding a test: create a .c file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.c must fail compilation.

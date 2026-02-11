@@ -38,6 +38,7 @@ int nglobals;
 int has_setup;
 int has_loop;
 int type_had_pointer;
+int type_had_const;
 
 void compile(void) {
     lex_init();

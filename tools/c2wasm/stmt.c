@@ -222,6 +222,7 @@ void parse_stmt(void) {
         int case_vals[256];
         int ncase_vals = 0;
         int has_default = 0;
+        int all_cases_resolved = 1;
         {
             LexerSave lsave;
             lexer_save(&lsave);
@@ -236,6 +237,8 @@ void parse_stmt(void) {
                     if (tok == TOK_MINUS) { negate = 1; next_token(); }
                     if ((tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) && ncase_vals < 256)
                         case_vals[ncase_vals++] = negate ? -tok_ival : tok_ival;
+                    else
+                        all_cases_resolved = 0;
                 }
                 next_token();
             }
@@ -246,7 +249,10 @@ void parse_stmt(void) {
         int found_local = -1;
         if (has_default) {
             found_local = alloc_local(WASM_I32);
-            if (ncase_vals > 0) {
+            if (!all_cases_resolved) {
+                /* Conservative: can't prove no case matches → default always enters */
+                emit_i32_const(0);
+            } else if (ncase_vals > 0) {
                 emit_local_get(switch_local);
                 emit_i32_const(case_vals[0]);
                 emit_op(OP_I32_EQ);
@@ -272,8 +278,10 @@ void parse_stmt(void) {
         ctrl_stk[ctrl_sp].incr_buf = NULL;
         ctrl_sp++;
 
+        int in_case = 0;
         while (tok != TOK_RBRACE && tok != TOK_EOF) {
             if (tok == TOK_CASE) {
+                in_case = 1;
                 next_token();
                 /* Parse constant expression */
                 int case_val = 0;
@@ -303,6 +311,7 @@ void parse_stmt(void) {
 
                 emit_end();
             } else if (tok == TOK_DEFAULT) {
+                in_case = 1;
                 next_token();
                 expect(TOK_COLON);
                 /* Default: if (matched || !found)
@@ -320,6 +329,9 @@ void parse_stmt(void) {
                     parse_stmt();
                 emit_end();
             } else {
+                if (!in_case)
+                    fprintf(stderr, "%s:%d: warning: statement before first case/default in switch\n",
+                            src_file ? src_file : "<input>", line_num);
                 parse_stmt();
             }
         }
@@ -369,6 +381,7 @@ void parse_stmt(void) {
             /* Bare return; in non-void function — push default value */
             if (ret == CT_DOUBLE) emit_f64_const(0.0);
             else if (ret == CT_FLOAT) emit_f32_const(0.0f);
+            else if (ret == CT_LONG_LONG) emit_i64_const(0);
             else emit_i32_const(0);
         }
         expect(TOK_SEMI);
@@ -404,10 +417,12 @@ void parse_block(void) {
 
 /* Parse local variable declaration(s) after type specifier */
 static void parse_local_decl(CType base_type) {
+    int base_const = type_had_const;
     do {
         CType var_type = base_type;
-        /* Skip const qualifier on the variable */
-        while (tok == TOK_CONST) next_token();
+        int var_const = base_const;
+        /* Check per-declarator const qualifier */
+        while (tok == TOK_CONST) { var_const = 1; next_token(); }
         /* Skip pointer stars */
         while (tok == TOK_STAR) { next_token(); var_type = CT_INT; }
 
@@ -422,11 +437,15 @@ static void parse_local_decl(CType base_type) {
         Symbol *s = add_sym(name, SYM_LOCAL, var_type);
         s->idx = local_idx;
         s->scope = cur_scope;
+        s->is_const = var_const;
 
         if (accept(TOK_ASSIGN)) {
             CType rhs = assignment_expr();
             emit_coerce(rhs, var_type);
             emit_local_set(local_idx);
+        } else if (var_const) {
+            fprintf(stderr, "%s:%d: warning: const variable '%s' without initializer\n",
+                    src_file ? src_file : "<input>", line_num, name);
         }
     } while (accept(TOK_COMMA));
     expect(TOK_SEMI);
@@ -492,7 +511,7 @@ void parse_top_level(void) {
                     s->scope = 0;
                 }
                 next_token();
-            } else if (tok == TOK_FLOAT_LIT) {
+            } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
                 /* const float or const double */
                 int gidx = nglobals++;
                 Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
@@ -524,7 +543,7 @@ void parse_top_level(void) {
             else if (base_type == CT_FLOAT) s->init_fval = negate ? -(float)tok_ival : (float)tok_ival;
             else s->init_ival = negate ? -tok_ival : tok_ival;
             next_token();
-        } else if (tok == TOK_FLOAT_LIT) {
+        } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
             if (base_type == CT_DOUBLE) s->init_dval = negate ? -tok_dval : tok_dval;
             else s->init_fval = negate ? -tok_fval : tok_fval;
             next_token();
@@ -537,7 +556,7 @@ void parse_top_level(void) {
                     if (base_type == CT_DOUBLE) s->init_dval = (double)tok_ival;
                     else s->init_ival = tok_ival;
                     next_token();
-                } else if (tok == TOK_FLOAT_LIT) {
+                } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
                     if (base_type == CT_DOUBLE) s->init_dval = tok_dval;
                     else s->init_fval = tok_fval;
                     next_token();
@@ -552,8 +571,9 @@ void parse_top_level(void) {
         }
     }
 
-    /* Handle multiple declarations: static int a = 0, b = 0; */
+    /* Handle multiple declarations: static int a = 0, b = 0; or int *a, *b; */
     while (accept(TOK_COMMA)) {
+        while (tok == TOK_STAR) next_token();  /* skip pointer stars */
         if (tok != TOK_NAME) { error_at("expected variable name"); break; }
         strncpy(name, tok_sval, sizeof(name) - 1); name[sizeof(name) - 1] = 0;
         next_token();
@@ -569,7 +589,7 @@ void parse_top_level(void) {
                 else if (base_type == CT_FLOAT) s->init_fval = neg ? -(float)tok_ival : (float)tok_ival;
                 else s->init_ival = neg ? -tok_ival : tok_ival;
                 next_token();
-            } else if (tok == TOK_FLOAT_LIT) {
+            } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
                 if (base_type == CT_DOUBLE) s->init_dval = neg ? -tok_dval : tok_dval;
                 else s->init_fval = neg ? -tok_fval : tok_fval;
                 next_token();
@@ -606,21 +626,22 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
         do {
             if (tok == TOK_VOID) { next_token(); break; }
             CType ptype = parse_type_spec();
+            if (fc->nparams >= 8) { error_at("too many function parameters"); break; }
+            fc->param_wasm_types[fc->nparams] = ctype_to_wasm(ptype);
+            fc->param_ctypes[fc->nparams] = ptype;
+            fc->nparams++;
+
             if (tok == TOK_NAME) {
                 char pname[64];
                 strncpy(pname, tok_sval, sizeof(pname) - 1); pname[sizeof(pname) - 1] = 0;
                 next_token();
-
-                if (fc->nparams >= 8) { error_at("too many function parameters"); break; }
-                fc->param_wasm_types[fc->nparams] = ctype_to_wasm(ptype);
-                fc->param_ctypes[fc->nparams] = ptype;
-                fc->nparams++;
 
                 /* Add param as a local symbol */
                 Symbol *ps = add_sym(pname, SYM_LOCAL, ptype);
                 ps->idx = fc->nparams - 1;
                 ps->scope = cur_scope;
             }
+            /* Unnamed param: counted but no symbol added */
         } while (accept(TOK_COMMA));
     } else if (tok == TOK_VOID) {
         next_token();
@@ -651,11 +672,31 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
         error_fmt("function '%s' already defined", name);
     }
 
+    /* Bug #4: Check forward declaration parameter match */
+    if (existing && !existing->is_defined) {
+        int new_nparams = func_bufs[nfuncs].nparams;
+        if (existing->param_count != new_nparams) {
+            error_fmt("function '%s' definition has %d params, declaration had %d",
+                      name, new_nparams, existing->param_count);
+        } else {
+            for (int i = 0; i < new_nparams; i++) {
+                if (existing->param_types[i] != func_bufs[nfuncs].param_ctypes[i]) {
+                    error_fmt("function '%s' param %d type mismatch with declaration", name, i + 1);
+                    break;
+                }
+            }
+        }
+    }
+
     /* Register/update symbol */
     Symbol *fs;
     if (existing) {
         fs = existing;
         func_idx = fs->idx;
+        /* Free the temp slot we allocated at nfuncs */
+        buf_free(&func_bufs[nfuncs].code);
+        free(func_bufs[nfuncs].name);
+        func_bufs[nfuncs].name = NULL;
         /* Update the function context to the right slot */
         fc = &func_bufs[func_idx - IMP_COUNT];
         fc->return_type = ret_type;
@@ -664,7 +705,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
         fc->nparams = 0;
         fc->nlocals = 0;
         fc->ncall_fixups = 0;
-    
+
         buf_init(&fc->code);
         /* Re-parse params into the correct fc */
         /* Actually we already parsed params above — copy them */
@@ -690,6 +731,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
 
     /* Switch to this function's code buffer */
     int save_func = cur_func;
+    int save_block_depth = block_depth;
     cur_func = func_idx - IMP_COUNT;
     block_depth = 0;
 
@@ -706,6 +748,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
     } else {
         if (ret_type == CT_DOUBLE) emit_f64_const(0.0);
         else if (ret_type == CT_FLOAT) emit_f32_const(0.0f);
+        else if (ret_type == CT_LONG_LONG) emit_i64_const(0);
         else emit_i32_const(0);
         emit_return();
     }
@@ -714,6 +757,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
     buf_byte(&func_bufs[cur_func].code, OP_END);
 
     cur_func = save_func;
+    block_depth = save_block_depth;
     pop_scope(cur_scope - 1);
     cur_scope--;
 }

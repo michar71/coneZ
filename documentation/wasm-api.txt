@@ -17,10 +17,13 @@ C modules (Option 1 — c2wasm, no external dependencies):
   ./c2wasm input.c -o output.wasm
 
   c2wasm is a self-contained C-to-WASM compiler that requires only libc.
-  It compiles a C subset (int/float/void/char, control flow, full operator
-  precedence, printf, #include "conez_api.h", #define, #ifdef) directly to
-  WASM. Useful when clang/LLVM is unavailable. See documentation/c2wasm.txt
-  for the full language reference and limitations.
+  It compiles a C subset (int/float/double/void/char/long long, const
+  enforcement, full control flow, full operator precedence, printf,
+  #include "conez_api.h", #define with line continuation, #ifdef,
+  #if with full constant expressions, file I/O, WASM-native and
+  host-imported math) directly to WASM. Useful when clang/LLVM is
+  unavailable. See documentation/c2wasm.txt for the full language
+  reference and limitations.
 
 C modules (Option 2 — clang, full C with optimization):
 
