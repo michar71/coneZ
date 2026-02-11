@@ -606,6 +606,38 @@ MID$ Assignment (compiler-only)
     FORMAT "$", C$               ' ABC3456789
 
 
+Constant Folding
+----------------
+
+The compiler performs peephole constant folding during code generation.
+Adjacent constant expressions are evaluated at compile time and replaced
+with a single constant instruction. This reduces code size and eliminates
+runtime arithmetic for literal expressions.
+
+Folded operations:
+
+  Arithmetic:   +  -  *  /  (i32, f32, and mixed i32/f32)
+  Integer:      \  MOD       (i32 only, skipped if divisor is 0)
+  Power:        ^            (constant base and exponent)
+  Negation:     -expr        (unary minus on a constant)
+
+Folding chains across subexpressions:
+
+    1 + 2 + 3 + 4            →  i32.const 10       (single instruction)
+    1.5 * 2.0                →  f32.const 3.0
+    2 + 3.0                  →  f32.const 5.0       (mixed: promoted to f32)
+    2.0 ^ 3.0                →  f32.const 8.0
+    10 \ 3                   →  i32.const 3
+    10 MOD 3                 →  i32.const 1
+    -42                      →  i32.const -42        (not 0 - 42)
+
+Mixed constant+variable expressions partially fold:
+
+    2 + 3 + X                →  i32.const 5; global.get X; i32.add
+
+Division and modulo by zero are left as runtime operations (WASM trap).
+
+
 Compiled Output
 ---------------
 

@@ -421,6 +421,17 @@ static int vsp;
 
 static int had_error;
 
+/* Constant folding — tracks the two most recent constant emissions */
+typedef struct {
+    int valid;       /* 0=none, 1=i32, 2=f32 */
+    int buf_start;   /* CODE->len before emit */
+    int buf_end;     /* CODE->len after emit */
+    int32_t ival;
+    float fval;
+} FoldSlot;
+
+static FoldSlot fold_a, fold_b;
+
 /* ================================================================
  *  Helpers
  * ================================================================ */
@@ -622,10 +633,20 @@ static void need(int t) { if (!want(t)) error_at("syntax error"); }
 static void emit_op(int op) { buf_byte(CODE, op); }
 
 static void emit_i32_const(int32_t v) {
+    fold_a = fold_b;
+    fold_b.valid = 1;
+    fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_I32_CONST); buf_sleb(CODE, v);
+    fold_b.buf_end = CODE->len;
+    fold_b.ival = v;
 }
 static void emit_f32_const(float v) {
+    fold_a = fold_b;
+    fold_b.valid = 2;
+    fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_F32_CONST); buf_f32(CODE, v);
+    fold_b.buf_end = CODE->len;
+    fold_b.fval = v;
 }
 static void emit_call(int func_idx) {
     buf_byte(CODE, OP_CALL);
@@ -700,6 +721,61 @@ static void base_expr(void);
 /* Binary op helper: check types and emit correct opcode */
 static void emit_binop(int i32_op, int f32_op) {
     VType b = vpop(), a = vpop();
+    /* Constant folding: check if both operands are adjacent constants */
+    if (fold_a.valid && fold_b.valid &&
+        fold_a.buf_end == fold_b.buf_start &&
+        fold_b.buf_end == CODE->len) {
+        int folded = 0;
+        if (fold_a.valid == 1 && fold_b.valid == 1) {
+            /* Both i32 */
+            int32_t va = fold_a.ival, vb = fold_b.ival, r = 0;
+            if (i32_op == OP_I32_ADD) { r = va + vb; folded = 1; }
+            else if (i32_op == OP_I32_SUB) { r = va - vb; folded = 1; }
+            else if (i32_op == OP_I32_MUL) { r = va * vb; folded = 1; }
+            else if (i32_op == OP_I32_DIV_S && vb != 0) { r = va / vb; folded = 1; }
+            if (folded) {
+                CODE->len = fold_a.buf_start;
+                fold_a.valid = fold_b.valid = 0;
+                emit_i32_const(r);
+                vpush(T_I32);
+                return;
+            }
+        }
+        if (fold_a.valid == 2 && fold_b.valid == 2) {
+            /* Both f32 */
+            float va = fold_a.fval, vb = fold_b.fval, r = 0;
+            if (f32_op == OP_F32_ADD) { r = va + vb; folded = 1; }
+            else if (f32_op == OP_F32_SUB) { r = va - vb; folded = 1; }
+            else if (f32_op == OP_F32_MUL) { r = va * vb; folded = 1; }
+            else if (f32_op == OP_F32_DIV) { r = va / vb; folded = 1; }
+            if (folded) {
+                CODE->len = fold_a.buf_start;
+                fold_a.valid = fold_b.valid = 0;
+                emit_f32_const(r);
+                vpush(T_F32);
+                return;
+            }
+        }
+        /* Mixed: one i32, one f32 — convert both to float */
+        if ((fold_a.valid == 1 && fold_b.valid == 2) ||
+            (fold_a.valid == 2 && fold_b.valid == 1)) {
+            float va = (fold_a.valid == 1) ? (float)fold_a.ival : fold_a.fval;
+            float vb = (fold_b.valid == 1) ? (float)fold_b.ival : fold_b.fval;
+            float r = 0;
+            if (f32_op == OP_F32_ADD) { r = va + vb; folded = 1; }
+            else if (f32_op == OP_F32_SUB) { r = va - vb; folded = 1; }
+            else if (f32_op == OP_F32_MUL) { r = va * vb; folded = 1; }
+            else if (f32_op == OP_F32_DIV) { r = va / vb; folded = 1; }
+            if (folded) {
+                CODE->len = fold_a.buf_start;
+                fold_a.valid = fold_b.valid = 0;
+                emit_f32_const(r);
+                vpush(T_F32);
+                return;
+            }
+        }
+    }
+    /* Normal (non-folded) path */
     if (a == T_F32 || b == T_F32) {
         if (a == T_I32 && b == T_F32) {
             /* a(i32) is under b(f32) — save b, convert a, reload b */
@@ -1586,9 +1662,22 @@ static void base_expr(void) {
 
     if (neg) {
         VType t = vpop();
-        if (t == T_F32) {
-            /* Negate float: 0 - x would require float 0 first. Use f32.neg? No such op. */
-            /* Use: f32.const 0; swap; f32.sub — but can't swap in WASM. Use local. */
+        /* Constant folding: negate the constant directly */
+        if (fold_b.valid && fold_b.buf_end == CODE->len) {
+            if (fold_b.valid == 1) {
+                int32_t v = fold_b.ival;
+                CODE->len = fold_b.buf_start;
+                fold_a.valid = fold_b.valid = 0;
+                emit_i32_const(-v);
+                vpush(T_I32);
+            } else {
+                float v = fold_b.fval;
+                CODE->len = fold_b.buf_start;
+                fold_a.valid = fold_b.valid = 0;
+                emit_f32_const(-v);
+                vpush(T_F32);
+            }
+        } else if (t == T_F32) {
             int scratch = alloc_local_f32();
             emit_local_set(scratch);
             emit_f32_const(0.0f);
@@ -1596,7 +1685,6 @@ static void base_expr(void) {
             emit_op(OP_F32_SUB);
             vpush(T_F32);
         } else {
-            /* 0 - val: save val to local, push 0, reload, sub */
             int sc = alloc_local();
             emit_local_set(sc);
             emit_i32_const(0);
@@ -1617,6 +1705,22 @@ static void relation(void);
 /* Integer binary op: coerce both operands to i32 */
 static void emit_int_binop(int i32_op) {
     VType b = vpop(), a = vpop();
+    /* Constant folding: both i32 */
+    if (fold_a.valid == 1 && fold_b.valid == 1 &&
+        fold_a.buf_end == fold_b.buf_start &&
+        fold_b.buf_end == CODE->len) {
+        int32_t va = fold_a.ival, vb = fold_b.ival;
+        int folded = 0; int32_t r = 0;
+        if (i32_op == OP_I32_DIV_S && vb != 0) { r = va / vb; folded = 1; }
+        else if (i32_op == OP_I32_REM_S && vb != 0) { r = va % vb; folded = 1; }
+        if (folded) {
+            CODE->len = fold_a.buf_start;
+            fold_a.valid = fold_b.valid = 0;
+            emit_i32_const(r);
+            vpush(T_I32);
+            return;
+        }
+    }
     if (a == T_I32 && b == T_I32) {
         emit_op(i32_op);
     } else if (a == T_I32 && b == T_F32) {
@@ -1645,9 +1749,24 @@ static void emit_int_binop(int i32_op) {
 static void power(void) {
     base_expr();
     if (want(TOK_POW)) {
+        int pos1 = CODE->len;
+        FoldSlot save1 = fold_b;
         coerce_f32();
         power();  /* right-associative: 2^3^2 = 2^(3^2) */
+        int pos2 = CODE->len;
+        FoldSlot save2 = fold_b;
         coerce_f32();
+        /* Constant folding: if both operands were constants */
+        if (save1.valid && save1.buf_end == pos1 &&
+            save2.valid && save2.buf_end == pos2) {
+            float va = (save1.valid == 1) ? (float)save1.ival : save1.fval;
+            float vb = (save2.valid == 1) ? (float)save2.ival : save2.fval;
+            CODE->len = save1.buf_start;
+            fold_a.valid = fold_b.valid = 0;
+            emit_f32_const(powf(va, vb));
+            vpush(T_F32);
+            return;
+        }
         emit_call(IMP_POWF);
         vpush(T_F32);
     }
