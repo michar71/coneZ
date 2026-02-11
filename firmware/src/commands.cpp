@@ -2,10 +2,19 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include <SimpleSerialShell.h>
+#include <WiFi.h>
+#include "esp_system.h"
+#include "esp_heap_caps.h"
+#include "esp_ota_ops.h"
+#include <esp_app_format.h>
 #include "basic_wrapper.h"
 #include "main.h"
 #include "task.h"
 #include "printManager.h"
+#include "gps.h"
+#include "sensors.h"
+#include "lora.h"
+#include "led.h"
 
 
 //Serial/Telnet Shell comamnds
@@ -387,80 +396,97 @@ int paramBasic(int argc, char **argv)
     }
 }
 
-/*
- void vTaskGetRunTimeStats( char *pcWriteBuffer )
+int cmd_mem(int argc, char **argv)
 {
-    TaskStatus_t pxTaskStatusArray[20];
-    volatile UBaseType_t uxArraySize, x;
-    uint32_t ulTotalRunTime, ulStatsAsPercentage;
+    printfnl(SOURCE_COMMANDS, F("Heap Memory:\n") );
+    printfnl(SOURCE_COMMANDS, F("  Free:    %u bytes\n"), esp_get_free_heap_size() );
+    printfnl(SOURCE_COMMANDS, F("  Min:     %u bytes  (lowest since boot)\n"), esp_get_minimum_free_heap_size() );
+    printfnl(SOURCE_COMMANDS, F("  Largest: %u bytes  (biggest allocatable block)\n"), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) );
+    return 0;
+}
 
-        // Make sure the write buffer does not contain a string.
-    *pcWriteBuffer = 0x00;
 
-    // Take a snapshot of the number of tasks in case it changes while this
-    // function is executing.
-    uxArraySize = uxTaskGetNumberOfTasks();
+int cmd_ps(int argc, char **argv)
+{
+    // Known task names (application + typical Arduino/ESP-IDF system tasks)
+    static const char *taskNames[] = {
+        "loopTask",     // Arduino main loop
+        "BasicTask",    // BASIC interpreter
+        "led_render",   // LED render task
+        "IDLE0",        // Idle task core 0
+        "IDLE1",        // Idle task core 1
+        "Tmr Svc",      // FreeRTOS timer service
+        "async_tcp",    // Async TCP (if WiFi active)
+        "wifi",         // WiFi task
+        "tiT",          // TCP/IP task
+        "sys_evt",      // System event task
+        "arduino_events", // Arduino event loop
+    };
+    static const int numNames = sizeof(taskNames) / sizeof(taskNames[0]);
 
-    // Allocate a TaskStatus_t structure for each task.  An array could be
-    // allocated statically at compile time.
-    //pxTaskStatusArray = pvPortMalloc( uxArraySize * sizeof( TaskStatus_t ) );
+    printfnl(SOURCE_COMMANDS, F("Task List (%u total tasks):\n"), (unsigned int)uxTaskGetNumberOfTasks() );
+    printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4s  %4s  %s\n"), "Name", "State", "Prio", "Core", "Min Free Stack" );
 
-    if( pxTaskStatusArray != NULL )
+    for (int i = 0; i < numNames; i++)
     {
-        // Generate raw status information about each task.
-        uxArraySize = uxTaskGetSystemState( pxTaskStatusArray, uxArraySize, &ulTotalRunTime );
+        TaskHandle_t handle = xTaskGetHandle(taskNames[i]);
+        if (handle == NULL)
+            continue;
 
-        // For percentage calculations.
-        ulTotalRunTime /= 100UL;
-
-        // Avoid divide by zero errors.
-        if( ulTotalRunTime > 0 )
+        const char *state;
+        switch (eTaskGetState(handle))
         {
-            // For each populated position in the pxTaskStatusArray array,
-            // format the raw data as human readable ASCII data
-            for( x = 0; x < uxArraySize; x++ )
-            {
-                // What percentage of the total run time has the task used?
-                // This will always be rounded down to the nearest integer.
-                // ulTotalRunTimeDiv100 has already been divided by 100.
-                ulStatsAsPercentage = pxTaskStatusArray[ x ].ulRunTimeCounter / ulTotalRunTime;
-
-                if( ulStatsAsPercentage > 0UL )
-                {
-                    sprintf( pcWriteBuffer, "%s\t\t%lu\t\t%lu%%\r\n", pxTaskStatusArray[ x ].pcTaskName, pxTaskStatusArray[ x ].ulRunTimeCounter, ulStatsAsPercentage );
-                }
-                else
-                {
-                    // If the percentage is zero here then the task has
-                    // consumed less than 1% of the total run time.
-                    sprintf( pcWriteBuffer, "%s\t\t%lu\t\t<1%%\r\n", pxTaskStatusArray[ x ].pcTaskName, pxTaskStatusArray[ x ].ulRunTimeCounter );
-                }
-
-                pcWriteBuffer += strlen( ( char * ) pcWriteBuffer );
-            }
+            case eRunning:   state = "Run";   break;
+            case eReady:     state = "Ready"; break;
+            case eBlocked:   state = "Block"; break;
+            case eSuspended: state = "Susp";  break;
+            case eDeleted:   state = "Del";   break;
+            default:         state = "?";     break;
         }
 
-        // The array is no longer needed, free the memory it consumes.
-        vPortFree( pxTaskStatusArray );
+        UBaseType_t prio = uxTaskPriorityGet(handle);
+        BaseType_t coreId = xTaskGetAffinity(handle);
+        uint32_t freeStackBytes = (uint32_t)uxTaskGetStackHighWaterMark(handle) * 4;
+
+        if (coreId == tskNO_AFFINITY)
+            printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4u     -  %u\n"),
+                taskNames[i], state,
+                (unsigned int)prio,
+                (unsigned int)freeStackBytes );
+        else
+            printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4u  %4d  %u\n"),
+                taskNames[i], state,
+                (unsigned int)prio,
+                (int)coreId,
+                (unsigned int)freeStackBytes );
     }
+
+    return 0;
 }
- */
-int tc(int argc, char **argv) 
+
+
+int cmd_uptime(int argc, char **argv)
 {
-    char buf[1024];
+    unsigned long ms = millis();
+    unsigned long totalSec = ms / 1000;
+    unsigned int days  = totalSec / 86400;
+    unsigned int hours = (totalSec % 86400) / 3600;
+    unsigned int mins  = (totalSec % 3600) / 60;
+    unsigned int secs  = totalSec % 60;
+    printfnl(SOURCE_COMMANDS, F("Uptime: %ud %02uh %02um %02us\n"), days, hours, mins, secs );
+    return 0;
+}
+
+
+int tc(int argc, char **argv)
+{
     if (argc != 1)
     {
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
-        return 1;       
+        return 1;
     }
     else
     {
-      /*
-        vTaskGetRunTimeStats(buf);
-        printfl(SOURCE_COMMANDS,"Task List:");
-        printfl(SOURCE_COMMANDS,"%s",buf);
-        printfl(SOURCE_COMMANDS,"");
-        */
         printfnl(SOURCE_COMMANDS,F("Thread Count:\n") );
         for (int ii=0;ii<4;ii++)
         {
@@ -471,6 +497,150 @@ int tc(int argc, char **argv)
 }
 
 
+int cmd_version(int argc, char **argv)
+{
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_app_desc_t desc;
+
+    if (running && esp_ota_get_partition_description(running, &desc) == ESP_OK)
+    {
+        printfnl(SOURCE_COMMANDS, F("Firmware: %s\n"), desc.project_name);
+        printfnl(SOURCE_COMMANDS, F("Version: %s\n"), desc.version);
+        printfnl(SOURCE_COMMANDS, F("Built:   %s %s\n"), desc.date, desc.time);
+    }
+    else
+    {
+        printfnl(SOURCE_COMMANDS, F("Firmware info unavailable\n"));
+    }
+
+#ifdef BOARD_CONEZ_V0_1
+    printfnl(SOURCE_COMMANDS, F("Board:   conez-v0-1\n"));
+#elif defined(BOARD_HELTEC_LORA32_V3)
+    printfnl(SOURCE_COMMANDS, F("Board:   heltec-lora32-v3\n"));
+#else
+    printfnl(SOURCE_COMMANDS, F("Board:   unknown\n"));
+#endif
+
+    return 0;
+}
+
+
+int cmd_wifi(int argc, char **argv)
+{
+    printfnl(SOURCE_COMMANDS, F("WiFi Status:\n"));
+
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        printfnl(SOURCE_COMMANDS, F("  SSID:   %s\n"), WiFi.SSID().c_str());
+        printfnl(SOURCE_COMMANDS, F("  Status: Connected\n"));
+        printfnl(SOURCE_COMMANDS, F("  IP:     %s\n"), WiFi.localIP().toString().c_str());
+        printfnl(SOURCE_COMMANDS, F("  RSSI:   %d dBm\n"), WiFi.RSSI());
+    }
+    else
+    {
+        printfnl(SOURCE_COMMANDS, F("  Status: Disconnected\n"));
+    }
+
+    return 0;
+}
+
+
+int cmd_gps(int argc, char **argv)
+{
+#ifdef BOARD_HAS_GPS
+    printfnl(SOURCE_COMMANDS, F("GPS Status:\n"));
+    printfnl(SOURCE_COMMANDS, F("  Fix:        %s\n"), get_gpsstatus() ? "Yes" : "No");
+    printfnl(SOURCE_COMMANDS, F("  Satellites: %d\n"), get_satellites());
+    printfnl(SOURCE_COMMANDS, F("  HDOP:       %.2f\n"), get_hdop() / 100.0);
+    printfnl(SOURCE_COMMANDS, F("  Position:   %.6f, %.6f\n"), get_lat(), get_lon());
+    printfnl(SOURCE_COMMANDS, F("  Altitude:   %.0f m\n"), get_alt());
+    printfnl(SOURCE_COMMANDS, F("  Speed:      %.1f m/s\n"), get_speed());
+    printfnl(SOURCE_COMMANDS, F("  Direction:  %.1f deg\n"), get_dir());
+#else
+    printfnl(SOURCE_COMMANDS, F("GPS not available on this board\n"));
+#endif
+    return 0;
+}
+
+
+int cmd_lora(int argc, char **argv)
+{
+#ifdef BOARD_HAS_LORA
+    printfnl(SOURCE_COMMANDS, F("LoRa Radio:\n"));
+    printfnl(SOURCE_COMMANDS, F("  Frequency: %.3f MHz\n"), lora_get_frequency());
+    printfnl(SOURCE_COMMANDS, F("  Bandwidth: %.1f kHz\n"), lora_get_bandwidth());
+    printfnl(SOURCE_COMMANDS, F("  SF:        %d\n"), lora_get_sf());
+    printfnl(SOURCE_COMMANDS, F("  Last RSSI: %.1f dBm\n"), lora_get_rssi());
+    printfnl(SOURCE_COMMANDS, F("  Last SNR:  %.1f dB\n"), lora_get_snr());
+#else
+    printfnl(SOURCE_COMMANDS, F("LoRa not available on this board\n"));
+#endif
+    return 0;
+}
+
+
+int cmd_sensors(int argc, char **argv)
+{
+    printfnl(SOURCE_COMMANDS, F("Sensors:\n"));
+
+#ifdef BOARD_HAS_IMU
+    printfnl(SOURCE_COMMANDS, F("  IMU:         %s\n"), imuAvailable() ? "Available" : "Not detected");
+    if (imuAvailable())
+    {
+        printfnl(SOURCE_COMMANDS, F("  Roll:        %.1f deg\n"), getRoll());
+        printfnl(SOURCE_COMMANDS, F("  Pitch:       %.1f deg\n"), getPitch());
+        printfnl(SOURCE_COMMANDS, F("  Yaw:         %.1f deg\n"), getYaw());
+        printfnl(SOURCE_COMMANDS, F("  Accel:       %.2f, %.2f, %.2f g\n"), getAccX(), getAccY(), getAccZ());
+    }
+#else
+    printfnl(SOURCE_COMMANDS, F("  IMU:         Not available on this board\n"));
+#endif
+
+    printfnl(SOURCE_COMMANDS, F("  Temperature: %.1f C\n"), getTemp());
+    printfnl(SOURCE_COMMANDS, F("  Battery:     %.2f V\n"), bat_voltage());
+
+#ifdef BOARD_HAS_POWER_MGMT
+    printfnl(SOURCE_COMMANDS, F("  Solar:       %.2f V\n"), solar_voltage());
+#endif
+
+    return 0;
+}
+
+
+int cmd_time(int argc, char **argv)
+{
+#ifdef BOARD_HAS_GPS
+    static const char *dayNames[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    int dow = get_day_of_week();
+    if (dow < 0 || dow > 6) dow = 0;
+
+    printfnl(SOURCE_COMMANDS, F("Time: %04d-%02d-%02d %02d:%02d:%02d (%s)\n"),
+        get_year(), get_month(), get_day(),
+        get_hour(), get_minute(), get_second(),
+        dayNames[dow]);
+    printfnl(SOURCE_COMMANDS, F("GPS time valid: %s\n"), get_gpsstatus() ? "Yes" : "No");
+#else
+    printfnl(SOURCE_COMMANDS, F("GPS time not available on this board\n"));
+#endif
+    return 0;
+}
+
+
+int cmd_led(int argc, char **argv)
+{
+#ifdef BOARD_HAS_RGB_LEDS
+    printfnl(SOURCE_COMMANDS, F("LED Config:\n"));
+    printfnl(SOURCE_COMMANDS, F("  Strip 1: %d LEDs\n"), NUM_LEDS1);
+    printfnl(SOURCE_COMMANDS, F("  Strip 2: %d LEDs\n"), NUM_LEDS2);
+    printfnl(SOURCE_COMMANDS, F("  Strip 3: %d LEDs\n"), NUM_LEDS3);
+    printfnl(SOURCE_COMMANDS, F("  Strip 4: %d LEDs\n"), NUM_LEDS4);
+#else
+    printfnl(SOURCE_COMMANDS, F("RGB LEDs not available on this board\n"));
+#endif
+    return 0;
+}
+
+
 int cmd_help( int argc, char **argv )
 {
     printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
@@ -478,15 +648,25 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]    Show or set debug message types\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  del {filename}                     Delete file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  dir                                List files\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  gps                                Show GPS status\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  help                               Crash the main thread\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  led                                Show LED configuration\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  list {filename}                    Show file contents\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  load {filename}                    Load BASIC program\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  lora                               Show LoRa radio status\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mem                                Show heap memory stats\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                Set BASIC program arguments\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  ps                                 Show task list and stack watermarks\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  reboot                             Respawn as a coyote\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  ren {oldname} {newname}            Rename file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  run {filename}                     Run BASIC program\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  sensors                            Show sensor readings\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  stop                               Stop BASIC program\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  time                               Show current date/time\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  uptime                             Show system uptime\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  version                            Show firmware version\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  wifi                               Show WiFi status\n\n" ) );
     return 0;
 }
 
@@ -503,15 +683,25 @@ void init_commands(Stream *dev)
     shell.addCommand(F("debug"), cmd_debug );
     shell.addCommand(F("del"), delFile);
     shell.addCommand(F("dir"), listDir);
+    shell.addCommand(F("gps"), cmd_gps);
     shell.addCommand(F("help"), cmd_help);
+    shell.addCommand(F("led"), cmd_led);
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("load"), loadFile);
+    shell.addCommand(F("lora"), cmd_lora);
+    shell.addCommand(F("mem"), cmd_mem);
     shell.addCommand(F("param"), paramBasic);
+    shell.addCommand(F("ps"), cmd_ps);
     shell.addCommand(F("reboot"), cmd_reboot );
     shell.addCommand(F("ren"), renFile);
     shell.addCommand(F("run"), runBasic);
+    shell.addCommand(F("sensors"), cmd_sensors);
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
+    shell.addCommand(F("time"), cmd_time);
+    shell.addCommand(F("uptime"), cmd_uptime);
+    shell.addCommand(F("version"), cmd_version);
+    shell.addCommand(F("wifi"), cmd_wifi);
     
     
     //System commands

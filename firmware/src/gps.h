@@ -24,5 +24,8 @@ int get_hour(void);
 int get_minute(void);
 int get_second(void);
 
+int get_satellites(void);
+int get_hdop(void);
+
 bool get_pps(void);
 #endif
