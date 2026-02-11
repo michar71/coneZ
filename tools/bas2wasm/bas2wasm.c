@@ -78,8 +78,10 @@ static void buf_section(Buf *out, int id, Buf *content) {
  * ================================================================ */
 
 /* Global index constants */
-#define GLOBAL_LINE  0   /* __line: current BASIC source line (mut i32) */
-#define GLOBAL_HEAP  1   /* _heap_ptr: bump allocator pointer (mut i32) */
+#define GLOBAL_LINE      0   /* __line: current BASIC source line (mut i32) */
+#define GLOBAL_HEAP      1   /* _heap_ptr: bump allocator pointer (mut i32) */
+#define GLOBAL_DATA_BASE 2   /* address of DATA table in linear memory */
+#define GLOBAL_DATA_IDX  3   /* current READ index (0-based) */
 
 #define OP_UNREACHABLE   0x00
 #define OP_BLOCK         0x02
@@ -131,6 +133,9 @@ static void buf_section(Buf *out, int id, Buf *content) {
 #define OP_F32_SQRT      0x91
 #define OP_F32_ABS       0x8B
 #define OP_I32_TRUNC_F32_S 0xA8
+#define OP_I32_XOR           0x73
+#define OP_F32_CEIL          0x8D
+#define OP_F32_FLOOR         0x8E
 #define OP_F32_CONVERT_I32_S 0xB2
 
 #define WASM_I32  0x7F
@@ -179,6 +184,9 @@ enum {
     IMP_STR_CHR, IMP_STR_ASC, IMP_STR_FROM_INT, IMP_STR_FROM_FLOAT,
     IMP_STR_TO_INT, IMP_STR_TO_FLOAT, IMP_STR_UPPER, IMP_STR_LOWER,
     IMP_STR_INSTR, IMP_STR_TRIM,
+    IMP_TANF, IMP_EXPF, IMP_LOGF, IMP_LOG2F, IMP_FMODF,
+    IMP_STR_REPEAT, IMP_STR_SPACE, IMP_STR_HEX, IMP_STR_OCT,
+    IMP_STR_MID_ASSIGN,
     IMP_COUNT
 };
 
@@ -287,6 +295,16 @@ static ImportDef imp_defs[IMP_COUNT] = {
     [IMP_STR_LOWER]      = {"basic_str_lower",      1,{_I},            1,{_I}},
     [IMP_STR_INSTR]      = {"basic_str_instr",      3,{_I,_I,_I},      1,{_I}},
     [IMP_STR_TRIM]       = {"basic_str_trim",       1,{_I},            1,{_I}},
+    [IMP_TANF]           = {"tanf",                 1,{_F},            1,{_F}},
+    [IMP_EXPF]           = {"expf",                 1,{_F},            1,{_F}},
+    [IMP_LOGF]           = {"logf",                 1,{_F},            1,{_F}},
+    [IMP_LOG2F]          = {"log2f",                1,{_F},            1,{_F}},
+    [IMP_FMODF]          = {"fmodf",                2,{_F,_F},         1,{_F}},
+    [IMP_STR_REPEAT]     = {"basic_str_repeat",     2,{_I,_I},         1,{_I}},
+    [IMP_STR_SPACE]      = {"basic_str_space",      1,{_I},            1,{_I}},
+    [IMP_STR_HEX]        = {"basic_str_hex",        1,{_I},            1,{_I}},
+    [IMP_STR_OCT]        = {"basic_str_oct",        1,{_I},            1,{_I}},
+    [IMP_STR_MID_ASSIGN] = {"basic_str_mid_assign", 4,{_I,_I,_I,_I},  1,{_I}},
 };
 #undef _I
 #undef _F
@@ -319,6 +337,7 @@ typedef struct {
     int param_vars[8];
     int local_vars[8];
     int func_local_idx; /* index into func_bufs (0=setup, 1+=SUBs) */
+    int is_const;       /* 1 if declared with CONST */
 } Var;
 
 typedef struct {
@@ -332,7 +351,7 @@ typedef struct {
     int ncall_fixups;
 } FuncCtx;
 
-enum { CTRL_WHILE, CTRL_FOR, CTRL_IF };
+enum { CTRL_WHILE, CTRL_FOR, CTRL_IF, CTRL_SELECT, CTRL_DO };
 
 typedef struct {
     int kind;
@@ -341,6 +360,8 @@ typedef struct {
     int for_var;        /* FOR: variable index */
     int for_limit_local;/* FOR: WASM local index for limit */
     int if_extra_ends;  /* IF: extra nesting from ELSE IF chains */
+    int for_step_local; /* FOR STEP: WASM local index for step value */
+    int for_has_step;   /* FOR: 1 if explicit STEP, 0 otherwise */
 } CtrlEntry;
 
 /* Global compiler state */
@@ -359,6 +380,12 @@ static uint8_t imp_used[IMP_COUNT];
 /* String/data table */
 static char data_buf[MAX_STRINGS];
 static int data_len;
+
+/* DATA items (compile-time collection, assembled into data section) */
+#define MAX_DATA_ITEMS 1024
+typedef struct { VType type; int32_t ival; float fval; int str_off; } DataItem;
+static DataItem data_items[MAX_DATA_ITEMS];
+static int ndata_items;
 
 /* Source */
 static char *source;
@@ -409,7 +436,7 @@ static int add_var(const char *name) {
     } else {
         vars[nvar].type = T_I32;
     }
-    vars[nvar].global_idx = nvar + 2; /* globals 0,1 = __line, _heap_ptr */
+    vars[nvar].global_idx = nvar + 4; /* globals 0-3 = __line, _heap_ptr, _data_base, _data_idx */
     return nvar++;
 }
 
@@ -453,13 +480,19 @@ enum {
     TOK_AND=19, TOK_OR=20, TOK_FORMAT=21, TOK_KW_SUB=22, TOK_END=23,
     TOK_RETURN=24, TOK_LOCAL=25, TOK_WHILE=26, TOK_FOR=27, TOK_TO=28,
     TOK_IF=29, TOK_ELSE=30, TOK_THEN=31, TOK_DIM=32, TOK_UBOUND=33,
-    TOK_BYE=34, TOK_BREAK=35, TOK_RESUME=36, TOK_PRINTS=37, TOK_STEP=38
+    TOK_BYE=34, TOK_BREAK=35, TOK_RESUME=36, TOK_PRINTS=37, TOK_STEP=38,
+    TOK_CONST=39, TOK_NOT=40, TOK_XOR=41,
+    TOK_SELECT=42, TOK_CASE=43, TOK_DO=44, TOK_LOOP=45, TOK_UNTIL=46,
+    TOK_EXIT=47, TOK_SWAP=48, TOK_IS=49,
+    TOK_DATA=50, TOK_READ=51, TOK_RESTORE=52
 };
 
 static const char *kwd[] = {
     "AND","OR","FORMAT","SUB","END","RETURN","LOCAL",
     "WHILE","FOR","TO","IF","ELSE","THEN","DIM","UBOUND",
-    "BYE","BREAK","RESUME","PRINTS","STEP",NULL
+    "BYE","BREAK","RESUME","PRINTS","STEP","CONST","NOT","XOR",
+    "SELECT","CASE","DO","LOOP","UNTIL","EXIT","SWAP","IS",
+    "DATA","READ","RESTORE",NULL
 };
 
 static int next_line(void) {
@@ -477,7 +510,7 @@ static int next_line(void) {
 
 static int read_tok(void) {
     static const char *pun = "(),+-*/\\=<>";
-    static const char *dub = "<><==>";
+    static const char *dub = "<><=>=";  /* pairs: <> <= >= */
     char *p, *d;
     const char **k;
 
@@ -591,6 +624,9 @@ static void emit_i32_load(int offset) {
 }
 static void emit_i32_store(int offset) {
     buf_byte(CODE, OP_I32_STORE); buf_uleb(CODE, 2); buf_uleb(CODE, offset);
+}
+static void emit_f32_load(int offset) {
+    buf_byte(CODE, OP_F32_LOAD); buf_uleb(CODE, 2); buf_uleb(CODE, offset);
 }
 static void emit_block(void)  { buf_byte(CODE, OP_BLOCK); buf_byte(CODE, WASM_VOID); block_depth++; }
 static void emit_loop(void)   { buf_byte(CODE, OP_LOOP);  buf_byte(CODE, WASM_VOID); block_depth++; }
@@ -1302,6 +1338,105 @@ static int compile_builtin_expr(const char *name) {
         vpush(T_STR);
         return 1;
     }
+    /* ---- Additional string functions ---- */
+    if (strcmp(name, "STRING$") == 0) {
+        expr(); coerce_i32(); need(TOK_COMMA);
+        expr(); coerce_i32(); need(TOK_RP);
+        emit_call(IMP_STR_REPEAT);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "SPACE$") == 0) {
+        expr(); coerce_i32(); need(TOK_RP);
+        emit_call(IMP_STR_SPACE);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "HEX$") == 0) {
+        expr(); coerce_i32(); need(TOK_RP);
+        emit_call(IMP_STR_HEX);
+        vpush(T_STR);
+        return 1;
+    }
+    if (strcmp(name, "OCT$") == 0) {
+        expr(); coerce_i32(); need(TOK_RP);
+        emit_call(IMP_STR_OCT);
+        vpush(T_STR);
+        return 1;
+    }
+    /* ---- Additional math functions ---- */
+    if (strcmp(name, "TAN") == 0) {
+        expr(); coerce_f32(); need(TOK_RP);
+        emit_call(IMP_TANF);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "EXP") == 0) {
+        expr(); coerce_f32(); need(TOK_RP);
+        emit_call(IMP_EXPF);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "LOG") == 0) {
+        expr(); coerce_f32(); need(TOK_RP);
+        emit_call(IMP_LOGF);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "LOG2") == 0) {
+        expr(); coerce_f32(); need(TOK_RP);
+        emit_call(IMP_LOG2F);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "FLOOR") == 0) {
+        expr(); coerce_f32(); need(TOK_RP);
+        emit_op(OP_F32_FLOOR);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "CEIL") == 0) {
+        expr(); coerce_f32(); need(TOK_RP);
+        emit_op(OP_F32_CEIL);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "FMOD") == 0) {
+        expr(); coerce_f32(); need(TOK_COMMA);
+        expr(); coerce_f32(); need(TOK_RP);
+        emit_call(IMP_FMODF);
+        vpush(T_F32);
+        return 1;
+    }
+    if (strcmp(name, "SGN") == 0) {
+        expr(); need(TOK_RP);
+        VType t = vpop();
+        if (t == T_F32) {
+            /* (x > 0.0) - (x < 0.0) */
+            int scratch = alloc_local_f32();
+            emit_local_set(scratch);
+            emit_local_get(scratch);
+            emit_f32_const(0.0f);
+            emit_op(OP_F32_GT);
+            emit_local_get(scratch);
+            emit_f32_const(0.0f);
+            emit_op(OP_F32_LT);
+            emit_op(OP_I32_SUB);
+        } else {
+            /* (x > 0) - (x < 0) */
+            int scratch = alloc_local();
+            emit_local_set(scratch);
+            emit_local_get(scratch);
+            emit_i32_const(0);
+            emit_op(OP_I32_GT_S);
+            emit_local_get(scratch);
+            emit_i32_const(0);
+            emit_op(OP_I32_LT_S);
+            emit_op(OP_I32_SUB);
+        }
+        vpush(T_I32);
+        return 1;
+    }
 
     return 0;
 }
@@ -1313,7 +1448,13 @@ static int compile_builtin_expr(const char *name) {
 static void base_expr(void) {
     int neg = want(TOK_SUB) ? 1 : 0;
 
-    if (want(TOK_NUMBER)) {
+    if (want(TOK_NOT)) {
+        base_expr();
+        if (vsp > 0 && vstack[vsp-1] == T_STR) { error_at("cannot use NOT on strings"); return; }
+        coerce_i32();
+        emit_i32_const(-1);
+        emit_op(OP_I32_XOR);
+    } else if (want(TOK_NUMBER)) {
         emit_i32_const(tokv);
         vpush(T_I32);
     } else if (want(TOK_FLOAT)) {
@@ -1480,16 +1621,16 @@ static void relation(void) {
 
 static void expr(void) {
     relation();
-    while (want(0), tok == TOK_AND || tok == TOK_OR) {
+    while (want(0), tok == TOK_AND || tok == TOK_OR || tok == TOK_XOR) {
         int op = tok;
         read_tok();
         relation();
-        /* AND/OR are bitwise on i32 (-1/0 values) */
+        /* AND/OR/XOR are bitwise on i32 (-1/0 values) */
         VType b = vpop(), a = vpop();
         if (a == T_STR || b == T_STR) {
-            error_at("cannot use AND/OR on strings");
+            error_at("cannot use AND/OR/XOR on strings");
         }
-        emit_op(op == TOK_AND ? OP_I32_AND : OP_I32_OR);
+        emit_op(op == TOK_AND ? OP_I32_AND : op == TOK_OR ? OP_I32_OR : OP_I32_XOR);
         vpush(T_I32);
     }
 }
@@ -1704,10 +1845,14 @@ static void compile_end(void) {
     } else if (kw == TOK_FOR) {
         ctrl_sp--;
         if (ctrl_stk[ctrl_sp].kind != CTRL_FOR) { error_at("END FOR without FOR"); return; }
-        /* Increment loop variable */
+        /* Increment loop variable by step (or 1 if no STEP) */
         int var = ctrl_stk[ctrl_sp].for_var;
         emit_global_get(vars[var].global_idx);
-        emit_i32_const(1);
+        if (ctrl_stk[ctrl_sp].for_has_step) {
+            emit_local_get(ctrl_stk[ctrl_sp].for_step_local);
+        } else {
+            emit_i32_const(1);
+        }
         emit_op(OP_I32_ADD);
         emit_global_set(vars[var].global_idx);
         /* Jump back to loop start */
@@ -1720,6 +1865,12 @@ static void compile_end(void) {
         int extras = ctrl_stk[ctrl_sp].if_extra_ends;
         emit_end(); /* close current if */
         for (int i = 0; i < extras; i++) emit_end();
+    } else if (kw == TOK_SELECT) {
+        ctrl_sp--;
+        if (ctrl_stk[ctrl_sp].kind != CTRL_SELECT) { error_at("END SELECT without SELECT"); return; }
+        int extras = ctrl_stk[ctrl_sp].if_extra_ends;
+        for (int i = 0; i < extras; i++) emit_end(); /* close case if-blocks */
+        emit_end(); /* close outer block */
     } else {
         error_at("unexpected END");
     }
@@ -1753,13 +1904,41 @@ static void compile_for(void) {
     int limit_local = alloc_local();
     emit_local_set(limit_local);
 
+    int step_local = -1;
+    int has_step = 0;
+    if (want(TOK_STEP)) {
+        expr(); coerce_i32(); vpop();
+        step_local = alloc_local();
+        emit_local_set(step_local);
+        has_step = 1;
+    }
+
     emit_block();
     emit_loop();
-    /* Check: I >= limit → break */
-    emit_global_get(vars[var].global_idx);
-    emit_local_get(limit_local);
-    emit_op(OP_I32_GE_S);
-    emit_br_if(1);
+
+    if (has_step) {
+        /* Direction-aware exit condition using SELECT:
+         * ge_result = (var >= limit)   -- for positive step
+         * le_result = (var <= limit)   -- for negative step
+         * select(ge_result, le_result, step > 0) → br_if */
+        emit_global_get(vars[var].global_idx);
+        emit_local_get(limit_local);
+        emit_op(OP_I32_GE_S);
+        emit_global_get(vars[var].global_idx);
+        emit_local_get(limit_local);
+        emit_op(OP_I32_LE_S);
+        emit_local_get(step_local);
+        emit_i32_const(0);
+        emit_op(OP_I32_GT_S);
+        emit_op(OP_SELECT);
+        emit_br_if(1);
+    } else {
+        /* Simple: I >= limit → break */
+        emit_global_get(vars[var].global_idx);
+        emit_local_get(limit_local);
+        emit_op(OP_I32_GE_S);
+        emit_br_if(1);
+    }
 
     ctrl_stk[ctrl_sp].kind = CTRL_FOR;
     ctrl_stk[ctrl_sp].for_var = var;
@@ -1767,6 +1946,8 @@ static void compile_for(void) {
     ctrl_stk[ctrl_sp].break_depth = block_depth - 1;
     ctrl_stk[ctrl_sp].cont_depth = block_depth;
     ctrl_stk[ctrl_sp].if_extra_ends = 0;
+    ctrl_stk[ctrl_sp].for_step_local = step_local;
+    ctrl_stk[ctrl_sp].for_has_step = has_step;
     ctrl_sp++;
 }
 
@@ -1796,6 +1977,29 @@ static void compile_else(void) {
         emit_if_void();
         ctrl_stk[ctrl_sp-1].if_extra_ends++;
     }
+}
+
+static void compile_const(void) {
+    need(TOK_NAME);
+    int var = tokv;
+    need(TOK_EQ);
+    expr();
+    VType et = vpop();
+    if (vars[var].type == T_STR) {
+        /* String const: just store the pointer */
+        emit_global_set(vars[var].global_idx);
+    } else {
+        if (!vars[var].type_set) {
+            vars[var].type = et;
+            vars[var].type_set = 1;
+        } else if (vars[var].type == T_I32 && et == T_F32) {
+            emit_op(OP_I32_TRUNC_F32_S);
+        } else if (vars[var].type == T_F32 && et == T_I32) {
+            emit_op(OP_F32_CONVERT_I32_S);
+        }
+        emit_global_set(vars[var].global_idx);
+    }
+    vars[var].is_const = 1;
 }
 
 static void compile_dim(void) {
@@ -1877,6 +2081,403 @@ static void compile_return(void) {
     }
 }
 
+static void compile_select(void) {
+    need(TOK_CASE);
+    /* Evaluate test expression, store in a local */
+    expr();
+    VType test_type = vpop();
+    int test_local;
+    if (test_type == T_F32) {
+        test_local = alloc_local_f32();
+    } else {
+        test_local = alloc_local();
+    }
+    emit_local_set(test_local);
+
+    /* Outer block = break target for END SELECT */
+    emit_block();
+
+    ctrl_stk[ctrl_sp].kind = CTRL_SELECT;
+    ctrl_stk[ctrl_sp].for_var = test_local;
+    ctrl_stk[ctrl_sp].for_limit_local = (int)test_type;
+    ctrl_stk[ctrl_sp].break_depth = block_depth;
+    ctrl_stk[ctrl_sp].if_extra_ends = 0;
+    ctrl_sp++;
+}
+
+static void compile_case(void) {
+    /* Find nearest CTRL_SELECT on ctrl stack */
+    int si = -1;
+    for (int i = ctrl_sp - 1; i >= 0; i--) {
+        if (ctrl_stk[i].kind == CTRL_SELECT) { si = i; break; }
+    }
+    if (si < 0) { error_at("CASE without SELECT"); return; }
+
+    int test_local = ctrl_stk[si].for_var;
+    VType test_type = (VType)ctrl_stk[si].for_limit_local;
+
+    /* Close previous CASE's if-block if any */
+    if (ctrl_stk[si].if_extra_ends > 0) {
+        /* br to outer block to skip remaining cases */
+        emit_br(block_depth - ctrl_stk[si].break_depth);
+        emit_end(); /* close previous case's if-block */
+        ctrl_stk[si].if_extra_ends--;
+    }
+
+    /* Check for CASE ELSE */
+    if (want(TOK_ELSE)) {
+        /* No condition — code falls through unconditionally */
+        /* Mark that we have a case block open (but no if-block to close) */
+        /* We don't emit an if — the code just runs */
+        /* But we still need to track that END SELECT shouldn't close an extra end */
+        /* Actually, CASE ELSE doesn't emit an if-block, so don't increment if_extra_ends */
+        return;
+    }
+
+    /* Parse one or more comma-separated match values */
+    int nmatches = 0;
+    do {
+        if (nmatches > 0) {
+            /* OR with previous match result */
+        }
+
+        /* Check for CASE IS <op> expr */
+        if (want(TOK_IS)) {
+            /* Read comparison operator */
+            int op = read_tok();
+            if (op < TOK_EQ || op > TOK_GE) {
+                error_at("expected comparison operator after IS");
+                return;
+            }
+            /* Load test value and compare */
+            if (test_type == T_F32) {
+                emit_local_get(test_local);
+                expr(); coerce_f32(); vpop();
+                switch (op) {
+                case TOK_EQ: emit_op(OP_F32_EQ); break;
+                case TOK_NE: emit_op(OP_F32_NE); break;
+                case TOK_LT: emit_op(OP_F32_LT); break;
+                case TOK_GT: emit_op(OP_F32_GT); break;
+                case TOK_LE: emit_op(OP_F32_LE); break;
+                case TOK_GE: emit_op(OP_F32_GE); break;
+                }
+            } else if (test_type == T_STR) {
+                emit_local_get(test_local);
+                expr(); vpop();
+                emit_call(IMP_STR_CMP);
+                switch (op) {
+                case TOK_EQ: emit_op(OP_I32_EQZ); break;
+                case TOK_NE: emit_i32_const(0); emit_op(OP_I32_NE); break;
+                case TOK_LT: emit_i32_const(0); emit_op(OP_I32_LT_S); break;
+                case TOK_GT: emit_i32_const(0); emit_op(OP_I32_GT_S); break;
+                case TOK_LE: emit_i32_const(0); emit_op(OP_I32_LE_S); break;
+                case TOK_GE: emit_i32_const(0); emit_op(OP_I32_GE_S); break;
+                }
+            } else {
+                emit_local_get(test_local);
+                expr(); coerce_i32(); vpop();
+                switch (op) {
+                case TOK_EQ: emit_op(OP_I32_EQ); break;
+                case TOK_NE: emit_op(OP_I32_NE); break;
+                case TOK_LT: emit_op(OP_I32_LT_S); break;
+                case TOK_GT: emit_op(OP_I32_GT_S); break;
+                case TOK_LE: emit_op(OP_I32_LE_S); break;
+                case TOK_GE: emit_op(OP_I32_GE_S); break;
+                }
+            }
+        } else {
+            /* Simple value match: test_local == expr */
+            if (test_type == T_F32) {
+                emit_local_get(test_local);
+                expr(); coerce_f32(); vpop();
+                emit_op(OP_F32_EQ);
+            } else if (test_type == T_STR) {
+                emit_local_get(test_local);
+                expr(); vpop();
+                emit_call(IMP_STR_CMP);
+                emit_op(OP_I32_EQZ);
+            } else {
+                emit_local_get(test_local);
+                expr(); coerce_i32(); vpop();
+                emit_op(OP_I32_EQ);
+            }
+        }
+
+        if (nmatches > 0) {
+            emit_op(OP_I32_OR);
+        }
+        nmatches++;
+    } while (want(TOK_COMMA));
+
+    emit_if_void();
+    ctrl_stk[si].if_extra_ends++;
+}
+
+static void compile_do(void) {
+    emit_block();
+    emit_loop();
+
+    int do_variant = 0; /* 0=infinite, 1=pre-WHILE, 2=pre-UNTIL */
+
+    if (want(TOK_WHILE)) {
+        expr(); coerce_i32(); vpop();
+        emit_op(OP_I32_EQZ);
+        emit_br_if(1); /* break if false */
+        do_variant = 1;
+    } else if (want(TOK_UNTIL)) {
+        expr(); coerce_i32(); vpop();
+        emit_br_if(1); /* break if true */
+        do_variant = 2;
+    }
+
+    ctrl_stk[ctrl_sp].kind = CTRL_DO;
+    ctrl_stk[ctrl_sp].break_depth = block_depth - 1; /* outer block */
+    ctrl_stk[ctrl_sp].cont_depth = block_depth;       /* inner loop */
+    ctrl_stk[ctrl_sp].for_var = do_variant;
+    ctrl_stk[ctrl_sp].if_extra_ends = 0;
+    ctrl_sp++;
+}
+
+static void compile_loop(void) {
+    if (ctrl_sp == 0 || ctrl_stk[ctrl_sp-1].kind != CTRL_DO) {
+        error_at("LOOP without DO"); return;
+    }
+    ctrl_sp--;
+    int do_variant = ctrl_stk[ctrl_sp].for_var;
+
+    if (do_variant != 0) {
+        /* Pre-condition (WHILE/UNTIL) already handled at DO — just loop back */
+        emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
+    } else {
+        /* No pre-condition — check for post-condition */
+        if (want(TOK_WHILE)) {
+            expr(); coerce_i32(); vpop();
+            emit_op(OP_I32_EQZ);
+            emit_br_if(block_depth - ctrl_stk[ctrl_sp].break_depth); /* break if false */
+            emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);     /* continue */
+        } else if (want(TOK_UNTIL)) {
+            expr(); coerce_i32(); vpop();
+            emit_br_if(block_depth - ctrl_stk[ctrl_sp].break_depth); /* break if true */
+            emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);     /* continue */
+        } else {
+            /* Infinite loop */
+            emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
+        }
+    }
+
+    emit_end(); /* loop */
+    emit_end(); /* block */
+}
+
+static void compile_exit(void) {
+    int kw = read_tok();
+    int target_kind;
+    const char *errmsg;
+
+    if (kw == TOK_FOR) {
+        target_kind = CTRL_FOR;
+        errmsg = "EXIT FOR without FOR";
+    } else if (kw == TOK_WHILE) {
+        target_kind = CTRL_WHILE;
+        errmsg = "EXIT WHILE without WHILE";
+    } else if (kw == TOK_DO) {
+        target_kind = CTRL_DO;
+        errmsg = "EXIT DO without DO";
+    } else if (kw == TOK_SELECT) {
+        target_kind = CTRL_SELECT;
+        errmsg = "EXIT SELECT without SELECT";
+    } else {
+        error_at("expected FOR, WHILE, DO, or SELECT after EXIT");
+        return;
+    }
+
+    /* Search ctrl stack from top for matching kind */
+    int found = -1;
+    for (int i = ctrl_sp - 1; i >= 0; i--) {
+        if (ctrl_stk[i].kind == target_kind) { found = i; break; }
+    }
+    if (found < 0) { error_at(errmsg); return; }
+
+    emit_br(block_depth - ctrl_stk[found].break_depth);
+}
+
+static void compile_swap(void) {
+    need(TOK_NAME);
+    int var_a = tokv;
+    need(TOK_COMMA);
+    need(TOK_NAME);
+    int var_b = tokv;
+
+    /* Type check */
+    VType ta = vars[var_a].type_set ? vars[var_a].type : T_I32;
+    VType tb = vars[var_b].type_set ? vars[var_b].type : T_I32;
+    if (ta != tb) { error_at("SWAP requires both variables to be the same type"); return; }
+
+    if (ta == T_F32) {
+        int tmp = alloc_local_f32();
+        emit_global_get(vars[var_a].global_idx);
+        emit_local_set(tmp);
+        emit_global_get(vars[var_b].global_idx);
+        emit_global_set(vars[var_a].global_idx);
+        emit_local_get(tmp);
+        emit_global_set(vars[var_b].global_idx);
+    } else {
+        int tmp = alloc_local();
+        emit_global_get(vars[var_a].global_idx);
+        emit_local_set(tmp);
+        emit_global_get(vars[var_b].global_idx);
+        emit_global_set(vars[var_a].global_idx);
+        emit_local_get(tmp);
+        emit_global_set(vars[var_b].global_idx);
+    }
+}
+
+static void compile_data(void) {
+    /* Parse comma-separated literals into data_items[]. No WASM code emitted. */
+    do {
+        if (ndata_items >= MAX_DATA_ITEMS) { error_at("too many DATA items"); return; }
+        int neg = 0;
+        if (want(TOK_SUB)) neg = 1;
+        if (want(TOK_NUMBER)) {
+            data_items[ndata_items].type = T_I32;
+            data_items[ndata_items].ival = neg ? -tokv : tokv;
+            ndata_items++;
+        } else if (want(TOK_FLOAT)) {
+            data_items[ndata_items].type = T_F32;
+            data_items[ndata_items].fval = neg ? -tokf : tokf;
+            ndata_items++;
+        } else if (!neg && want(TOK_STRING)) {
+            data_items[ndata_items].type = T_STR;
+            data_items[ndata_items].str_off = tokv;
+            ndata_items++;
+        } else {
+            error_at("expected number or string in DATA");
+            return;
+        }
+    } while (want(TOK_COMMA));
+}
+
+static void compile_read(void) {
+    /* For each variable, read the next item from the DATA table */
+    do {
+        need(TOK_NAME);
+        int var = tokv;
+
+        /* entry_addr = DATA_BASE + 4 + DATA_IDX * 8 */
+        emit_global_get(GLOBAL_DATA_BASE);
+        emit_i32_const(4);
+        emit_op(OP_I32_ADD);
+        emit_global_get(GLOBAL_DATA_IDX);
+        emit_i32_const(8);
+        emit_op(OP_I32_MUL);
+        emit_op(OP_I32_ADD);
+        int addr = alloc_local();
+        emit_local_set(addr);
+
+        if (vars[var].type == T_STR) {
+            /* Load value (string offset), copy to pool, free-old-store-new */
+            emit_local_get(addr);
+            emit_i32_load(4);
+            emit_call(IMP_STR_COPY);
+            int new_val = alloc_local();
+            emit_local_set(new_val);
+            emit_global_get(vars[var].global_idx);
+            emit_call(IMP_STR_FREE);
+            emit_local_get(new_val);
+            emit_global_set(vars[var].global_idx);
+        } else if (vars[var].type_set && vars[var].type == T_F32) {
+            /* f32 target: check type tag, load accordingly */
+            int tag = alloc_local();
+            emit_local_get(addr);
+            emit_i32_load(0);
+            emit_local_set(tag);
+            emit_local_get(tag);
+            emit_i32_const(1); /* type 1 = f32 */
+            emit_op(OP_I32_EQ);
+            emit_if_void();
+                emit_local_get(addr);
+                emit_f32_load(4);
+                emit_global_set(vars[var].global_idx);
+            emit_else();
+                emit_local_get(addr);
+                emit_i32_load(4);
+                emit_op(OP_F32_CONVERT_I32_S);
+                emit_global_set(vars[var].global_idx);
+            emit_end();
+        } else {
+            /* i32 target: check type tag, load accordingly */
+            if (!vars[var].type_set) {
+                vars[var].type = T_I32;
+                vars[var].type_set = 1;
+            }
+            int tag = alloc_local();
+            emit_local_get(addr);
+            emit_i32_load(0);
+            emit_local_set(tag);
+            emit_local_get(tag);
+            emit_i32_const(1); /* type 1 = f32 */
+            emit_op(OP_I32_EQ);
+            emit_if_void();
+                emit_local_get(addr);
+                emit_f32_load(4);
+                emit_op(OP_I32_TRUNC_F32_S);
+                emit_global_set(vars[var].global_idx);
+            emit_else();
+                emit_local_get(addr);
+                emit_i32_load(4);
+                emit_global_set(vars[var].global_idx);
+            emit_end();
+        }
+
+        /* Increment DATA_IDX */
+        emit_global_get(GLOBAL_DATA_IDX);
+        emit_i32_const(1);
+        emit_op(OP_I32_ADD);
+        emit_global_set(GLOBAL_DATA_IDX);
+    } while (want(TOK_COMMA));
+}
+
+static void compile_restore(void) {
+    emit_i32_const(0);
+    emit_global_set(GLOBAL_DATA_IDX);
+}
+
+static void compile_mid_assign(void) {
+    /* MID$(target$, start, len) = replacement$ */
+    need(TOK_LP);
+    need(TOK_NAME);
+    int target = tokv;
+    if (vars[target].type != T_STR) { error_at("MID$ target must be a string variable"); return; }
+    need(TOK_COMMA);
+    expr(); coerce_i32(); vpop();
+    int start_local = alloc_local();
+    emit_local_set(start_local);
+    need(TOK_COMMA);
+    expr(); coerce_i32(); vpop();
+    int len_local = alloc_local();
+    emit_local_set(len_local);
+    need(TOK_RP);
+    need(TOK_EQ);
+    expr(); vpop();
+    int repl_local = alloc_local();
+    emit_local_set(repl_local);
+
+    /* Call str_mid_assign(dst, start, count, src) → new string */
+    emit_global_get(vars[target].global_idx);
+    emit_local_get(start_local);
+    emit_local_get(len_local);
+    emit_local_get(repl_local);
+    emit_call(IMP_STR_MID_ASSIGN);
+
+    /* Free old, store new */
+    int result = alloc_local();
+    emit_local_set(result);
+    emit_global_get(vars[target].global_idx);
+    emit_call(IMP_STR_FREE);
+    emit_local_get(result);
+    emit_global_set(vars[target].global_idx);
+}
+
 static void stmt(void) {
     int t = read_tok();
     if (had_error) return;
@@ -1900,6 +2501,16 @@ static void stmt(void) {
     case TOK_IF:      compile_if(); break;
     case TOK_ELSE:    compile_else(); break;
     case TOK_DIM:     compile_dim(); break;
+    case TOK_CONST:   compile_const(); break;
+    case TOK_SELECT:  compile_select(); break;
+    case TOK_CASE:    compile_case(); break;
+    case TOK_DO:      compile_do(); break;
+    case TOK_LOOP:    compile_loop(); break;
+    case TOK_EXIT:    compile_exit(); break;
+    case TOK_SWAP:    compile_swap(); break;
+    case TOK_DATA:    compile_data(); break;
+    case TOK_READ:    compile_read(); break;
+    case TOK_RESTORE: compile_restore(); break;
     case TOK_BYE:     emit_return(); break;
     case TOK_BREAK:   emit_return(); break;
     case TOK_RESUME:  error_at("RESUME not supported in compiled code"); break;
@@ -1927,8 +2538,13 @@ static void stmt(void) {
     }
     case TOK_NAME: {
         int var = tokv;
+        if (strcmp(vars[var].name, "MID$") == 0) {
+            compile_mid_assign();
+            break;
+        }
         if (want(TOK_EQ)) {
             /* Assignment: X = expr */
+            if (vars[var].is_const) { error_at("cannot assign to CONST"); break; }
             expr();
             VType et = vpop();
             if (vars[var].type == T_STR) {
@@ -2162,11 +2778,15 @@ static void assemble(const char *outpath) {
 
     /* --- Global Section (6) --- */
     {
-        /* fmt arg buffer lives at 0xF000, so heap starts right after string data */
-        int heap_start = (data_len + 3) & ~3;
+        /* Compute DATA table layout and heap start */
+        int data_table_start = (data_len + 3) & ~3;
+        int total_data = data_table_start;
+        if (ndata_items > 0)
+            total_data += 4 + ndata_items * 8;
+        int heap_start = (total_data + 3) & ~3;
 
         Buf sec; buf_init(&sec);
-        int nglobals = 2 + nvar; /* __line + _heap_ptr + variables */
+        int nglobals = 4 + nvar; /* __line + _heap_ptr + _data_base + _data_idx + variables */
         buf_uleb(&sec, nglobals);
         /* Global 0: __line (mut i32) = 0 */
         buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01); /* mutable */
@@ -2174,6 +2794,12 @@ static void assemble(const char *outpath) {
         /* Global 1: _heap_ptr (mut i32) = heap_start */
         buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01); /* mutable */
         buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, heap_start); buf_byte(&sec, OP_END);
+        /* Global 2: _data_base (mut i32) = data_table_start */
+        buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01); /* mutable */
+        buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, data_table_start); buf_byte(&sec, OP_END);
+        /* Global 3: _data_idx (mut i32) = 0 */
+        buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01); /* mutable */
+        buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, 0); buf_byte(&sec, OP_END);
         /* Variable globals */
         for (int i = 0; i < nvar; i++) {
             uint8_t gt = (vars[i].type_set && vars[i].type == T_F32) ? WASM_F32 : WASM_I32;
@@ -2263,15 +2889,44 @@ static void assemble(const char *outpath) {
     }
 
     /* --- Data Section (11) --- */
-    if (data_len > 0) {
-        Buf sec; buf_init(&sec);
-        buf_uleb(&sec, 1); /* 1 data segment */
-        buf_byte(&sec, 0x00); /* active, memory 0 */
-        buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, 0); buf_byte(&sec, OP_END);
-        buf_uleb(&sec, data_len);
-        buf_bytes(&sec, data_buf, data_len);
-        buf_section(&out, 11, &sec);
-        buf_free(&sec);
+    {
+        /* Build complete data payload: string constants + padding + DATA table */
+        int data_table_start = (data_len + 3) & ~3;
+        int total_data = data_table_start;
+        if (ndata_items > 0)
+            total_data += 4 + ndata_items * 8;
+
+        if (total_data > 0) {
+            uint8_t *full_data = calloc(total_data, 1);
+            memcpy(full_data, data_buf, data_len);
+            /* Padding zeros already from calloc */
+            if (ndata_items > 0) {
+                uint8_t *p = full_data + data_table_start;
+                int32_t count = ndata_items;
+                memcpy(p, &count, 4); p += 4;
+                for (int i = 0; i < ndata_items; i++) {
+                    int32_t type_tag = 0;
+                    int32_t value = 0;
+                    switch (data_items[i].type) {
+                    case T_I32: type_tag = 0; value = data_items[i].ival; break;
+                    case T_F32: type_tag = 1; memcpy(&value, &data_items[i].fval, 4); break;
+                    case T_STR: type_tag = 2; value = data_items[i].str_off; break;
+                    }
+                    memcpy(p, &type_tag, 4); p += 4;
+                    memcpy(p, &value, 4); p += 4;
+                }
+            }
+
+            Buf sec; buf_init(&sec);
+            buf_uleb(&sec, 1); /* 1 data segment */
+            buf_byte(&sec, 0x00); /* active, memory 0 */
+            buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, 0); buf_byte(&sec, OP_END);
+            buf_uleb(&sec, total_data);
+            buf_bytes(&sec, full_data, total_data);
+            buf_section(&out, 11, &sec);
+            buf_free(&sec);
+            free(full_data);
+        }
     }
 
     /* Write output */
@@ -2280,8 +2935,8 @@ static void assemble(const char *outpath) {
     fwrite(out.data, 1, out.len, fp);
     fclose(fp);
     printf("Wrote %d bytes to %s\n", out.len, outpath);
-    printf("  %d imports, %d local functions, %d globals, %d bytes string data\n",
-           num_used_imports, nfuncs, 2 + nvar, data_len);
+    printf("  %d imports, %d local functions, %d globals, %d bytes data (%d DATA items)\n",
+           num_used_imports, nfuncs, 4 + nvar, data_len, ndata_items);
     buf_free(&out);
 }
 
@@ -2302,6 +2957,7 @@ static void compile(void) {
     vsp = 0;
     nvar = 0;
     data_len = 0;
+    ndata_items = 0;
     had_error = 0;
     nftypes = 0;
     line_num = 0;

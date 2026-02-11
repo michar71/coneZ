@@ -743,3 +743,55 @@ Example Binary Sizes (stripped)
   C module with printf (host-imported)             ~641 bytes
   C module with printf (CONEZ_PRINTF_INLINE)       ~7.7 KB
   rust_rainbow.wasm    (Rust std, println!)        ~35 KB
+
+
+BASIC-Specific Host Imports (basic_* prefix)
+--------------------------------------------
+
+These imports exist only to support the bas2wasm compiler. They are NOT
+part of the C/Rust module API and are not declared in conez_api.h. They
+use a basic_ prefix to distinguish them from general-purpose imports.
+
+All string functions operate on null-terminated strings in WASM linear
+memory. String pointers refer to either static data (compiled string
+literals at low addresses) or pool-allocated strings in the 0x8000-0xEFFF
+region. The pool is a host-managed free-list allocator with bump fallback.
+
+String pool management:
+
+  int  basic_str_alloc(int size)            Allocate size bytes from pool.
+                                            Returns pointer or 0 on failure.
+  void basic_str_free(int ptr)              Free a pool-allocated string.
+                                            No-op for static/out-of-pool ptrs.
+
+String operations (all return new pool-allocated strings):
+
+  int basic_str_copy(int src)               Duplicate a string.
+  int basic_str_concat(int a, int b)        Concatenate two strings.
+  int basic_str_mid(int src, int start, int len)
+                                            Substring (start is 1-based).
+  int basic_str_left(int src, int n)        First n characters.
+  int basic_str_right(int src, int n)       Last n characters.
+  int basic_str_chr(int code)               Single character from ASCII code.
+  int basic_str_upper(int src)              Convert to uppercase.
+  int basic_str_lower(int src)              Convert to lowercase.
+  int basic_str_trim(int src)               Strip leading/trailing whitespace.
+  int basic_str_repeat(int n, int code)     String of n copies of CHR$(code).
+  int basic_str_space(int n)                String of n spaces.
+  int basic_str_hex(int val)                Integer to hex (e.g. 255 -> "FF").
+  int basic_str_oct(int val)                Integer to octal (e.g. 255 -> "377").
+
+String queries (no allocation):
+
+  int basic_str_len(int ptr)                String length.
+  int basic_str_cmp(int a, int b)           strcmp-style comparison (<0, 0, >0).
+  int basic_str_asc(int ptr)                ASCII code of first character.
+  int basic_str_instr(int hay, int needle, int start)
+                                            Find substring (1-based, 0=not found).
+
+Conversions:
+
+  int   basic_str_from_int(int val)         Integer to string (new pool string).
+  int   basic_str_from_float(float val)     Float to string (new pool string).
+  int   basic_str_to_int(int ptr)           String to integer.
+  float basic_str_to_float(int ptr)         String to float.

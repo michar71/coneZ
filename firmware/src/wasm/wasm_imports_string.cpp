@@ -405,6 +405,111 @@ m3ApiRawFunction(m3_str_trim)
 }
 
 
+// i32 basic_str_repeat(i32 n, i32 char_code) -> new pool string of n copies of char
+m3ApiRawFunction(m3_str_repeat)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, n);
+    m3ApiGetArg(int32_t, char_code);
+    if (n < 0) n = 0;
+    if (n > 4096) n = 4096;
+    uint32_t dst = pool_alloc(runtime, n + 1);
+    if (dst == 0) m3ApiReturn(0);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    memset(mem + dst, (uint8_t)(char_code & 0xFF), n);
+    mem[dst + n] = 0;
+    m3ApiReturn((int32_t)dst);
+}
+
+// i32 basic_str_space(i32 n) -> new pool string of n spaces
+m3ApiRawFunction(m3_str_space)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, n);
+    if (n < 0) n = 0;
+    if (n > 4096) n = 4096;
+    uint32_t dst = pool_alloc(runtime, n + 1);
+    if (dst == 0) m3ApiReturn(0);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    memset(mem + dst, ' ', n);
+    mem[dst + n] = 0;
+    m3ApiReturn((int32_t)dst);
+}
+
+// i32 basic_str_hex(i32 val) -> new pool string with hex representation
+m3ApiRawFunction(m3_str_hex)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, val);
+    char buf[16];
+    int len = snprintf(buf, sizeof(buf), "%X", (unsigned int)val);
+    uint32_t dst = pool_alloc(runtime, len + 1);
+    if (dst == 0) m3ApiReturn(0);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    memcpy(mem + dst, buf, len + 1);
+    m3ApiReturn((int32_t)dst);
+}
+
+// i32 basic_str_oct(i32 val) -> new pool string with octal representation
+m3ApiRawFunction(m3_str_oct)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, val);
+    char buf[16];
+    int len = snprintf(buf, sizeof(buf), "%o", (unsigned int)val);
+    uint32_t dst = pool_alloc(runtime, len + 1);
+    if (dst == 0) m3ApiReturn(0);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    memcpy(mem + dst, buf, len + 1);
+    m3ApiReturn((int32_t)dst);
+}
+
+
+// i32 str_mid_assign(i32 dst, i32 start, i32 count, i32 src) -> i32
+// Returns NEW pool string = dst with chars [start..start+n-1] replaced by src
+// start is 1-based (BASIC convention)
+m3ApiRawFunction(m3_str_mid_assign)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, dst);
+    m3ApiGetArg(int32_t, start);
+    m3ApiGetArg(int32_t, count);
+    m3ApiGetArg(int32_t, src);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    if (!mem || dst == 0) m3ApiReturn(0);
+    int dlen = wasm_strlen(mem, mem_size, (uint32_t)dst);
+    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    int s = start - 1;  // convert to 0-based
+    if (s < 0) s = 0;
+    if (s >= dlen) {
+        // start beyond string — return copy of original
+        uint32_t r = pool_alloc(runtime, dlen + 1);
+        if (r == 0) m3ApiReturn(0);
+        mem = m3_GetMemory(runtime, &mem_size, 0);
+        memcpy(mem + r, mem + (uint32_t)dst, dlen);
+        mem[r + dlen] = 0;
+        m3ApiReturn((int32_t)r);
+    }
+    int n = count;
+    if (n < 0) n = 0;
+    if (n > slen) n = slen;          // replace at most LEN(src) chars
+    if (s + n > dlen) n = dlen - s;  // don't extend past original length
+    // Allocate new string same length as dst
+    uint32_t r = pool_alloc(runtime, dlen + 1);
+    if (r == 0) m3ApiReturn(0);
+    mem = m3_GetMemory(runtime, &mem_size, 0);
+    memcpy(mem + r, mem + (uint32_t)dst, dlen);  // copy original
+    memcpy(mem + r + s, mem + (uint32_t)src, n);  // overlay replacement
+    mem[r + dlen] = 0;
+    m3ApiReturn((int32_t)r);
+}
+
+
 // ---- Link string imports ----
 
 M3Result link_string_imports(IM3Module module)
@@ -434,6 +539,11 @@ M3Result link_string_imports(IM3Module module)
     LINK("basic_str_lower",      "i(i)",   m3_str_lower);
     LINK("basic_str_instr",      "i(iii)", m3_str_instr);
     LINK("basic_str_trim",       "i(i)",   m3_str_trim);
+    LINK("basic_str_repeat",     "i(ii)",  m3_str_repeat);
+    LINK("basic_str_space",      "i(i)",   m3_str_space);
+    LINK("basic_str_hex",        "i(i)",   m3_str_hex);
+    LINK("basic_str_oct",        "i(i)",   m3_str_oct);
+    LINK("basic_str_mid_assign", "i(iiii)",m3_str_mid_assign);
 
 #undef LINK
 
