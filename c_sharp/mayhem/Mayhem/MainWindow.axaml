@@ -1,0 +1,565 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Mayhem.ViewModels"
+        xmlns:conv="clr-namespace:Mayhem.Converters"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="Mayhem.MainWindow"
+        x:Name="Root"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Mayhem"
+        MinWidth="900"
+        MinHeight="600"
+        KeyDown="Window_OnKeyDown"
+        PointerPressed="Root_OnPointerPressed">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New Project" Click="NewProject_OnClick" />
+                <MenuItem Header="_Open Project..." Click="OpenProject_OnClick" />
+                <Separator />
+                <MenuItem Header="_Save" Click="SaveProject_OnClick" />
+                <MenuItem Header="Save _As..." Click="SaveProjectAs_OnClick" />
+                <Separator />
+                <MenuItem Header="_Import Media..." Click="ImportMedia_OnClick" />
+                <Separator />
+                <MenuItem Header="E_xit" Click="Exit_OnClick" />
+            </MenuItem>
+            <MenuItem Header="_Edit">
+                <MenuItem Header="_Undo" />
+                <MenuItem Header="_Redo" />
+                <Separator />
+                <MenuItem Header="Cu_t" />
+                <MenuItem Header="_Copy" />
+                <MenuItem Header="_Paste" />
+                <Separator />
+                <MenuItem Header="_Delete" />
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="_Zoom In" />
+                <MenuItem Header="Zoom _Out" />
+                <MenuItem Header="_Reset Zoom" />
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_About Mayhem" />
+            </MenuItem>
+        </Menu>
+
+        <Grid Name="RootGrid" RowDefinitions="Auto,*,Auto,Auto">
+            <Border Grid.Row="0" Padding="8" BorderBrush="#3A3A3A" BorderThickness="0,0,0,1">
+                <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button Content="Play/Pause" Click="PlayPause_OnClick" />
+                        <Button Content="Cue" Click="AddCue_OnClick" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding Timecode}"
+                               FontSize="18"
+                               FontWeight="Bold"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+
+                    <StackPanel Grid.Column="2"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="Zoom" VerticalAlignment="Center" />
+                        <Slider Width="160"
+                                Minimum="0.05"
+                                Maximum="4"
+                                Value="{Binding Zoom}" />
+                        <TextBlock Text="Channel Zoom" VerticalAlignment="Center" Margin="12,0,0,0" />
+                        <Slider Width="120"
+                                Minimum="20"
+                                Maximum="120"
+                                Value="{Binding ChannelLaneHeight}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1"
+                  Name="MainContentGrid"
+                  ColumnDefinitions="260,Auto,*,Auto,260"
+                  RowDefinitions="*,Auto,80">
+                <Border Grid.Column="0" Background="#1E1E1E" Name="LeftPanel">
+                    <TabControl FontSize="11">
+                        <TabItem>
+                            <TabItem.Header>
+                                <TextBlock Text="Files" FontSize="10" />
+                            </TabItem.Header>
+                            <StackPanel Margin="8" Spacing="8">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Text="Scripts" FontWeight="Bold" />
+                                    <Button Grid.Column="1"
+                                            Content="New Script"
+                                            Padding="8,2"
+                                            HorizontalAlignment="Right"
+                                            Click="NewScript_OnClick" />
+                                </Grid>
+                                <ListBox ItemsSource="{Binding ScriptFiles}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ScriptFileItem">
+                                            <Border Padding="6,4"
+                                                    Background="#1A1A1A"
+                                                    PointerPressed="ScriptFile_OnPointerPressed"
+                                                    DoubleTapped="ScriptFile_OnDoubleTapped">
+                                                <TextBlock Text="{Binding Name}" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                        </TabItem>
+                        <TabItem>
+                            <TabItem.Header>
+                                <TextBlock Text="Effects" FontSize="10" />
+                            </TabItem.Header>
+                            <TreeView Margin="8">
+                                <TreeViewItem Header="Color"
+                                              PointerPressed="EffectTreeItem_OnPointerPressed" />
+                            </TreeView>
+                        </TabItem>
+                        <TabItem>
+                            <TabItem.Header>
+                                <TextBlock Text="Project" FontSize="10" />
+                            </TabItem.Header>
+                            <StackPanel Margin="8" Spacing="6">
+                                <TextBlock Text="Project Setup" FontWeight="Bold" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <TextBlock Text="Channels:" VerticalAlignment="Center" />
+                                    <TextBox Width="60"
+                                             Text="{Binding ChannelCount, Mode=TwoWay}"
+                                             HorizontalContentAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Text="(1-255)" Opacity="0.6" FontSize="10" />
+                            </StackPanel>
+                        </TabItem>
+                    </TabControl>
+                </Border>
+
+                <GridSplitter Grid.Column="1"
+                              Width="5"
+                              Background="#2A2A2A"
+                              ResizeDirection="Columns" />
+
+                <Border Grid.Column="2" Background="#141414">
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Border Grid.Column="0" Background="#121212">
+                            <Grid RowDefinitions="*,80">
+                                <Grid Grid.Row="0" RowDefinitions="18,*">
+                                    <Border Grid.Row="0" Background="#151515" />
+                                    <ScrollViewer Grid.Row="1"
+                                                  Name="ChannelLabelsScroll"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  ScrollChanged="ChannelScroll_OnScrollChanged">
+                                        <ItemsControl ItemsSource="{Binding Channels}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:ChannelEntry">
+                                                    <Border Height="{Binding DataContext.ChannelLaneHeight, ElementName=Root}"
+                                                            BorderBrush="#2A2A2A"
+                                                            BorderThickness="0,0,0,1"
+                                                            Padding="6,0">
+                                                        <Grid>
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       VerticalAlignment="Center"
+                                                                       IsVisible="{Binding IsEditing, Converter={x:Static conv:BoolToVisibilityConverter.Inverse}}" 
+                                                                       PointerPressed="ChannelLabel_OnPointerPressed" />
+                                                            <TextBox Text="{Binding Name}"
+                                                                     VerticalAlignment="Center"
+                                                                     IsVisible="{Binding IsEditing}"
+                                                                     LostFocus="ChannelName_OnLostFocus"
+                                                                     KeyDown="ChannelName_OnKeyDown" />
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Grid>
+                                <Border Grid.Row="1" Background="#000000" />
+                            </Grid>
+                        </Border>
+
+                        <ScrollViewer Grid.Column="1"
+                                      Name="TimelineScroll"
+                                      HorizontalScrollBarVisibility="Visible"
+                                      VerticalScrollBarVisibility="Disabled"
+                                      DragDrop.AllowDrop="True"
+                                      DragDrop.DragOver="ChannelLanes_OnDragOver"
+                                      DragDrop.Drop="ChannelLanes_OnDrop">
+                            <Grid Width="{Binding TimelineWidth}" RowDefinitions="*,80">
+                                <Grid Grid.Row="0" Name="TimelineRow" RowDefinitions="18,*">
+                                <Border Grid.RowSpan="2" Background="#151515" IsHitTestVisible="False">
+                                    <TextBlock Text="Timeline Area"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Opacity="0.6" />
+                                </Border>
+
+                                <Border Grid.RowSpan="2"
+                                        Background="Transparent"
+                                        PointerPressed="Timeline_OnPointerPressed"
+                                        PointerMoved="Timeline_OnPointerMoved"
+                                        PointerReleased="Timeline_OnPointerReleased" />
+
+                                <Canvas Grid.Row="0"
+                                        IsHitTestVisible="False"
+                                        Width="{Binding TimelineWidth}"
+                                        Height="18">
+                                    <ItemsControl ItemsSource="{Binding TimelineTicks}"
+                                                  Width="{Binding TimelineWidth}"
+                                                  Height="18">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <Canvas Height="18" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:TimelineTick">
+                                                <TextBlock Text="{Binding Label}"
+                                                           Foreground="White"
+                                                           Opacity="0.7"
+                                                           FontSize="11" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                        <ItemsControl.ItemContainerTheme>
+                                            <ControlTheme TargetType="ContentPresenter"
+                                                          x:DataType="vm:TimelineTick">
+                                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                <Setter Property="Canvas.Top" Value="0" />
+                                            </ControlTheme>
+                                        </ItemsControl.ItemContainerTheme>
+                                    </ItemsControl>
+                                </Canvas>
+
+                                <ScrollViewer Grid.Row="1"
+                                              Name="ChannelLanesScroll"
+                                              VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled"
+                                              ScrollChanged="ChannelScroll_OnScrollChanged">
+                                    <Border DragDrop.AllowDrop="True"
+                                            DragDrop.DragOver="ChannelLanes_OnDragOver"
+                                            DragDrop.Drop="ChannelLanes_OnDrop"
+                                            Background="Transparent">
+                                        <ItemsControl ItemsSource="{Binding Channels}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:ChannelEntry">
+                                            <Canvas Height="{Binding DataContext.ChannelLaneHeight, ElementName=Root}"
+                                                    Width="{Binding ElementName=Root, Path=DataContext.TimelineWidth}"
+                                                    Background="#181818"
+                                                    ClipToBounds="True">
+                                                <ItemsControl ItemsSource="{Binding Effects}"
+                                                              Width="{Binding ElementName=Root, Path=DataContext.TimelineWidth}"
+                                                              Height="{Binding DataContext.ChannelLaneHeight, ElementName=Root}"
+                                                              ClipToBounds="True">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <Canvas />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:EffectInstanceViewModel">
+                                                                <Border Width="{Binding Width}"
+                                                                    Height="{Binding DataContext.ChannelLaneHeight, ElementName=Root}"
+                                                                    Background="{Binding Fill}"
+                                                                    BorderBrush="{Binding Border}"
+                                                                    BorderThickness="{Binding BorderThickness}"
+                                                                    CornerRadius="2"
+                                                                    PointerPressed="Effect_OnPointerPressed"
+                                                                    PointerMoved="Effect_OnPointerMoved"
+                                                                    PointerReleased="Effect_OnPointerReleased"
+                                                                    PointerCaptureLost="Effect_OnPointerCaptureLost"
+                                                                    DoubleTapped="Effect_OnDoubleTapped">
+                                                                    <TextBlock Text="{Binding Label}"
+                                                                               Foreground="Black"
+                                                                               FontSize="11"
+                                                                               FontWeight="Bold"
+                                                                               HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center" />
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    <ItemsControl.ItemContainerTheme>
+                                                            <ControlTheme TargetType="ContentPresenter"
+                                                                          x:DataType="vm:EffectInstanceViewModel">
+                                                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                                <Setter Property="Canvas.Top" Value="0" />
+                                                                <Setter Property="Panel.ZIndex" Value="50" />
+                                                            </ControlTheme>
+                                                        </ItemsControl.ItemContainerTheme>
+                                                    </ItemsControl>
+                                                <TextBlock Text="{Binding EffectCount}"
+                                                           Foreground="White"
+                                                           Opacity="0.6"
+                                                           Canvas.Left="6"
+                                                           Canvas.Top="10" />
+                                            </Canvas>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Border>
+                                </ScrollViewer>
+
+                                <Canvas Grid.RowSpan="2"
+                                        IsHitTestVisible="False"
+                                        Width="{Binding TimelineWidth}"
+                                        Height="{Binding ElementName=TimelineRow, Path=Bounds.Height}"
+                                        ZIndex="10">
+                                    <ItemsControl ItemsSource="{Binding TimelineTicks}"
+                                                  Width="{Binding TimelineWidth}"
+                                                  Height="{Binding ElementName=TimelineRow, Path=Bounds.Height}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <Canvas />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:TimelineTick">
+                                                <Rectangle Width="1"
+                                                           Height="{Binding RelativeSource={RelativeSource AncestorType=Canvas}, Path=Bounds.Height}"
+                                                           Fill="#2C2C2C" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                        <ItemsControl.ItemContainerTheme>
+                                            <ControlTheme TargetType="ContentPresenter"
+                                                          x:DataType="vm:TimelineTick">
+                                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                <Setter Property="Canvas.Top" Value="0" />
+                                            </ControlTheme>
+                                        </ItemsControl.ItemContainerTheme>
+                                    </ItemsControl>
+                                </Canvas>
+
+                                <Canvas Grid.RowSpan="2"
+                                        IsHitTestVisible="False"
+                                        Width="{Binding TimelineWidth}"
+                                        Height="{Binding ElementName=TimelineRow, Path=Bounds.Height}"
+                                        ZIndex="30">
+                                    <Rectangle Width="2"
+                                               Fill="#FF4D4D"
+                                               Height="{Binding ElementName=TimelineRow, Path=Bounds.Height}"
+                                               Canvas.Left="{Binding PlayheadX}" />
+                                </Canvas>
+
+
+                                <Canvas Grid.RowSpan="2"
+                                        IsHitTestVisible="False"
+                                        Width="{Binding TimelineWidth}"
+                                        Height="{Binding ElementName=TimelineRow, Path=Bounds.Height}"
+                                        ZIndex="40">
+                                    <ItemsControl ItemsSource="{Binding CueMarkers}"
+                                                  Width="{Binding TimelineWidth}"
+                                                  Height="{Binding ElementName=TimelineRow, Path=Bounds.Height}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <Canvas />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:CueMarker">
+                                                <Rectangle Width="2"
+                                                           Height="{Binding RelativeSource={RelativeSource AncestorType=Canvas}, Path=Bounds.Height}"
+                                                           Fill="{Binding IsSelected, Converter={x:Static conv:BoolToColorConverter.Instance}}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                        <ItemsControl.ItemContainerTheme>
+                                            <ControlTheme TargetType="ContentPresenter"
+                                                          x:DataType="vm:CueMarker">
+                                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                <Setter Property="Canvas.Top" Value="0" />
+                                            </ControlTheme>
+                                        </ItemsControl.ItemContainerTheme>
+                                    </ItemsControl>
+                                </Canvas>
+
+                            </Grid>
+
+                            <Border Grid.Row="1" Background="#000000">
+                                <Grid>
+                                    <TextBlock Text="No media loaded"
+                                               IsVisible="{Binding IsNoMedia}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Opacity="0.6" />
+
+                                    <Canvas IsVisible="{Binding IsAudio}"
+                                            Height="80"
+                                            Width="{Binding TimelineWidth}"
+                                            Background="#000000"
+                                            ClipToBounds="True">
+                                        <Path Data="{Binding WaveformGeometry}"
+                                              Stroke="#00FF66"
+                                              StrokeThickness="1.5" />
+                                    </Canvas>
+
+                                    <ItemsControl IsVisible="{Binding IsVideo}"
+                                                  ItemsSource="{Binding VideoFrames}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <Canvas Height="80"
+                                                        Width="{Binding TimelineWidth}" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:VideoFrameThumbnail">
+                                                <Image Source="{Binding Bitmap}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                        <ItemsControl.ItemContainerTheme>
+                                            <ControlTheme TargetType="ContentPresenter"
+                                                          x:DataType="vm:VideoFrameThumbnail">
+                                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                <Setter Property="Canvas.Top" Value="5" />
+                                            </ControlTheme>
+                                        </ItemsControl.ItemContainerTheme>
+                                    </ItemsControl>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
+                </Border>
+
+                <GridSplitter Grid.Column="3"
+                              Width="5"
+                              Background="#2A2A2A"
+                              ResizeDirection="Columns" />
+
+                <Border Grid.Column="4" Background="#1E1E1E" Name="PropertiesPanel">
+                    <Grid Name="RightPanelGrid" RowDefinitions="*,Auto,240">
+                        <Border Grid.Row="0" Background="#1E1E1E">
+                            <Grid>
+                                <StackPanel Margin="12" Spacing="10"
+                                            IsVisible="{Binding HasSelectedEffect}">
+                                    <TextBlock Text="Effect"
+                                               FontWeight="Bold"
+                                               FontSize="14" />
+                                    <TextBlock Text="{Binding SelectedEffectType}"
+                                               FontSize="12"
+                                               Opacity="0.8" />
+
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Start (ms)" Width="80" VerticalAlignment="Center" />
+                                        <NumericUpDown Width="120"
+                                                       Minimum="0"
+                                                       Increment="1"
+                                                       Value="{Binding EditStartMs, Mode=TwoWay}" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Duration (ms)" Width="80" VerticalAlignment="Center" />
+                                        <NumericUpDown Width="120"
+                                                       Minimum="1"
+                                                       Increment="1"
+                                                       Value="{Binding EditDurationMs, Mode=TwoWay}" />
+                                    </StackPanel>
+
+                                    <TextBlock Text="Color"
+                                               FontWeight="Bold"
+                                               Margin="0,8,0,0"
+                                               IsVisible="{Binding IsColorEffectSelected}" />
+                                    <StackPanel Orientation="Horizontal"
+                                                Spacing="16"
+                                                IsVisible="{Binding IsColorEffectSelected}">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="Start" FontSize="11" Opacity="0.7" />
+                                            <ColorPicker Width="80"
+                                                         Color="{Binding EditStartRgb, Mode=TwoWay, Converter={x:Static conv:RgbColorConverter.Instance}}" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="End" FontSize="11" Opacity="0.7" />
+                                            <ColorPicker Width="80"
+                                                         Color="{Binding EditEndRgb, Mode=TwoWay, Converter={x:Static conv:RgbColorConverter.Instance}}" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <StackPanel Margin="0,8,0,0" IsVisible="{Binding IsScriptEffectSelected}">
+                                        <TextBlock Text="Script File" FontWeight="Bold" />
+                                        <TextBlock Text="{Binding SelectedScriptLink}" FontSize="12" Opacity="0.8" />
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <TextBlock Text="Select an effect to edit."
+                                           IsVisible="{Binding HasSelectedEffect, Converter={x:Static conv:BoolToVisibilityConverter.Inverse}}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Opacity="0.6" />
+                            </Grid>
+                        </Border>
+
+                        <GridSplitter Grid.Row="1"
+                                      Height="5"
+                                      Background="#2A2A2A"
+                                      ResizeDirection="Rows" />
+
+                        <Border Grid.Row="2" Background="#111111">
+                            <Grid>
+                                <TextBlock Text="Video Preview"
+                                           IsVisible="{Binding IsVideo}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Opacity="0.6" />
+                                <Image Source="{Binding CurrentVideoFrame}"
+                                       Stretch="Uniform"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <GridSplitter Grid.Row="1"
+                              Grid.ColumnSpan="5"
+                              Height="5"
+                              Background="#2A2A2A"
+                              ResizeDirection="Rows" />
+
+                <Border Grid.Row="2"
+                        Grid.ColumnSpan="5"
+                        Background="#0F0F0F"
+                        Name="DebugPanel">
+                    <Grid RowDefinitions="28,*">
+                        <DockPanel Margin="8,4,8,4">
+                            <TextBlock Text="Debug Log"
+                                       Foreground="White"
+                                       Opacity="0.7"
+                                       DockPanel.Dock="Left" />
+                            <Button Content="Copy"
+                                    DockPanel.Dock="Right"
+                                    Padding="8,2"
+                                    MinWidth="60"
+                                    Foreground="White"
+                                    Background="#2A2A2A"
+                                    Click="CopyDebug_OnClick" />
+                        </DockPanel>
+                        <ListBox Grid.Row="1"
+                                 ItemsSource="{Binding DebugLines}"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 FontSize="12"
+                                 Foreground="White"
+                                 Margin="0,4,0,0" />
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Border Grid.Row="2" Background="#101010" BorderBrush="#2A2A2A" BorderThickness="0,1,0,0">
+                <TextBlock Text="{Binding StatusText}" Margin="8,4" />
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
