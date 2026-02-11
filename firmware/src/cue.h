@@ -63,7 +63,7 @@ struct cue_entry {
 void cue_setup(void);
 void cue_loop(void);
 bool cue_load(const char *path);
-void cue_start(uint32_t gps_timestamp_ms);
+void cue_start(uint64_t epoch_start_ms);
 void cue_stop(void);
 bool cue_is_playing(void);
 int  cmd_cue(int argc, char **argv);

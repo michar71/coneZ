@@ -39,6 +39,7 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("lora",   "preamble",     CFG_INT,   lora_preamble),
     CFG_ENTRY("lora",   "tx_power",     CFG_INT,   lora_tx_power),
     CFG_ENTRY("lora",   "sync_word",    CFG_HEX,   lora_sync_word),
+    CFG_ENTRY("lora",   "callsign",     CFG_STR,   lora_callsign),
     // [system]
     CFG_ENTRY("system", "device_name",  CFG_STR,   device_name),
     CFG_ENTRY("system", "startup_script", CFG_STR, startup_script),
@@ -46,6 +47,7 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("system", "auto_dst",    CFG_BOOL,  auto_dst),
     CFG_ENTRY("system", "cone_id",    CFG_INT,   cone_id),
     CFG_ENTRY("system", "cone_group", CFG_INT,   cone_group),
+    CFG_ENTRY("system", "ntp_server", CFG_STR,   ntp_server),
     // [led]
     CFG_ENTRY("led",    "count1",       CFG_INT,   led_count1),
     CFG_ENTRY("led",    "count2",       CFG_INT,   led_count2),
@@ -86,6 +88,7 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->lora_tx_power    = DEFAULT_LORA_TX_POWER;
     cfg->lora_sync_word   = DEFAULT_LORA_SYNC_WORD;
     strlcpy(cfg->lora_ssid,       DEFAULT_LORA_SSID,      sizeof(cfg->lora_ssid));
+    strlcpy(cfg->lora_callsign,   DEFAULT_LORA_CALLSIGN,  sizeof(cfg->lora_callsign));
 
     strlcpy(cfg->device_name,     DEFAULT_DEVICE_NAME,    sizeof(cfg->device_name));
     strlcpy(cfg->startup_script,  DEFAULT_STARTUP_SCRIPT, sizeof(cfg->startup_script));
@@ -93,6 +96,7 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->auto_dst         = DEFAULT_AUTO_DST;
     cfg->cone_id          = DEFAULT_CONE_ID;
     cfg->cone_group       = DEFAULT_CONE_GROUP;
+    strlcpy(cfg->ntp_server,      DEFAULT_NTP_SERVER,     sizeof(cfg->ntp_server));
 
     cfg->led_count1       = DEFAULT_LED_COUNT;
     cfg->led_count2       = DEFAULT_LED_COUNT;

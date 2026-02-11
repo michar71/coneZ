@@ -9,6 +9,8 @@
 #define CONFIG_MAX_DEVICE_NAME  33
 #define CONFIG_MAX_PATH         33
 #define CONFIG_MAX_LORA_SSID    17
+#define CONFIG_MAX_NTP_SERVER   65
+#define CONFIG_MAX_CALLSIGN     11
 
 // ---------- Compiled defaults ----------
 // WiFi
@@ -28,6 +30,7 @@
 #define DEFAULT_LORA_TX_POWER   10
 #define DEFAULT_LORA_SYNC_WORD  0x12            // 0x12 = default, 0x1424 = private
 #define DEFAULT_LORA_SSID       "ConeZ"
+#define DEFAULT_LORA_CALLSIGN   ""
 
 // System
 #define DEFAULT_DEVICE_NAME     ""
@@ -36,6 +39,7 @@
 #define DEFAULT_AUTO_DST        true
 #define DEFAULT_CONE_ID         0
 #define DEFAULT_CONE_GROUP      0
+#define DEFAULT_NTP_SERVER      ""              // empty = use pool.ntp.org + time.nist.gov
 
 // LED counts per channel
 #define DEFAULT_LED_COUNT       50
@@ -72,6 +76,7 @@ typedef struct {
     int     lora_tx_power;
     int     lora_sync_word;
     char    lora_ssid[CONFIG_MAX_LORA_SSID];
+    char    lora_callsign[CONFIG_MAX_CALLSIGN];
 
     // [system]
     char    device_name[CONFIG_MAX_DEVICE_NAME];
@@ -80,6 +85,7 @@ typedef struct {
     bool    auto_dst;
     int     cone_id;
     int     cone_group;
+    char    ntp_server[CONFIG_MAX_NTP_SERVER];
 
     // [led]
     int     led_count1;

@@ -13,7 +13,7 @@
 static cue_entry *cue_list = nullptr;
 static int   cue_count   = 0;
 static int   cue_cursor  = 0;       // next cue index to evaluate
-static uint32_t music_start_ms = 0; // GPS time-of-day in ms when music started
+static uint64_t music_start_ms = 0; // epoch ms when music started
 static bool  playing = false;
 
 // Precomputed cone position in meter-space
@@ -21,16 +21,6 @@ static float my_x = 0, my_y = 0;
 static float origin_x = 0, origin_y = 0;
 
 // ---------- Helpers ----------
-
-// GPS time-of-day as milliseconds since midnight (UTC).
-// TODO: wraps at midnight — shows spanning midnight need day-aware time.
-static uint32_t get_gps_time_ms(void)
-{
-    return ((uint32_t)get_hour() * 3600 +
-            (uint32_t)get_minute() * 60 +
-            (uint32_t)get_second()) * 1000;
-}
-
 
 // Evaluate group targeting: does this cue apply to us?
 static bool cue_matches(uint16_t group)
@@ -164,14 +154,11 @@ void cue_loop(void)
 {
     if (!playing) return;
 
-    uint32_t now_ms = get_gps_time_ms();
+    uint64_t now_ms = get_epoch_ms();
+    if (now_ms == 0) return;  // no time source yet
 
-    // Handle wraparound: if GPS time is less than start, assume midnight crossed
-    uint32_t elapsed_ms;
-    if (now_ms >= music_start_ms)
-        elapsed_ms = now_ms - music_start_ms;
-    else
-        elapsed_ms = (86400000UL - music_start_ms) + now_ms;
+    // Simple subtraction — epoch time never wraps at midnight
+    uint32_t elapsed_ms = (now_ms > music_start_ms) ? (uint32_t)(now_ms - music_start_ms) : 0;
 
     // Walk cue list from cursor forward
     while (cue_cursor < cue_count) {
@@ -287,14 +274,14 @@ bool cue_load(const char *path)
 }
 
 
-void cue_start(uint32_t gps_timestamp_ms)
+void cue_start(uint64_t epoch_start_ms)
 {
     if (!cue_list || cue_count == 0) {
         printfnl(SOURCE_SYSTEM, F("cue: no cue file loaded\n"));
         return;
     }
 
-    music_start_ms = gps_timestamp_ms;
+    music_start_ms = epoch_start_ms;
     cue_cursor = 0;
     playing = true;
 
@@ -302,8 +289,7 @@ void cue_start(uint32_t gps_timestamp_ms)
     latlon_to_meters(get_lat(), get_lon(), &my_x, &my_y);
     latlon_to_meters(config.origin_lat, config.origin_lon, &origin_x, &origin_y);
 
-    printfnl(SOURCE_SYSTEM, F("cue: playback started (start=%lu ms, %d cues)\n"),
-             (unsigned long)music_start_ms, cue_count);
+    printfnl(SOURCE_SYSTEM, F("cue: playback started (%d cues)\n"), cue_count);
 }
 
 
@@ -331,12 +317,8 @@ int cmd_cue(int argc, char **argv)
         printfnl(SOURCE_COMMANDS, F("  Cues:    %d\n"), cue_count);
         printfnl(SOURCE_COMMANDS, F("  Playing: %s\n"), playing ? "yes" : "no");
         if (playing) {
-            uint32_t now_ms = get_gps_time_ms();
-            uint32_t elapsed;
-            if (now_ms >= music_start_ms)
-                elapsed = now_ms - music_start_ms;
-            else
-                elapsed = (86400000UL - music_start_ms) + now_ms;
+            uint64_t now_ms = get_epoch_ms();
+            uint32_t elapsed = (now_ms > music_start_ms) ? (uint32_t)(now_ms - music_start_ms) : 0;
             printfnl(SOURCE_COMMANDS, F("  Elapsed: %lu ms\n"), (unsigned long)elapsed);
             printfnl(SOURCE_COMMANDS, F("  Cursor:  %d / %d\n"), cue_cursor, cue_count);
         }
@@ -352,13 +334,18 @@ int cmd_cue(int argc, char **argv)
         return cue_load(argv[2]) ? 0 : 1;
     }
 
-    // cue start [ms]
+    // cue start [offset_ms]
+    // No arg = start now. With arg = started N ms ago (offset semantic).
     if (!strcasecmp(argv[1], "start")) {
-        uint32_t start_time;
+        uint64_t now = get_epoch_ms();
+        if (now == 0) {
+            printfnl(SOURCE_COMMANDS, F("cue: no time source available\n"));
+            return 1;
+        }
+        uint64_t start_time = now;
         if (argc >= 3) {
-            start_time = strtoul(argv[2], NULL, 0);
-        } else {
-            start_time = get_gps_time_ms();
+            uint32_t offset = strtoul(argv[2], NULL, 0);
+            start_time = (now > offset) ? now - offset : 0;
         }
         cue_start(start_time);
         return 0;

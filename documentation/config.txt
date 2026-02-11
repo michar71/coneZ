@@ -53,6 +53,8 @@ Sections and Keys
   sync_word         Sync word, hex format          (default: 0x12)
                       0x12 = LoRa default
                       0x1424 = LoRa private network
+  callsign          Ham radio callsign             (default: empty)
+                      License ID for 70cm band operation.
 
 [system]
   device_name       DHCP hostname (blank = auto)   (default: empty)
@@ -70,6 +72,10 @@ Sections and Keys
                       Used by the cue system for per-cone targeting.
   cone_group        Cone group number (0-4095)      (default: 0)
                       Used by the cue system for group-based targeting.
+  ntp_server        NTP server hostname            (default: empty)
+                      When empty, uses pool.ntp.org. Set to a local NTP
+                      server address for minimal network latency at
+                      installations (e.g. 192.168.1.100).
 
 [led]
   count1            LEDs on channel 1              (default: 50)
@@ -139,6 +145,7 @@ before any hardware that depends on config values is initialized:
   gps_setup()              Reads config.origin_*
   sensors_setup()
   WiFi.begin()             Reads config.wifi_*
+  ntp_setup()              Starts SNTP if WiFi connected
   printManagerInit()
   config_apply_debug()     Applies config.dbg_* settings
   sunSetTZOffset()         Reads config.timezone

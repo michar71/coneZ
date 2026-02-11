@@ -19,6 +19,7 @@ cr=6
 preamble=8
 tx_power=10
 sync_word=0x12
+callsign=
 
 [system]
 device_name=
@@ -27,6 +28,7 @@ timezone=-8
 auto_dst=on
 cone_id=0
 cone_group=0
+; ntp_server=192.168.1.100   ; local NTP server (blank = pool.ntp.org)
 
 [led]
 count1=50
