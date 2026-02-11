@@ -9,6 +9,7 @@ using Avalonia.VisualTree;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using System.Collections.ObjectModel;
+using Avalonia.Controls.Presenters;
 using Mayhem.Services;
 using Mayhem.ViewModels;
 using Mayhem.Models;
@@ -794,15 +795,40 @@ public partial class MainWindow : Window
             }
         }
 
-        UpdateLineNumbers(text);
+        const double lineHeight = 16;
 
-        var lineList = new ListBox
+        var lineItems = new StackPanel
         {
-            Width = 40,
-            ItemsSource = lineNumbers,
-            Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
-            BorderThickness = new Thickness(0),
-            FontSize = 12
+            Width = 40
+        };
+
+        void RebuildLineItems()
+        {
+            lineItems.Children.Clear();
+            foreach (var value in lineNumbers)
+            {
+                lineItems.Children.Add(new TextBlock
+                {
+                    Text = value,
+                    Height = lineHeight,
+                    LineHeight = lineHeight,
+                    FontFamily = new FontFamily("Menlo"),
+                    FontSize = 12,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+            }
+        }
+
+        UpdateLineNumbers(text);
+        RebuildLineItems();
+
+        var lineScroll = new ScrollViewer
+        {
+            Content = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#1A1A1A")),
+                Child = lineItems
+            }
         };
 
         var editor = new TextBox
@@ -810,11 +836,28 @@ public partial class MainWindow : Window
             Text = text,
             AcceptsReturn = true,
             TextWrapping = TextWrapping.NoWrap,
+            LineHeight = lineHeight,
             FontFamily = new FontFamily("Menlo"),
             FontSize = 12
         };
 
-        editor.TextChanged += (_, _) => UpdateLineNumbers(editor.Text ?? string.Empty);
+        editor.TextChanged += (_, _) =>
+        {
+            UpdateLineNumbers(editor.Text ?? string.Empty);
+            RebuildLineItems();
+        };
+
+        editor.AttachedToVisualTree += (_, _) =>
+        {
+            var editorScroll = editor.FindDescendantOfType<ScrollViewer>();
+            if (editorScroll != null)
+            {
+                editorScroll.ScrollChanged += (_, _) =>
+                {
+                    lineScroll.Offset = new Vector(0, editorScroll.Offset.Y);
+                };
+            }
+        };
 
         var grid = new Grid
         {
@@ -823,9 +866,9 @@ public partial class MainWindow : Window
             Margin = new Thickness(12)
         };
 
-        grid.Children.Add(lineList);
-        Grid.SetRow(lineList, 0);
-        Grid.SetColumn(lineList, 0);
+        grid.Children.Add(lineScroll);
+        Grid.SetRow(lineScroll, 0);
+        Grid.SetColumn(lineScroll, 0);
 
         grid.Children.Add(editor);
         Grid.SetRow(editor, 0);
