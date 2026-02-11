@@ -36,18 +36,9 @@
 #include "commands.h"
 
 
-// LED buffers
-CRGB leds1[NUM_LEDS1];
-CRGB leds2[NUM_LEDS2];
-CRGB leds3[NUM_LEDS3];
-CRGB leds4[NUM_LEDS4];
-
-
-// Debug message config
-//uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_LORA_RAW | 
+// Debug message config -- defined in printManager.cpp
+//uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_LORA_RAW |
 //                 DEBUG_MSG_GPS | DEBUG_MSG_GPS_RAW;
-
-uint32_t debug = 0;
 
 //I2C speed
 #define I2C_FREQ      100000 // 400 kHz fast-mode; drop to 100 k if marginal
@@ -145,71 +136,39 @@ void dump_i2c( TwoWire &bus )
 }
 
 
-//LED Stuff
-void blink_leds(CRGB col)
+//LED Stuff -- led.cpp owns FastLED now; helpers here are setup-time only
+#ifdef BOARD_HAS_RGB_LEDS
+static void blink_leds(CRGB col)
 {
     leds1[0] = CRGB::Black;
-    //Set LED's
-    FastLED.show();
+    led_show_now();
     delay(300);
     leds1[0] = col;
-    //Set LED's
-    FastLED.show();
+    led_show_now();
     delay(500);
     leds1[0] = CRGB::Black;
-    //Set LED's
-    FastLED.show();
-    delay(300);      
+    led_show_now();
+    delay(300);
 }
-
-
-void color_leds(int ch, int cnt, CRGB col)
-{
-    if (cnt > NUM_LEDS1)
-      cnt = NUM_LEDS1;
-    switch (ch)
-    {
-      default:
-      case 1:
-        for (int ii=0;ii<cnt;ii++)
-        {
-          leds1[ii] = col;    
-        }
-        break;
-      case 2:
-        for (int ii=0;ii<NUM_LEDS2;ii++)
-        {
-          leds2[ii] = col;    
-        }
-        break;
-      case 3:
-        for (int ii=0;ii<NUM_LEDS3;ii++)
-        {
-          leds3[ii] = col;    
-        }
-        break;
-      case 4:
-        for (int ii=0;ii<NUM_LEDS4;ii++)
-        {
-          leds4[ii] = col;    
-        }
-        break;
-      }                  
-    FastLED.show();
-}
+#endif
 
 
 void check_serial(void)
 {
   //We check for any incoming serial data
-  //If there is data we switch all data from telnet 
-  //to the USB serial port 
+  //If there is data we switch all data from telnet
+  //to the USB serial port
+  static bool serial_active = false;
 
   if (Serial.available())
   {
-    setStream(&Serial);
-    setCLIEcho(true);
-    init_commands(getStream());
+    if (!serial_active)
+    {
+      serial_active = true;
+      setStream(&Serial);
+      setCLIEcho(true);
+      init_commands(getStream());
+    }
   }
 }
 
@@ -238,6 +197,7 @@ void basic_autoexec(void)
 }
 
 
+#ifdef BOARD_HAS_BUZZER
 void buzzer(int freq, int vol)
 {
   //ledcSetup(0, freq, 8);
@@ -247,11 +207,13 @@ void buzzer(int freq, int vol)
   analogWriteFrequency(freq);
   analogWrite(BUZZER_PIN,vol);
 }
+#endif
 
 
 void setup()
 {
 
+#ifdef BOARD_HAS_POWER_MGMT
   // Turn on LOAD FET
   pinMode( LOAD_ON_PIN, OUTPUT );
   digitalWrite( LOAD_ON_PIN, HIGH );
@@ -259,34 +221,36 @@ void setup()
   // Turn on solar FET
   pinMode( SOLAR_PWM_PIN, OUTPUT );
   digitalWrite( SOLAR_PWM_PIN, HIGH );
+#endif
 
   delay( 250 );
 
-
+#ifdef BOARD_HAS_RGB_LEDS
   //Setup RGB leds so we can also signal stuff there...
-  FastLED.addLeds<WS2811, RGB1_PIN, BRG>(leds1, NUM_LEDS1);
-  FastLED.addLeds<WS2811, RGB2_PIN, BRG>(leds2, NUM_LEDS2);
-  FastLED.addLeds<WS2811, RGB3_PIN, BRG>(leds3, NUM_LEDS3);
-  FastLED.addLeds<WS2811, RGB4_PIN, BRG>(leds4, NUM_LEDS4);
+  led_setup();
 
+    led_set_channel(1, 4, CRGB::Red);
+    led_show_now();
+    delay(500);
+    led_set_channel(1, 4, CRGB::Green);
+    led_show_now();
+    delay(500);
+    led_set_channel(1, 4, CRGB::Blue);
+    led_show_now();
+    delay(500);
+    led_set_channel(1, 4, CRGB::Black);
+    led_show_now();
 
-    color_leds(1,4,CRGB::Red);
-    delay(500);
-    color_leds(1,4,CRGB::Green);
-    delay(500);
-    color_leds(1,4,CRGB::Blue);
-    delay(500);
-    color_leds(1,4,CRGB::Black);
-  
-  //NOTE: Don't use FastLED functions outside the setup routine in the main program.
-  //At the end of Setup we create the BASIC interpreter task who will handle all LED access 
-  //through fastLED afterwards to avoid any thread collisions.
-
+  //NOTE: After led_start_task(), only the LED render task calls FastLED.show().
+  //All other code writes to the LED buffers and calls led_show() to mark dirty.
+#endif
 
   delay(1000);
 
+#ifdef BOARD_HAS_BUZZER
   //Buzzer Setup
   pinMode( BUZZER_PIN, OUTPUT );
+#endif
 
   // LED pin
   pinMode( LED_PIN, OUTPUT );
@@ -313,6 +277,7 @@ void setup()
   #endif
 
   
+#ifdef BOARD_HAS_BUZZER
   for (int ii=1100;ii<13100;ii=ii+1000)
   {
     Serial.print("Freq:");
@@ -321,6 +286,7 @@ void setup()
     delay(100);
   }
   buzzer(20000,0);
+#endif
    
 
 
@@ -343,8 +309,10 @@ void setup()
   // Fire up the LoRa radio.
   lora_setup();
 
+#ifdef BOARD_HAS_GPS
   // Fire up GPS UART.
   gps_setup();
+#endif
 
   //Setup Sensors
   sensors_setup();
@@ -411,7 +379,10 @@ void setup()
   //TBD for NEVADA
   sunSetTZOffset(7);
 
-  //Start Thread for Basic interpreter/FastLED here
+  //Start the LED render task (owns FastLED.show() from here on)
+  led_start_task();
+
+  //Start Thread for Basic interpreter
   setup_basic();
   Serial.println("BASIC task active\n");
 
@@ -457,20 +428,24 @@ void loop()
   // Check for LoRa packets
   lora_rx();
 
+#ifdef BOARD_HAS_GPS
   // Process GPS messages
   gps_loop();
-
-  //Proicess Sensors.. Maybe we shoudl run this slower?
-  sensors_loop();
 
   EVERY_N_SECONDS( 60 )
   {
     // Update the sun position every minute
     sunUpdateViaGPS();
   }
+#endif
 
+  //Proicess Sensors.. Maybe we shoudl run this slower?
+  sensors_loop();
+
+#ifdef BOARD_HAS_RGB_LEDS
   //RUN Direct Effects
   //CIRCLE_effect();
   SOS_effect2();
+#endif
 
 }

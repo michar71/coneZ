@@ -3,7 +3,7 @@
 
 #include "Arduino.h"
 
-bool sunSetPosition(float latitude, float longitude, int dstOffset);
+bool sunSetPosition(float latitude, float longitude);
 bool sunSetTZOffset(int dstOffset);
 bool sunSetCurrentDate(int year, int month, int day);
 bool sunUpdate();

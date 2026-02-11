@@ -9,20 +9,21 @@
 #include <nvs.h>
 #include <LittleFS.h>
 #include <FS.h>
-#include <TinyGPSPlus.h>
 #include "main.h"
 #include "http.h"
 #include "gps.h"
 
+#ifdef BOARD_HAS_GPS
+#include <TinyGPSPlus.h>
+extern TinyGPSPlus gps;
+extern volatile float gps_lat;
+extern volatile float gps_lon;
+extern volatile bool gps_pos_valid;
+extern volatile float gps_alt;
+extern volatile bool gps_alt_valid;
+#endif
 
 WebServer server(80);
-
-extern TinyGPSPlus gps;
-extern float gps_lat;
-extern float gps_lon;
-extern bool gps_pos_valid;
-extern float gps_alt;       // Altitude is in meters
-extern bool gps_alt_valid;
 
 
 
@@ -44,6 +45,7 @@ String html_escape( const char* str )
 
 String http_get_gps()
 {
+#ifdef BOARD_HAS_GPS
     char buf[128];
 
     String out = "<h3>GPS</h3><pre>";
@@ -58,6 +60,9 @@ String http_get_gps()
     out += "</pre><br>\n";
 
     return out;
+#else
+    return "<h3>GPS</h3><pre>No GPS hardware</pre><br>\n";
+#endif
 }
 
 

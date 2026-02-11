@@ -1,63 +1,84 @@
-ConeZ PCB v0.1
-ESP32-S3-MINI-1 module (8MB SPI flash)
-Pin map
-
-GPIO		Function
-
-0		BOOT/USR switch
-1		ADC: 
-2		ADC: 
-3			...do not use, pullup to 3.3V...
-
-4		PSRAM CE
-5		PSRAM MISO
-6		PSRAM SCK
-7		PSRAM MOSI
-
-8		LoRa NSS
-9		LoRa SCK
-10		LoRa MOSI
-11		LoRa MISO
-12		LoRa RST
-13		LoRa BUSY
-14		LoRa IRQ (DIO1)
-
-15		Hartmann Standard Connector 1
-16		Hartmann Standard Connector 2
-
-17		I2C SDA
-18		I2C SCL
-
-19		USB N
-20		USB P
-
-21		Solar PWM
-
-33		Power switch status
-34		Power switch off (assert high to power board off)
-
-35		RGB LED signal 4
-36		RGB LED signal 3
-37		RGB LED signal 2
-38		RGB LED signal 1
-
-40		LED
-41		IMU INT (MPU-6500)
-42		GPS PPS (1Hz time reference)
-
-43		Serial
-44		Serial
-
-47		Load MOSFET (enables 12V to LOAD terminals and RGB LED terminals)
-48		Audio PWM
+GPIO Pin Assignments
+====================
+Source of truth: firmware/src/board.h
 
 
-I2C devices
------------
-Enumerating I2C devices:
-  I2C device @ 0x48		TMP102A temp sensor
-  I2C device @ 0x68		MPU-6500 IMU
+ConeZ PCB v0.1 (BOARD_CONEZ_V0_1)
+ESP32-S3-MINI-1 module (8MB SPI flash) + SX1268 LoRa
+------------------------------------------------------
+
+GPIO  Define          Function
+----  --------------  ------------------------------------
+  0                   BOOT/USR switch
+  1   ADC_BAT_PIN     ADC: Battery voltage
+  2   ADC_SOLAR_PIN   ADC: Solar voltage
+  3                   ...do not use, pullup to 3.3V...
+  4   PSR_CE          PSRAM CE
+  5   PSR_MISO        PSRAM MISO
+  6   PSR_SCK         PSRAM SCK
+  7   PSR_MOSI        PSRAM MOSI
+  8   LORA_PIN_CS     LoRa CS
+  9   LORA_PIN_SCK    LoRa SCK
+ 10   LORA_PIN_MOSI   LoRa MOSI
+ 11   LORA_PIN_MISO   LoRa MISO
+ 12   LORA_PIN_RST    LoRa RST
+ 13   LORA_PIN_BUSY   LoRa BUSY
+ 14   LORA_PIN_DIO1   LoRa IRQ (DIO1)
+ 15   EXT1_PIN        Hartmann Standard Connector 1
+ 16   EXT2_PIN        Hartmann Standard Connector 2
+ 17   I2C_SDA_PIN     I2C SDA
+ 18   I2C_SCL_PIN     I2C SCL
+ 19                   USB N
+ 20                   USB P
+ 21   SOLAR_PWM_PIN   Solar PWM
+ 33   PWR_SW_PIN      Power switch status
+ 34   PWR_OFF_PIN     Power switch off (assert high to power board off)
+ 35   RGB4_PIN        RGB LED signal 4 (WS2811)
+ 36   RGB3_PIN        RGB LED signal 3 (WS2811)
+ 37   RGB2_PIN        RGB LED signal 2 (WS2811)
+ 38   RGB1_PIN        RGB LED signal 1 (WS2811, 50 LEDs)
+ 40   LED_PIN         Status LED
+ 41   IMU_INT_PIN     IMU INT (MPU-6500)
+ 42   GPS_PPS_PIN     GPS PPS (1Hz time reference)
+ 43   GPS_TX_PIN      GPS UART TX (UART0)
+ 44   GPS_RX_PIN      GPS UART RX (UART0)
+ 47   LOAD_ON_PIN     Load MOSFET (enables 12V to LOAD and RGB LED terminals)
+ 48   BUZZER_PIN      Audio PWM (piezo buzzer)
+
+I2C devices:
+  0x48  TMP102A temp sensor
+  0x68  MPU-6500 IMU
 
 
+Heltec WiFi LoRa 32 V3 (BOARD_HELTEC_LORA32_V3)
+ESP32-S3 + SX1262 LoRa
+------------------------------------------------------
 
+GPIO  Define          Function
+----  --------------  ------------------------------------
+  0   BUTTON_PIN      Onboard user button
+  1   ADC_BAT_PIN     ADC: Battery voltage
+  8   LORA_PIN_CS     LoRa CS
+  9   LORA_PIN_SCK    LoRa SCK
+ 10   LORA_PIN_MOSI   LoRa MOSI
+ 11   LORA_PIN_MISO   LoRa MISO
+ 12   LORA_PIN_RST    LoRa RST
+ 13   LORA_PIN_BUSY   LoRa BUSY
+ 14   LORA_PIN_DIO1   LoRa IRQ (DIO1)
+ 17   I2C_SDA_PIN     I2C SDA (shared with OLED)
+ 18   I2C_SCL_PIN     I2C SCL (shared with OLED)
+ 19                   USB N
+ 20                   USB P
+ 21   OLED_RST_PIN    OLED display reset
+ 35   LED_PIN         Onboard status LED
+ 36   VEXT_PIN        External peripheral power control
+ 43                   USB serial TX
+ 44                   USB serial RX
 
+Reserved (do not use on Heltec V3):
+  26                  SubSPI chip select
+  33-38               SPI flash / SubSPI
+  39-42               JTAG (MTCK, MTDO, MTDI, MTMS)
+
+I2C devices:
+  0x3C  SSD1306 OLED display (128x64)

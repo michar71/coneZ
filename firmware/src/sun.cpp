@@ -8,8 +8,9 @@ int lastMonth = -1;
 int lastYear = -1;
 int DST_Offset = -1;
     
-int sunrise;
-int sunset;
+// Marked volatile for cross-core visibility (Core 1 writes, Core 0 reads).
+volatile int sunrise;
+volatile int sunset;
 float lastLat;
 float lastLong;
 

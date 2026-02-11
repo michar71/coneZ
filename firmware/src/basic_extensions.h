@@ -6,12 +6,6 @@
 
 #define VERSION 1
 
-// LED buffers
-extern CRGB leds1[NUM_LEDS1];
-extern CRGB leds2[NUM_LEDS2];
-extern CRGB leds3[NUM_LEDS3];
-extern CRGB leds4[NUM_LEDS4];
-
 /*
 TODO
 ====
@@ -315,7 +309,7 @@ void setLEDb(int pos, int val)
 
 void updateLEDs()
 {
-    FastLED.show(); //Update the LED strip with the new values
+    led_show(); //Mark LED buffers dirty; render task will call FastLED.show()
 }
 
 unsigned long getTimestamp()
@@ -790,19 +784,19 @@ int SETLEDRGB_()
     } 
     //copy arrays to LED array
     for (int ii=0;ii<getNumLeds();ii++)
-    { 
+    {
         if (useGamma)
         {
-            setLEDr(ii, gamma8[arr_r[ii+1]]);
-            setLEDg(ii, gamma8[arr_g[ii+1]]);
-            setLEDb(ii, gamma8[arr_b[ii+1]]);
+            setLEDr(ii, gamma8[constrain(arr_r[ii+1], 0, 255)]);
+            setLEDg(ii, gamma8[constrain(arr_g[ii+1], 0, 255)]);
+            setLEDb(ii, gamma8[constrain(arr_b[ii+1], 0, 255)]);
         }
         else
         {
             setLEDr(ii, arr_r[ii+1]);
             setLEDg(ii, arr_g[ii+1]);
-            setLEDb(ii, arr_b[ii+1]);       
-        }                
+            setLEDb(ii, arr_b[ii+1]);
+        }
     }
     //Show LED 
     updateLEDs();
@@ -833,7 +827,7 @@ int RGBTOHSVARRAY_()
     } 
 
 
-    //copy arrays to LED array
+    //Convert RGB to HSV
     CRGB rgb;
     CHSV hsv;
     for (int ii=1;ii<=arr_r[0];ii++)
@@ -842,40 +836,40 @@ int RGBTOHSVARRAY_()
         rgb.g = arr_g[ii];
         rgb.b = arr_b[ii];
 
-        hsv2rgb_rainbow( hsv, rgb);  //Convert RGB to HSV
-        
+        hsv = rgb2hsv_approximate( rgb );  //Convert RGB to HSV
+
         arr_r[ii] = hsv.h; //Store Hue
         arr_g[ii] = hsv.s; //Store Saturation
-        arr_b[ii] = hsv.v; //Store Brightness             
+        arr_b[ii] = hsv.v; //Store Brightness
     }
 
     //Hmm... How do we deal with no return??? Just return a dummy value?
     *sp = 0; //Push 0 to the stack
-    STEP;    
+    STEP;
 }
 
 int HSVTORGBARRAY_()
 {
     //Pull 3 arrays from stack
-    Val *arr_b = (Val*)*sp++;  
-    Val *arr_g = (Val*)*sp++;  
-    Val *arr_r = (Val*)*sp;      
+    Val *arr_b = (Val*)*sp++;
+    Val *arr_g = (Val*)*sp++;
+    Val *arr_r = (Val*)*sp;
 
     //Validate arrays
     if ((arr_r == 0) || (arr_g == 0) || (arr_b == 0))
     {
         bad((char*)"HSVTORGBARRAY: BAD ARRAY POINTER");
         return 0;
-    } 
+    }
 
     if ((arr_r[0] != arr_g[0]) || (arr_g[0] != arr_b[0]) || (arr_b[0] != arr_r[0]))
     {
         bad((char*)"HSVTORGBARRAY: ARRAY LENGTH NOT MATCHING");
         return 0;
-    } 
+    }
 
 
-    //copy arrays to LED array
+    //Convert HSV to RGB
     CRGB rgb;
     CHSV hsv;
     for (int ii=1;ii<=arr_r[0];ii++)
@@ -884,11 +878,11 @@ int HSVTORGBARRAY_()
         hsv.s = arr_g[ii];
         hsv.v = arr_b[ii];
 
-        rgb = rgb2hsv_approximate( hsv);  //Convert HSV to RGB
-        
-        arr_r[ii] = rgb.r; //Store Hue
-        arr_g[ii] = rgb.g; //Store Saturation
-        arr_b[ii] = rgb.b; //Store Brightness             
+        hsv2rgb_rainbow( hsv, rgb );  //Convert HSV to RGB
+
+        arr_r[ii] = rgb.r; //Store Red
+        arr_g[ii] = rgb.g; //Store Green
+        arr_b[ii] = rgb.b; //Store Blue
     }
 
     //Hmm... How do we deal with no return??? Just return a dummy value?
@@ -941,7 +935,7 @@ int SCALE_()
     int valmin = (int)*sp++;    
     int val = *sp;  //Pull value from Stack
     int res = map(val,valmin, valmax,rmin,rmax);
-    *sp=val; //Push back to the stack
+    *sp=res; //Push back to the stack
     STEP;
 }
 
@@ -968,8 +962,10 @@ int SIN256_()
 int GAMMA256_()
 {
     int val = *sp;  //Pull value from Stack
+    if (val < 0) val = 0;
+    if (val > 255) val = 255;
     *sp=(int)gamma8[val]; //Push result to the stack
-    STEP; 
+    STEP;
 }
 
 int USEGAMMA_()
@@ -1043,7 +1039,7 @@ int ROTATEARRAY_()
         else
         {
             tmp = arr[1];
-            for (int jj=1;jj<size-1;jj++)
+            for (int jj=1;jj<size;jj++)
                 arr[jj] = arr[jj+1];
             arr[size] = tmp;    
         }
@@ -1201,6 +1197,11 @@ int LIMIT_()
 int TIMESTAMP_()
 {
     int div = (int)*sp;
+    if (div == 0)
+    {
+        bad((char*)"TIMESTAMP: DIVISION BY ZERO");
+        return 0;
+    }
     int ts = (int)(getTimestamp()/div);
     *sp=ts; //Push back to to the stack
     STEP;
@@ -1672,7 +1673,7 @@ int ACCZ_()
             *sp=0; //Push back to to the stack
             STEP;
         }
-        *sp=accY; //Push back to to the stack
+        *sp=accZ; //Push back to to the stack
         STEP;
     }
 }
@@ -1786,7 +1787,7 @@ int WAITFOR_()
         STEP;
     }
 
-    uint8_t ret = SYNC_Func(event,source, condition, trigger,timeout); //Call the sync function
+    int8_t ret = SYNC_Func(event,source, condition, trigger,timeout); //Call the sync function
     if (ret == 0) //If we timed out
     {
         *sp=0; //Push back to to the stack
@@ -1907,7 +1908,7 @@ int HOUR_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no time data
         }
         STEP;
     }
@@ -1941,7 +1942,7 @@ int MINUTE_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no time data
         }
         STEP;
     }
@@ -1975,7 +1976,7 @@ int SECOND_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no time data
         }
         STEP;
     }
@@ -2009,7 +2010,7 @@ int DAY_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no date data
         }
         STEP;
     }
@@ -2043,7 +2044,7 @@ int MONTH_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no date data
         }
         STEP;
     }
@@ -2077,7 +2078,7 @@ int YEAR_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no date data
         }
         STEP;
     }
@@ -2111,7 +2112,7 @@ int DAYOFWEEK_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no date data
         }
         STEP;
     }
@@ -2145,7 +2146,7 @@ int DAYOFYEAR_()
         }
         else
         {
-            *sp=1; //Push back to to the stack
+            *sp=-1; //Error: no date data
         }
         STEP;
     }
