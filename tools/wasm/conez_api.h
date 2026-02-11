@@ -571,6 +571,32 @@ static inline double trunc(double x) { return __builtin_trunc(x); }
 static inline double fmin(double a, double b) { return __builtin_fmin(a, b); }
 static inline double fmax(double a, double b) { return __builtin_fmax(a, b); }
 
+/* ---- Curve / Interpolation ---- */
+
+/* Linear interpolation: returns a + t * (b - a). */
+__attribute__((import_module("env"), import_name("lerp")))
+float lerp(float a, float b, float t);
+
+/*
+ * Smoothed clamped linear interpolation (integer).
+ * Maps x_pos from [x_min, x_max] to [min_val, max_val].
+ *   offset:  percentage (0-100) of half-range to shrink from each end
+ *   window:  percentage (0-100) of offset region used as smoothing width
+ *   stride:  step size for samples within the smoothing window
+ */
+__attribute__((import_module("env"), import_name("larp")))
+int larp(int x_pos, int x_min, int x_max, int min_val, int max_val,
+         int offset, int window, int stride);
+
+/*
+ * Smoothed clamped linear interpolation (float).
+ * Same as larp but with float params. stride is the number of
+ * subdivisions of the smoothing window.
+ */
+__attribute__((import_module("env"), import_name("larpf")))
+float larpf(float x_pos, float x_min, float x_max, float min_val, float max_val,
+            float offset, float window, int stride);
+
 /* M_PI constant */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

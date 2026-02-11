@@ -188,7 +188,7 @@ WASM runtime:
 Host Imports
 ------------
 
-All 145 firmware host imports are implemented. Behavior differences from
+All 148 firmware host imports are implemented. Behavior differences from
 hardware are noted below.
 
   LED (14 functions)
@@ -221,8 +221,10 @@ hardware are noted below.
     /config.ini is blocked. Max 4 open files. Parent directories are
     created automatically for write/append.
 
-  Math (24 functions)
+  Math (27 functions)
     Direct libm calls for both float and double transcendentals.
+    Curve functions (lerp, larp, larpf) use standalone implementations
+    matching the firmware's util/curve.cpp.
 
   Strings (26 functions)
     Free-list pool allocator on WASM linear memory (0x8000-0xF000),

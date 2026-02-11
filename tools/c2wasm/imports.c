@@ -130,6 +130,9 @@ ImportDef imp_defs[IMP_COUNT] = {
     [IMP_LOG]            = {"log",                  1,{_D},            1,{_D}},
     [IMP_LOG2]           = {"log2",                 1,{_D},            1,{_D}},
     [IMP_FMOD]           = {"fmod",                 2,{_D,_D},         1,{_D}},
+    [IMP_LERP]           = {"lerp",                 3,{_F,_F,_F},      1,{_F}},
+    [IMP_LARP]           = {"larp",                 8,{_I,_I,_I,_I,_I,_I,_I,_I}, 1,{_I}},
+    [IMP_LARPF]          = {"larpf",                8,{_F,_F,_F,_F,_F,_F,_F,_I}, 1,{_F}},
 };
 #undef _I
 #undef _F

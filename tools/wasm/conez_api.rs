@@ -184,6 +184,16 @@ extern "C" {
     pub fn file_delete(path: *const u8, path_len: i32) -> i32;
     pub fn file_rename(old_path: *const u8, old_len: i32, new_path: *const u8, new_len: i32) -> i32;
 
+    // ---- Curve / Interpolation ----
+    /// Linear interpolation: returns a + t * (b - a).
+    pub fn lerp(a: f32, b: f32, t: f32) -> f32;
+    /// Smoothed clamped linear interpolation (integer).
+    pub fn larp(x_pos: i32, x_min: i32, x_max: i32, min_val: i32, max_val: i32,
+                offset: i32, window: i32, stride: i32) -> i32;
+    /// Smoothed clamped linear interpolation (float). stride = number of window subdivisions.
+    pub fn larpf(x_pos: f32, x_min: f32, x_max: f32, min_val: f32, max_val: f32,
+                 offset: f32, window: f32, stride: i32) -> f32;
+
     // ---- Math (host-imported transcendentals) ----
     pub fn sinf(x: f32) -> f32;
     pub fn cosf(x: f32) -> f32;

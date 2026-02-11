@@ -183,6 +183,48 @@ m3ApiRawFunction(m3_fmod)
 }
 
 
+// --- Curve functions ---
+
+#include "curve.h"
+
+m3ApiRawFunction(m3_lerp)
+{
+    m3ApiReturnType(float);
+    m3ApiGetArg(float, a);
+    m3ApiGetArg(float, b);
+    m3ApiGetArg(float, t);
+    m3ApiReturn(lerp(a, b, t));
+}
+
+m3ApiRawFunction(m3_larp)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, x_pos);
+    m3ApiGetArg(int32_t, x_min);
+    m3ApiGetArg(int32_t, x_max);
+    m3ApiGetArg(int32_t, min_val);
+    m3ApiGetArg(int32_t, max_val);
+    m3ApiGetArg(int32_t, offset);
+    m3ApiGetArg(int32_t, window);
+    m3ApiGetArg(int32_t, stride);
+    m3ApiReturn(larp(x_pos, x_min, x_max, min_val, max_val, offset, window, stride));
+}
+
+m3ApiRawFunction(m3_larpf)
+{
+    m3ApiReturnType(float);
+    m3ApiGetArg(float, x_pos);
+    m3ApiGetArg(float, x_min);
+    m3ApiGetArg(float, x_max);
+    m3ApiGetArg(float, min_val);
+    m3ApiGetArg(float, max_val);
+    m3ApiGetArg(float, offset);
+    m3ApiGetArg(float, window);
+    m3ApiGetArg(int32_t, stride);
+    m3ApiReturn(larpf(x_pos, x_min, x_max, min_val, max_val, offset, window, stride));
+}
+
+
 // ---------- Link math imports ----------
 
 M3Result link_math_imports(IM3Module module)
@@ -260,6 +302,16 @@ M3Result link_math_imports(IM3Module module)
     if (result && result != m3Err_functionLookupFailed) return result;
 
     result = m3_LinkRawFunction(module, "env", "fmod", "F(FF)", m3_fmod);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    // Curve functions
+    result = m3_LinkRawFunction(module, "env", "lerp", "f(fff)", m3_lerp);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    result = m3_LinkRawFunction(module, "env", "larp", "i(iiiiiiii)", m3_larp);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    result = m3_LinkRawFunction(module, "env", "larpf", "f(fffffffi)", m3_larpf);
     if (result && result != m3Err_functionLookupFailed) return result;
 
     return m3Err_none;

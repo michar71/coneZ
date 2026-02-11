@@ -398,6 +398,25 @@ Math (host-imported transcendentals)
   float log2f(float x)            Base-2 logarithm
   float fmodf(float x, float y)   Floating-point remainder
 
+  Curve / interpolation:
+
+  float lerp(float a, float b, float t)
+      Linear interpolation: returns a + t * (b - a).
+
+  int larp(int x_pos, int x_min, int x_max, int min_val, int max_val,
+           int offset, int window, int stride)
+      Smoothed clamped linear interpolation (integer).
+      Maps x_pos from [x_min, x_max] to [min_val, max_val].
+        offset:  percentage (0-100) of half-range to shrink from each end
+        window:  percentage (0-100) of offset region used as smoothing width
+        stride:  step size for samples within the smoothing window
+
+  float larpf(float x_pos, float x_min, float x_max, float min_val,
+              float max_val, float offset, float window, int stride)
+      Smoothed clamped linear interpolation (float).
+      Same as larp but with float params. stride is the number of
+      subdivisions of the smoothing window.
+
   Double (f64) versions:
 
   double sin(double x)              Sine

@@ -234,6 +234,13 @@ Host-imported math (transcendentals via libm):
   Double (f64):  sin, cos, tan, asin, acos, atan, atan2,
                  pow, exp, log, log2, fmod
 
+Host-imported curve/interpolation:
+  float lerp(float a, float b, float t)
+  int   larp(int x_pos, int x_min, int x_max, int min_val, int max_val,
+             int offset, int window, int stride)
+  float larpf(float x_pos, float x_min, float x_max, float min_val,
+              float max_val, float offset, float window, int stride)
+
   Example:
     float r = sqrtf(x*x + y*y);
     float a = fabsf(value);
@@ -281,6 +288,7 @@ All functions declared in tools/wasm/conez_api.h are available after
               powf, expf, logf, log2f, fmodf
   Math f64:   sin, cos, tan, asin, acos, atan, atan2,
               pow, exp, log, log2, fmod
+  Curve:      lerp, larp, larpf
 
   File I/O:   file_open, file_close, file_read, file_write,
               file_size, file_seek, file_tell,
