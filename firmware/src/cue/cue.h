@@ -66,6 +66,7 @@ bool cue_load(const char *path);
 void cue_start(uint64_t epoch_start_ms);
 void cue_stop(void);
 bool cue_is_playing(void);
+uint32_t cue_get_elapsed_ms(void);
 int  cmd_cue(int argc, char **argv);
 
 #endif

@@ -196,7 +196,7 @@ bool cue_load(const char *path)
         return false;
     }
 
-    File f = FSLINK.open(path, "r");
+    File f = LittleFS.open(path, "r");
     if (!f) {
         printfnl(SOURCE_SYSTEM, F("cue: cannot open %s\n"), path);
         return false;
@@ -303,6 +303,14 @@ void cue_stop(void)
 bool cue_is_playing(void)
 {
     return playing;
+}
+
+uint32_t cue_get_elapsed_ms(void)
+{
+    if (!playing) return 0;
+    uint64_t now_ms = get_epoch_ms();
+    if (now_ms == 0 || now_ms <= music_start_ms) return 0;
+    return (uint32_t)(now_ms - music_start_ms);
 }
 
 

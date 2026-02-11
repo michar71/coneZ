@@ -19,10 +19,6 @@
 #endif
 
 
-//Set defaults if not defined somewhere else
-#ifndef FSLINK
-#define FSLINK LittleFS
-#endif
 
 //Forward declarations
 void base();
@@ -438,7 +434,7 @@ int interp(char* filen)
 	//Open file
 	if (filen != NULL)
 	{
-		file = FSLINK.open(filen);
+		file = LittleFS.open(filen);
 		if (file.size() > 0)
 			printfnl(SOURCE_BASIC,"File: %s opened\n", filen);
 		else

@@ -1,0 +1,706 @@
+ConeZ WASM Module API Reference
+=================================
+
+API Version: 0 (CONEZ_API_VERSION 0)
+
+This document describes the complete API available to C and Rust WASM
+modules running on the ConeZ wasm3 runtime. The authoritative source is
+the C header at tools/wasm/conez_api.h.
+
+
+Building Modules
+----------------
+
+C modules:
+
+  cd tools/wasm
+  clang --target=wasm32 -mbulk-memory -O2 -nostdlib \
+    -Wl,--no-entry -Wl,--export=setup -Wl,--export=loop \
+    -Wl,--allow-undefined \
+    -I . -o module.wasm module.c
+
+  Include conez_api.h to get all imports, libc-equivalent functions,
+  and helper utilities. The -mbulk-memory flag enables WASM memory.copy
+  and memory.fill instructions for memcpy/memset/memmove.
+
+Rust modules (no_std, recommended for size):
+
+  Target wasm32-unknown-unknown. Declare host imports as extern "C".
+  Export setup/loop with #[no_mangle]. Produces tiny binaries (~350 B).
+  See tools/wasm/examples/rust_rgb_cycle/ for a complete example.
+
+Rust modules (std, for convenience):
+
+  Target wasm32-wasip1. println!() works via WASI fd_write but adds
+  ~35KB of formatting overhead. See tools/wasm/examples/rust_rainbow/.
+
+Both Rust approaches use cdylib crate type with opt-level="z", lto,
+strip, panic="abort". Post-process with wasm-opt --enable-bulk-memory -Oz.
+
+Use `make -C tools/wasm` to build all examples.
+Use `make -C tools/wasm install` to copy .wasm files to firmware/data/.
+
+
+Entry Points
+------------
+
+Export one of these combinations:
+
+  void setup()   — called once at load
+  void loop()    — called repeatedly until stopped
+
+  Or a single entry:
+  void _start()  — called once, returns when done
+  int  main()    — called once, returns when done
+
+If both setup() and loop() are exported, setup() runs first, then loop()
+is called in a while-loop until the module is stopped.
+
+
+Host Imports (module "env")
+---------------------------
+
+All host-imported functions are linked from the "env" WASM module. They
+are declared in conez_api.h for C; Rust no_std modules declare them as
+extern "C" { fn name(args) -> ret; }.
+
+Signatures use wasm3 convention: return types before '(', args after.
+  v=void, i=i32, I=i64, f=f32, F=f64
+
+
+LED (RGB)
+~~~~~~~~~
+
+  void led_set_pixel(int channel, int pos, int r, int g, int b)
+      Set a single pixel on channel (1-4) to an RGB color (0-255 each).
+      If auto-gamma is enabled, values are gamma-corrected before writing.
+
+  void led_fill(int channel, int r, int g, int b)
+      Fill an entire channel with a solid RGB color.
+
+  void led_show()
+      Push the LED buffer to the physical strip. Call after writing pixels.
+
+  int led_count(int channel)
+      Return the number of LEDs configured on a channel.
+
+  void led_set_buffer(int channel, void *rgb_data, int count)
+      Bulk-write count pixels from an interleaved R,G,B byte array to
+      a channel. Much faster than per-pixel led_set_pixel() calls.
+      Does NOT call led_show() — call it yourself after filling.
+
+
+LED (HSV)
+~~~~~~~~~
+
+  void led_set_pixel_hsv(int channel, int pos, int h, int s, int v)
+      Set a single pixel to an HSV color (0-255 each).
+
+  void led_fill_hsv(int channel, int h, int s, int v)
+      Fill an entire channel with a solid HSV color.
+
+  int hsv_to_rgb(int h, int s, int v)
+      Convert HSV to packed RGB: returns (r<<16)|(g<<8)|b.
+      Unpack with rgb_r(), rgb_g(), rgb_b() helpers.
+
+  int rgb_to_hsv(int r, int g, int b)
+      Convert RGB to packed HSV: returns (h<<16)|(s<<8)|v.
+      Unpack with hsv_h(), hsv_s(), hsv_v() helpers.
+
+
+LED (Gamma)
+~~~~~~~~~~~
+
+  int led_gamma8(int val)
+      Apply gamma correction to a 0-255 value. Returns corrected value.
+
+  void led_set_gamma(int enable)
+      Enable (1) or disable (0) automatic gamma correction on all LED
+      output. When enabled, led_set_pixel, led_fill, led_set_pixel_hsv,
+      led_fill_hsv, and led_set_buffer all apply gamma automatically.
+      Reset to disabled when the module exits.
+
+
+LED (Array Operations)
+~~~~~~~~~~~~~~~~~~~~~~
+
+  void led_shift(int channel, int amount, int r, int g, int b)
+      Shift pixels on a channel. Positive amount shifts right (new pixels
+      appear at the start), negative shifts left (new pixels at end).
+      New pixel positions are filled with the given RGB color.
+
+  void led_rotate(int channel, int amount)
+      Rotate pixels on a channel. Positive rotates right, negative left.
+      Pixels wrap around — no data is lost.
+
+  void led_reverse(int channel)
+      Reverse the pixel order on a channel.
+
+  None of these call led_show() — call it yourself after manipulating.
+
+
+GPIO
+~~~~
+
+  void pin_set(int gpio)
+      Set a GPIO pin HIGH (configures as OUTPUT first).
+
+  void pin_clear(int gpio)
+      Set a GPIO pin LOW (configures as OUTPUT first).
+
+  int pin_read(int gpio)
+      Read a digital GPIO pin (configures as INPUT first). Returns 0 or 1.
+
+  int analog_read(int pin)
+      Read an analog pin via ADC. Returns 0-4095.
+
+
+GPS
+~~~
+
+  float get_lat()           Latitude in degrees
+  float get_lon()           Longitude in degrees
+  float get_alt()           Altitude in meters
+  float get_speed()         Speed in km/h
+  float get_dir()           Direction in degrees (0-360)
+  int   gps_valid()         1 if GPS has a fix, 0 otherwise
+
+
+GPS Origin / Geometry
+~~~~~~~~~~~~~~~~~~~~~
+
+  float get_origin_lat()    Configured origin latitude
+  float get_origin_lon()    Configured origin longitude
+  int   has_origin()        1 if GPS fix AND origin is set, 0 otherwise
+  float origin_dist()       Distance in meters from origin to current pos
+  float origin_bearing()    Bearing in degrees from origin to current pos
+
+  origin_dist() and origin_bearing() return 0 if GPS or origin unavailable.
+
+
+IMU
+~~~
+
+  float get_roll()          Roll angle in degrees
+  float get_pitch()         Pitch angle in degrees
+  float get_yaw()           Yaw angle in degrees
+  float get_acc_x()         Accelerometer X in g
+  float get_acc_y()         Accelerometer Y in g
+  float get_acc_z()         Accelerometer Z in g
+  int   imu_valid()         1 if IMU data is available, 0 otherwise
+
+
+Environment
+~~~~~~~~~~~
+
+  float get_temp()
+      Temperature in degrees Celsius. Returns a large negative value
+      if no sensor is present.
+
+  float get_humidity()
+      Humidity in percent. Returns -1.0 if no sensor is present.
+
+  float get_brightness()
+      Brightness 0-4096. Returns -1.0 if no sensor is present.
+
+  float get_bat_voltage()
+      Battery voltage. Returns 0 if no power management hardware.
+
+  float get_solar_voltage()
+      Solar panel voltage. Returns 0 if no power management hardware.
+
+
+Sun Position
+~~~~~~~~~~~~
+
+  int get_sunrise()
+      Sunrise time as minutes past midnight. Returns -1 if sun data
+      is not available (requires GPS fix and valid date).
+
+  int get_sunset()
+      Sunset time as minutes past midnight. Returns -1 if not available.
+
+  int sun_valid()
+      Returns 1 if sun position data is valid, 0 otherwise.
+
+  int is_daylight()
+      Returns 1 if currently between sunrise and sunset, 0 if night,
+      -1 if sun data is not available.
+
+  Sun calculations are updated automatically from GPS every 60 seconds.
+
+
+Cue Engine
+~~~~~~~~~~
+
+  int cue_playing()
+      Returns 1 if the cue timeline engine is currently playing, 0 otherwise.
+
+  int cue_elapsed()
+      Milliseconds elapsed since cue playback started. Returns 0 if not
+      playing. Useful for WASM effects launched by the cue engine to know
+      their position within a show timeline.
+
+
+Time
+~~~~
+
+  int64_t get_epoch_ms()
+      Milliseconds since Unix epoch (64-bit). Returns 0 if no time
+      source is available. Uses GPS+PPS when available, NTP fallback.
+
+  int millis()
+      Milliseconds since boot (wraps at ~49 days).
+
+  void delay_ms(int ms)
+      Delay and yield to FreeRTOS. MUST be called in tight loops to
+      prevent watchdog starvation. The m3_Yield hook also provides
+      automatic yielding every ~10K opcodes.
+
+  int time_valid()
+      Returns 1 if any time source (GPS+PPS or NTP) is active.
+
+
+Date/Time (calendar fields)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  int get_year()             4-digit year
+  int get_month()            Month 1-12
+  int get_day()              Day of month 1-31
+  int get_hour()             Hour 0-23 (UTC)
+  int get_minute()           Minute 0-59
+  int get_second()           Second 0-59
+  int get_day_of_week()      0=Sunday, 1=Monday, ..., 6=Saturday
+  int get_day_of_year()      1-366
+  int get_is_leap_year()     1 if leap year, 0 otherwise
+
+  All return 0 if no time source is available.
+
+
+Params (inter-task communication)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  int  get_param(int id)
+      Read a shared parameter (0-15). Param 0 == 1 means stop requested.
+
+  void set_param(int id, int val)
+      Write a shared parameter (0-15).
+
+  int  should_stop()
+      Returns 1 if the host has requested this module to stop.
+
+
+Event Synchronization
+~~~~~~~~~~~~~~~~~~~~~
+
+  int wait_pps(int timeout_ms)
+      Block until a GPS PPS rising edge is detected. Returns 1 on
+      success, 0 on timeout, -1 if GPS has no fix. timeout_ms=0
+      waits forever. Also returns 0 if stop is requested.
+
+  int wait_param(int id, int condition, int value, int timeout_ms)
+      Block until shared param `id` matches the condition against
+      `value`. Returns 1 on match, 0 on timeout. timeout_ms=0
+      waits forever.
+
+      Conditions:
+        0 (WAIT_GT)  — param > value
+        1 (WAIT_LT)  — param < value
+        2 (WAIT_EQ)  — param == value
+        3 (WAIT_NEQ) — param != value
+
+
+Output
+~~~~~~
+
+  void print_i32(int val)         Print a 32-bit integer followed by newline.
+  void print_f32(float val)       Print a 32-bit float followed by newline.
+  void print_i64(int64_t val)     Print a 64-bit integer followed by newline.
+  void print_f64(double val)      Print a 64-bit double followed by newline.
+  void print_str(char *ptr, int len)   Print a string (pointer + length).
+
+  Convenience macros (defined in conez_api.h, route to print_i32 or printf):
+    print_i8(val)                 Print a signed 8-bit integer + newline.
+    print_u8(val)                 Print an unsigned 8-bit integer + newline.
+    print_i16(val)                Print a signed 16-bit integer + newline.
+    print_u16(val)                Print an unsigned 16-bit integer + newline.
+    print_u32(val)                Print an unsigned 32-bit integer + newline.
+    print_u64(val)                Print an unsigned 64-bit integer + newline.
+
+  All output goes through the SOURCE_WASM debug channel, filterable
+  via "debug WASM on/off" or the debug.wasm config key.
+
+
+Math (host-imported transcendentals)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  These are backed by the ESP32's libm. Zero cost in the .wasm binary.
+
+  Float (f32) versions:
+
+  float sinf(float x)             Sine
+  float cosf(float x)             Cosine
+  float tanf(float x)             Tangent
+  float asinf(float x)            Arc sine
+  float acosf(float x)            Arc cosine
+  float atanf(float x)            Arc tangent
+  float atan2f(float y, float x)  Two-argument arc tangent
+  float powf(float base, float exp)   Power
+  float expf(float x)             Natural exponential (e^x)
+  float logf(float x)             Natural logarithm
+  float log2f(float x)            Base-2 logarithm
+  float fmodf(float x, float y)   Floating-point remainder
+
+  Double (f64) versions:
+
+  double sin(double x)              Sine
+  double cos(double x)              Cosine
+  double tan(double x)              Tangent
+  double asin(double x)             Arc sine
+  double acos(double x)             Arc cosine
+  double atan(double x)             Arc tangent
+  double atan2(double y, double x)  Two-argument arc tangent
+  double pow(double base, double exp)   Power
+  double exp(double x)              Natural exponential (e^x)
+  double log(double x)              Natural logarithm
+  double log2(double x)             Base-2 logarithm
+  double fmod(double x, double y)   Floating-point remainder
+
+  Note: ESP32 has no double FPU — double math is software-emulated,
+  ~3-5x slower than float. Use the float versions unless you need
+  the extra precision.
+
+
+Printf (host-imported formatting)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  int host_printf(char *fmt, void *args)
+      Format a string and print to the WASM debug console. Used
+      internally by the printf() wrapper.
+
+  int host_snprintf(char *buf, int size, char *fmt, void *args)
+      Format a string into a WASM memory buffer. Used internally
+      by the snprintf()/sprintf() wrappers.
+
+  Module authors call the standard C functions printf(), snprintf(),
+  sprintf(), puts(), putchar() — the header routes them through these
+  host imports automatically (or through inline code if compiled with
+  -DCONEZ_PRINTF_INLINE).
+
+
+sscanf (host-imported parsing)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  int host_sscanf(char *str, char *fmt, void *args)
+      Parse a string according to a format and write results into WASM
+      memory. Used internally by the sscanf() wrapper.
+
+  Module authors call the standard C function:
+
+  int sscanf(const char *str, const char *fmt, ...)
+
+  Supported conversions: %d %i %u %x %X %o %f %e %g %s %c %n %%
+  Width specifiers supported. Assignment suppression (*) supported.
+  Length modifiers: hh→int8, h→int16, (none/l)→int32, ll→int64.
+  For floats: %f→float(4B), %lf→double(8B).
+
+  Returns the number of successfully matched and assigned items.
+
+  Example:
+    int x; float y; char name[32];
+    int n = sscanf("42 3.14 hello", "%d %f %s", &x, &y, name);
+    // n=3, x=42, y=3.14, name="hello"
+
+
+LUT (lookup tables)
+~~~~~~~~~~~~~~~~~~~
+
+  LUT access is mutex-protected for safe use when both BASIC and WASM
+  tasks are active.
+
+  int  lut_load(int index)        Load LUT file (0-255) from flash.
+                                  Returns entry count, 0 on failure.
+  int  lut_get(int index)         Get value at position. Returns 0 if
+                                  out of bounds.
+  int  lut_size()                 Number of entries in current LUT.
+  void lut_set(int index, int value)   Set value at position (bounds-checked).
+  int  lut_save(int index)        Save current LUT to flash. Returns 1/0.
+  int  lut_check(int index)       Check if LUT file exists. Returns entry
+                                  count or -1 if not found.
+
+
+File I/O
+~~~~~~~~
+
+  int  file_open(char *path, int path_len, int mode)
+      Open a file on LittleFS. mode: 0=read, 1=write, 2=append.
+      Returns a handle (0-3) or -1 on failure. Max 4 files open at once.
+      Path must start with '/', no '..' allowed, /config.ini is protected.
+
+  void file_close(int handle)
+  int  file_read(int handle, void *buf, int max_len)   Returns bytes read or -1.
+  int  file_write(int handle, void *buf, int len)      Returns bytes written or -1.
+  int  file_size(int handle)       Total file size or -1.
+  int  file_seek(int handle, int pos)   Returns 1 on success, 0 on failure.
+  int  file_tell(int handle)       Current read/write position or -1.
+
+  int  file_exists(char *path, int path_len)
+      Check if a file exists. Returns 1 if it exists, 0 otherwise.
+
+  int  file_delete(char *path, int path_len)
+      Delete a file. Returns 1 on success, 0 on failure.
+      Same path restrictions as file_open().
+
+  int  file_rename(char *old_path, int old_len, char *new_path, int new_len)
+      Rename a file. Returns 1 on success, 0 on failure.
+      Same path restrictions apply to both paths.
+
+
+Inline Functions (compiled into module, not host imports)
+---------------------------------------------------------
+
+These are provided by conez_api.h as static inline functions. They
+compile into the module with no host call overhead. Unused functions
+are eliminated by the compiler.
+
+
+Math (WASM-native instructions)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  These compile to single WASM opcodes — zero call overhead:
+
+  Float (f32):
+  float sqrtf(float x)            Square root
+  float fabsf(float x)            Absolute value
+  float floorf(float x)           Floor
+  float ceilf(float x)            Ceiling
+  float truncf(float x)           Truncate toward zero
+  float fminf(float a, float b)   Minimum
+  float fmaxf(float a, float b)   Maximum
+
+  Double (f64):
+  double sqrt(double x)            Square root
+  double fabs(double x)            Absolute value
+  double floor(double x)           Floor
+  double ceil(double x)            Ceiling
+  double trunc(double x)           Truncate toward zero
+  double fmin(double a, double b)  Minimum
+  double fmax(double a, double b)  Maximum
+
+  M_PI is defined as 3.14159265358979323846.
+
+
+Math / Utility Helpers
+~~~~~~~~~~~~~~~~~~~~~~
+
+  int clamp(int val, int lo, int hi)
+      Clamp an integer to [lo, hi].
+
+  int clamp255(int val)
+      Clamp an integer to [0, 255]. Shorthand for clamp(val, 0, 255).
+
+  int abs_i(int val)
+      Integer absolute value.
+
+  int map_range(int val, int in_min, int in_max, int out_min, int out_max)
+      Map a value from one range to another (integer arithmetic).
+
+  int sin256(int val)
+      Sine using 0-255 input range (0-255 maps to 0-360 degrees).
+      Output is 0-255 (sinusoidal oscillation). Equivalent to BASIC's
+      SIN256() function.
+
+
+Memory Functions
+~~~~~~~~~~~~~~~~
+
+  memcpy, memset, memmove compile to WASM bulk-memory instructions
+  (memory.copy / memory.fill) when built with -mbulk-memory:
+
+  void *memcpy(void *dst, const void *src, size_t n)
+  void *memset(void *dst, int c, size_t n)
+  void *memmove(void *dst, const void *src, size_t n)
+  int   memcmp(const void *a, const void *b, size_t n)
+
+
+String Functions
+~~~~~~~~~~~~~~~~
+
+  size_t strlen(const char *s)
+  int    strcmp(const char *a, const char *b)
+  int    strncmp(const char *a, const char *b, size_t n)
+  char  *strchr(const char *s, int c)
+
+
+Printf / Scanf Family
+~~~~~~~~~~~~~~~~~~~~~
+
+  printf: By default, formatting is host-imported (~50 bytes in module).
+  Define CONEZ_PRINTF_INLINE to use the fully self-contained inline
+  implementation (~1KB in module) instead.
+
+  Supported printf specifiers: %d %i %u %x %X %c %s %f %p %%
+  Flags: - 0    Width: number or *    Precision: .number or .*
+  Length modifiers: l/ll/h/hh/z (accepted, ignored — 32-bit platform)
+
+  int printf(const char *fmt, ...)
+  int sprintf(char *buf, const char *fmt, ...)
+  int snprintf(char *buf, size_t n, const char *fmt, ...)
+  int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap)
+  int puts(const char *s)         Print string + newline
+  int putchar(int c)              Print single character
+
+  sscanf: Always host-imported.
+
+  int sscanf(const char *str, const char *fmt, ...)
+
+  va_list, va_start, va_end, va_arg, va_copy are also provided.
+
+
+Output Helpers
+~~~~~~~~~~~~~~
+
+  void print(const char *s)       Print a null-terminated string
+                                  (uses print_str internally)
+
+
+Color Unpack Helpers
+~~~~~~~~~~~~~~~~~~~~
+
+  int rgb_r(int packed)            Extract red   from hsv_to_rgb() result
+  int rgb_g(int packed)            Extract green from hsv_to_rgb() result
+  int rgb_b(int packed)            Extract blue  from hsv_to_rgb() result
+
+  int hsv_h(int packed)            Extract hue   from rgb_to_hsv() result
+  int hsv_s(int packed)            Extract sat   from rgb_to_hsv() result
+  int hsv_v(int packed)            Extract val   from rgb_to_hsv() result
+
+
+File I/O Helpers
+~~~~~~~~~~~~~~~~
+
+  int file_open_str(const char *path, int mode)
+      Convenience wrapper that computes strlen for you.
+
+  int file_exists_str(const char *path)
+      Convenience wrapper for file_exists().
+
+  int file_delete_str(const char *path)
+      Convenience wrapper for file_delete().
+
+  int file_rename_str(const char *old_path, const char *new_path)
+      Convenience wrapper for file_rename().
+
+
+C Standard Library Helpers
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  int   atoi(const char *s)
+  float atof(const char *s)
+  long  strtol(const char *s, char **endptr, int base)
+  float strtof(const char *s, char **endptr)
+  abs(x)                           Macro for integer absolute value
+
+
+Type Definitions
+~~~~~~~~~~~~~~~~
+
+  size_t                           Typedef for __SIZE_TYPE__
+  NULL                             Defined as ((void *)0)
+  bool / true / false              Defined for C modules (not C++)
+  CONEZ_API_VERSION                0
+
+
+WASI Support
+------------
+
+Minimal WASI stubs are provided for Rust std modules targeting
+wasm32-wasip1:
+
+  fd_write (stdout/stderr only) — routes to printfnl(SOURCE_WASM, ...)
+  fd_seek, fd_close — return EBADF
+  proc_exit — sets stop flag and traps
+
+This is what makes println!() and print!() work in Rust std modules.
+Not needed for C modules or Rust no_std modules.
+
+
+Rust no_std API
+---------------
+
+For Rust modules targeting wasm32-unknown-unknown with #![no_std],
+declare host imports as extern "C" blocks. Example:
+
+  #![no_std]
+
+  use core::panic::PanicInfo;
+
+  #[panic_handler]
+  fn panic(_info: &PanicInfo) -> ! {
+      core::arch::wasm32::unreachable()
+  }
+
+  extern "C" {
+      fn led_fill(channel: i32, r: i32, g: i32, b: i32);
+      fn led_show();
+      fn led_set_gamma(enable: i32);
+      fn led_gamma8(val: i32) -> i32;
+      fn led_set_buffer(channel: i32, rgb_ptr: *const u8, count: i32);
+      fn get_year() -> i32;
+      fn get_hour() -> i32;
+      fn time_valid() -> i32;
+      fn has_origin() -> i32;
+      fn origin_dist() -> f32;
+      fn wait_pps(timeout_ms: i32) -> i32;
+      fn wait_param(id: i32, cond: i32, val: i32, timeout: i32) -> i32;
+      fn get_humidity() -> f32;
+      fn file_exists(path: *const u8, len: i32) -> i32;
+      fn file_delete(path: *const u8, len: i32) -> i32;
+      fn print_str(ptr: *const u8, len: i32);
+      fn print_i64(val: i64);
+      fn print_f64(val: f64);
+      fn delay_ms(ms: i32);
+      fn sinf(x: f32) -> f32;
+      fn cosf(x: f32) -> f32;
+      fn sin(x: f64) -> f64;
+      fn cos(x: f64) -> f64;
+      fn pin_set(gpio: i32);
+      fn pin_read(gpio: i32) -> i32;
+      fn analog_read(pin: i32) -> i32;
+      fn get_bat_voltage() -> f32;
+      fn get_sunrise() -> i32;
+      fn is_daylight() -> i32;
+      fn cue_playing() -> i32;
+      fn cue_elapsed() -> i32;
+      fn led_shift(ch: i32, amount: i32, r: i32, g: i32, b: i32);
+      fn led_rotate(ch: i32, amount: i32);
+      fn led_reverse(ch: i32);
+      // ... declare any host imports you need
+  }
+
+  #[no_mangle]
+  pub extern "C" fn setup() {
+      let msg = b"hello from rust\n";
+      unsafe { print_str(msg.as_ptr(), msg.len() as i32) };
+  }
+
+  #[export_name = "loop"]
+  pub extern "C" fn wasm_loop() {
+      // ... your loop code
+  }
+
+All host imports listed above are available with the same names and
+signatures. Use i32 for int parameters, f32 for float, i64 for int64_t.
+The loop function must use #[export_name = "loop"] because `loop` is a
+Rust keyword.
+
+
+Example Binary Sizes
+--------------------
+
+  rgb_cycle.wasm       (C, no printf)             465 bytes
+  hsv_rainbow.wasm     (C, no printf)             469 bytes
+  rust_rgb_cycle.wasm  (Rust no_std, no printf)   353 bytes
+  C module with printf (host-imported)             ~641 bytes
+  C module with printf (CONEZ_PRINTF_INLINE)       ~7.7 KB
+  rust_rainbow.wasm    (Rust std, println!)        ~35 KB

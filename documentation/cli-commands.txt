@@ -11,6 +11,7 @@ Quick Reference
 
   ?                                  Show help
   config [set|unset|reset]           Show or change settings
+  cue [load|start|stop|status]       Cue timeline engine control
   debug [off | {source} [on|off]]    Show or set debug message types
   del {filename}                     Delete file
   dir                                List files
@@ -20,17 +21,18 @@ Quick Reference
   load {filename}                    Receive file via serial (CTRL+Z to end)
   lora                               Show LoRa radio status
   mem                                Show heap memory stats
-  param {id} {value}                 Set BASIC program parameter
+  param {id} {value}                 Set script parameter
   ps                                 Show task list and stack watermarks
   reboot                             Reboot the device
   ren {oldname} {newname}            Rename file
-  run {filename}                     Run BASIC program
+  run {filename}                     Run script (.bas or .wasm)
   sensors                            Show sensor readings
-  stop                               Stop running BASIC program
+  stop                               Stop running script
   tc                                 Show thread count per core
-  time                               Show current date/time from GPS
+  time                               Show current date/time and source
   uptime                             Show system uptime
   version                            Show firmware version and board info
+  wasm [status|info <file>]          WASM runtime status/info
   wifi                               Show WiFi status
 
 
@@ -55,6 +57,24 @@ config
   config reset
       Delete /config.ini and revert all settings to compiled defaults.
 
+cue
+  Control the cue timeline engine for synchronized LED shows.
+
+  cue load {filename}
+      Load a binary .cue file from LittleFS.
+      Example: cue load /show.cue
+
+  cue start [ms]
+      Start cue playback. With no argument, starts from now. With an
+      offset in ms, treats playback as having started that many ms ago
+      (useful for syncing to a track already in progress).
+
+  cue stop
+      Stop cue playback.
+
+  cue status
+      Show cue engine state: loaded file, playing/stopped, position.
+
 debug
   With no arguments, shows the current on/off state of each debug source.
 
@@ -67,8 +87,8 @@ debug
   debug {source} on|off
       Enable or disable a specific source.
 
-  Sources: SYSTEM, BASIC, COMMANDS, SHELL, GPS, GPS_RAW, LORA, LORA_RAW,
-           FSYNC, WIFI, SENSORS, OTHER
+  Sources: SYSTEM, BASIC, WASM, COMMANDS, SHELL, GPS, GPS_RAW, LORA,
+           LORA_RAW, FSYNC, WIFI, SENSORS, OTHER
 
 del {filename}
   Delete a file from LittleFS. Path must start with /.
@@ -103,9 +123,9 @@ mem
   block.
 
 param {id} {value}
-  Set a BASIC program parameter. Parameters are a 16-slot integer array
-  shared between the main loop and running BASIC scripts. The BASIC
-  program reads them with GETPARAM(id).
+  Set a script parameter. Parameters are a 16-slot integer array shared
+  between the main loop and running scripts (BASIC or WASM). BASIC reads
+  them with GETPARAM(id); WASM reads them with get_param(id).
   Example: param 1 42
 
 ps
@@ -120,31 +140,47 @@ ren {oldname} {newname}
   Example: ren /old.bas /new.bas
 
 run {filename}
-  Start a BASIC program. The program runs on the dedicated BASIC task
-  (Core 0). Only one program can run at a time.
-  Example: run /test.bas
+  Run a script file. The file extension determines the runtime: .bas
+  files run on the BASIC interpreter task, .wasm files run on the WASM
+  interpreter task. Both tasks run on Core 0. Only one script of each
+  type can run at a time.
+  Examples: run /test.bas
+            run /rgb_cycle.wasm
 
 sensors
   Show sensor readings: IMU (roll/pitch/yaw/acceleration), temperature,
   battery voltage, solar voltage. Available sensors depend on the board.
 
 stop
-  Stop the currently running BASIC program by setting parameter 0 to 1.
-  The BASIC program should check GETPARAM(0) to honor the stop request.
+  Stop the currently running script. Sets parameter 0 to 1 (checked by
+  BASIC via GETPARAM(0)) and signals the WASM runtime to exit. WASM
+  modules are also stopped automatically via the m3_Yield() hook.
 
 tc
   Show the thread loop counter for each CPU core. Useful for checking
   that tasks are running.
 
 time
-  Show current date, time, and day of week from GPS.
-  Only available on boards with GPS hardware.
+  Show current date, time, day of week, time source (GPS+PPS, NTP, or
+  none), and epoch milliseconds. Available on all boards — GPS boards
+  use PPS-disciplined time, others fall back to NTP when WiFi is
+  connected.
 
 uptime
   Show time since boot in days, hours, minutes, seconds.
 
 version
   Show firmware project name, version, build date/time, and board type.
+
+wasm
+  Show WASM runtime status and module information.
+
+  wasm status
+      Show whether a WASM module is running and its file path.
+
+  wasm info {filename}
+      Show the size of a .wasm file on LittleFS.
+      Example: wasm info /rgb_cycle.wasm
 
 wifi
   Show WiFi status: SSID, connection state, IP address, RSSI.

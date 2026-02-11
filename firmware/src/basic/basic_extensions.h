@@ -287,6 +287,7 @@ const uint8_t  gamma8[] = {
 
 #include "FastLED.h"
 #include "config.h"
+#include "lut.h"
 
 int getNumLeds()
 {
@@ -357,129 +358,7 @@ unsigned long getTimestamp()
 //-------------------------------------
 //LUTs
 //-------------------------------------
-int* pLUT = NULL;
-int lutSize = 0;
-int currentLUTIndex = -1; //-1 means no LUT loaded
-
 bool useGamma = false;
-
-//Try to open LUT and check number of elements
-//Returns number of elements
-//0 = Failed to count elements
-//-1 = LUT does not exists
-int checkLut(uint8_t index)
-{
-    //Try to open the file
-    String filename = String("/LUT_") + String(index) + ".csv";
-    File file = FSLINK.open(filename.c_str(), FILE_READ);
-    if (!file)
-    {
-        printfnl(SOURCE_BASIC,"LUT %d does not exists\n", index);
-        return -1; //LUT does not exists
-    }
-    int count = 0;
-    char c;
-    while (file.available())
-    {
-        c = file.read();
-        if (c == ',')
-            count++;
-    }
-    file.close();
-    if (count == 0)
-    {
-        printfnl(SOURCE_BASIC,"LUT %d is empty\n", index);
-        return 0; //LUT is empty
-    }
-    return count + 1; //Return number of elements
-}
-
-int loadLut(uint8_t index)
-{
-    //Check if we already have a LUT loaded
-    if (currentLUTIndex == index)
-    {
-        return lutSize; //Return size of current LUT
-    }
-
-    //Check if the LUT exists and get the size
-    int size = checkLut(index);
-    if (size < 0)
-        return 0; //LUT does not exists or is empty
-
-    //Allocate memory for the LUT
-    if (pLUT != NULL)
-        free(pLUT); //Free previous LUT memory
-
-    pLUT = (int*)calloc(size, sizeof(int));
-    if (pLUT == NULL)
-    {
-        return 0; //Memory allocation failed
-    }
-
-    //Open the file and read the values into the LUT
-    String filename = String("/LUT_") + String(index) + ".csv";
-    File file = FSLINK.open(filename.c_str(), FILE_READ);
-    if (!file)
-    {
-        free(pLUT);
-        pLUT = NULL;
-        return 0; //Failed to open file
-    }
-
-    int i = 0;
-    String value;
-    while (file.available())
-    {
-        char c = file.read();
-        if (c == ',')
-        {
-            pLUT[i++] = value.toInt();
-            value = ""; //Reset value for next read
-        }
-        else
-        {
-            value += c; //Append character to value
-        }
-    }
-    
-    //Read last value (after last comma)
-    if (value.length() > 0 && i < size)
-        pLUT[i++] = value.toInt();
-
-    file.close();
-    
-    lutSize = i; //Set the size of the LUT
-    currentLUTIndex = index; //Set current LUT index
-    return lutSize; //Return size of loaded LUT
-}
-int saveLut(uint8_t index)
-{
-    //Check if we have a LUT loaded
-    if (pLUT == NULL || lutSize <= 0)
-    {
-        return 0; //No LUT to save
-    }
-
-    //Open the file for writing
-    String filename = String("/LUT_") + String(index) + ".csv";
-    File file = FSLINK.open(filename.c_str(), FILE_WRITE);
-    if (!file)
-    {
-        return 0; //Failed to open file
-    }
-
-    //Write the values to the file
-    for (int i = 0; i < lutSize; i++)
-    {
-        file.print(pLUT[i]);
-        if (i < lutSize - 1)
-            file.print(","); //Add comma between values
-    }
-    
-    file.close(); 
-    return 1; //Success
-}   
 
 int LUT_()
 {
@@ -2183,13 +2062,7 @@ int funhook_exec_(char *msg, int n)
 void registerhook()
 {
     // Clean up LUT state from previous program
-    if (pLUT != NULL)
-    {
-        free(pLUT);
-        pLUT = NULL;
-    }
-    lutSize = 0;
-    currentLUTIndex = -1;
+    lutReset();
 
     kwdhook=kwdhook_;
     funhook=funhook_exec_;

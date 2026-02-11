@@ -11,7 +11,7 @@
 
 typedef enum {
     SOURCE_BASIC        = 0x00000001,
-                                        // Available: 0x00000002
+    SOURCE_WASM         = 0x00000002,
                                         // Available: 0x00000004
                                         // Available: 0x00000008
                                         // Available: 0x00000010

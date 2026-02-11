@@ -16,6 +16,9 @@
 #include <esp_wifi.h>
 #include <TelnetStream2.h>
 #include "basic_wrapper.h"
+#ifdef INCLUDE_WASM
+#include "wasm_wrapper.h"
+#endif
 #include "lora.h"
 #include "fwupdate.h"
 #include "http.h"
@@ -26,6 +29,7 @@
 #include "sun.h"
 #include "config.h"
 #include "cue.h"
+#include "lut.h"
 
 #define USE_TELNET
 
@@ -63,7 +67,7 @@ void init_LittleFS()
   Serial.println("---- LittleFS ----");
 
 
-  if (!FSLINK.begin(true)) {
+  if (!LittleFS.begin(true)) {
     Serial.println("Failed to mount LittleFS, even after formatting.");
     return;
   }
@@ -71,8 +75,8 @@ void init_LittleFS()
   littlefs_mounted = true;
   Serial.println("LittleFS mounted successfully.");
 
-  size_t total = FSLINK.totalBytes();
-  size_t used = FSLINK.usedBytes();
+  size_t total = LittleFS.totalBytes();
+  size_t used = LittleFS.usedBytes();
 
   Serial.println("LittleFS Stats:");
   Serial.printf("  Total bytes : %u\n", total);
@@ -172,21 +176,17 @@ void check_serial(void)
 }
 
 
-void basic_autoexec(void)
+void script_autoexec(void)
 {
-    //Hmm... Maybe this should actually happen in setup?
-  static bool startup = true;  
+  static bool startup = true;
   if (startup)
   {
     startup = false;
 
-    //Appartly the function exist() exist... But shouldn't be used.
-    //Because it uses open() which flags an error if the file doesn't exists...
-    //Open bug in littleFS for 4 year... WTF????
-    if (littlefs_mounted && FSLINK.exists(config.startup_script))
+    if (littlefs_mounted && LittleFS.exists(config.startup_script))
     {
         printfnl(SOURCE_SYSTEM,"%s found. Executing...\n", config.startup_script);
-        set_basic_program(config.startup_script);
+        set_script_program(config.startup_script);
     }
     else
     {
@@ -277,10 +277,13 @@ void setup()
   //dump_nvs();
   print_nvs_stats();
   init_LittleFS();
-  list_dir( FSLINK, "/" );
+  list_dir( LittleFS, "/" );
 
   // Load config from /config.ini (or use compiled defaults)
   config_init();
+
+  // Initialize LUT mutex (before any scripting tasks start)
+  lutMutexInit();
 
   // Initialize cue engine (no file loaded yet)
   cue_setup();
@@ -387,9 +390,15 @@ void setup()
   //Start the LED render task (owns FastLED.show() from here on)
   led_start_task();
 
-  //Start Thread for Basic interpreter
+  //Start scripting runtime tasks
+#ifdef INCLUDE_BASIC
   setup_basic();
-  Serial.println("BASIC task active\n");
+  Serial.println("BASIC task active");
+#endif
+#ifdef INCLUDE_WASM
+  setup_wasm();
+  Serial.println("WASM task active");
+#endif
 
 #ifdef USE_TELNET
   Serial.println("CLI now via Telnet. Press any key to return to Serial\n");
@@ -414,8 +423,8 @@ void loop()
   run_commands();
   check_serial();
 
-  //Check for startup.bas and if it exist run it once
-  basic_autoexec();
+  //Check for startup script and if it exists run it once
+  script_autoexec();
 
   // put your main code here, to run repeatedly:
   //Serial.print( "." );
