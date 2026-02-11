@@ -411,7 +411,8 @@ void setup_basic()
 
     //Start Own Thread
     basic_mutex = xSemaphoreCreateMutex();    
-    xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 65535, NULL, 1, &basic_task, 0);
+    // TODO: monitor stack watermark via `ps` command under real workloads and adjust
+    xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 16384, NULL, 1, &basic_task, 0);
     //xTaskCreate(basic_task_fun, "BasicTask", 65535, NULL, 128, NULL);
 }
 

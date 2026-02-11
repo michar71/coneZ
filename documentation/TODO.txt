@@ -24,6 +24,7 @@ Firmware:
       POST
       Temp Sensor Tie-In
       IMU Driver
+      Monitor BASIC and WASM task stack watermarks under real workloads (reduced from 64KB to 16KB)
 
    Basic
      Own Thread. (How do we handle debug messages? Dump into file?)
