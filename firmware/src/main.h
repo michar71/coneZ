@@ -3,6 +3,17 @@
 
 #include "board.h"
 #include "led.h"
+#include <sys/stat.h>
+
+// Check file existence via POSIX stat() instead of LittleFS.exists(),
+// which internally calls open() and triggers VFS error logs for missing files.
+static inline bool file_exists(const char *path)
+{
+    char fullpath[64];
+    snprintf(fullpath, sizeof(fullpath), "/littlefs%s", path);
+    struct stat st;
+    return (stat(fullpath, &st) == 0);
+}
 
 //#define configGENERATE_RUN_TIME_STATS
 //#define configUSE_STATS_FORMATTING_FUNCTIONS

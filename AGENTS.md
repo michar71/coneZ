@@ -58,7 +58,7 @@ src/
 ├── effects/                  Direct LED effects
 ├── cue/                      Cue timeline engine
 ├── psram/                    External SPI PSRAM driver
-└── util/                     Utilities, sun calc, LUT
+└── util/                     Utilities, shell, sun calc, LUT
 ```
 
 PlatformIO's `-I src/<dir>` flags in `platformio.ini` make all headers includable by basename (e.g. `#include "gps.h"`).
@@ -216,13 +216,13 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 ### Key Hardware Interfaces
 
 - **LoRa:** RadioLib, SX1262/SX1268 via SPI, configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW)
-- **GPS:** TinyGPSPlus on UART (9600 baud), with PPS pin for interrupt-driven timing (see Time System below)
+- **GPS:** ATGM336H (AT6558 chipset) via UART (9600 baud), parsed by TinyGPSPlus, with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`).
 - **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
 - **Temp:** TMP102 on I2C 0x48
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
 - **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`
-- **CLI:** SimpleSerialShell, defaults to Telnet after setup; press any key on USB Serial to switch back
+- **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) handles IAC WILL ECHO + WILL SGA negotiation. Arrow keys, Home/End/Delete, Ctrl-A/E/U, single-command history. ANSI color output when `SHELL_USE_ANSI` is defined. See `documentation/cli-commands.txt` for the full command reference.
 
 ### Time System
 

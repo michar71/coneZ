@@ -14,7 +14,8 @@
 #include <FS.h>
 #include <RadioLib.h>
 #include <esp_wifi.h>
-#include <TelnetStream2.h>
+#include "dualstream.h"
+#include "shell.h"
 #include "basic_wrapper.h"
 #ifdef INCLUDE_WASM
 #include "wasm_wrapper.h"
@@ -31,8 +32,6 @@
 #include "cue.h"
 #include "lut.h"
 #include "psram.h"
-
-#define USE_TELNET
 
 #define WAIT_FOR_USB_SERIAL
 #define WAIT_FOR_USB_SERIAL_TIMEOUT 15    // Seconds
@@ -157,24 +156,7 @@ static void blink_leds(CRGB col)
 #endif
 
 
-void check_serial(void)
-{
-  //We check for any incoming serial data
-  //If there is data we switch all data from telnet
-  //to the USB serial port
-  static bool serial_active = false;
-
-  if (Serial.available())
-  {
-    if (!serial_active)
-    {
-      serial_active = true;
-      setStream(&Serial);
-      setCLIEcho(true);
-      init_commands(getStream());
-    }
-  }
-}
+DualStream dualStream;
 
 
 void script_autoexec(void)
@@ -184,7 +166,7 @@ void script_autoexec(void)
   {
     startup = false;
 
-    if (littlefs_mounted && LittleFS.exists(config.startup_script))
+    if (littlefs_mounted && file_exists(config.startup_script))
     {
         printfnl(SOURCE_SYSTEM,"%s found. Executing...\n", config.startup_script);
         set_script_program(config.startup_script);
@@ -256,23 +238,53 @@ void setup()
     }
   #endif
 
-  
-#ifdef BOARD_HAS_BUZZER
-  for (int ii=1100;ii<13100;ii=ii+1000)
-  {
-    Serial.print("Freq:");
-    Serial.println(ii);
-    buzzer(ii,128);
-    delay(100);
-  }
-  buzzer(20000,0);
-#endif
-   
-
 
   Serial.println();
-  Serial.println( "Starting...\n" );
 
+  // Print firmware version and hardware banner
+  {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_app_desc_t desc;
+    if (running && esp_ota_get_partition_description(running, &desc) == ESP_OK)
+      Serial.printf("%s firmware v%s (%s %s)\n", desc.project_name, desc.version, desc.date, desc.time);
+    else
+      Serial.println("ConeZ");
+
+#ifdef BOARD_CONEZ_V0_1
+    Serial.println("Board:  conez-v0-1");
+#elif defined(BOARD_HELTEC_LORA32_V3)
+    Serial.println("Board:  heltec-lora32-v3");
+#else
+    Serial.println("Board:  unknown");
+#endif
+
+    Serial.printf("CPU:    %s rev %d, %d MHz, %d cores\n",
+        ESP.getChipModel(), ESP.getChipRevision(),
+        ESP.getCpuFreqMHz(), ESP.getChipCores());
+    Serial.printf("Flash:  %lu KB, SRAM: %lu KB free / %lu KB total\n",
+        ESP.getFlashChipSize() / 1024,
+        ESP.getFreeHeap() / 1024,
+        ESP.getHeapSize() / 1024);
+#ifdef BOARD_HAS_IMPROVISED_PSRAM
+    Serial.println("PSRAM:  8 MB (external SPI)");
+#elif defined(BOARD_HAS_NATIVE_PSRAM)
+    Serial.printf("PSRAM:  %lu KB (native)\n", ESP.getPsramSize() / 1024);
+#else
+    Serial.println("PSRAM:  none");
+#endif
+    Serial.println();
+  }
+
+#ifdef BOARD_HAS_BUZZER
+  for (int ii = 1100; ii < 13100; ii += 1000)
+  {
+    Serial.printf("\rSpeaker: %d Hz  ", ii);
+    buzzer(ii, 128);
+    delay(100);
+  }
+  buzzer(20000, 0);
+  Serial.println("\rSpeaker: OK          \n");
+#endif
 
   dump_partitions();
   //dump_nvs();
@@ -379,13 +391,12 @@ void setup()
 
   http_setup();
 
-  //At this point switch comms over to telnet
-  TelnetStream2.begin();
-  Serial.println( "Telnet initialized");
-  Serial.println( "CLI active");
+  //Start telnet server and dual-stream CLI
+  telnet.begin();
+  Serial.println( "Telnet server started");
 
-  //Init print manager
-  printManagerInit(&Serial);
+  //Init print manager (all output goes to both Serial + Telnet)
+  printManagerInit(&dualStream);
   config_apply_debug();
   showTimestamps(true);
 
@@ -404,13 +415,22 @@ void setup()
   Serial.println("WASM task active");
 #endif
 
-#ifdef USE_TELNET
-  Serial.println("CLI now via Telnet. Press any key to return to Serial\n");
-  setCLIEcho(false);
-  setStream(&TelnetStream2);
+#ifdef SHELL_USE_ANSI
+  // ANSI color test — each letter in a different color
+  Serial.print("\nANSI color test: ");
+  const char *hello = "Hello World";
+  const int colors[] = { 31, 32, 33, 34, 35, 36, 91, 92, 93, 94, 95 };
+  for (int i = 0; hello[i]; i++) {
+    Serial.printf("\033[%dm%c", colors[i], hello[i]);
+  }
+  Serial.println("\033[0m");
 #endif
-  //Init command Line interpreter
-  init_commands(getStream());
+
+  //Init command line interpreter (single DualStream for both Serial + Telnet)
+  setCLIEcho(true);
+  init_commands(&dualStream);
+  Serial.println("CLI active on Serial + Telnet\n");
+  shell.showPrompt();
 }
 
 
@@ -423,9 +443,8 @@ void loop()
   //HTTP Request Processor
   http_loop();
 
-  //Run Shell commands and check serial port. Protected bymutex.
+  //Run Shell commands. Protected by mutex.
   run_commands();
-  check_serial();
 
   //Check for startup script and if it exists run it once
   script_autoexec();

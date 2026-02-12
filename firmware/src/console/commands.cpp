@@ -1,10 +1,12 @@
 #include "commands.h"
 #include <LittleFS.h>
 #include <FS.h>
-#include <SimpleSerialShell.h>
+#include "shell.h"
 #include <WiFi.h>
 #include "esp_system.h"
 #include "esp_heap_caps.h"
+#include "soc/io_mux_reg.h"
+#include "soc/gpio_reg.h"
 #include "esp_ota_ops.h"
 #include <esp_app_format.h>
 #include "basic_wrapper.h"
@@ -571,21 +573,513 @@ int cmd_wifi(int argc, char **argv)
 }
 
 
-int cmd_gps(int argc, char **argv)
+// --- GPIO pin name table (board-specific) ---
+struct PinInfo { int pin; const char *name; };
+
+static const PinInfo pin_table[] = {
+#ifdef BOARD_CONEZ_V0_1
+    {  0, "BOOT/USR" },
+    {  1, "ADC_BAT" },
+    {  2, "ADC_SOLAR" },
+    {  3, "(reserved)" },
+    {  4, "PSR_MISO" },
+    {  5, "PSR_CE" },
+    {  6, "PSR_SCK" },
+    {  7, "PSR_MOSI" },
+    {  8, "LORA_CS" },
+    {  9, "LORA_SCK" },
+    { 10, "LORA_MOSI" },
+    { 11, "LORA_MISO" },
+    { 12, "LORA_RST" },
+    { 13, "LORA_BUSY" },
+    { 14, "LORA_DIO1" },
+    { 15, "EXT1" },
+    { 16, "EXT2" },
+    { 17, "I2C_SDA" },
+    { 18, "I2C_SCL" },
+    { 19, "USB_N" },
+    { 20, "USB_P" },
+    { 21, "SOLAR_PWM" },
+    { 33, "PWR_SW" },
+    { 34, "PWR_OFF" },
+    { 35, "RGB4" },
+    { 36, "RGB3" },
+    { 37, "RGB2" },
+    { 38, "RGB1" },
+    { 40, "LED" },
+    { 41, "IMU_INT" },
+    { 42, "GPS_PPS" },
+    { 43, "GPS_TX" },
+    { 44, "GPS_RX" },
+    { 47, "LOAD_ON" },
+    { 48, "BUZZER" },
+#elif defined(BOARD_HELTEC_LORA32_V3)
+    {  0, "BUTTON" },
+    {  1, "ADC_BAT" },
+    {  8, "LORA_CS" },
+    {  9, "LORA_SCK" },
+    { 10, "LORA_MOSI" },
+    { 11, "LORA_MISO" },
+    { 12, "LORA_RST" },
+    { 13, "LORA_BUSY" },
+    { 14, "LORA_DIO1" },
+    { 17, "I2C_SDA" },
+    { 18, "I2C_SCL" },
+    { 19, "USB_N" },
+    { 20, "USB_P" },
+    { 21, "OLED_RST" },
+    { 35, "LED" },
+    { 36, "VEXT" },
+    { 43, "USB_TX" },
+    { 44, "USB_RX" },
+#endif
+    { -1, NULL }
+};
+
+static const char *pin_name_lookup(int gpio)
+{
+    for (const PinInfo *p = pin_table; p->pin >= 0; p++)
+        if (p->pin == gpio) return p->name;
+    return "";
+}
+
+// Returns true if the pin is a valid ESP32-S3 GPIO (0-21, 33-48)
+static bool gpio_valid_pin(int pin)
+{
+    return (pin >= 0 && pin <= 21) || (pin >= 33 && pin <= 48);
+}
+
+// Returns true if the pin is reserved for critical hardware and should not be reconfigured
+static bool gpio_is_reserved(int pin)
+{
+    // USB
+    if (pin == 19 || pin == 20) return true;
+#ifdef BOARD_CONEZ_V0_1
+    // PSRAM SPI
+    if (pin >= 4 && pin <= 7) return true;
+    // LoRa SPI + control
+    if (pin >= 8 && pin <= 14) return true;
+    // GPS UART
+    if (pin == 43 || pin == 44) return true;
+    // GPS PPS
+    if (pin == 42) return true;
+    // I2C
+    if (pin == 17 || pin == 18) return true;
+#elif defined(BOARD_HELTEC_LORA32_V3)
+    // LoRa SPI + control
+    if (pin >= 8 && pin <= 14) return true;
+    // I2C / OLED
+    if (pin == 17 || pin == 18 || pin == 21) return true;
+#endif
+    return false;
+}
+
+static void gpio_show_all(void)
+{
+    printfnl(SOURCE_COMMANDS, F("GPIO  Val  Dir  Pull      Function\n"));
+    printfnl(SOURCE_COMMANDS, F("----  ---  ---  --------  ----------\n"));
+
+    uint32_t out_en_lo = REG_READ(GPIO_ENABLE_REG);
+    uint32_t out_en_hi = REG_READ(GPIO_ENABLE1_REG);
+
+    for (int i = 0; i <= 48; i++) {
+        // ESP32-S3 has no GPIO 22-32
+        if (i >= 22 && i <= 32) continue;
+
+        int level = digitalRead(i);
+
+        bool is_output;
+        if (i < 32)
+            is_output = (out_en_lo >> i) & 1;
+        else
+            is_output = (out_en_hi >> (i - 32)) & 1;
+
+        uint32_t iomux_reg = REG_READ(GPIO_PIN_MUX_REG[i]);
+        bool pull_up   = (iomux_reg >> 8) & 1;
+        bool pull_down = (iomux_reg >> 7) & 1;
+
+        const char *pull_str;
+        if (pull_up && pull_down) pull_str = "UP+DOWN";
+        else if (pull_up)        pull_str = "UP";
+        else if (pull_down)      pull_str = "DOWN";
+        else                     pull_str = "-";
+
+        const char *name = pin_name_lookup(i);
+
+        printfnl(SOURCE_COMMANDS, F(" %2d    %d   %s  %-8s  %s\n"),
+            i, level,
+            is_output ? "OUT" : "IN ",
+            pull_str, name);
+    }
+}
+
+int cmd_gpio(int argc, char **argv)
+{
+    // "gpio" — show all pin states
+    if (argc == 1) {
+        gpio_show_all();
+        return 0;
+    }
+
+    // "gpio set <pin> <0|1>" — set output level
+    if (argc == 4 && strcasecmp(argv[1], "set") == 0) {
+        int pin = atoi(argv[2]);
+        int val = atoi(argv[3]);
+        if (!gpio_valid_pin(pin)) {
+            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            return -1;
+        }
+        if (gpio_is_reserved(pin)) {
+            printfnl(SOURCE_COMMANDS, F("GPIO %d is reserved (use 'gpio' to see pin assignments)\n"), pin);
+            return -1;
+        }
+        if (val != 0 && val != 1) {
+            printfnl(SOURCE_COMMANDS, F("Value must be 0 or 1\n"));
+            return -1;
+        }
+        digitalWrite(pin, val);
+        printfnl(SOURCE_COMMANDS, F("GPIO %d -> %d\n"), pin, val);
+        return 0;
+    }
+
+    // "gpio out <pin> <0|1>" — configure as output and set value
+    if (argc == 4 && strcasecmp(argv[1], "out") == 0) {
+        int pin = atoi(argv[2]);
+        int val = atoi(argv[3]);
+        if (!gpio_valid_pin(pin)) {
+            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            return -1;
+        }
+        if (gpio_is_reserved(pin)) {
+            printfnl(SOURCE_COMMANDS, F("GPIO %d is reserved (use 'gpio' to see pin assignments)\n"), pin);
+            return -1;
+        }
+        if (val != 0 && val != 1) {
+            printfnl(SOURCE_COMMANDS, F("Value must be 0 or 1\n"));
+            return -1;
+        }
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, val);
+        printfnl(SOURCE_COMMANDS, F("GPIO %d -> OUTPUT %d\n"), pin, val);
+        return 0;
+    }
+
+    // "gpio in <pin> [pull]" — configure as input with optional pull
+    //   pull: up, down, none (default: none)
+    if ((argc == 3 || argc == 4) && strcasecmp(argv[1], "in") == 0) {
+        int pin = atoi(argv[2]);
+        if (!gpio_valid_pin(pin)) {
+            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            return -1;
+        }
+        if (gpio_is_reserved(pin)) {
+            printfnl(SOURCE_COMMANDS, F("GPIO %d is reserved (use 'gpio' to see pin assignments)\n"), pin);
+            return -1;
+        }
+        int mode = INPUT;
+        const char *pull_name = "none";
+        if (argc == 4) {
+            if (strcasecmp(argv[3], "up") == 0) {
+                mode = INPUT_PULLUP;
+                pull_name = "pull-up";
+            } else if (strcasecmp(argv[3], "down") == 0) {
+                mode = INPUT_PULLDOWN;
+                pull_name = "pull-down";
+            } else if (strcasecmp(argv[3], "none") == 0) {
+                mode = INPUT;
+                pull_name = "none";
+            } else {
+                printfnl(SOURCE_COMMANDS, F("Pull mode must be: up, down, or none\n"));
+                return -1;
+            }
+        }
+        pinMode(pin, mode);
+        printfnl(SOURCE_COMMANDS, F("GPIO %d -> INPUT (%s)\n"), pin, pull_name);
+        return 0;
+    }
+
+    // "gpio read <pin>" — read a single pin
+    if (argc == 3 && strcasecmp(argv[1], "read") == 0) {
+        int pin = atoi(argv[2]);
+        if (!gpio_valid_pin(pin)) {
+            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            return -1;
+        }
+        printfnl(SOURCE_COMMANDS, F("GPIO %d = %d\n"), pin, digitalRead(pin));
+        return 0;
+    }
+
+    printfnl(SOURCE_COMMANDS, F("Usage:\n"));
+    printfnl(SOURCE_COMMANDS, F("  gpio              Show all pin states\n"));
+    printfnl(SOURCE_COMMANDS, F("  gpio set <pin> <0|1>      Set output level\n"));
+    printfnl(SOURCE_COMMANDS, F("  gpio out <pin> <0|1>      Set as output with value\n"));
+    printfnl(SOURCE_COMMANDS, F("  gpio in  <pin> [up|down|none]  Set as input\n"));
+    printfnl(SOURCE_COMMANDS, F("  gpio read <pin>           Read single pin\n"));
+    return -1;
+}
+
+
+static void gps_show_status(void)
 {
 #ifdef BOARD_HAS_GPS
+    static const char *fix_names[] = { "Unknown", "No Fix", "2D", "3D" };
+    int ft = get_fix_type();
+    const char *fix_str = (ft >= 0 && ft <= 3) ? fix_names[ft] : "Unknown";
     printfnl(SOURCE_COMMANDS, F("GPS Status:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Fix:        %s\n"), get_gpsstatus() ? "Yes" : "No");
+    printfnl(SOURCE_COMMANDS, F("  Fix:        %s (%s)\n"), get_gpsstatus() ? "Yes" : "No", fix_str);
     printfnl(SOURCE_COMMANDS, F("  Satellites: %d\n"), get_satellites());
     printfnl(SOURCE_COMMANDS, F("  HDOP:       %.2f\n"), get_hdop() / 100.0);
+    printfnl(SOURCE_COMMANDS, F("  VDOP:       %.2f\n"), get_vdop());
+    printfnl(SOURCE_COMMANDS, F("  PDOP:       %.2f\n"), get_pdop());
     printfnl(SOURCE_COMMANDS, F("  Position:   %.6f, %.6f\n"), get_lat(), get_lon());
-    printfnl(SOURCE_COMMANDS, F("  Altitude:   %.0f m\n"), get_alt());
-    printfnl(SOURCE_COMMANDS, F("  Speed:      %.1f m/s\n"), get_speed());
+    float alt_m = get_alt();
+    printfnl(SOURCE_COMMANDS, F("  Altitude:   %.0f m (%.0f ft)\n"), alt_m, alt_m * 3.28084f);
+    float spd_mps = get_speed();
+    printfnl(SOURCE_COMMANDS, F("  Speed:      %.1f m/s (%.1f mph)\n"), spd_mps, spd_mps * 2.23694f);
     printfnl(SOURCE_COMMANDS, F("  Direction:  %.1f deg\n"), get_dir());
+    printfnl(SOURCE_COMMANDS, F("  Time:       %02d:%02d:%02d  %04d-%02d-%02d\n"),
+        get_hour(), get_minute(), get_second(),
+        get_year(), get_month(), get_day());
+    static const char *src_names[] = { "None", "NTP", "GPS+PPS" };
+    uint8_t ts = get_time_source();
+    printfnl(SOURCE_COMMANDS, F("  Time src:   %s\n"), src_names[ts < 3 ? ts : 0]);
+    uint32_t pps_age = get_pps_age_ms();
+    if (pps_age == UINT32_MAX)
+        printfnl(SOURCE_COMMANDS, F("  PPS:        No (never received)\n"));
+    else
+        printfnl(SOURCE_COMMANDS, F("  PPS:        %s (%lu ms ago, %lu pulses)\n"),
+            get_pps() ? "High" : "Low", (unsigned long)pps_age, (unsigned long)get_pps_count());
 #else
     printfnl(SOURCE_COMMANDS, F("GPS not available on this board\n"));
 #endif
-    return 0;
+}
+
+
+static void gps_show_usage(void)
+{
+    printfnl(SOURCE_COMMANDS, F("Usage:\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps                        Show GPS status\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps info                   Query module firmware/hardware\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps set baud <rate>        Set baud (4800/9600/19200/38400/57600/115200)\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps set rate <hz>          Set update rate (1/2/4/5/10)\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps set mode <mode>        Set constellation (gps/bds/glonass or combos)\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps set nmea <sentences>   Enable NMEA sentences (e.g. gga,rmc,gsa)\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps save                   Save config to module flash\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps restart <type>         Restart (hot/warm/cold/factory)\n"));
+    printfnl(SOURCE_COMMANDS, F("  gps send <body>            Send raw NMEA (auto-checksum)\n"));
+}
+
+
+int cmd_gps(int argc, char **argv)
+{
+    // No subcommand — show status
+    if (argc < 2) {
+        gps_show_status();
+        return 0;
+    }
+
+#ifndef BOARD_HAS_GPS
+    printfnl(SOURCE_COMMANDS, F("GPS not available on this board\n"));
+    return -1;
+#else
+
+    // --- gps info: query module firmware and hardware ---
+    if (strcasecmp(argv[1], "info") == 0) {
+        printfnl(SOURCE_COMMANDS, F("Querying GPS module info (enable 'debug gps_raw' to see response)...\n"));
+        gps_send_nmea("PCAS06,0");  // firmware version
+        gps_send_nmea("PCAS06,1");  // hardware model
+        return 0;
+    }
+
+    // --- gps set <subcommand> ---
+    if (strcasecmp(argv[1], "set") == 0) {
+        if (argc < 3) {
+            gps_show_usage();
+            return -1;
+        }
+
+        // --- gps set baud <rate> ---
+        if (strcasecmp(argv[2], "baud") == 0) {
+            if (argc < 4) {
+                printfnl(SOURCE_COMMANDS, F("Usage: gps set baud <4800|9600|19200|38400|57600|115200>\n"));
+                return -1;
+            }
+            int rate = atoi(argv[3]);
+            int code = -1;
+            switch (rate) {
+                case 4800:   code = 0; break;
+                case 9600:   code = 1; break;
+                case 19200:  code = 2; break;
+                case 38400:  code = 3; break;
+                case 57600:  code = 4; break;
+                case 115200: code = 5; break;
+            }
+            if (code < 0) {
+                printfnl(SOURCE_COMMANDS, F("Invalid baud rate. Use: 4800/9600/19200/38400/57600/115200\n"));
+                return -1;
+            }
+            char buf[16];
+            snprintf(buf, sizeof(buf), "PCAS01,%d", code);
+            gps_send_nmea(buf);
+            printfnl(SOURCE_COMMANDS, F("Baud set to %d (use 'gps save' to persist)\n"), rate);
+            printfnl(SOURCE_COMMANDS, F("Note: firmware still expects 9600. Reboot to reconnect.\n"));
+            return 0;
+        }
+
+        // --- gps set rate <hz> ---
+        if (strcasecmp(argv[2], "rate") == 0) {
+            if (argc < 4) {
+                printfnl(SOURCE_COMMANDS, F("Usage: gps set rate <1|2|4|5|10>\n"));
+                return -1;
+            }
+            int hz = atoi(argv[3]);
+            int ms = -1;
+            switch (hz) {
+                case 1:  ms = 1000; break;
+                case 2:  ms = 500;  break;
+                case 4:  ms = 250;  break;
+                case 5:  ms = 200;  break;
+                case 10: ms = 100;  break;
+            }
+            if (ms < 0) {
+                printfnl(SOURCE_COMMANDS, F("Invalid rate. Use: 1, 2, 4, 5, or 10 Hz\n"));
+                return -1;
+            }
+            char buf[16];
+            snprintf(buf, sizeof(buf), "PCAS02,%d", ms);
+            gps_send_nmea(buf);
+            printfnl(SOURCE_COMMANDS, F("Update rate set to %d Hz (%d ms)\n"), hz, ms);
+            return 0;
+        }
+
+        // --- gps set mode <constellation> ---
+        if (strcasecmp(argv[2], "mode") == 0) {
+            if (argc < 4) {
+                printfnl(SOURCE_COMMANDS, F("Usage: gps set mode <gps|bds|glonass|gps+bds|gps+glonass|bds+glonass|all>\n"));
+                return -1;
+            }
+            int mode = -1;
+            if (strcasecmp(argv[3], "gps") == 0)           mode = 1;
+            else if (strcasecmp(argv[3], "bds") == 0)       mode = 2;
+            else if (strcasecmp(argv[3], "gps+bds") == 0)   mode = 3;
+            else if (strcasecmp(argv[3], "glonass") == 0)    mode = 4;
+            else if (strcasecmp(argv[3], "gps+glonass") == 0) mode = 5;
+            else if (strcasecmp(argv[3], "bds+glonass") == 0) mode = 6;
+            else if (strcasecmp(argv[3], "all") == 0)        mode = 7;
+
+            if (mode < 0) {
+                printfnl(SOURCE_COMMANDS, F("Invalid mode. Use: gps, bds, glonass, gps+bds, gps+glonass, bds+glonass, all\n"));
+                return -1;
+            }
+            char buf[16];
+            snprintf(buf, sizeof(buf), "PCAS04,%d", mode);
+            gps_send_nmea(buf);
+            printfnl(SOURCE_COMMANDS, F("Constellation mode set to %d\n"), mode);
+            return 0;
+        }
+
+        // --- gps set nmea <sentences> ---
+        // Enables listed NMEA sentences at 1Hz, disables the rest
+        // e.g. "gps set nmea gga,rmc,gsa"
+        if (strcasecmp(argv[2], "nmea") == 0) {
+            if (argc < 4) {
+                printfnl(SOURCE_COMMANDS, F("Usage: gps set nmea <gga,gll,gsa,gsv,rmc,vtg,zda,...>\n"));
+                printfnl(SOURCE_COMMANDS, F("  Enables listed sentences at 1/fix, disables others\n"));
+                printfnl(SOURCE_COMMANDS, F("  Slots: gga,gll,gsa,gsv,rmc,vtg,zda,ant,dhv,lps,,,utc,gst\n"));
+                return -1;
+            }
+            // PCAS03 field order: GGA,GLL,GSA,GSV,RMC,VTG,ZDA,ANT,DHV,LPS,res,res,UTC,GST,res,res,res,TIM
+            static const char *names[] = {
+                "gga","gll","gsa","gsv","rmc","vtg","zda","ant","dhv","lps",
+                NULL, NULL, "utc", "gst", NULL, NULL, NULL, "tim"
+            };
+            int fields[18] = {0};
+
+            // Parse comma-separated list from argv[3]
+            char list[64];
+            strncpy(list, argv[3], sizeof(list) - 1);
+            list[sizeof(list) - 1] = '\0';
+            char *saveptr;
+            char *tok = strtok_r(list, ",", &saveptr);
+            while (tok) {
+                bool found = false;
+                for (int i = 0; i < 18; i++) {
+                    if (names[i] && strcasecmp(tok, names[i]) == 0) {
+                        fields[i] = 1;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    printfnl(SOURCE_COMMANDS, F("  Unknown sentence: %s (ignored)\n"), tok);
+                tok = strtok_r(NULL, ",", &saveptr);
+            }
+
+            char buf[80];
+            snprintf(buf, sizeof(buf),
+                "PCAS03,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],
+                fields[6], fields[7], fields[8], fields[9], fields[10], fields[11],
+                fields[12], fields[13], fields[14], fields[15], fields[16], fields[17]);
+            gps_send_nmea(buf);
+            return 0;
+        }
+
+        gps_show_usage();
+        return -1;
+    }
+
+    // --- gps save ---
+    if (strcasecmp(argv[1], "save") == 0) {
+        gps_send_nmea("PCAS00");
+        printfnl(SOURCE_COMMANDS, F("Configuration saved to GPS module flash\n"));
+        return 0;
+    }
+
+    // --- gps restart <type> ---
+    if (strcasecmp(argv[1], "restart") == 0) {
+        if (argc < 3) {
+            printfnl(SOURCE_COMMANDS, F("Usage: gps restart <hot|warm|cold|factory>\n"));
+            return -1;
+        }
+        int rs = -1;
+        if (strcasecmp(argv[2], "hot") == 0)      rs = 0;
+        else if (strcasecmp(argv[2], "warm") == 0)  rs = 1;
+        else if (strcasecmp(argv[2], "cold") == 0)  rs = 2;
+        else if (strcasecmp(argv[2], "factory") == 0) rs = 3;
+
+        if (rs < 0) {
+            printfnl(SOURCE_COMMANDS, F("Invalid restart type. Use: hot, warm, cold, factory\n"));
+            return -1;
+        }
+        char buf[16];
+        snprintf(buf, sizeof(buf), "PCAS10,%d", rs);
+        gps_send_nmea(buf);
+        printfnl(SOURCE_COMMANDS, F("GPS module restarting (%s)\n"), argv[2]);
+        return 0;
+    }
+
+    // --- gps send <raw body> ---
+    // Send arbitrary NMEA body with auto-checksum, e.g. "gps send PCAS06,0"
+    if (strcasecmp(argv[1], "send") == 0) {
+        if (argc < 3) {
+            printfnl(SOURCE_COMMANDS, F("Usage: gps send <NMEA body>  (e.g. PCAS06,0)\n"));
+            return -1;
+        }
+        // Rejoin remaining args with spaces (in case user typed spaces)
+        char buf[80];
+        buf[0] = '\0';
+        for (int i = 2; i < argc; i++) {
+            if (i > 2) strncat(buf, ",", sizeof(buf) - strlen(buf) - 1);
+            strncat(buf, argv[i], sizeof(buf) - strlen(buf) - 1);
+        }
+        gps_send_nmea(buf);
+        return 0;
+    }
+
+    gps_show_usage();
+    return -1;
+#endif
 }
 
 
@@ -628,6 +1122,17 @@ int cmd_sensors(int argc, char **argv)
 #ifdef BOARD_HAS_POWER_MGMT
     printfnl(SOURCE_COMMANDS, F("  Solar:       %.2f V\n"), solar_voltage());
 #endif
+
+    // ADC1 channels (GPIO 1-10 on ESP32-S3)
+    printfnl(SOURCE_COMMANDS, F("\nADC1 (GPIO 1-10):\n"));
+    for (int pin = 1; pin <= 10; pin++) {
+        int mv = analogReadMilliVolts(pin);
+        const char *name = pin_name_lookup(pin);
+        if (name[0])
+            printfnl(SOURCE_COMMANDS, F("  GPIO %2d: %4d mV  (%s)\n"), pin, mv, name);
+        else
+            printfnl(SOURCE_COMMANDS, F("  GPIO %2d: %4d mV\n"), pin, mv);
+    }
 
     return 0;
 }
@@ -682,36 +1187,351 @@ int cmd_led(int argc, char **argv)
 }
 
 
+int cmd_art( int argc, char **argv )
+{
+    getLock();
+    Stream *out = getStream();
+    out->print(
+        "\n"
+        "\033[38;5;208m"
+        "            ▄\n"
+        "           ███\n"
+        "          █████\n"
+        "\033[97m"
+        "         ███████\n"
+        "\033[38;5;208m"
+        "        █████████\n"
+        "       ███████████\n"
+        "\033[97m"
+        "      █████████████\n"
+        "\033[38;5;208m"
+        "     ███████████████\n"
+        "    █████████████████\n"
+        "   ███████████████████\n"
+        "  █████████████████████\n"
+        "\033[38;5;240m"
+        " ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n"
+        "\033[0m"
+        "\n"
+        "      Is it art...?\n"
+        "\n"
+    );
+    releaseLock();
+    return 0;
+}
+
+
+// Helper: draw N copies of a UTF-8 character
+static void wa_repeat(Stream *out, const char *ch, int n)
+{
+    for (int i = 0; i < n; i++) out->print(ch);
+}
+
+int cmd_winamp(int argc, char **argv)
+{
+    vTaskDelay(pdMS_TO_TICKS(50));
+    while (getStream()->available()) getStream()->read();
+
+    // 40 spectrum bars, heights 0-8
+    const int NBARS = 40, SROWS = 8;
+    int bars[NBARS];
+    for (int i = 0; i < NBARS; i++) bars[i] = esp_random() % (SROWS + 1);
+
+    // Spectrum row colors: green -> yellow -> orange -> red (bottom to top)
+    static const uint8_t spc[8][3] = {
+        {0,170,0}, {0,210,0}, {0,255,0}, {100,255,0},
+        {180,255,0}, {255,255,0}, {255,170,0}, {255,0,0}
+    };
+
+    // Inner width = 48.  All lines: indent + border + 48 content + border
+    #define WA_W   48
+    #define WA_IND "     "
+
+    #define WF "\033[38;5;240m"
+    #define WT "\033[38;5;208m"
+    #define WG "\033[38;2;0;200;0m"
+    #define WD "\033[38;5;242m"
+    #define WB "\033[38;5;252m"
+    #define WR "\033[0m"
+
+    const int song_len = 213;  // 3:33
+    int elapsed = 0;
+    unsigned long last_sec = millis();
+
+    getLock();
+    Stream *out = getStream();
+    out->print("\033[2J\033[?25l");
+    releaseLock();
+
+    for (;;) {
+        // Advance clock
+        if (millis() - last_sec >= 1000) {
+            last_sec += 1000;
+            elapsed++;
+            if (elapsed >= song_len) elapsed = 0;
+        }
+
+        // Animate spectrum — drift with occasional spikes
+        for (int i = 0; i < NBARS; i++) {
+            bars[i] += (int)(esp_random() % 3) - 1;
+            if (esp_random() % 8 == 0)
+                bars[i] = 1 + (int)(esp_random() % 7);
+            if (bars[i] < 0) bars[i] = 0;
+            if (bars[i] > SROWS) bars[i] = SROWS;
+        }
+
+        int mm = elapsed / 60, ss = elapsed % 60;
+        int seek = elapsed * 39 / (song_len > 0 ? song_len : 1); // 0-39
+
+        getLock();
+        out = getStream();
+        out->print("\033[H\n\n\n");
+
+        // --- Top border ---
+        out->print(WF WA_IND "\xe2\x94\x8c");      // ┌
+        wa_repeat(out, "\xe2\x94\x80", WA_W);       // ─ × 48
+        out->print("\xe2\x94\x90\n");                // ┐
+
+        // --- Title bar: 7 + 34 + 7 = 48 (□ is 2-wide) ---
+        out->print(WF WA_IND "\xe2\x94\x82" WT      // │
+            " WINAMP" WF
+            "                                   "     // 34 spaces
+            "- \xe2\x96\xa1 \xc3\x97 "               // - □ ×  (7 display chars)
+            "\xe2\x94\x82\n");                       // │
+
+        // --- Separator ---
+        out->print(WF WA_IND "\xe2\x94\x9c");       // ├
+        wa_repeat(out, "\xe2\x94\x80", WA_W);
+        out->print("\xe2\x94\xa4\n");                // ┤
+
+        // --- Time: "  ▶ XX:XX / 03:33" = 18 display (▶ is 2-wide), pad 30 ---
+        out->printf(WF WA_IND "\xe2\x94\x82"
+            "  " WG "\xe2\x96\xb6 %02d:%02d / 03:33" WF
+            "                               "          // 30 spaces
+            "\xe2\x94\x82\n", mm, ss);
+
+        // --- Song: "  Rick Astley - Never Gonna Give You Up" = 39, pad 9 ---
+        out->print(WF WA_IND "\xe2\x94\x82"
+            "  " WG "Rick Astley - Never Gonna Give You Up" WF
+            "         "                               // 9 spaces
+            "\xe2\x94\x82\n");
+
+        // --- Bitrate: "  128kbps  44kHz  stereo" = 24, pad 24 ---
+        out->print(WF WA_IND "\xe2\x94\x82"
+            "  " WD "128kbps  44kHz  stereo" WF
+            "                        "               // 24 spaces
+            "\xe2\x94\x82\n");
+
+        // --- Separator ---
+        out->print(WF WA_IND "\xe2\x94\x9c");
+        wa_repeat(out, "\xe2\x94\x80", WA_W);
+        out->print("\xe2\x94\xa4\n");
+
+        // --- 8-row spectrum (4 pad + 40 bars + 4 pad = 48) ---
+        for (int row = SROWS - 1; row >= 0; row--) {
+            out->printf(WF WA_IND "\xe2\x94\x82"
+                "    \033[38;2;%d;%d;%dm",
+                spc[row][0], spc[row][1], spc[row][2]);
+            for (int i = 0; i < NBARS; i++)
+                out->print(bars[i] > row ? "\xe2\x96\x88" : " ");
+            out->print(WF "    \xe2\x94\x82\n");
+        }
+
+        // --- Separator ---
+        out->print(WF WA_IND "\xe2\x94\x9c");
+        wa_repeat(out, "\xe2\x94\x80", WA_W);
+        out->print("\xe2\x94\xa4\n");
+
+        // --- Seek bar: "  " + 40 chars + "      " = 48 ---
+        out->print(WF WA_IND "\xe2\x94\x82  " WD);
+        for (int i = 0; i < 40; i++)
+            out->print(i == seek
+                ? (WG "\xe2\x97\x8f" WD)            // ● in green
+                : "\xe2\x94\x80");                   // ─
+        out->print(WF "      \xe2\x94\x82\n");   // 5 spaces (● is 2-wide)
+
+        // --- Transport + volume slider ---
+        out->print(WF WA_IND "\xe2\x94\x82"
+            "  " WB
+            "|\xe2\x97\x84  \xe2\x96\xb6  ||  "     // |◄  ▶  ||
+            "\xe2\x96\xa0  \xe2\x96\xb6|" WF         //  ■  ▶|
+            "   " WD "vol ");  // 3 spaces (◄/▶ are 2-wide)
+        wa_repeat(out, "\xe2\x94\x80", 14);           // ─ × 14 (● is 2-wide)
+        out->print(WG "\xe2\x97\x8f" WD);             // ● in green
+        wa_repeat(out, "\xe2\x94\x80", 6);             // ─ × 4
+        out->print(WF "  \xe2\x94\x82\n");
+
+        // --- Bottom border ---
+        out->print(WF WA_IND "\xe2\x94\x94");       // └
+        wa_repeat(out, "\xe2\x94\x80", WA_W);
+        out->print("\xe2\x94\x98" WR "\n");          // ┘
+
+        out->print("\n" WA_IND "Any key to exit\n");
+
+        releaseLock();
+
+        vTaskDelay(pdMS_TO_TICKS(67));  // ~15 fps
+
+        if (getStream()->available()) {
+            while (getStream()->available()) getStream()->read();
+            break;
+        }
+    }
+
+    getLock();
+    getStream()->print("\033[?25h" WR "\n");
+    releaseLock();
+
+    #undef WA_W
+    #undef WA_IND
+    #undef WF
+    #undef WT
+    #undef WG
+    #undef WD
+    #undef WB
+    #undef WR
+
+    return 0;
+}
+
+
+int cmd_game(int argc, char **argv)
+{
+    const int W = 30, H = 20;
+    uint8_t grid[H][W], next[H][W], age[H][W];
+
+    // Age palette: cyan-green → green → yellow-green → yellow → orange → red
+    static const uint8_t pal[][3] = {
+        {0,255,200}, {0,255,0}, {180,255,0},
+        {255,220,0}, {255,128,0}, {255,0,0}
+    };
+
+    // Random initial state (~33% alive)
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            grid[y][x] = (esp_random() % 3 == 0);
+            age[y][x] = grid[y][x];
+        }
+
+    // Drain leftover input from command entry (e.g. trailing \n after \r)
+    vTaskDelay(pdMS_TO_TICKS(50));
+    while (getStream()->available()) getStream()->read();
+
+    getLock();
+    Stream *out = getStream();
+    out->print("\033[2J\033[?25l");   // clear screen + hide cursor
+    releaseLock();
+
+    for (int gen = 1; gen <= 500; gen++) {
+        // Draw frame
+        getLock();
+        out = getStream();
+        out->print("\033[H");         // cursor home
+
+        for (int y = 0; y < H; y++) {
+            int lc = -1;
+            for (int x = 0; x < W; x++) {
+                if (grid[y][x]) {
+                    int a = age[y][x];
+                    int c = (a<=1)?0 : (a<=3)?1 : (a<=6)?2 : (a<=10)?3 : (a<=16)?4 : 5;
+                    if (c != lc) {
+                        out->printf("\033[38;2;%d;%d;%dm", pal[c][0], pal[c][1], pal[c][2]);
+                        lc = c;
+                    }
+                    out->print("\xe2\x96\x88\xe2\x96\x88");  // ██
+                } else {
+                    if (lc >= 0) { out->print("\033[0m"); lc = -1; }
+                    out->print("  ");
+                }
+            }
+            out->print("\033[0m\n");
+        }
+        out->printf("\033[0m Gen %-4d  Any key to exit", gen);
+        releaseLock();
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+
+        // Check for keypress to exit
+        if (getStream()->available()) {
+            while (getStream()->available()) getStream()->read();
+            break;
+        }
+
+        // Compute next generation (toroidal wrap)
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) {
+                int n = 0;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (!dy && !dx) continue;
+                        n += grid[(y+dy+H)%H][(x+dx+W)%W];
+                    }
+                next[y][x] = grid[y][x] ? (n==2||n==3) : (n==3);
+            }
+
+        // Update grid and ages
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) {
+                age[y][x] = next[y][x]
+                    ? (grid[y][x] ? (age[y][x] < 255 ? age[y][x]+1 : 255) : 1)
+                    : 0;
+                grid[y][x] = next[y][x];
+            }
+    }
+
+    getLock();
+    getStream()->print("\033[?25h\033[0m\n");  // show cursor + reset
+    releaseLock();
+    return 0;
+}
+
+
+int cmd_clear( int argc, char **argv )
+{
+    getLock();
+    Stream *out = getStream();
+    out->print(F("\033[2J\033[H"));  // clear screen + cursor home
+    releaseLock();
+    return 0;
+}
+
+
 int cmd_help( int argc, char **argv )
 {
     printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  ?                                  Show help\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]           Show or change settings\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]       Cue timeline engine\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]    Show or set debug message types\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  del {filename}                     Delete file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  dir                                List files\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  gps                                Show GPS status\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  help                               Crash the main thread\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  led                                Show LED configuration\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  list {filename}                    Show file contents\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  load {filename}                    Load BASIC program\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  lora                               Show LoRa radio status\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mem                                Show heap memory stats\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                Set BASIC program arguments\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  ps                                 Show task list and stack watermarks\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  reboot                             Respawn as a coyote\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  ren {oldname} {newname}            Rename file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  run {filename}                     Run BASIC program\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  sensors                            Show sensor readings\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  stop                               Stop BASIC program\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  time                               Show current date/time\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  uptime                             Show system uptime\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  psram [test [forever]] [freq <MHz>] PSRAM status, test, or set SPI clock\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  version                            Show firmware version\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  art                                 Is it art?\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  clear                               Clear screen\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]            Show or change settings\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]        Cue timeline engine\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]     Show or set debug message types\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  del {filename}                      Delete file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  game                                Waste time\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  dir                                 List files\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  gpio [set|out|in|read]              Show or configure GPIO pins\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  gps                                 Show GPS status\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  help                                Show this help\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  history                             Show command history\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  led                                 Show LED configuration\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  list {filename}                     Show file contents\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  load {filename}                     Load program (.bas or .wasm)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mem                                 Show heap memory stats\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                 Set program arguments\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  ps                                  Show task list and stack watermarks\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  psram [test [forever]] [freq <MHz>] PSRAM status, test, or set clock\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  reboot                              Reboot the system\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  ren {oldname} {newname}             Rename file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  run {filename}                      Run program (.bas or .wasm)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  sensors                             Show sensor readings\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  stop                                Stop running program\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  tc                                  Show thread count\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  time                                Show current date/time\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  uptime                              Show system uptime\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  version                             Show firmware version\n" ) );
+#ifdef INCLUDE_WASM
     printfnl( SOURCE_COMMANDS, F( "  wasm [status|info <file>]           WASM runtime status/info\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  wifi                               Show WiFi status\n\n" ) );
+#endif
+    printfnl( SOURCE_COMMANDS, F( "  wifi                                Show WiFi status\n" ) );
     return 0;
 }
 
@@ -806,11 +1626,16 @@ void init_commands(Stream *dev)
 
     //file Sydstem commands
     shell.addCommand(F("?"), cmd_help);
+    shell.addCommand(F("art"), cmd_art);
+    shell.addCommand(F("clear"), cmd_clear);
+    shell.addCommand(F("cls"), cmd_clear);
     shell.addCommand(F("config"), cmd_config);
     shell.addCommand(F("cue"), cmd_cue);
     shell.addCommand(F("debug"), cmd_debug );
     shell.addCommand(F("del"), delFile);
     shell.addCommand(F("dir"), listDir);
+    shell.addCommand(F("game"), cmd_game);
+    shell.addCommand(F("gpio"), cmd_gpio);
     shell.addCommand(F("gps"), cmd_gps);
     shell.addCommand(F("help"), cmd_help);
     shell.addCommand(F("led"), cmd_led);
@@ -831,6 +1656,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("uptime"), cmd_uptime);
     shell.addCommand(F("version"), cmd_version);
     shell.addCommand(F("wifi"), cmd_wifi);
+    shell.addCommand(F("winamp"), cmd_winamp);
 #ifdef INCLUDE_WASM
     shell.addCommand(F("wasm"), cmd_wasm);
 #endif

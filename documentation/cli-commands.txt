@@ -1,26 +1,36 @@
 ConeZ CLI Command Reference
 ============================
 
-The CLI is available via Telnet (default) or USB Serial. After boot the
-CLI listens on Telnet; pressing any key on the USB Serial port switches
-the CLI back to Serial.
+The CLI is available simultaneously on both USB Serial and Telnet (port
+23). All output goes to both streams; input is accepted from either.
+The Telnet server negotiates IAC WILL ECHO + WILL SGA so clients
+operate in character mode with server-side echo.
 
 The desktop simulator (see simulator.txt) supports a subset of these
 commands in its console: ?, run, stop, open, dir, del, list, ren, param,
 led, sensors, time, uptime, version, wasm. Hardware-only commands are
 not available in the simulator.
 
+Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
+Up arrow recalls the last command.
+
 
 Quick Reference
 ---------------
 
   ?                                  Show help
+  art                                Display ANSI traffic cone art
+  clear / cls                        Clear screen
   config [set|unset|reset]           Show or change settings
   cue [load|start|stop|status]       Cue timeline engine control
   debug [off | {source} [on|off]]    Show or set debug message types
   del {filename}                     Delete file
   dir                                List files
-  gps                                Show GPS status
+  game                               Conway's Game of Life
+  gpio [set|out|in|read]             Show or control GPIO pins
+  gps [info|set|save|restart|send]   Show GPS status or configure module
+  help                               Show help (same as ?)
+  history                            Show command history
   led                                Show LED configuration
   list {filename}                    Show file contents
   load {filename}                    Receive file via serial (CTRL+Z to end)
@@ -28,6 +38,7 @@ Quick Reference
   mem                                Show heap memory stats
   param {id} {value}                 Set script parameter
   ps                                 Show task list and stack watermarks
+  psram [test|freq]                  Show PSRAM status or run diagnostics
   reboot                             Reboot the device
   ren {oldname} {newname}            Rename file
   run {filename}                     Run script (.bas or .wasm)
@@ -46,6 +57,12 @@ Detailed Command Descriptions
 
 ?
   Alias for the help display. Shows all available commands.
+
+art
+  Display an ANSI art traffic cone. Uses 256-color escapes.
+
+clear / cls
+  Clear the terminal screen. Requires ANSI terminal support.
 
 config
   Show all current configuration settings. See documentation/config.txt
@@ -95,6 +112,10 @@ debug
   Sources: SYSTEM, BASIC, WASM, COMMANDS, SHELL, GPS, GPS_RAW, LORA,
            LORA_RAW, FSYNC, WIFI, SENSORS, OTHER
 
+game
+  Conway's Game of Life on a 30x20 toroidal grid with RGB age-based
+  coloring. Runs at ~10 FPS. Press any key to exit.
+
 del {filename}
   Delete a file from LittleFS. Path must start with /.
   Example: del /old_script.bas
@@ -102,9 +123,72 @@ del {filename}
 dir
   List all files and directories on LittleFS with sizes.
 
+gpio
+  With no arguments, shows all GPIO pin states (direction and level).
+  Only shows pins valid for the current board.
+
+  gpio set <pin> <0|1>
+      Set the output level of an already-configured output pin.
+
+  gpio out <pin> <0|1>
+      Configure pin as output and set its level.
+
+  gpio in <pin> [up|down|none]
+      Configure pin as input with optional pull-up/pull-down.
+      Default is no pull if not specified.
+
+  gpio read <pin>
+      Read the digital level of a single pin.
+
 gps
-  Show GPS status: fix, satellites, HDOP, position, altitude, speed,
-  direction. Only available on boards with GPS hardware.
+  With no arguments, shows GPS status: fix type, satellites, HDOP/VDOP/
+  PDOP, position, altitude, speed, direction, time, PPS info.
+  Only available on boards with GPS hardware.
+
+  gps info
+      Query GPS module firmware version and hardware model.
+      Enable 'debug gps_raw' to see the module's response.
+
+  gps set baud <rate>
+      Set the GPS module's serial baud rate.
+      Valid rates: 4800, 9600, 19200, 38400, 57600, 115200.
+      Note: the firmware always connects at 9600 on boot.
+
+  gps set rate <hz>
+      Set the GPS position update rate.
+      Valid rates: 1, 2, 4, 5, or 10 Hz.
+
+  gps set mode <constellation>
+      Set which satellite constellations to use.
+      Options: gps, bds, glonass, gps+bds, gps+glonass, bds+glonass, all
+
+  gps set nmea <sentences>
+      Enable specific NMEA sentence types at 1/fix rate, disable others.
+      Comma-separated list of: gga, gll, gsa, gsv, rmc, vtg, zda, ant,
+      dhv, lps, utc, gst, tim.
+      Example: gps set nmea gga,rmc,gsa
+
+  gps save
+      Save the current GPS module configuration to its internal flash.
+      Without this, settings revert on GPS module power cycle.
+
+  gps restart <type>
+      Restart the GPS module.
+      Types: hot (keep ephemeris), warm (keep almanac), cold (clear all),
+      factory (reset to factory defaults).
+
+  gps send <body>
+      Send an arbitrary NMEA sentence to the GPS module. The checksum
+      is computed and appended automatically. The body is everything
+      between $ and * (exclusive).
+      Example: gps send PCAS06,0
+
+help
+  Show all available commands. Same as ?.
+
+history
+  Show command history. Currently stores the single most recent command.
+  Up arrow also recalls the last command for editing.
 
 led
   Show LED strip configuration (number of LEDs per strip).
@@ -125,7 +209,7 @@ lora
 
 mem
   Show heap memory: free bytes, minimum since boot, largest allocatable
-  block.
+  block. Also shows PSRAM summary if available.
 
 param {id} {value}
   Set a script parameter. Parameters are a 16-slot integer array shared
@@ -136,6 +220,25 @@ param {id} {value}
 ps
   Show FreeRTOS task list with state, priority, core affinity, and
   minimum free stack (high water mark) for each known task.
+
+psram
+  With no arguments, shows PSRAM status: availability, SPI clock speed,
+  total/used/free/contiguous bytes, allocation slot usage, and cache
+  hit rate. Available on all boards (shows "not available" on boards
+  without PSRAM hardware).
+
+  psram test
+      Run a full PSRAM memory test with read/write verification and
+      throughput benchmark. Requires no existing PSRAM allocations.
+
+  psram test forever
+      Run the memory test in a loop until an error occurs or a key is
+      pressed. Useful for burn-in testing.
+
+  psram freq <MHz>
+      Change the SPI clock frequency at runtime (5-80 MHz). Useful for
+      benchmarking. Default is 40 MHz. Only available on boards with
+      external SPI PSRAM (ConeZ PCB).
 
 reboot
   Reboot the ESP32.
