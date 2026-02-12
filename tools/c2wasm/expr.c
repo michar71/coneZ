@@ -116,19 +116,7 @@ static void emit_lvalue_store(CType rhs_type) {
     if (last_var_sym) {
         /* Simple variable */
         emit_coerce(rhs_type, last_var_sym->ctype);
-        if (last_var_sym->kind == SYM_LOCAL) {
-            if (last_var_sym->is_mem_backed) {
-                int tmp = alloc_local(ctype_to_wasm(last_var_sym->ctype));
-                emit_local_tee(tmp);
-                emit_i32_const(last_var_sym->mem_off);
-                emit_local_get(tmp);
-                emit_mem_store_for_ctype(last_var_sym->ctype);
-            } else {
-                emit_local_tee(last_var_sym->idx);
-            }
-        } else {
-            emit_sym_store_and_reload(last_var_sym);
-        }
+        emit_sym_store_and_reload(last_var_sym);
     } else if (lvalue_addr_local >= 0) {
         /* Complex lvalue (array element, dereferenced pointer) */
         /* Stack: [rhs_value] */
@@ -896,18 +884,7 @@ static CType unary_expr(void) {
             emit_op(is_inc ? OP_I32_ADD : OP_I32_SUB);
         }
         /* Tee so the new value stays on stack and is stored */
-        if (sym->kind == SYM_LOCAL) {
-            if (sym->is_mem_backed) {
-                int tmp = alloc_local(ctype_to_wasm(sym->ctype));
-                emit_local_tee(tmp);
-                emit_i32_const(sym->mem_off);
-                emit_local_get(tmp);
-                emit_mem_store_for_ctype(sym->ctype);
-            } else {
-                emit_local_tee(sym->idx);
-            }
-        }
-        else { emit_sym_store(sym); emit_sym_load(sym); }
+        emit_sym_store_and_reload(sym);
         expr_last_is_ptr = 0;
         return sym->ctype;
     }

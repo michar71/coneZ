@@ -565,7 +565,9 @@ pointer increment/decrement scaling by element size (++p, p++, --p, p--),
 negated macros in array initializers (-MACRO), array initializer bounds
 checking, multidimensional array indexing and nested initializer tests,
 designated array initializer tests, address-of local/global scalar plus
-array lvalue tests, global/local array initializer tests.
+array lvalue tests, global/local array initializer tests, global
+float/double/long long address-of tests, and compound ops through global
+pointer aliases.
 
 Preprocessor tests: #if unsigned literal classification (1U, 100UL),
 #if unsigned 64-bit literal comparison, #if macro identifier/expression

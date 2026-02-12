@@ -776,6 +776,8 @@ static void parse_local_decl(CType base_type) {
         while (tok == TOK_CONST) { var_const = 1; next_token(); }
         /* Skip pointer stars - count depth */
         while (tok == TOK_STAR) { next_token(); is_pointer++; var_type = CT_INT; }
+        if (is_pointer > 0)
+            var_type = CT_INT;  /* all pointers are i32 at runtime */
 
         if (tok != TOK_NAME) { 
             error_at("expected variable name"); 
@@ -867,7 +869,7 @@ static void parse_local_decl(CType base_type) {
         s->idx = local_idx;
         s->scope = cur_scope;
         s->is_const = var_const;
-        s->type_info = type_base(var_type);
+        s->type_info = type_base(base_type);
         if (is_array) {
             for (int d = array_ndims - 1; d >= 0; d--) {
                 int dim = array_dims[d] > 0 ? array_dims[d] : 1;
