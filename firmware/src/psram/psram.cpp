@@ -629,8 +629,11 @@ int psram_test(bool forever) {
             for (int i = 0; i < 64; i++)
                 wbuf[i] = (uint8_t)((addr + i) ^ ((addr + i) >> 8) ^ pass_xor);
             psram_raw_write(addr, wbuf, 64);
-            if (pass == 0 && (addr & 0xFFFFF) == 0)
-                printfnl(SOURCE_COMMANDS, "  Write: %u KB / %u KB\n", addr/1024, size/1024);
+            if ((addr & 0xFFFF) == 0) {
+                if (pass == 0 && (addr & 0xFFFFF) == 0)
+                    printfnl(SOURCE_COMMANDS, "  Write: %u KB / %u KB\n", addr/1024, size/1024);
+                vTaskDelay(1);
+            }
         }
 
         unsigned long t_write = micros() - t0;
@@ -650,8 +653,11 @@ int psram_test(bool forever) {
                     errors++;
                 }
             }
-            if (pass == 0 && (addr & 0xFFFFF) == 0)
-                printfnl(SOURCE_COMMANDS, "  Verify: %u KB / %u KB\n", addr/1024, size/1024);
+            if ((addr & 0xFFFF) == 0) {
+                if (pass == 0 && (addr & 0xFFFFF) == 0)
+                    printfnl(SOURCE_COMMANDS, "  Verify: %u KB / %u KB\n", addr/1024, size/1024);
+                vTaskDelay(1);
+            }
         }
 
         unsigned long t_read = micros() - t1;
@@ -871,8 +877,10 @@ int psram_test(bool forever) {
         unsigned long t0 = micros();
 
         // Write pattern
-        for (size_t i = 0; i < avail; i++)
+        for (size_t i = 0; i < avail; i++) {
             buf[i] = (uint8_t)(i ^ (i >> 8) ^ pass_xor);
+            if ((i & 0xFFFF) == 0) vTaskDelay(1);
+        }
 
         unsigned long t_write = micros() - t0;
 
@@ -888,6 +896,7 @@ int psram_test(bool forever) {
                              i, expected, buf[i]);
                 errors++;
             }
+            if ((i & 0xFFFF) == 0) vTaskDelay(1);
         }
 
         unsigned long t_read = micros() - t1;

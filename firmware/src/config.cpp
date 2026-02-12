@@ -246,7 +246,7 @@ void config_init(void)
 {
     config_fill_defaults(&config);
 
-    if (littlefs_mounted && LittleFS.exists(CONFIG_PATH))
+    if (littlefs_mounted && file_exists(CONFIG_PATH))
         config_parse_ini();
     else
         Serial.println("No /config.ini — using compiled defaults.");
@@ -311,7 +311,7 @@ void config_save(void)
 
 void config_reset(void)
 {
-    if (littlefs_mounted && LittleFS.exists(CONFIG_PATH))
+    if (littlefs_mounted && file_exists(CONFIG_PATH))
         LittleFS.remove(CONFIG_PATH);
 
     config_fill_defaults(&config);

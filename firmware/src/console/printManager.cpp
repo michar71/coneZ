@@ -1,4 +1,5 @@
 #include "printManager.h"
+#include "shell.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -20,12 +21,19 @@ void printManagerInit(Stream* defaultStream)
 
 void print_ts(void)
 {
-    // Print the source prefix if needed
+    // Print the timestamp if enabled
     if (ts) {
         unsigned long currentMillis = millis();
+#ifdef SHELL_USE_ANSI
+        OutputStream->print("\033[36m[");     // cyan bracket
+        OutputStream->print("\033[34m");      // blue number
+        OutputStream->print(currentMillis);
+        OutputStream->print("\033[36m] ");    // cyan bracket
+#else
         OutputStream->print("[");
         OutputStream->print(currentMillis);
         OutputStream->print("] ");
+#endif
     }
 }
 
@@ -35,13 +43,10 @@ void vprintfnl( source_e source, const char *format, va_list args )
 {
     const int max_txt = 255;
     char buf[max_txt];
-    if (OutputStream == NULL) 
+    if (OutputStream == NULL)
     {
         return; // No output stream set
     }
-
-    //va_list args;
-    //va_start(args, format);
 
     //get Mutex
     if (xSemaphoreTake(print_mutex, portMAX_DELAY) != pdTRUE)
@@ -49,143 +54,55 @@ void vprintfnl( source_e source, const char *format, va_list args )
         return; // Failed to acquire mutex
     }
 
-    switch (source) {
-        case SOURCE_BASIC:
-            if (debug & SOURCE_BASIC)
-            {
-                print_ts();
-                OutputStream->print("[BASIC] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_WASM:
-            if (debug & SOURCE_WASM)
-            {
-                print_ts();
-                OutputStream->print("[WASM] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_SHELL:
-            if (debug & SOURCE_SHELL)
-            {
-                print_ts();
-                OutputStream->print("[SHELL] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);    
-            }
-            break;
-
-        case SOURCE_COMMANDS:
-            if (debug & SOURCE_COMMANDS)
-            {
-                print_ts();
-                OutputStream->print("[COMMANDS] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_SYSTEM:
-            if (debug & SOURCE_SYSTEM)
-            {
-                print_ts();
-                OutputStream->print("[SYSTEM] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_GPS:
-            if (debug & SOURCE_GPS)
-            {
-                print_ts();
-                OutputStream->print("[GPS] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_GPS_RAW:
-            if (debug & SOURCE_GPS_RAW)
-            {
-                print_ts();
-                OutputStream->print("[GPS_RAW] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_LORA:
-            if (debug & SOURCE_LORA)
-            {
-                print_ts();
-                OutputStream->print("[LORA] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);   
-            }
-            break;
-
-        case SOURCE_LORA_RAW:
-            if (debug & SOURCE_LORA_RAW)
-            {
-                print_ts();
-                OutputStream->print("[LORA_RAW] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);   
-            }
-            break;
-
-        case SOURCE_OTHER:
-            if (debug & SOURCE_OTHER)
-            {
-                print_ts();
-                OutputStream->print("[OTHER] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_WIFI:
-            if (debug & SOURCE_WIFI)
-            {
-                print_ts();
-                OutputStream->print("[WIFI] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_FSYNC:
-            if (debug & SOURCE_FSYNC)
-            {
-                print_ts();
-                OutputStream->print("[FSYNC] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_SENSORS:
-            if (debug & SOURCE_SENSORS)
-            {
-                print_ts();
-                OutputStream->print("[SENSORS] ");
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            }
-            break;
-
-        case SOURCE_NONE:
-                vsnprintf(buf,max_txt, format, args);
-                OutputStream->print(buf);
-            break;            
+    // Early out if source is disabled
+    if (source != SOURCE_NONE && !(debug & source)) {
+        xSemaphoreGive(print_mutex);
+        return;
     }
-    
+
+    // Erase the in-progress command line before printing
+    shell.suspendLine(OutputStream);
+
+    // Print source tag (SOURCE_NONE prints with no prefix)
+    {
+        const char *tag = NULL;
+        switch (source) {
+            case SOURCE_BASIC:     tag = "BASIC";    break;
+            case SOURCE_WASM:      tag = "WASM";     break;
+            case SOURCE_SHELL:     tag = "SHELL";    break;
+            case SOURCE_COMMANDS:  tag = "COMMANDS";  break;
+            case SOURCE_SYSTEM:    tag = "SYSTEM";    break;
+            case SOURCE_GPS:       tag = "GPS";       break;
+            case SOURCE_GPS_RAW:   tag = "GPS_RAW";   break;
+            case SOURCE_LORA:      tag = "LORA";      break;
+            case SOURCE_LORA_RAW:  tag = "LORA_RAW";  break;
+            case SOURCE_OTHER:     tag = "OTHER";     break;
+            case SOURCE_WIFI:      tag = "WIFI";      break;
+            case SOURCE_FSYNC:     tag = "FSYNC";     break;
+            case SOURCE_SENSORS:   tag = "SENSORS";   break;
+            case SOURCE_NONE:      break;
+        }
+        if (tag) {
+            print_ts();
+#ifdef SHELL_USE_ANSI
+            OutputStream->print("\033[36m[");   // dark cyan bracket
+            OutputStream->print("\033[32m");    // green tag
+            OutputStream->print(tag);
+            OutputStream->print("\033[36m]");   // dark cyan bracket
+            OutputStream->print("\033[0m ");    // reset + space
+#else
+            OutputStream->print("[");
+            OutputStream->print(tag);
+            OutputStream->print("] ");
+#endif
+        }
+    }
+    vsnprintf(buf, max_txt, format, args);
+    OutputStream->print(buf);
+
+    // Redraw the command line after our output
+    shell.resumeLine(OutputStream);
+
     //return mutex
     xSemaphoreGive(print_mutex);
 }
