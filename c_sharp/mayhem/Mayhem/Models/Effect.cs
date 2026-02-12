@@ -45,7 +45,9 @@ public abstract class Effect
         {
             EffectType.Color => new ColorEffect(dto.StartMs, dto.DurationMs,
                 NormalizeColor(dto.StartRgb, RgbColor.Yellow),
-                NormalizeColor(dto.EndRgb, RgbColor.Yellow)),
+                NormalizeColor(dto.EndRgb, RgbColor.Yellow),
+                dto.Offset ?? 0,
+                dto.Window ?? 100),
             EffectType.Fx => new FxEffect(dto.StartMs, dto.DurationMs, dto.FxId ?? 0,
                 ParamList.FromList(dto.Params ?? new List<float>())),
             EffectType.Script => new ScriptEffect(dto.StartMs, dto.DurationMs,
@@ -87,6 +89,8 @@ public abstract class Effect
 
         public RgbColor? StartRgb { get; set; }
         public RgbColor? EndRgb { get; set; }
+        public int? Offset { get; set; }
+        public int? Window { get; set; }
 
         public uint? FxId { get; set; }
         public List<float>? Params { get; set; }

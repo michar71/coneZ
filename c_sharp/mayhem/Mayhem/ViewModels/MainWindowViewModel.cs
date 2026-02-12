@@ -40,6 +40,9 @@ public sealed class MainWindowViewModel : ObservableObject
     private int _editDurationMs = 1000;
     private RgbColor _editStartRgb = RgbColor.Yellow;
     private RgbColor _editEndRgb = RgbColor.Yellow;
+    private int _editOffset;
+    private int _editWindow = 100;
+    private Geometry? _colorCurveGeometry;
     private bool _suppressEffectApply;
     private bool _isColorEffectSelected;
     private bool _isScriptEffectSelected;
@@ -189,6 +192,7 @@ public sealed class MainWindowViewModel : ObservableObject
             if (SetField(ref _editStartRgb, value))
             {
                 OnPropertyChanged(nameof(EditStartBrush));
+                RebuildColorCurveGeometry();
                 ApplyEffectEdits();
             }
         }
@@ -202,9 +206,44 @@ public sealed class MainWindowViewModel : ObservableObject
             if (SetField(ref _editEndRgb, value))
             {
                 OnPropertyChanged(nameof(EditEndBrush));
+                RebuildColorCurveGeometry();
                 ApplyEffectEdits();
             }
         }
+    }
+
+    public int EditOffset
+    {
+        get => _editOffset;
+        set
+        {
+            var clamped = Math.Clamp(value, 0, 100);
+            if (SetField(ref _editOffset, clamped))
+            {
+                RebuildColorCurveGeometry();
+                ApplyEffectEdits();
+            }
+        }
+    }
+
+    public int EditWindow
+    {
+        get => _editWindow;
+        set
+        {
+            var clamped = Math.Clamp(value, 0, 100);
+            if (SetField(ref _editWindow, clamped))
+            {
+                RebuildColorCurveGeometry();
+                ApplyEffectEdits();
+            }
+        }
+    }
+
+    public Geometry? ColorCurveGeometry
+    {
+        get => _colorCurveGeometry;
+        private set => SetField(ref _colorCurveGeometry, value);
     }
 
     public IBrush EditStartBrush => new SolidColorBrush(Color.FromRgb(EditStartRgb.R, EditStartRgb.G, EditStartRgb.B));
@@ -506,6 +545,7 @@ public sealed class MainWindowViewModel : ObservableObject
             IsColorEffectSelected = false;
             IsScriptEffectSelected = false;
             SelectedScriptLink = string.Empty;
+            ColorCurveGeometry = null;
             return;
         }
 
@@ -516,11 +556,15 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             EditStartRgb = color.StartRgb;
             EditEndRgb = color.EndRgb;
+            EditOffset = color.Offset;
+            EditWindow = color.Window;
         }
         else
         {
             EditStartRgb = RgbColor.Yellow;
             EditEndRgb = RgbColor.Yellow;
+            EditOffset = 0;
+            EditWindow = 100;
         }
         IsColorEffectSelected = SelectedEffect.Effect is ColorEffect;
         IsScriptEffectSelected = SelectedEffect.Effect is ScriptEffect;
@@ -533,6 +577,7 @@ public sealed class MainWindowViewModel : ObservableObject
             SelectedScriptLink = string.Empty;
         }
         _suppressEffectApply = false;
+        RebuildColorCurveGeometry();
     }
 
     public void LoadScripts()
@@ -595,11 +640,53 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             color.StartRgb = EditStartRgb;
             color.EndRgb = EditEndRgb;
+            color.Offset = EditOffset;
+            color.Window = EditWindow;
             SelectedEffect.Effect.SetColor(EditStartRgb);
         }
 
         SelectedEffect.UpdateLayout(this);
         OnPropertyChanged(nameof(PlayheadX));
+    }
+
+    private void RebuildColorCurveGeometry()
+    {
+        if (!IsColorEffectSelected)
+        {
+            ColorCurveGeometry = null;
+            return;
+        }
+
+        const int width = 220;
+        const int height = 90;
+        const int min = 0;
+        const int max = 255;
+        const int stride = 20;
+        const int xMin = 0;
+        const int xMax = 1000;
+
+        var geometry = new StreamGeometry();
+        using var ctx = geometry.Open();
+        var first = true;
+        for (var x = 0; x <= width; x++)
+        {
+            var t = x / (double)width;
+            var sampleX = (int)Math.Round(xMin + ((xMax - xMin) * t));
+            var value = ParamMath.Larp(sampleX, xMin, xMax, min, max, EditOffset, EditWindow, stride);
+            var y = height - ((value / 255.0) * height);
+            var point = new Point(x, y);
+            if (first)
+            {
+                ctx.BeginFigure(point, false);
+                first = false;
+            }
+            else
+            {
+                ctx.LineTo(point);
+            }
+        }
+
+        ColorCurveGeometry = geometry;
     }
 
     public void UpdateEffectDuration(EffectInstanceViewModel effect, int durationMs)
