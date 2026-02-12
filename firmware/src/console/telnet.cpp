@@ -55,6 +55,12 @@ size_t TelnetServer::write(uint8_t b) {
     return client.write(b);
 }
 
+size_t TelnetServer::write(const uint8_t *buffer, size_t size) {
+    if (!client || !client.connected())
+        return size;
+    return client.write(buffer, size);
+}
+
 int TelnetServer::available() {
     if (!client || !client.connected())
         return 0;

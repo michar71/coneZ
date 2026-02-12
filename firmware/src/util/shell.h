@@ -50,6 +50,10 @@ class ConezShell : public Stream {
 
         static int printHistory(int argc, char **argv);
 
+        // PSRAM-backed history ring buffer (falls back to single DRAM entry)
+        void historyInit(void);     // allocate PSRAM ring buffer
+        void historyFree(void);     // free PSRAM ring, keep DRAM fallback
+
         void resetBuffer(void);
 
         // Called by printManager (under mutex) to erase/redraw the input line
@@ -93,7 +97,16 @@ class ConezShell : public Stream {
         int inptr;
         int cursor;         // cursor position within linebuffer (0..inptr)
         int escState;       // escape sequence state: 0=normal, 1=got ESC, 2=got ESC[, 3=got ESC[3
-        char history[SHELL_BUFSIZE]; // single previous-command buffer
+        // History ring buffer (PSRAM-backed when available, else single DRAM entry)
+        static const int HIST_MAX = 32;
+        uint32_t hist_addr;         // PSRAM address of ring buffer (0 = not allocated)
+        int hist_count;             // number of valid entries in ring (0..HIST_MAX)
+        int hist_write;             // next write slot in ring (0..HIST_MAX-1)
+        int hist_nav;               // navigation offset (-1 = not navigating)
+        char history[SHELL_BUFSIZE]; // DRAM fallback (single entry, always available)
+
+        void historyAdd(const char *cmd);
+        bool historyGet(int offset, char *buf);  // offset: 0=most recent, 1=previous...
 
         bool inputActive;   // true when prompt is visible and user may be typing
 

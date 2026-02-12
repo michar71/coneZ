@@ -15,6 +15,18 @@ static inline bool file_exists(const char *path)
     return (stat(fullpath, &st) == 0);
 }
 
+// Normalize a LittleFS path: prepend '/' if missing.
+// Writes result into dst (must be at least dstsz bytes).
+static inline void normalize_path(char *dst, size_t dstsz, const char *src)
+{
+    if (src[0] != '/')
+        snprintf(dst, dstsz, "/%s", src);
+    else {
+        strncpy(dst, src, dstsz);
+        dst[dstsz - 1] = '\0';
+    }
+}
+
 //#define configGENERATE_RUN_TIME_STATS
 //#define configUSE_STATS_FORMATTING_FUNCTIONS
 

@@ -72,6 +72,10 @@ Stream* getStream(void);
 void getLock(void);
 void releaseLock(void);
 
+// Suppress printfnl output while a fullscreen interactive app is running
+void setInteractive(bool active);
+bool isInteractive(void);
+
 bool getDebug(source_e source);
 void inc_thread_count(int thread);
 long get_thread_count(int thread);

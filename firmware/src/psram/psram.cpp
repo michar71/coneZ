@@ -688,6 +688,59 @@ int psram_test(bool forever) {
     return 0;
 }
 
+void psram_print_map(void) {
+    if (!psram_ok) return;
+
+    #define MAP_WIDTH 64
+    char map[MAP_WIDTH + 1];
+    uint32_t region_size = BOARD_PSRAM_SIZE / MAP_WIDTH;  // 128KB per char
+
+    PSRAM_LOCK();
+    for (int m = 0; m < MAP_WIDTH; m++) {
+        uint32_t rstart = (uint32_t)m * region_size;
+        uint32_t rend   = rstart + region_size;
+        uint32_t used = 0;
+
+        for (int i = 0; i < psram_block_count; i++) {
+            if (!psram_blocks[i].used) continue;
+            uint32_t bstart = psram_blocks[i].addr;
+            uint32_t bend   = bstart + psram_blocks[i].size;
+            if (bend <= rstart || bstart >= rend) continue;
+            uint32_t os = (bstart > rstart) ? bstart : rstart;
+            uint32_t oe = (bend < rend) ? bend : rend;
+            used += oe - os;
+        }
+
+        if (used == 0)           map[m] = '-';
+        else if (used >= region_size) map[m] = '*';
+        else                     map[m] = '+';
+    }
+    PSRAM_UNLOCK();
+    map[MAP_WIDTH] = '\0';
+
+#ifdef SHELL_USE_ANSI
+    // Colorize: green for free, yellow for partial, red for full
+    getLock();
+    Stream *out = getStream();
+    out->print("  Map:       [");
+    for (int i = 0; i < MAP_WIDTH; i++) {
+        if (map[i] == '-')      out->print("\033[38;5;240m-");
+        else if (map[i] == '+') out->print("\033[33m+");
+        else                    out->print("\033[31m*");
+    }
+    out->print("\033[0m]\n");
+    out->print("             \033[38;5;240m-\033[0m free  "
+               "\033[33m+\033[0m partial  "
+               "\033[31m*\033[0m full   "
+               "(128KB/char)\n");
+    releaseLock();
+#else
+    printfnl(SOURCE_COMMANDS, F("  Map:       [%s]\n"), map);
+    printfnl(SOURCE_COMMANDS, F("             - free  + partial  * full   (128KB/char)\n"));
+#endif
+    #undef MAP_WIDTH
+}
+
 uint32_t psram_size(void) { return BOARD_PSRAM_SIZE; }
 bool psram_available(void) { return psram_ok; }
 
@@ -934,6 +987,8 @@ void     psram_cache_invalidate(void) {}
 uint32_t psram_cache_hits(void)   { return 0; }
 uint32_t psram_cache_misses(void) { return 0; }
 
+void psram_print_map(void) {}  // No block table for native PSRAM
+
 uint32_t psram_size(void) { return ESP.getPsramSize(); }
 bool psram_available(void) { return psram_ok; }
 uint32_t psram_get_freq(void) { return 0; }
@@ -990,6 +1045,7 @@ void     psram_cache_flush(void) {}
 void     psram_cache_invalidate(void) {}
 uint32_t psram_cache_hits(void)   { return 0; }
 uint32_t psram_cache_misses(void) { return 0; }
+void     psram_print_map(void) {}
 uint32_t psram_get_freq(void) { return 0; }
 int psram_change_freq(uint32_t) { return -1; }
 

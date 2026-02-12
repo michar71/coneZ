@@ -8,6 +8,7 @@ Stream* OutputStream = &Serial;
 SemaphoreHandle_t print_mutex;
 uint32_t debug = 0;
 bool ts = false;
+volatile bool interactive_mode = false;
 
 volatile long threadLoopCount[4] = {0, 0, 0, 0}; // For debugging thread loops
 
@@ -47,6 +48,9 @@ void vprintfnl( source_e source, const char *format, va_list args )
     {
         return; // No output stream set
     }
+
+    // Suppress all output while a fullscreen interactive app is active
+    if (interactive_mode) return;
 
     //get Mutex
     if (xSemaphoreTake(print_mutex, portMAX_DELAY) != pdTRUE)
@@ -211,6 +215,17 @@ void releaseLock(void)
 bool getDebug(source_e source)
 {
     return (debug & source) != 0;
+}
+
+
+void setInteractive(bool active)
+{
+    interactive_mode = active;
+}
+
+bool isInteractive(void)
+{
+    return interactive_mode;
 }
 
 

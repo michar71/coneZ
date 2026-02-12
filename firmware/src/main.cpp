@@ -5,6 +5,7 @@
 #include <WebServer.h>
 #include <ElegantOTA.h>
 #include "esp_system.h"
+#include "esp_log.h"
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
 #include <esp_app_format.h>
@@ -157,6 +158,18 @@ static void blink_leds(CRGB col)
 
 
 DualStream dualStream;
+
+
+void script_autoexec(void);
+
+static void shell_task_fun(void *param)
+{
+    script_autoexec();
+    for (;;) {
+        run_commands();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
 
 
 void script_autoexec(void)
@@ -429,8 +442,14 @@ void setup()
   //Init command line interpreter (single DualStream for both Serial + Telnet)
   setCLIEcho(true);
   init_commands(&dualStream);
+  // Suppress ESP-IDF component logging — with ARDUINO_USB_CDC_ON_BOOT=1
+  // it shares the USB CDC with Serial, bypassing our print_mutex.
+  esp_log_level_set("*", ESP_LOG_NONE);
+
   Serial.println("CLI active on Serial + Telnet\n");
   shell.showPrompt();
+
+  xTaskCreatePinnedToCore(shell_task_fun, "ShellTask", 8192, NULL, 1, NULL, 1);
 }
 
 
@@ -442,12 +461,6 @@ void loop()
 
   //HTTP Request Processor
   http_loop();
-
-  //Run Shell commands. Protected by mutex.
-  run_commands();
-
-  //Check for startup script and if it exists run it once
-  script_autoexec();
 
   // put your main code here, to run repeatedly:
   //Serial.print( "." );
