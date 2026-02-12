@@ -21,6 +21,12 @@ m3ApiRawFunction(m3_millis) {
     m3ApiReturn((int32_t)std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
 }
 
+m3ApiRawFunction(m3_millis64) {
+    m3ApiReturnType(int64_t);
+    auto elapsed = std::chrono::steady_clock::now() - s_boot_time;
+    m3ApiReturn(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
+}
+
 m3ApiRawFunction(m3_delay_ms) {
     m3ApiGetArg(int32_t, ms);
     if (ms > 0) {
@@ -117,6 +123,7 @@ M3Result link_datetime_imports(IM3Module module)
     M3Result r;
     LINK("get_epoch_ms",    "I()", m3_get_epoch_ms)
     LINK("millis",          "i()", m3_millis)
+    LINK("millis64",        "I()", m3_millis64)
     LINK("delay_ms",        "v(i)", m3_delay_ms)
     LINK("time_valid",      "i()", m3_time_valid)
     LINK("get_uptime_ms",   "I()", m3_get_uptime_ms)

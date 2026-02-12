@@ -42,6 +42,19 @@ void buf_sleb(Buf *b, int32_t v) {
     }
 }
 
+void buf_sleb64(Buf *b, int64_t v) {
+    int more = 1;
+    while (more) {
+        uint8_t x = v & 0x7F;
+        v >>= 7;
+        if ((v == 0 && !(x & 0x40)) || (v == -1 && (x & 0x40)))
+            more = 0;
+        else
+            x |= 0x80;
+        buf_byte(b, x);
+    }
+}
+
 void buf_f32(Buf *b, float v) {
     uint8_t tmp[4]; memcpy(tmp, &v, 4); buf_bytes(b, tmp, 4);
 }

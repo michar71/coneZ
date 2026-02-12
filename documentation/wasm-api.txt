@@ -271,7 +271,7 @@ Cue Engine
   int cue_playing()
       Returns 1 if the cue timeline engine is currently playing, 0 otherwise.
 
-  int cue_elapsed()
+  int64_t cue_elapsed()
       Milliseconds elapsed since cue playback started. Returns 0 if not
       playing. Useful for WASM effects launched by the cue engine to know
       their position within a show timeline.
@@ -294,6 +294,9 @@ Time
 
   int millis()
       Milliseconds since boot (wraps at ~49 days).
+
+  int64_t millis64()
+      Milliseconds since boot as a 64-bit value (does not wrap).
 
   void delay_ms(int ms)
       Delay and yield to FreeRTOS. MUST be called in tight loops to
@@ -762,7 +765,7 @@ declare host imports as extern "C" blocks. Example:
       fn get_sunrise() -> i32;
       fn is_daylight() -> i32;
       fn cue_playing() -> i32;
-      fn cue_elapsed() -> i32;
+      fn cue_elapsed() -> i64;
       fn led_shift(ch: i32, amount: i32, r: i32, g: i32, b: i32);
       fn led_rotate(ch: i32, amount: i32);
       fn led_reverse(ch: i32);
@@ -856,6 +859,8 @@ String queries (no allocation):
 Conversions:
 
   int   basic_str_from_int(int val)         Integer to string (new pool string).
+  int   basic_str_from_i64(int64_t val)     64-bit integer to string.
   int   basic_str_from_float(float val)     Float to string (new pool string).
   int   basic_str_to_int(int ptr)           String to integer.
+  int64_t basic_str_to_i64(int ptr)         String to 64-bit integer.
   float basic_str_to_float(int ptr)         String to float.

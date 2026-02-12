@@ -23,6 +23,13 @@ m3ApiRawFunction(m3_millis)
     m3ApiReturn((int32_t)millis());
 }
 
+// I64 millis64()
+m3ApiRawFunction(m3_millis64)
+{
+    m3ApiReturnType(int64_t);
+    m3ApiReturn((int64_t)millis());
+}
+
 // void delay_ms(i32 ms) — yields to FreeRTOS
 m3ApiRawFunction(m3_delay_ms)
 {
@@ -102,6 +109,9 @@ M3Result link_datetime_imports(IM3Module module)
     if (result && result != m3Err_functionLookupFailed) return result;
 
     result = m3_LinkRawFunction(module, "env", "millis", "i()", m3_millis);
+    if (result && result != m3Err_functionLookupFailed) return result;
+
+    result = m3_LinkRawFunction(module, "env", "millis64", "I()", m3_millis64);
     if (result && result != m3Err_functionLookupFailed) return result;
 
     result = m3_LinkRawFunction(module, "env", "delay_ms", "v(i)", m3_delay_ms);

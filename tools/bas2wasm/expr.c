@@ -7,7 +7,7 @@
  *  Binary op helpers
  * ================================================================ */
 
-static void emit_binop(int i32_op, int f32_op) {
+static void emit_binop(int i32_op, int f32_op, int i64_op) {
     VType b = vpop(), a = vpop();
     /* Constant folding: check if both operands are adjacent constants */
     if (fold_a.valid && fold_b.valid &&
@@ -65,17 +65,30 @@ static void emit_binop(int i32_op, int f32_op) {
     }
     /* Normal (non-folded) path */
     if (a == T_F32 || b == T_F32) {
-        if (a == T_I32 && b == T_F32) {
+        if (a != T_F32 && b == T_F32) {
             /* a(i32) is under b(f32) — save b, convert a, reload b */
             int scratch = alloc_local_f32();
             emit_local_set(scratch);
-            emit_op(OP_F32_CONVERT_I32_S);
+            if (a == T_I64) emit_op(OP_F32_CONVERT_I64_S);
+            else emit_op(OP_F32_CONVERT_I32_S);
             emit_local_get(scratch);
-        } else if (a == T_F32 && b == T_I32) {
-            emit_op(OP_F32_CONVERT_I32_S);
+        } else if (a == T_F32 && b != T_F32) {
+            if (b == T_I64) emit_op(OP_F32_CONVERT_I64_S);
+            else emit_op(OP_F32_CONVERT_I32_S);
         }
         emit_op(f32_op);
         vpush(T_F32);
+    } else if (a == T_I64 || b == T_I64) {
+        if (a == T_I32 && b == T_I64) {
+            int scratch = alloc_local_i64();
+            emit_local_set(scratch);
+            emit_op(OP_I64_EXTEND_I32_S);
+            emit_local_get(scratch);
+        } else if (a == T_I64 && b == T_I32) {
+            emit_op(OP_I64_EXTEND_I32_S);
+        }
+        emit_op(i64_op);
+        vpush(T_I64);
     } else {
         emit_op(i32_op);
         vpush(T_I32);
@@ -83,18 +96,30 @@ static void emit_binop(int i32_op, int f32_op) {
 }
 
 /* Comparison: always produces i32 (-1 or 0) */
-static void emit_compare(int i32_op, int f32_op) {
+static void emit_compare(int i32_op, int f32_op, int i64_op) {
     VType b = vpop(), a = vpop();
     if (a == T_F32 || b == T_F32) {
-        if (a == T_I32 && b == T_F32) {
+        if (a != T_F32 && b == T_F32) {
             int scratch = alloc_local_f32();
             emit_local_set(scratch);
-            emit_op(OP_F32_CONVERT_I32_S);
+            if (a == T_I64) emit_op(OP_F32_CONVERT_I64_S);
+            else emit_op(OP_F32_CONVERT_I32_S);
             emit_local_get(scratch);
-        } else if (a == T_F32 && b == T_I32) {
-            emit_op(OP_F32_CONVERT_I32_S);
+        } else if (a == T_F32 && b != T_F32) {
+            if (b == T_I64) emit_op(OP_F32_CONVERT_I64_S);
+            else emit_op(OP_F32_CONVERT_I32_S);
         }
         emit_op(f32_op);
+    } else if (a == T_I64 || b == T_I64) {
+        if (a == T_I32 && b == T_I64) {
+            int scratch = alloc_local_i64();
+            emit_local_set(scratch);
+            emit_op(OP_I64_EXTEND_I32_S);
+            emit_local_get(scratch);
+        } else if (a == T_I64 && b == T_I32) {
+            emit_op(OP_I64_EXTEND_I32_S);
+        }
+        emit_op(i64_op);
     } else {
         emit_op(i32_op);
     }
@@ -123,7 +148,33 @@ static void emit_int_binop(int i32_op) {
             return;
         }
     }
-    if (a == T_I32 && b == T_I32) {
+    if (a == T_I64 || b == T_I64) {
+        int i64_op = OP_I64_DIV_S;
+        if (i32_op == OP_I32_REM_S) i64_op = OP_I64_REM_S;
+        if (a == T_I32 && b == T_I64) {
+            int sc = alloc_local_i64();
+            emit_local_set(sc);
+            emit_op(OP_I64_EXTEND_I32_S);
+            emit_local_get(sc);
+        } else if (a == T_I64 && b == T_I32) {
+            emit_op(OP_I64_EXTEND_I32_S);
+        } else if (a == T_F32 && b == T_I64) {
+            int sc = alloc_local_i64();
+            emit_local_set(sc);
+            emit_op(OP_I64_TRUNC_F32_S);
+            emit_local_get(sc);
+        } else if (a == T_I64 && b == T_F32) {
+            emit_op(OP_I64_TRUNC_F32_S);
+        } else if (a == T_F32 && b == T_F32) {
+            int sc = alloc_local_f32();
+            emit_local_set(sc);
+            emit_op(OP_I64_TRUNC_F32_S);
+            emit_local_get(sc);
+            emit_op(OP_I64_TRUNC_F32_S);
+        }
+        emit_op(i64_op);
+        vpush(T_I64);
+    } else if (a == T_I32 && b == T_I32) {
         emit_op(i32_op);
     } else if (a == T_I32 && b == T_F32) {
         /* stack: [a_i32, b_f32]. Trunc b. */
@@ -145,7 +196,7 @@ static void emit_int_binop(int i32_op) {
         emit_op(OP_I32_TRUNC_F32_S);
         emit_op(i32_op);
     }
-    vpush(T_I32);
+    if (!(a == T_I64 || b == T_I64)) vpush(T_I32);
 }
 
 /* ================================================================
@@ -155,6 +206,7 @@ static void emit_int_binop(int i32_op) {
 /* Simple call-through builtins: name, nargs, import, trunc_f32 */
 typedef struct { const char *name; int nargs; int imp; int trunc; } SimpleBI;
 static const SimpleBI simple_bi[] = {
+    {"EPOCHMS&",    0, IMP_GET_EPOCH_MS, 0},
     {"GETPARAM",    1, IMP_GET_PARAM,    0},
     {"HASGPS",      0, IMP_GPS_VALID,    0},
     {"HASORIGIN",   0, IMP_HAS_ORIGIN,   0},
@@ -195,6 +247,8 @@ static const SimpleBI simple_bi[] = {
     {"GPSPRESENT",  0, IMP_GPS_PRESENT,  0},
     {"IMUPRESENT",  0, IMP_IMU_PRESENT,  0},
     {"UPTIME",      0, IMP_MILLIS,       0},
+    {"UPTIME&",     0, IMP_MILLIS64,     0},
+    {"CUEELAPSED&", 0, IMP_CUE_ELAPSED,  0},
     {"BATPCT",      0, IMP_GET_BATTERY_PERCENTAGE, 1},
     {"BATRUNTIME",  0, IMP_GET_BATTERY_RUNTIME,    1},
     {"SUNAZ",       0, IMP_GET_SUN_AZIMUTH,        1},
@@ -277,6 +331,7 @@ static const StringBI string_bi[] = {
     {"LEN",      1, IMP_STR_LEN,   T_I32, {SA, 0, 0}},
     {"ASC",      1, IMP_STR_ASC,   T_I32, {SA, 0, 0}},
     {"VAL",      1, IMP_STR_TO_INT,   T_I32, {SA, 0, 0}},
+    {"VAL&",     1, IMP_STR_TO_I64,   T_I64, {SA, 0, 0}},
     {"VAL#",     1, IMP_STR_TO_FLOAT, T_F32, {SA, 0, 0}},
     {NULL, 0, 0, 0, {0, 0, 0}}
 };
@@ -291,18 +346,22 @@ int compile_builtin_expr(const char *name) {
     /* Check simple builtins first */
     for (const SimpleBI *b = simple_bi; b->name; b++) {
         if (strcmp(name, b->name) != 0) continue;
+        int base_vsp = vsp;
         for (int i = 0; i < b->nargs; i++) {
             if (i > 0) need(TOK_COMMA);
             expr(); coerce_i32();
         }
         need(TOK_RP);
         emit_call(b->imp);
+        vsp = base_vsp;
         if (b->trunc) {
             emit_op(OP_I32_TRUNC_F32_S);
             vpush(T_I32);
         } else {
             ImportDef *id = &imp_defs[b->imp];
-            vpush(id->nr > 0 && id->r[0] == WASM_F32 ? T_F32 : T_I32);
+            if (id->nr > 0 && id->r[0] == WASM_F32) vpush(T_F32);
+            else if (id->nr > 0 && id->r[0] == WASM_I64) vpush(T_I64);
+            else vpush(T_I32);
         }
         return 1;
     }
@@ -310,6 +369,7 @@ int compile_builtin_expr(const char *name) {
     /* Float math builtins */
     for (const FloatMathBI *b = float_math_bi; b->name; b++) {
         if (strcmp(name, b->name) != 0) continue;
+        int base_vsp = vsp;
         for (int i = 0; i < b->nargs; i++) {
             if (i > 0) need(TOK_COMMA);
             expr(); coerce_f32();
@@ -319,6 +379,7 @@ int compile_builtin_expr(const char *name) {
             emit_call(b->imp);
         else
             emit_op(b->opcode);
+        vsp = base_vsp;
         vpush(T_F32);
         return 1;
     }
@@ -326,6 +387,7 @@ int compile_builtin_expr(const char *name) {
     /* String builtins */
     for (const StringBI *b = string_bi; b->name; b++) {
         if (strcmp(name, b->name) != 0) continue;
+        int base_vsp = vsp;
         for (int i = 0; i < b->nargs; i++) {
             if (i > 0) need(TOK_COMMA);
             expr();
@@ -333,6 +395,7 @@ int compile_builtin_expr(const char *name) {
         }
         need(TOK_RP);
         emit_call(b->imp);
+        vsp = base_vsp;
         vpush(b->result);
         return 1;
     }
@@ -384,6 +447,16 @@ int compile_builtin_expr(const char *name) {
         vpush(T_I32);
         return 1;
     }
+    if (strcmp(name, "TIMESTAMP&") == 0) {
+        expr(); coerce_i64(); need(TOK_RP);
+        int scratch = alloc_local_i64();
+        emit_local_set(scratch);
+        emit_call(IMP_MILLIS64);
+        emit_local_get(scratch);
+        emit_op(OP_I64_DIV_S);
+        vpush(T_I64);
+        return 1;
+    }
     if (strcmp(name, "VERSION") == 0) {
         need(TOK_RP);
         emit_i32_const(1); vpush(T_I32);
@@ -411,6 +484,18 @@ int compile_builtin_expr(const char *name) {
         if (t == T_F32) {
             emit_op(OP_F32_ABS);
             vpush(T_F32);
+        } else if (t == T_I64) {
+            int scratch = alloc_local_i64();
+            emit_local_set(scratch);
+            emit_i64_const(0);
+            emit_local_get(scratch);
+            emit_op(OP_I64_SUB);
+            emit_local_get(scratch);
+            emit_local_get(scratch);
+            emit_i64_const(0);
+            emit_op(OP_I64_LT_S);
+            emit_op(OP_SELECT);
+            vpush(T_I64);
         } else {
             int scratch = alloc_local();
             emit_local_set(scratch);
@@ -712,6 +797,8 @@ int compile_builtin_expr(const char *name) {
         VType t = vpop();
         if (t == T_F32) {
             emit_call(IMP_STR_FROM_FLOAT);
+        } else if (t == T_I64) {
+            emit_call(IMP_STR_FROM_I64);
         } else {
             emit_call(IMP_STR_FROM_INT);
         }
@@ -744,6 +831,16 @@ int compile_builtin_expr(const char *name) {
             emit_local_get(scratch);
             emit_f32_const(0.0f);
             emit_op(OP_F32_LT);
+            emit_op(OP_I32_SUB);
+        } else if (t == T_I64) {
+            int scratch = alloc_local_i64();
+            emit_local_set(scratch);
+            emit_local_get(scratch);
+            emit_i64_const(0);
+            emit_op(OP_I64_GT_S);
+            emit_local_get(scratch);
+            emit_i64_const(0);
+            emit_op(OP_I64_LT_S);
             emit_op(OP_I32_SUB);
         } else {
             int scratch = alloc_local();
@@ -802,8 +899,13 @@ void base_expr(void) {
         emit_i32_const(-1);
         emit_op(OP_I32_XOR);
     } else if (want(TOK_NUMBER)) {
-        emit_i32_const(tokv);
-        vpush(T_I32);
+        if (tok_num_is_i64) {
+            emit_i64_const(tokq);
+            vpush(T_I64);
+        } else {
+            emit_i32_const(tokv);
+            vpush(T_I32);
+        }
     } else if (want(TOK_FLOAT)) {
         emit_f32_const(tokf);
         vpush(T_F32);
@@ -858,10 +960,15 @@ void base_expr(void) {
                 emit_i32_const((ndims + 1) * 4);
                 emit_op(OP_I32_ADD);
                 emit_local_get(flat_local);
-                emit_i32_const(4); emit_op(OP_I32_MUL);
+                emit_i32_const(vars[var].type == T_I64 ? 8 : 4); emit_op(OP_I32_MUL);
                 emit_op(OP_I32_ADD);
-                emit_i32_load(0);
-                vpush(T_I32);
+                if (vars[var].type == T_I64) {
+                    emit_i64_load(0);
+                    vpush(T_I64);
+                } else {
+                    emit_i32_load(0);
+                    vpush(T_I32);
+                }
             } else if (!compile_builtin_expr(vars[var].name)) {
                 int nargs = 0;
                 if (!want(TOK_RP)) {
@@ -871,6 +978,10 @@ void base_expr(void) {
                             vars[vars[var].param_vars[nargs]].type_set &&
                             vars[vars[var].param_vars[nargs]].type == T_F32)
                             coerce_f32();
+                        else if (nargs < vars[var].param_count &&
+                                 vars[vars[var].param_vars[nargs]].type_set &&
+                                 vars[vars[var].param_vars[nargs]].type == T_I64)
+                            coerce_i64();
                         else if (nargs >= vars[var].param_count ||
                                  !vars[vars[var].param_vars[nargs]].type_set ||
                                  vars[vars[var].param_vars[nargs]].type != T_STR)
@@ -940,6 +1051,13 @@ void base_expr(void) {
             emit_local_get(scratch);
             emit_op(OP_F32_SUB);
             vpush(T_F32);
+        } else if (t == T_I64) {
+            int sc = alloc_local_i64();
+            emit_local_set(sc);
+            emit_i64_const(0);
+            emit_local_get(sc);
+            emit_op(OP_I64_SUB);
+            vpush(T_I64);
         } else {
             int sc = alloc_local();
             emit_local_set(sc);
@@ -986,8 +1104,8 @@ static void factor(void) {
             error_at("cannot use *, /, \\ or MOD on strings"); return;
         }
         switch (op) {
-        case TOK_MUL:  emit_binop(OP_I32_MUL, OP_F32_MUL); break;
-        case TOK_DIV:  emit_binop(OP_I32_DIV_S, OP_F32_DIV); break;
+        case TOK_MUL:  emit_binop(OP_I32_MUL, OP_F32_MUL, OP_I64_MUL); break;
+        case TOK_DIV:  emit_binop(OP_I32_DIV_S, OP_F32_DIV, OP_I64_DIV_S); break;
         case TOK_IDIV: emit_int_binop(OP_I32_DIV_S); break;
         case TOK_MOD:  emit_int_binop(OP_I32_REM_S); break;
         }
@@ -1007,9 +1125,9 @@ static void addition(void) {
         } else if (vsp >= 2 && (vstack[vsp-1] == T_STR || vstack[vsp-2] == T_STR)) {
             error_at("cannot mix strings and numbers with + or -");
         } else if (op == TOK_ADD) {
-            emit_binop(OP_I32_ADD, OP_F32_ADD);
+            emit_binop(OP_I32_ADD, OP_F32_ADD, OP_I64_ADD);
         } else {
-            emit_binop(OP_I32_SUB, OP_F32_SUB);
+            emit_binop(OP_I32_SUB, OP_F32_SUB, OP_I64_SUB);
         }
     }
 }
@@ -1038,12 +1156,12 @@ static void relation(void) {
             error_at("cannot compare string with number");
         } else {
             switch (op) {
-            case TOK_EQ: emit_compare(OP_I32_EQ, OP_F32_EQ); break;
-            case TOK_LT: emit_compare(OP_I32_LT_S, OP_F32_LT); break;
-            case TOK_GT: emit_compare(OP_I32_GT_S, OP_F32_GT); break;
-            case TOK_NE: emit_compare(OP_I32_NE, OP_F32_NE); break;
-            case TOK_LE: emit_compare(OP_I32_LE_S, OP_F32_LE); break;
-            case TOK_GE: emit_compare(OP_I32_GE_S, OP_F32_GE); break;
+            case TOK_EQ: emit_compare(OP_I32_EQ, OP_F32_EQ, OP_I64_EQ); break;
+            case TOK_LT: emit_compare(OP_I32_LT_S, OP_F32_LT, OP_I64_LT_S); break;
+            case TOK_GT: emit_compare(OP_I32_GT_S, OP_F32_GT, OP_I64_GT_S); break;
+            case TOK_NE: emit_compare(OP_I32_NE, OP_F32_NE, OP_I64_NE); break;
+            case TOK_LE: emit_compare(OP_I32_LE_S, OP_F32_LE, OP_I64_LE_S); break;
+            case TOK_GE: emit_compare(OP_I32_GE_S, OP_F32_GE, OP_I64_GE_S); break;
             }
         }
     }
@@ -1059,14 +1177,32 @@ void expr(void) {
         if (a == T_STR || b == T_STR) {
             error_at("cannot use AND/OR/XOR on strings");
         }
-        if (b == T_F32) emit_op(OP_I32_TRUNC_F32_S);
-        if (a == T_F32) {
-            int sc = alloc_local();
-            emit_local_set(sc);
-            emit_op(OP_I32_TRUNC_F32_S);
-            emit_local_get(sc);
+        if (a == T_I64 || b == T_I64) {
+            if (b == T_F32) emit_op(OP_I64_TRUNC_F32_S);
+            else if (b == T_I32) emit_op(OP_I64_EXTEND_I32_S);
+            if (a == T_F32) {
+                int sc = alloc_local_i64();
+                emit_local_set(sc);
+                emit_op(OP_I64_TRUNC_F32_S);
+                emit_local_get(sc);
+            } else if (a == T_I32) {
+                int sc = alloc_local_i64();
+                emit_local_set(sc);
+                emit_op(OP_I64_EXTEND_I32_S);
+                emit_local_get(sc);
+            }
+            emit_op(op == TOK_AND ? OP_I64_AND : op == TOK_OR ? OP_I64_OR : OP_I64_XOR);
+            vpush(T_I64);
+        } else {
+            if (b == T_F32) emit_op(OP_I32_TRUNC_F32_S);
+            if (a == T_F32) {
+                int sc = alloc_local();
+                emit_local_set(sc);
+                emit_op(OP_I32_TRUNC_F32_S);
+                emit_local_get(sc);
+            }
+            emit_op(op == TOK_AND ? OP_I32_AND : op == TOK_OR ? OP_I32_OR : OP_I32_XOR);
+            vpush(T_I32);
         }
-        emit_op(op == TOK_AND ? OP_I32_AND : op == TOK_OR ? OP_I32_OR : OP_I32_XOR);
-        vpush(T_I32);
     }
 }

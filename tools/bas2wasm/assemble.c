@@ -86,8 +86,10 @@ void assemble(const char *outpath) {
         if (i == 0) {
             local_type_idx[i] = find_or_add_ftype(0, NULL, 0, NULL);
         } else {
-            uint8_t result = (vars[f->sub_var].type_set && vars[f->sub_var].type == T_F32)
-                             ? WASM_F32 : WASM_I32;
+            uint8_t result;
+            if (vars[f->sub_var].type_set && vars[f->sub_var].type == T_F32) result = WASM_F32;
+            else if (vars[f->sub_var].type_set && vars[f->sub_var].type == T_I64) result = WASM_I64;
+            else result = WASM_I32;
             local_type_idx[i] = find_or_add_ftype(f->nparams, f->param_types, 1, &result);
         }
     }
@@ -167,11 +169,16 @@ void assemble(const char *outpath) {
         buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, 0); buf_byte(&sec, OP_END);
         /* Variable globals */
         for (int i = 0; i < nvar; i++) {
-            uint8_t gt = (vars[i].type_set && vars[i].type == T_F32) ? WASM_F32 : WASM_I32;
+            uint8_t gt = WASM_I32;
+            if (vars[i].type_set && vars[i].type == T_F32) gt = WASM_F32;
+            else if (vars[i].type_set && vars[i].type == T_I64) gt = WASM_I64;
             buf_byte(&sec, gt); buf_byte(&sec, 0x01);
             if (gt == WASM_F32) {
                 buf_byte(&sec, OP_F32_CONST);
                 float z = 0.0f; buf_f32(&sec, z);
+            } else if (gt == WASM_I64) {
+                buf_byte(&sec, OP_I64_CONST);
+                buf_sleb64(&sec, 0);
             } else {
                 buf_byte(&sec, OP_I32_CONST);
                 buf_sleb(&sec, 0);
@@ -263,6 +270,7 @@ void assemble(const char *outpath) {
                     case T_I32: type_tag = 0; value = data_items[i].ival; break;
                     case T_F32: type_tag = 1; memcpy(&value, &data_items[i].fval, 4); break;
                     case T_STR: type_tag = 2; value = data_items[i].str_off; break;
+                    case T_I64: type_tag = 0; value = (int32_t)data_items[i].ival; break;
                     }
                     memcpy(p, &type_tag, 4); p += 4;
                     memcpy(p, &value, 4); p += 4;

@@ -43,10 +43,10 @@ m3ApiRawFunction(m3_cue_playing) {
     m3ApiReturn(cue_is_playing() ? 1 : 0);
 }
 
-// i32 cue_elapsed() — ms since cue playback started, 0 if not playing
+// i64 cue_elapsed() — ms since cue playback started, 0 if not playing
 m3ApiRawFunction(m3_cue_elapsed) {
-    m3ApiReturnType(int32_t);
-    m3ApiReturn((int32_t)cue_get_elapsed_ms());
+    m3ApiReturnType(int64_t);
+    m3ApiReturn((int64_t)cue_get_elapsed_ms());
 }
 
 // --- Random ---
@@ -127,7 +127,7 @@ M3Result link_system_imports(IM3Module module)
     // Cue
     result = m3_LinkRawFunction(module, "env", "cue_playing", "i()", m3_cue_playing);
     if (result && result != m3Err_functionLookupFailed) return result;
-    result = m3_LinkRawFunction(module, "env", "cue_elapsed", "i()", m3_cue_elapsed);
+    result = m3_LinkRawFunction(module, "env", "cue_elapsed", "I()", m3_cue_elapsed);
     if (result && result != m3Err_functionLookupFailed) return result;
 
     // Random

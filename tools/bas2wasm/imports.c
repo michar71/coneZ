@@ -4,10 +4,13 @@
 #include "bas2wasm.h"
 
 #define _I WASM_I32
+#define _L WASM_I64
 #define _F WASM_F32
 ImportDef imp_defs[IMP_COUNT] = {
     [IMP_DELAY_MS]      = {"delay_ms",      1,{_I},            0,{}},
     [IMP_MILLIS]         = {"millis",         0,{},              1,{_I}},
+    [IMP_MILLIS64]       = {"millis64",       0,{},              1,{_L}},
+    [IMP_GET_EPOCH_MS]   = {"get_epoch_ms",   0,{},              1,{_L}},
     [IMP_GET_PARAM]      = {"get_param",      1,{_I},            1,{_I}},
     [IMP_SET_PARAM]      = {"set_param",      2,{_I,_I},         0,{}},
     [IMP_SHOULD_STOP]    = {"should_stop",    0,{},              1,{_I}},
@@ -27,6 +30,7 @@ ImportDef imp_defs[IMP_COUNT] = {
     [IMP_RGB_TO_HSV]     = {"rgb_to_hsv",     3,{_I,_I,_I},      1,{_I}},
     [IMP_HOST_PRINTF]    = {"host_printf",    2,{_I,_I},         1,{_I}},
     [IMP_PRINT_I32]      = {"print_i32",      1,{_I},            0,{}},
+    [IMP_PRINT_I64]      = {"print_i64",      1,{_L},            0,{}},
     [IMP_PRINT_F32]      = {"print_f32",      1,{_F},            0,{}},
     [IMP_PRINT_STR]      = {"print_str",      2,{_I,_I},         0,{}},
     [IMP_GPS_VALID]      = {"gps_valid",      0,{},              1,{_I}},
@@ -72,7 +76,7 @@ ImportDef imp_defs[IMP_COUNT] = {
     [IMP_WAIT_PPS]       = {"wait_pps",       1,{_I},            1,{_I}},
     [IMP_WAIT_PARAM]     = {"wait_param",     4,{_I,_I,_I,_I},   1,{_I}},
     [IMP_CUE_PLAYING]    = {"cue_playing",    0,{},              1,{_I}},
-    [IMP_CUE_ELAPSED]    = {"cue_elapsed",    0,{},              1,{_I}},
+    [IMP_CUE_ELAPSED]    = {"cue_elapsed",    0,{},              1,{_L}},
     [IMP_GET_BAT_VOLTAGE]= {"get_bat_voltage",0,{},              1,{_F}},
     [IMP_GET_SOLAR_VOLTAGE]={"get_solar_voltage",0,{},           1,{_F}},
     [IMP_GET_SUNRISE]    = {"get_sunrise",    0,{},              1,{_I}},
@@ -101,8 +105,10 @@ ImportDef imp_defs[IMP_COUNT] = {
     [IMP_STR_CHR]        = {"basic_str_chr",        1,{_I},            1,{_I}},
     [IMP_STR_ASC]        = {"basic_str_asc",        1,{_I},            1,{_I}},
     [IMP_STR_FROM_INT]   = {"basic_str_from_int",   1,{_I},            1,{_I}},
+    [IMP_STR_FROM_I64]   = {"basic_str_from_i64",   1,{_L},            1,{_I}},
     [IMP_STR_FROM_FLOAT] = {"basic_str_from_float", 1,{_F},            1,{_I}},
     [IMP_STR_TO_INT]     = {"basic_str_to_int",     1,{_I},            1,{_I}},
+    [IMP_STR_TO_I64]     = {"basic_str_to_i64",     1,{_I},            1,{_L}},
     [IMP_STR_TO_FLOAT]   = {"basic_str_to_float",   1,{_I},            1,{_F}},
     [IMP_STR_UPPER]      = {"basic_str_upper",      1,{_I},            1,{_I}},
     [IMP_STR_LOWER]      = {"basic_str_lower",      1,{_I},            1,{_I}},
@@ -138,6 +144,7 @@ ImportDef imp_defs[IMP_COUNT] = {
     [IMP_REALLOC]        = {"realloc",              2,{_I,_I},         1,{_I}},
 };
 #undef _I
+#undef _L
 #undef _F
 
 uint8_t imp_used[IMP_COUNT];

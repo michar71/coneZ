@@ -27,6 +27,8 @@ char *lp;
 int line_num;
 
 int tok, tokv, ungot;
+int64_t tokq;
+int tok_num_is_i64;
 float tokf;
 char tokn[16];
 

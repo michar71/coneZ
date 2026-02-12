@@ -101,7 +101,7 @@ extern "C" {
     /// 1 if cue timeline is currently playing, 0 otherwise.
     pub fn cue_playing() -> i32;
     /// Milliseconds elapsed since cue playback started. 0 if not playing.
-    pub fn cue_elapsed() -> i32;
+    pub fn cue_elapsed() -> i64;
 
     // ---- GPIO ----
     pub fn pin_set(gpio: i32);
@@ -114,6 +114,8 @@ extern "C" {
     pub fn get_epoch_ms() -> i64;
     /// Milliseconds since boot (wraps at ~49 days).
     pub fn millis() -> i32;
+    /// Milliseconds since boot as 64-bit value (no wrap).
+    pub fn millis64() -> i64;
     /// Delay and yield to FreeRTOS. MUST be called in tight loops.
     pub fn delay_ms(ms: i32);
     /// Returns 1 if any time source (GPS+PPS or NTP) is active.

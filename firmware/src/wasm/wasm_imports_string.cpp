@@ -360,6 +360,21 @@ m3ApiRawFunction(m3_str_from_int)
     m3ApiReturn((int32_t)dst);
 }
 
+// i32 str_from_i64(i64 val) -> new pool string
+m3ApiRawFunction(m3_str_from_i64)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int64_t, val);
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    uint32_t dst = pool_alloc(runtime, n + 1);
+    if (dst == 0) m3ApiReturn(0);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    memcpy(mem + dst, buf, n + 1);
+    m3ApiReturn((int32_t)dst);
+}
+
 // i32 str_from_float(f32 val) -> new pool string
 m3ApiRawFunction(m3_str_from_float)
 {
@@ -384,6 +399,17 @@ m3ApiRawFunction(m3_str_to_int)
     uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
     if (!mem || ptr == 0 || (uint32_t)ptr >= mem_size) m3ApiReturn(0);
     m3ApiReturn((int32_t)strtol((const char *)(mem + (uint32_t)ptr), NULL, 0));
+}
+
+// i64 str_to_i64(i32 ptr) -> integer value
+m3ApiRawFunction(m3_str_to_i64)
+{
+    m3ApiReturnType(int64_t);
+    m3ApiGetArg(int32_t, ptr);
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    if (!mem || ptr == 0 || (uint32_t)ptr >= mem_size) m3ApiReturn((int64_t)0);
+    m3ApiReturn((int64_t)strtoll((const char *)(mem + (uint32_t)ptr), NULL, 0));
 }
 
 // f32 str_to_float(i32 ptr) -> float value
@@ -650,8 +676,10 @@ M3Result link_string_imports(IM3Module module)
     LINK("basic_str_chr",        "i(i)",   m3_str_chr);
     LINK("basic_str_asc",        "i(i)",   m3_str_asc);
     LINK("basic_str_from_int",   "i(i)",   m3_str_from_int);
+    LINK("basic_str_from_i64",   "i(I)",   m3_str_from_i64);
     LINK("basic_str_from_float", "i(f)",   m3_str_from_float);
     LINK("basic_str_to_int",     "i(i)",   m3_str_to_int);
+    LINK("basic_str_to_i64",     "I(i)",   m3_str_to_i64);
     LINK("basic_str_to_float",   "f(i)",   m3_str_to_float);
     LINK("basic_str_upper",      "i(i)",   m3_str_upper);
     LINK("basic_str_lower",      "i(i)",   m3_str_lower);

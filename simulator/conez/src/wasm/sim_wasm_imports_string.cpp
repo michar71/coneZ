@@ -388,6 +388,20 @@ m3ApiRawFunction(m3_str_from_int) {
     m3ApiReturn((int32_t)dst);
 }
 
+// i32 basic_str_from_i64(i64 val)
+m3ApiRawFunction(m3_str_from_i64) {
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int64_t, val);
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%lld", (long long)val);
+    uint32_t dst = pool_alloc(runtime, len + 1);
+    if (!dst) { m3ApiReturn(0); }
+    uint32_t ms = 0;
+    uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
+    memcpy(mem + dst, buf, len + 1);
+    m3ApiReturn((int32_t)dst);
+}
+
 // i32 basic_str_from_float(f32 val)
 m3ApiRawFunction(m3_str_from_float) {
     m3ApiReturnType(int32_t);
@@ -409,6 +423,15 @@ m3ApiRawFunction(m3_str_to_int) {
     uint32_t ms = 0;
     const char *s = pool_str(runtime, ptr, &ms);
     m3ApiReturn(s ? atoi(s) : 0);
+}
+
+// i64 basic_str_to_i64(i32 ptr)
+m3ApiRawFunction(m3_str_to_i64) {
+    m3ApiReturnType(int64_t);
+    m3ApiGetArg(int32_t, ptr);
+    uint32_t ms = 0;
+    const char *s = pool_str(runtime, ptr, &ms);
+    m3ApiReturn(s ? (int64_t)strtoll(s, nullptr, 0) : 0);
 }
 
 // f32 basic_str_to_float(i32 ptr)
@@ -608,8 +631,10 @@ M3Result link_string_imports(IM3Module module)
     LINK("basic_str_mid_assign", "i(iiii)", m3_str_mid_assign)
 
     LINK("basic_str_from_int",   "i(i)", m3_str_from_int)
+    LINK("basic_str_from_i64",   "i(I)", m3_str_from_i64)
     LINK("basic_str_from_float", "i(f)", m3_str_from_float)
     LINK("basic_str_to_int",     "i(i)", m3_str_to_int)
+    LINK("basic_str_to_i64",     "I(i)", m3_str_to_i64)
     LINK("basic_str_to_float",   "f(i)", m3_str_to_float)
     LINK("basic_str_hex",        "i(i)", m3_str_hex)
     LINK("basic_str_oct",        "i(i)", m3_str_oct)
