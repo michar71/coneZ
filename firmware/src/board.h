@@ -27,8 +27,8 @@
     #define I2C_SCL_PIN     18
 
     // PSRAM SPI
-    #define PSR_CE          4
-    #define PSR_MISO        5
+    #define PSR_CE          5
+    #define PSR_MISO        4
     #define PSR_SCK         6
     #define PSR_MOSI        7
 

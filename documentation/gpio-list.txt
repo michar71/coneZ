@@ -13,8 +13,8 @@ GPIO  Define          Function
   1   ADC_BAT_PIN     ADC: Battery voltage
   2   ADC_SOLAR_PIN   ADC: Solar voltage
   3                   ...do not use, pullup to 3.3V...
-  4   PSR_CE          PSRAM CE
-  5   PSR_MISO        PSRAM MISO
+  4   PSR_MISO        PSRAM MISO
+  5   PSR_CE          PSRAM CE
   6   PSR_SCK         PSRAM SCK
   7   PSR_MOSI        PSRAM MOSI
   8   LORA_PIN_CS     LoRa CS

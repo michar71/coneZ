@@ -178,7 +178,11 @@ void assemble(const char *outpath) {
         buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01);
         buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, heap_start); buf_byte(&sec, OP_END);
 
-        /* User globals (1-based) — use stored init values */
+        /* Global 1: __line */
+        buf_byte(&sec, WASM_I32); buf_byte(&sec, 0x01);
+        buf_byte(&sec, OP_I32_CONST); buf_sleb(&sec, 0); buf_byte(&sec, OP_END);
+
+        /* User globals (2-based) — use stored init values */
         for (int i = 0; i < nsym; i++) {
             if (syms[i].kind != SYM_GLOBAL) continue;
             uint8_t gt = ctype_to_wasm(syms[i].ctype);
@@ -206,7 +210,7 @@ void assemble(const char *outpath) {
     /* --- Export Section (7) --- */
     {
         Buf sec; buf_init(&sec);
-        int nexports = 1; /* memory always exported */
+        int nexports = 2; /* memory + __line always exported */
         int setup_idx = find_func_by_name("setup");
         int loop_idx = find_func_by_name("loop");
         if (setup_idx >= 0) nexports++;
@@ -228,6 +232,10 @@ void assemble(const char *outpath) {
         buf_str(&sec, "memory");
         buf_byte(&sec, 0x02);
         buf_uleb(&sec, 0);
+
+        buf_str(&sec, "__line");
+        buf_byte(&sec, 0x03);
+        buf_uleb(&sec, GLOBAL_LINE);
 
         buf_section(&out, 7, &sec);
         buf_free(&sec);

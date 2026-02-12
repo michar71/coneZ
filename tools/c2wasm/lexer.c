@@ -17,6 +17,9 @@ static int peek_slen;
 /* Macro expansion depth guard (prevents mutual recursion) */
 #define MAX_MACRO_DEPTH 16
 static int macro_depth;
+static int predefined_counter;
+static char predefined_date[16];
+static char predefined_time[16];
 
 /* Guard to prevent macro expansion during lexer save/restore (e.g., switch pre-scan) */
 static int lexer_save_active = 0;
@@ -30,6 +33,76 @@ void lex_init(void) {
     tok_int_unsigned = 0;
     macro_depth = 0;
     lexer_save_active = 0;
+    predefined_counter = 0;
+
+    time_t now = time(NULL);
+    struct tm *tmv = localtime(&now);
+    if (tmv) {
+        strftime(predefined_date, sizeof(predefined_date), "%b %d %Y", tmv);
+        strftime(predefined_time, sizeof(predefined_time), "%H:%M:%S", tmv);
+    } else {
+        snprintf(predefined_date, sizeof(predefined_date), "Jan 01 1970");
+        snprintf(predefined_time, sizeof(predefined_time), "00:00:00");
+    }
+}
+
+static int emit_predefined_macro_token(void) {
+    if (strcmp(tok_sval, "__LINE__") == 0) {
+        tok_i64 = (int64_t)line_num;
+        tok_ival = line_num;
+        tok_int_is_64 = 0;
+        tok_int_unsigned = 0;
+        return TOK_INT_LIT;
+    }
+    if (strcmp(tok_sval, "__COUNTER__") == 0) {
+        tok_i64 = (int64_t)predefined_counter;
+        tok_ival = predefined_counter;
+        tok_int_is_64 = 0;
+        tok_int_unsigned = 0;
+        predefined_counter++;
+        return TOK_INT_LIT;
+    }
+    if (strcmp(tok_sval, "__STDC__") == 0) {
+        tok_i64 = 1;
+        tok_ival = 1;
+        tok_int_is_64 = 0;
+        tok_int_unsigned = 0;
+        return TOK_INT_LIT;
+    }
+    if (strcmp(tok_sval, "__STDC_VERSION__") == 0) {
+        tok_i64 = 199901;
+        tok_ival = 199901;
+        tok_int_is_64 = 0;
+        tok_int_unsigned = 0;
+        return TOK_INT_LIT;
+    }
+    if (strcmp(tok_sval, "__STDC_HOSTED__") == 0) {
+        tok_i64 = 0;
+        tok_ival = 0;
+        tok_int_is_64 = 0;
+        tok_int_unsigned = 0;
+        return TOK_INT_LIT;
+    }
+    if (strcmp(tok_sval, "__FILE__") == 0) {
+        const char *f = src_file ? src_file : "<input>";
+        tok_slen = (int)strlen(f);
+        if (tok_slen > (int)sizeof(tok_sval) - 1)
+            tok_slen = (int)sizeof(tok_sval) - 1;
+        memcpy(tok_sval, f, tok_slen);
+        tok_sval[tok_slen] = 0;
+        return TOK_STR_LIT;
+    }
+    if (strcmp(tok_sval, "__DATE__") == 0) {
+        tok_slen = (int)strlen(predefined_date);
+        memcpy(tok_sval, predefined_date, tok_slen + 1);
+        return TOK_STR_LIT;
+    }
+    if (strcmp(tok_sval, "__TIME__") == 0) {
+        tok_slen = (int)strlen(predefined_time);
+        memcpy(tok_sval, predefined_time, tok_slen + 1);
+        return TOK_STR_LIT;
+    }
+    return 0;
 }
 
 static int ch(void) {
@@ -310,6 +383,9 @@ static int lex_raw(void) {
 
         int kw = lookup_keyword(tok_sval);
         if (kw >= 0) return kw;
+
+        int predef = emit_predefined_macro_token();
+        if (predef) return predef;
 
         /* Check for macro expansion (with depth limit to prevent mutual recursion,
          * and disabled during lexer save/restore to prevent use-after-free) */

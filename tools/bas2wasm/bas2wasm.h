@@ -31,6 +31,7 @@ void buf_bytes(Buf *b, const void *p, int n);
 void buf_free(Buf *b);
 void buf_uleb(Buf *b, uint32_t v);
 void buf_sleb(Buf *b, int32_t v);
+void buf_sleb64(Buf *b, int64_t v);
 void buf_f32(Buf *b, float v);
 void buf_str(Buf *b, const char *s);
 void buf_section(Buf *out, int id, Buf *content);
@@ -63,10 +64,13 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_GLOBAL_GET    0x23
 #define OP_GLOBAL_SET    0x24
 #define OP_I32_LOAD      0x28
+#define OP_I64_LOAD      0x29
 #define OP_F32_LOAD      0x2A
 #define OP_I32_STORE     0x36
+#define OP_I64_STORE     0x37
 #define OP_F32_STORE     0x38
 #define OP_I32_CONST     0x41
+#define OP_I64_CONST     0x42
 #define OP_F32_CONST     0x43
 #define OP_I32_EQZ       0x45
 #define OP_I32_EQ        0x46
@@ -81,6 +85,12 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_F32_GT        0x5E
 #define OP_F32_LE        0x5F
 #define OP_F32_GE        0x60
+#define OP_I64_EQ        0x51
+#define OP_I64_NE        0x52
+#define OP_I64_LT_S      0x53
+#define OP_I64_GT_S      0x55
+#define OP_I64_LE_S      0x57
+#define OP_I64_GE_S      0x59
 #define OP_I32_ADD       0x6A
 #define OP_I32_SUB       0x6B
 #define OP_I32_MUL       0x6C
@@ -88,6 +98,14 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_I32_REM_S     0x6F
 #define OP_I32_AND       0x71
 #define OP_I32_OR        0x72
+#define OP_I64_ADD       0x7C
+#define OP_I64_SUB       0x7D
+#define OP_I64_MUL       0x7E
+#define OP_I64_DIV_S     0x7F
+#define OP_I64_REM_S     0x81
+#define OP_I64_AND       0x83
+#define OP_I64_OR        0x84
+#define OP_I64_XOR       0x85
 #define OP_F32_ADD       0x92
 #define OP_F32_SUB       0x93
 #define OP_F32_MUL       0x94
@@ -96,11 +114,16 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_F32_ABS       0x8B
 #define OP_I32_TRUNC_F32_S 0xA8
 #define OP_I32_XOR           0x73
+#define OP_I32_WRAP_I64      0xA7
+#define OP_I64_TRUNC_F32_S   0xAE
+#define OP_I64_EXTEND_I32_S  0xAC
 #define OP_F32_CEIL          0x8D
 #define OP_F32_FLOOR         0x8E
 #define OP_F32_CONVERT_I32_S 0xB2
+#define OP_F32_CONVERT_I64_S 0xB4
 
 #define WASM_I32  0x7F
+#define WASM_I64  0x7E
 #define WASM_F32  0x7D
 #define WASM_VOID 0x40
 
@@ -115,12 +138,12 @@ typedef struct {
 } ImportDef;
 
 enum {
-    IMP_DELAY_MS, IMP_MILLIS, IMP_GET_PARAM, IMP_SET_PARAM, IMP_SHOULD_STOP,
+    IMP_DELAY_MS, IMP_MILLIS, IMP_MILLIS64, IMP_GET_EPOCH_MS, IMP_GET_PARAM, IMP_SET_PARAM, IMP_SHOULD_STOP,
     IMP_LED_SET_PIXEL, IMP_LED_FILL, IMP_LED_SHOW, IMP_LED_COUNT,
     IMP_LED_GAMMA8, IMP_LED_SET_GAMMA,
     IMP_LED_SET_BUFFER, IMP_LED_SHIFT, IMP_LED_ROTATE, IMP_LED_REVERSE,
     IMP_LED_SET_PIXEL_HSV, IMP_LED_FILL_HSV, IMP_HSV_TO_RGB, IMP_RGB_TO_HSV,
-    IMP_HOST_PRINTF, IMP_PRINT_I32, IMP_PRINT_F32, IMP_PRINT_STR,
+    IMP_HOST_PRINTF, IMP_PRINT_I32, IMP_PRINT_I64, IMP_PRINT_F32, IMP_PRINT_STR,
     IMP_GPS_VALID, IMP_HAS_ORIGIN, IMP_ORIGIN_DIST, IMP_ORIGIN_BEARING,
     IMP_GET_LAT, IMP_GET_LON, IMP_GET_ALT, IMP_GET_SPEED, IMP_GET_DIR,
     IMP_GET_SECOND, IMP_GET_MINUTE, IMP_GET_HOUR,
@@ -143,8 +166,8 @@ enum {
     IMP_GET_SUN_AZIMUTH, IMP_GET_SUN_ELEVATION,
     IMP_STR_ALLOC, IMP_STR_FREE, IMP_STR_LEN, IMP_STR_COPY,
     IMP_STR_CONCAT, IMP_STR_CMP, IMP_STR_MID, IMP_STR_LEFT, IMP_STR_RIGHT,
-    IMP_STR_CHR, IMP_STR_ASC, IMP_STR_FROM_INT, IMP_STR_FROM_FLOAT,
-    IMP_STR_TO_INT, IMP_STR_TO_FLOAT, IMP_STR_UPPER, IMP_STR_LOWER,
+    IMP_STR_CHR, IMP_STR_ASC, IMP_STR_FROM_INT, IMP_STR_FROM_I64, IMP_STR_FROM_FLOAT,
+    IMP_STR_TO_INT, IMP_STR_TO_I64, IMP_STR_TO_FLOAT, IMP_STR_UPPER, IMP_STR_LOWER,
     IMP_STR_INSTR, IMP_STR_TRIM,
     IMP_TANF, IMP_EXPF, IMP_LOGF, IMP_LOG2F, IMP_FMODF,
     IMP_STR_REPEAT, IMP_STR_SPACE, IMP_STR_HEX, IMP_STR_OCT,
@@ -171,7 +194,7 @@ extern uint8_t imp_used[IMP_COUNT];
 #define FMT_BUF_SIZE 256
 #define FILE_TABLE_BASE 0xF100  /* 4 i32 handles at 0xF100..0xF10F */
 
-typedef enum { T_I32 = 0, T_F32 = 1, T_STR = 2 } VType;
+typedef enum { T_I32 = 0, T_F32 = 1, T_STR = 2, T_I64 = 3 } VType;
 
 #define VAR_NORMAL 0
 #define VAR_DIM    1
@@ -254,6 +277,8 @@ extern char *lp;
 extern int line_num;
 
 extern int tok, tokv, ungot;
+extern int64_t tokq;
+extern int tok_num_is_i64;
 extern float tokf;
 extern char tokn[16];
 
@@ -322,6 +347,9 @@ static inline int add_var(const char *name) {
     } else if (len > 0 && name[len-1] == '#') {
         vars[nvar].type = T_F32;
         vars[nvar].type_set = 1;
+    } else if (len > 0 && name[len-1] == '&') {
+        vars[nvar].type = T_I64;
+        vars[nvar].type_set = 1;
     } else {
         vars[nvar].type = T_I32;
     }
@@ -343,6 +371,26 @@ static inline int alloc_local_f32(void) {
     int idx = f->nparams + f->nlocals;
     f->local_types[f->nlocals++] = WASM_F32;
     return idx;
+}
+
+static inline int alloc_local_i64(void) {
+    FuncCtx *f = &func_bufs[cur_func];
+    if (f->nlocals >= 128) { error_at("too many locals in function"); return 0; }
+    int idx = f->nparams + f->nlocals;
+    f->local_types[f->nlocals++] = WASM_I64;
+    return idx;
+}
+
+static inline uint8_t wasm_type_for_vtype(VType t) {
+    if (t == T_F32) return WASM_F32;
+    if (t == T_I64) return WASM_I64;
+    return WASM_I32;
+}
+
+static inline int alloc_local_for_vtype(VType t) {
+    if (t == T_F32) return alloc_local_f32();
+    if (t == T_I64) return alloc_local_i64();
+    return alloc_local();
 }
 
 static inline int add_string(const char *s, int len) {
@@ -385,6 +433,10 @@ static inline void emit_f32_const(float v) {
     fold_b.buf_end = CODE->len;
     fold_b.fval = v;
 }
+static inline void emit_i64_const(int64_t v) {
+    fold_a.valid = fold_b.valid = 0;
+    buf_byte(CODE, OP_I64_CONST); buf_sleb64(CODE, v);
+}
 static inline void emit_call(int func_idx) {
     buf_byte(CODE, OP_CALL);
     FuncCtx *f = &func_bufs[cur_func];
@@ -414,6 +466,12 @@ static inline void emit_i32_store(int offset) {
 static inline void emit_f32_load(int offset) {
     buf_byte(CODE, OP_F32_LOAD); buf_uleb(CODE, 2); buf_uleb(CODE, offset);
 }
+static inline void emit_i64_load(int offset) {
+    buf_byte(CODE, OP_I64_LOAD); buf_uleb(CODE, 3); buf_uleb(CODE, offset);
+}
+static inline void emit_i64_store(int offset) {
+    buf_byte(CODE, OP_I64_STORE); buf_uleb(CODE, 3); buf_uleb(CODE, offset);
+}
 static inline void emit_block(void)  { buf_byte(CODE, OP_BLOCK); buf_byte(CODE, WASM_VOID); block_depth++; }
 static inline void emit_loop(void)   { buf_byte(CODE, OP_LOOP);  buf_byte(CODE, WASM_VOID); block_depth++; }
 static inline void emit_if_void(void){ buf_byte(CODE, OP_IF);    buf_byte(CODE, WASM_VOID); block_depth++; }
@@ -432,6 +490,9 @@ static inline void coerce_i32(void) {
     if (vsp > 0 && vstack[vsp-1] == T_F32) {
         emit_op(OP_I32_TRUNC_F32_S);
         vstack[vsp-1] = T_I32;
+    } else if (vsp > 0 && vstack[vsp-1] == T_I64) {
+        emit_op(OP_I32_WRAP_I64);
+        vstack[vsp-1] = T_I32;
     }
 }
 
@@ -443,7 +504,30 @@ static inline void coerce_f32(void) {
     if (vsp > 0 && vstack[vsp-1] == T_I32) {
         emit_op(OP_F32_CONVERT_I32_S);
         vstack[vsp-1] = T_F32;
+    } else if (vsp > 0 && vstack[vsp-1] == T_I64) {
+        emit_op(OP_F32_CONVERT_I64_S);
+        vstack[vsp-1] = T_F32;
     }
+}
+
+static inline void coerce_i64(void) {
+    if (vsp > 0 && vstack[vsp-1] == T_STR) {
+        error_at("cannot use string in numeric context");
+        return;
+    }
+    if (vsp > 0 && vstack[vsp-1] == T_F32) {
+        emit_op(OP_I64_TRUNC_F32_S);
+        vstack[vsp-1] = T_I64;
+    } else if (vsp > 0 && vstack[vsp-1] == T_I32) {
+        emit_op(OP_I64_EXTEND_I32_S);
+        vstack[vsp-1] = T_I64;
+    }
+}
+
+static inline void coerce_to(VType t) {
+    if (t == T_F32) coerce_f32();
+    else if (t == T_I64) coerce_i64();
+    else if (t != T_STR) coerce_i32();
 }
 
 /* ================================================================

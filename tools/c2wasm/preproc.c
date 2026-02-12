@@ -20,12 +20,14 @@ static int ifdef_overflow;  /* excess nesting beyond MAX_IFDEF_DEPTH */
 
 static int api_registered;
 static int pp_macro_eval_depth;
+static int pp_predefined_counter;
 
 void preproc_init(void) {
     ifdef_depth = 0;
     ifdef_overflow = 0;
     api_registered = 0;
     pp_macro_eval_depth = 0;
+    pp_predefined_counter = 0;
 }
 
 int preproc_skipping(void) {
@@ -521,6 +523,17 @@ static PPVal pp_primary(void) {
             }
             return pp_make_u((find_sym_kind(dname, SYM_DEFINE) != NULL) ? 1 : 0, 0);
         }
+
+        if (strcmp(name, "__LINE__") == 0)
+            return pp_make_u((uint64_t)line_num, 0);
+        if (strcmp(name, "__COUNTER__") == 0)
+            return pp_make_u((uint64_t)pp_predefined_counter++, 0);
+        if (strcmp(name, "__STDC__") == 0)
+            return pp_make_u(1, 0);
+        if (strcmp(name, "__STDC_VERSION__") == 0)
+            return pp_make_u(199901, 0);
+        if (strcmp(name, "__STDC_HOSTED__") == 0)
+            return pp_make_u(0, 0);
 
         /* Macro expansion */
         Symbol *mac = find_sym_kind(name, SYM_DEFINE);

@@ -24,6 +24,7 @@ basic-scripting.txt) with the following differences:
 
   Additions:
     - Floating-point variables and arithmetic (f32)
+    - 64-bit integer variables and arithmetic (i64) via & suffix
     - Float math functions: SIN, COS, SQRT, ATAN2, POW, TAN, EXP,
       LOG, LOG2, FLOOR, CEIL, FMOD, SGN
     - Type conversion functions: INT, FLOAT
@@ -69,7 +70,8 @@ instructions. This is a compiler-only extension — the interpreter is unchanged
 
 Type Rules:
 
-  Variables are typed i32 (integer), f32 (float), or str (string). The
+  Variables are typed i32 (integer), i64 (long integer), f32 (float), or str
+  (string). The
   type is determined by the variable name or first value assigned:
 
     X = 42            ' X is i32
@@ -77,9 +79,24 @@ Type Rules:
     Z = GPSLAT#()     ' Z is f32 (# function returns float)
     A$ = "hello"      ' A$ is str ($ suffix = string variable)
     PI# = 3.14159     ' PI# is f32 (# suffix = float variable)
+    C& = 4294967296&  ' C& is i64 (& suffix = 64-bit integer variable)
 
   String variables must have a $ suffix. Float variables can use a # suffix.
-  Numeric variables without a suffix default to i32.
+  64-bit integer variables can use an & suffix. Numeric variables without a
+  suffix default to i32.
+
+
+Integer Literals:
+
+  Integer literals support decimal and hexadecimal forms:
+
+    A = 42
+    B = 0x2A          ' C-style hex
+    C = &H2A          ' QuickBASIC-style hex
+    D& = 4294967296&  ' explicit i64 literal
+
+  A trailing & marks an integer literal as i64. Decimal/hex literals outside
+  i32 range are also treated as i64 automatically.
 
   In mixed arithmetic, i32 values are promoted to f32 automatically:
 
@@ -118,7 +135,7 @@ Math Functions (compiler-only):
   FLOOR(x)            Floor (round toward -infinity). Returns f32.
   CEIL(x)             Ceiling (round toward +infinity). Returns f32.
   FMOD(x, y)          Floating-point remainder. Returns f32.
-  SGN(x)              Sign: returns 1, 0, or -1 (i32). Works on i32 or f32.
+  SGN(x)              Sign: returns 1, 0, or -1 (i32). Works on i32, i64, or f32.
 
 Type Conversion:
 
@@ -349,8 +366,9 @@ String Functions:
   RIGHT$(s$, n)           Last n characters. Returns str.
   CHR$(n)                 Character from ASCII code. Returns str.
   ASC(s$)                 ASCII code of first character. Returns i32.
-  STR$(x)                 Number to string (works with i32 or f32). Returns str.
+  STR$(x)                 Number to string (works with i32, i64, or f32). Returns str.
   VAL(s$)                 String to integer. Returns i32.
+  VAL&(s$)                String to 64-bit integer. Returns i64.
   VAL#(s$)                String to float. Returns f32.
   UPPER$(s$)              Convert to uppercase. Returns str.
   UCASE$(s$)              Alias for UPPER$.
@@ -768,10 +786,11 @@ Compiles to a WASM function that:
 
 The return type is determined by the SUB name suffix:
   - No suffix: returns i32 (e.g. SUB COUNT)
+  - & suffix:  returns i64 (e.g. SUB ACCUM&)
   - # suffix:  returns f32 (e.g. SUB AVERAGE#)
   - $ suffix:  returns str (e.g. SUB GREET$)
 
-All three types are supported for parameters and LOCAL variables.
+All four types are supported for parameters and LOCAL variables.
 At the WASM level, strings are i32 pointers, so string parameters
 use WASM i32 type.
 

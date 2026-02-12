@@ -89,6 +89,13 @@ uint32_t psram_size(void);
 // When false, psram_malloc() still works — it uses the system heap.
 bool     psram_available(void);
 
+// Current SPI clock frequency in Hz (0 on boards without SPI PSRAM).
+uint32_t psram_get_freq(void);
+
+// Change SPI clock at runtime (1–80 MHz). Flushes cache, acquires mutex.
+// Returns 0 on success, -1 on error. No-op on native/stub boards.
+int      psram_change_freq(uint32_t freq_hz);
+
 // ---- Read / Write ----
 //
 // All read/write functions accept addresses returned by psram_malloc().

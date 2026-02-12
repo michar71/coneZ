@@ -360,6 +360,11 @@ static void parse_local_array_init_level(int local_idx, CType base_type, int ele
 /* ---- Statement parser ---- */
 
 void parse_stmt(void) {
+    if (tok != TOK_EOF) {
+        emit_i32_const(line_num);
+        emit_global_set(GLOBAL_LINE);
+    }
+
     if (tok == TOK_LBRACE) {
         parse_block();
         return;

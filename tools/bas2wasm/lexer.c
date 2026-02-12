@@ -37,11 +37,24 @@ int read_tok(void) {
     if (!*lp || *lp == '\'') return tok = TOK_EOF;
 
     /* Number (int or float) */
-    if (isdigit((unsigned char)*lp) || (*lp == '.' && isdigit((unsigned char)lp[1]))) {
+    if ((*lp == '&' && (lp[1] == 'H' || lp[1] == 'h')) ||
+        isdigit((unsigned char)*lp) || (*lp == '.' && isdigit((unsigned char)lp[1]))) {
+        tok_num_is_i64 = 0;
         int is_float = 0;
         char *start = lp;
+        if (*lp == '&' && (lp[1] == 'H' || lp[1] == 'h')) {
+            lp += 2;
+            tokq = strtoll(lp, &lp, 16);
+            tokv = (int)tokq;
+            if (*lp == '&') { tok_num_is_i64 = 1; lp++; }
+            if (tokq > 2147483647LL || tokq < -2147483648LL) tok_num_is_i64 = 1;
+            return tok = TOK_NUMBER;
+        }
         if (lp[0] == '0' && (lp[1] == 'x' || lp[1] == 'X')) {
-            tokv = (int)strtol(lp, &lp, 16);
+            tokq = strtoll(lp, &lp, 16);
+            tokv = (int)tokq;
+            if (*lp == '&') { tok_num_is_i64 = 1; lp++; }
+            if (tokq > 2147483647LL || tokq < -2147483648LL) tok_num_is_i64 = 1;
             return tok = TOK_NUMBER;
         }
         while (isdigit((unsigned char)*lp)) lp++;
@@ -53,7 +66,10 @@ int read_tok(void) {
             tokf = strtof(start, NULL);
             return tok = TOK_FLOAT;
         }
-        tokv = (int)strtol(start, NULL, 10);
+        tokq = strtoll(start, &lp, 10);
+        tokv = (int)tokq;
+        if (*lp == '&') { tok_num_is_i64 = 1; lp++; }
+        if (tokq > 2147483647LL || tokq < -2147483648LL) tok_num_is_i64 = 1;
         return tok = TOK_NUMBER;
     }
 
@@ -81,6 +97,8 @@ int read_tok(void) {
         if (*lp == '#') { if (tp - tokn < 15) *tp++ = '#'; lp++; }
         /* Allow $ suffix for string variable/function names */
         if (*lp == '$') { if (tp - tokn < 15) *tp++ = '$'; lp++; }
+        /* Allow & suffix for 64-bit integer variable/function names */
+        if (*lp == '&') { if (tp - tokn < 15) *tp++ = '&'; lp++; }
         *tp = 0;
         for (k = kwd; *k; k++)
             if (strcmp(tokn, *k) == 0) return tok = (k - kwd) + TOK_AND;

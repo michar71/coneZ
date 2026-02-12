@@ -63,7 +63,10 @@ SENSOR_F(get_sun_elevation, sun_elevation)
 
 // Cue
 SENSOR_I(cue_playing, cue_playing)
-SENSOR_I(cue_elapsed, cue_elapsed)
+m3ApiRawFunction(m3_cue_elapsed) {
+    m3ApiReturnType(int64_t);
+    m3ApiReturn((int64_t)sensorState().get(&SensorMock::cue_elapsed));
+}
 
 // ---- Link ----
 
@@ -122,7 +125,7 @@ M3Result link_sensor_imports(IM3Module module)
 
     // Cue
     LINK("cue_playing", "i()", m3_cue_playing)
-    LINK("cue_elapsed", "i()", m3_cue_elapsed)
+    LINK("cue_elapsed", "I()", m3_cue_elapsed)
 
     return m3Err_none;
 }

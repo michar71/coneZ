@@ -10,6 +10,18 @@ ConeZ is an ESP32-S3 embedded system that powers networked LED light displays on
 
 All commands run from the `firmware/` directory. The build system is PlatformIO with Arduino framework.
 
+If `pio` is not on `PATH`, use the local PlatformIO virtualenv binary:
+
+```bash
+/home/ryan/.platformio/penv/bin/pio run -e conez-v0-1
+```
+
+or export it for the current shell session:
+
+```bash
+export PATH="$HOME/.platformio/penv/bin:$PATH"
+```
+
 ```bash
 # Build for ConeZ custom PCB (default)
 pio run -e conez-v0-1
@@ -105,7 +117,7 @@ Each file contains its wrapper functions and a `link_*_imports()` function that 
 
 **Naming convention:** Host imports that are useful to C and Rust modules use short names matching libc conventions (e.g. `sinf`, `get_temp`, `led_fill`). Imports that exist only to support the BASIC-to-WASM compiler and aren't useful for C/Rust modules use a `basic_` prefix (e.g. `basic_str_alloc`, `basic_str_concat`, `basic_str_hex`).
 
-**Host imports** (module `"env"`): LED (`led_set_pixel`, `led_fill`, `led_show`, `led_count`, `led_set_pixel_hsv`, `led_fill_hsv`, `hsv_to_rgb`, `rgb_to_hsv`, `led_gamma8`, `led_set_gamma`, `led_set_buffer`, `led_shift`, `led_rotate`, `led_reverse`), GPIO (`pin_set`, `pin_clear`, `pin_read`, `analog_read`), GPS (`get_lat`, `get_lon`, `get_alt`, `get_speed`, `get_dir`, `gps_valid`), GPS origin/geometry (`get_origin_lat`, `get_origin_lon`, `has_origin`, `origin_dist`, `origin_bearing`), IMU (`get_roll`, `get_pitch`, `get_yaw`, `get_acc_x/y/z`, `imu_valid`), environment (`get_temp`, `get_humidity`, `get_brightness`, `get_bat_voltage`, `get_solar_voltage`), sun position (`get_sunrise`, `get_sunset`, `sun_valid`, `is_daylight`), cue engine (`cue_playing`, `cue_elapsed`), date/time (`get_year`, `get_month`, `get_day`, `get_hour`, `get_minute`, `get_second`, `get_day_of_week`, `get_day_of_year`, `get_is_leap_year`, `time_valid`, `get_epoch_ms`, `millis`, `delay_ms`), event sync (`wait_pps`, `wait_param`), params (`get_param`, `set_param`, `should_stop`), output (`print_i32`, `print_f32`, `print_i64`, `print_f64`, `print_str`), math float (`sinf`, `cosf`, `tanf`, `asinf`, `acosf`, `atanf`, `atan2f`, `powf`, `expf`, `logf`, `log2f`, `fmodf`), math double (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `pow`, `exp`, `log`, `log2`, `fmod`), curve (`lerp`, `larp`, `larpf`), printf/scanf (`host_printf`, `host_snprintf`, `host_sscanf`), LUT (`lut_load`, `lut_get`, `lut_size`, `lut_set`, `lut_save`, `lut_check`), file I/O (`file_open`, `file_close`, `file_read`, `file_write`, `file_size`, `file_seek`, `file_tell`, `file_exists`, `file_delete`, `file_rename`). Full reference in `documentation/wasm-api.txt`.
+**Host imports** (module `"env"`): LED (`led_set_pixel`, `led_fill`, `led_show`, `led_count`, `led_set_pixel_hsv`, `led_fill_hsv`, `hsv_to_rgb`, `rgb_to_hsv`, `led_gamma8`, `led_set_gamma`, `led_set_buffer`, `led_shift`, `led_rotate`, `led_reverse`), GPIO (`pin_set`, `pin_clear`, `pin_read`, `analog_read`), GPS (`get_lat`, `get_lon`, `get_alt`, `get_speed`, `get_dir`, `gps_valid`), GPS origin/geometry (`get_origin_lat`, `get_origin_lon`, `has_origin`, `origin_dist`, `origin_bearing`), IMU (`get_roll`, `get_pitch`, `get_yaw`, `get_acc_x/y/z`, `imu_valid`), environment (`get_temp`, `get_humidity`, `get_brightness`, `get_bat_voltage`, `get_solar_voltage`), sun position (`get_sunrise`, `get_sunset`, `sun_valid`, `is_daylight`), cue engine (`cue_playing`, `cue_elapsed`), date/time (`get_year`, `get_month`, `get_day`, `get_hour`, `get_minute`, `get_second`, `get_day_of_week`, `get_day_of_year`, `get_is_leap_year`, `time_valid`, `get_epoch_ms`, `millis`, `millis64`, `delay_ms`), event sync (`wait_pps`, `wait_param`), params (`get_param`, `set_param`, `should_stop`), output (`print_i32`, `print_f32`, `print_i64`, `print_f64`, `print_str`), math float (`sinf`, `cosf`, `tanf`, `asinf`, `acosf`, `atanf`, `atan2f`, `powf`, `expf`, `logf`, `log2f`, `fmodf`), math double (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `pow`, `exp`, `log`, `log2`, `fmod`), curve (`lerp`, `larp`, `larpf`), printf/scanf (`host_printf`, `host_snprintf`, `host_sscanf`), LUT (`lut_load`, `lut_get`, `lut_size`, `lut_set`, `lut_save`, `lut_check`), file I/O (`file_open`, `file_close`, `file_read`, `file_write`, `file_size`, `file_seek`, `file_tell`, `file_exists`, `file_delete`, `file_rename`). Full reference in `documentation/wasm-api.txt`.
 
 **WASI support** (module `"wasi_snapshot_preview1"`): Minimal WASI stubs so `println!()` works in Rust when compiled with `--target=wasm32-wasip1`. `fd_write` handles stdout/stderr via `printfnl(SOURCE_WASM, ...)`. `fd_seek`, `fd_close` return EBADF. `proc_exit` sets the stop flag. All WASM output uses the `SOURCE_WASM` debug channel (filterable independently from BASIC via `debug.wasm` config key or `debug WASM` CLI command).
 
@@ -124,7 +136,7 @@ Option 1 — **c2wasm** (self-contained, no external dependencies):
 cd tools/c2wasm && make          # build the compiler once
 ./c2wasm ../wasm/examples/rgb_cycle.c -o rgb_cycle.wasm
 ```
-c2wasm compiles a C subset (int/float/double/void/char/long long, unsigned int/unsigned long long/uint8_t..uint64_t/size_t, short/signed/_Bool/bool, const enforcement, if/else/for/while/do/switch, full operator precedence, comma operator, ternary, multidimensional arrays with chained subscripts and compound assignment, nested/designated array initializers, pointer arithmetic/dereference/address-of/increment with element-size scaling (including local/global scalar linear-memory spill-slot addressing), `#include "conez_api.h"`, `#define`/`#undef` (with line continuation), `#ifdef`/`#ifndef`/`#elif`/`#else`/`#endif`/`#if` with full constant expressions, `#error`/`#warning`, printf, host_snprintf, file I/O, malloc/free/calloc/realloc imports, WASM-native sqrtf/fabsf/floorf/ceilf/truncf/fminf/fmaxf + f64 equivalents, f64 math sin/cos/tan/etc.) directly to WASM. No clang, LLVM, or SDK needed. Test suite: `make test` (currently 141 tests). See `documentation/c2wasm.txt` for the full reference.
+c2wasm compiles a C subset (int/float/double/void/char/long long, unsigned int/unsigned long long/uint8_t..uint64_t/size_t, short/signed/_Bool/bool, const enforcement, if/else/for/while/do/switch, full operator precedence, comma operator, ternary, multidimensional arrays with chained subscripts and compound assignment, nested/designated array initializers, pointer arithmetic/dereference/address-of/increment with element-size scaling (including local/global scalar linear-memory spill-slot addressing), `#include "conez_api.h"`, `#define`/`#undef` (with line continuation), `#ifdef`/`#ifndef`/`#elif`/`#else`/`#endif`/`#if` with full constant expressions, `#error`/`#warning`, printf, host_snprintf, file I/O, malloc/free/calloc/realloc imports, WASM-native sqrtf/fabsf/floorf/ceilf/truncf/fminf/fmaxf + f64 equivalents, f64 math sin/cos/tan/etc.) directly to WASM. No clang, LLVM, or SDK needed. Test suite: `make test` (currently 142 tests). See `documentation/c2wasm.txt` for the full reference.
 
 Option 2 — **clang** (full C, optimized output):
 ```bash
@@ -235,7 +247,7 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 
 | Define | Board | Behavior |
 |---|---|---|
-| `BOARD_HAS_IMPROVISED_PSRAM` | ConeZ PCB v0.1 | External LY68L6400SLIT 8MB SPI PSRAM on GPIO 4/5/6/7 (FSPI bus). Accessed via SPI commands, not memory-mapped. |
+| `BOARD_HAS_IMPROVISED_PSRAM` | ConeZ PCB v0.1 | External LY68L6400SLIT 8MB SPI PSRAM on GPIO 5/4/6/7 (CE/MISO/SCK/MOSI, FSPI bus). Accessed via SPI commands, not memory-mapped. |
 | `BOARD_HAS_NATIVE_PSRAM` | Future boards | ESP-IDF memory-mapped PSRAM. Wraps `ps_malloc()`/`free()`. Addresses are real pointers. |
 | Neither | Heltec LoRa32 V3 | All allocations silently fall back to the system heap (`malloc`/`free`). |
 
@@ -249,9 +261,26 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 
 **Thread safety:** All public functions are protected by a recursive FreeRTOS mutex. Safe to call from any task. The memory test (`psram_test`) runs without the mutex and requires exclusive access — refuses to run if any allocations exist.
 
-**CLI:** `psram` shows status (size, used/free, contiguous, alloc slots used/max, cache hit rate). `psram test` runs a full memory test with throughput benchmark. `psram test forever` loops until error or keypress. `mem` also includes a PSRAM summary.
+**CLI:** `psram` shows status (size, used/free, contiguous, alloc slots used/max, cache hit rate, SPI clock). `psram test` runs a full memory test with throughput benchmark. `psram test forever` loops until error or keypress. `psram freq <MHz>` changes SPI clock at runtime (5–80 MHz) for benchmarking. `mem` also includes a PSRAM summary.
 
-**Hardware details (ConeZ PCB):** LY68L6400SLIT (Lyontek), 64Mbit/8MB, 23-bit address, SPI-only wiring (no quad), 33 MHz clock on FSPI bus (SPI2). Fast Read command `0x0B` with 8 wait cycles. 8µs tCEM max per CE# assertion — driver chunks transfers to stay within budget. 1KB page size. Datasheet: `hardware/datasheets/LY68L6400SLIT.pdf`.
+**Hardware details (ConeZ PCB):** LY68L6400SLIT (Lyontek), 64Mbit/8MB, 23-bit address, SPI-only wiring (no quad), FSPI bus (SPI2) on GPIO 5/4/6/7 (CE/MISO/SCK/MOSI). These are **GPIO matrix** routed (not IOMUX), so the documented reliable max is 26 MHz; IOMUX pins (GPIO 10–13) would allow 80 MHz. Default boot clock: 40 MHz (APB/2). Read command auto-selects: slow read `0x03` (no wait, max 33 MHz) vs fast read `0x0B` (8 wait cycles, max 133 MHz). 8µs tCEM max per CE# assertion — driver chunks transfers to stay within budget. 1KB page size. Datasheet: `hardware/datasheets/LY68L6400SLIT.pdf`.
+
+**SPI clock and tCEM:** ESP32-S3 SPI clock = APB (80 MHz) / integer N. The driver computes the actual achieved frequency and sizes chunks accordingly. At low frequencies, the 4-byte command overhead (cmd + 3 addr) dominates — at 5 MHz only 1 byte of payload fits per tCEM window.
+
+**Throughput benchmarks (ConeZ PCB v0.1, 8MB, `psram test`):**
+
+| Actual SPI Clock | Read KB/s | Write KB/s | Notes |
+|---|---|---|---|
+| 5.00 MHz | 88 | 93 | 1 byte payload/chunk — overhead-dominated |
+| 6.67 MHz | 97 | 103 | |
+| 8.00 MHz | 346 | 374 | |
+| 10.00 MHz | 498 | 545 | |
+| 13.33 MHz | 705 | 786 | |
+| 16.00 MHz | 917 | 1,030 | |
+| 20.00 MHz | 1,233 | 1,414 | |
+| 26.67 MHz | 1,603 | 1,893 | Max documented for GPIO matrix routing |
+| 40.00 MHz | 2,216 | 2,800 | Default boot clock (APB/2) |
+| 80.00 MHz | 3,327 | 4,534 | APB/1 — requires IOMUX pins for reliability |
 
 ### Configuration
 

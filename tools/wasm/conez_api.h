@@ -248,7 +248,7 @@ int cue_playing(void);
 
 /* Milliseconds elapsed since cue playback started. 0 if not playing. */
 __attribute__((import_module("env"), import_name("cue_elapsed")))
-int cue_elapsed(void);
+int64_t cue_elapsed(void);
 
 /* ---- GPIO ---- */
 
@@ -277,6 +277,10 @@ int64_t get_epoch_ms(void);
 /* Milliseconds since boot (wraps at ~49 days). */
 __attribute__((import_module("env"), import_name("millis")))
 int millis(void);
+
+/* Milliseconds since boot as int64_t (no wrap). */
+__attribute__((import_module("env"), import_name("millis64")))
+int64_t millis64(void);
 
 /* Delay and yield to FreeRTOS. MUST be called in tight loops. */
 __attribute__((import_module("env"), import_name("delay_ms")))

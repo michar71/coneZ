@@ -27,6 +27,9 @@ static void compile_format(void) {
         VType t = vpop();
         if (t == T_F32) {
             buf_byte(CODE, OP_F32_STORE); buf_uleb(CODE, 2); buf_uleb(CODE, nargs * 4);
+        } else if (t == T_I64) {
+            emit_op(OP_I32_WRAP_I64);
+            emit_i32_store(nargs * 4);
         } else {
             emit_i32_store(nargs * 4);
         }
@@ -90,8 +93,10 @@ static void compile_sub(void) {
     vars[var].param_count = np;
     for (int i = 0; i < np; i++) vars[var].param_vars[i] = params[i];
     f->nparams = np;
-    for (int i = 0; i < np; i++)
-        f->param_types[i] = (vars[params[i]].type_set && vars[params[i]].type == T_F32) ? WASM_F32 : WASM_I32;
+    for (int i = 0; i < np; i++) {
+        VType pt = vars[params[i]].type_set ? vars[params[i]].type : T_I32;
+        f->param_types[i] = wasm_type_for_vtype(pt);
+    }
 
     int prev_func = cur_func;
     int prev_depth = block_depth;
@@ -99,8 +104,10 @@ static void compile_sub(void) {
     block_depth = 0;
 
     int saved[8];
-    for (int i = 0; i < np; i++)
-        saved[i] = (f->param_types[i] == WASM_F32) ? alloc_local_f32() : alloc_local();
+    for (int i = 0; i < np; i++) {
+        VType pt = vars[params[i]].type_set ? vars[params[i]].type : T_I32;
+        saved[i] = alloc_local_for_vtype(pt);
+    }
 
     for (int i = 0; i < np; i++) {
         emit_global_get(vars[params[i]].global_idx);
@@ -151,6 +158,8 @@ static void close_sub(void) {
 
     if (vars[var].type_set && vars[var].type == T_F32)
         emit_f32_const(0.0f);
+    else if (vars[var].type_set && vars[var].type == T_I64)
+        emit_i64_const(0);
     else
         emit_i32_const(0);
     emit_end();
@@ -172,13 +181,16 @@ static void close_for(void) {
     if (ctrl_stk[ctrl_sp].kind != CTRL_FOR) { error_at("NEXT without FOR"); return; }
     int var = ctrl_stk[ctrl_sp].for_var;
     int is_float = (vars[var].type_set && vars[var].type == T_F32);
+    int is_i64 = (vars[var].type_set && vars[var].type == T_I64);
     emit_global_get(vars[var].global_idx);
     if (ctrl_stk[ctrl_sp].for_has_step) {
         emit_local_get(ctrl_stk[ctrl_sp].for_step_local);
     } else {
-        if (is_float) emit_f32_const(1.0f); else emit_i32_const(1);
+        if (is_float) emit_f32_const(1.0f);
+        else if (is_i64) emit_i64_const(1);
+        else emit_i32_const(1);
     }
-    emit_op(is_float ? OP_F32_ADD : OP_I32_ADD);
+    emit_op(is_float ? OP_F32_ADD : (is_i64 ? OP_I64_ADD : OP_I32_ADD));
     emit_global_set(vars[var].global_idx);
     emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
     emit_end();
@@ -226,25 +238,26 @@ static void compile_for(void) {
     int var = tokv;
     if (vars[var].type == T_STR) { error_at("FOR loop variable cannot be a string"); return; }
     int is_float = (vars[var].type_set && vars[var].type == T_F32);
+    int is_i64 = (vars[var].type_set && vars[var].type == T_I64);
     need(TOK_EQ);
     expr();
-    if (is_float) coerce_f32(); else coerce_i32();
+    if (is_float) coerce_f32(); else if (is_i64) coerce_i64(); else coerce_i32();
     vpop();
     emit_global_set(vars[var].global_idx);
     need(TOK_TO);
     expr();
-    if (is_float) coerce_f32(); else coerce_i32();
+    if (is_float) coerce_f32(); else if (is_i64) coerce_i64(); else coerce_i32();
     vpop();
-    int limit_local = is_float ? alloc_local_f32() : alloc_local();
+    int limit_local = is_float ? alloc_local_f32() : (is_i64 ? alloc_local_i64() : alloc_local());
     emit_local_set(limit_local);
 
     int step_local = -1;
     int has_step = 0;
     if (want(TOK_STEP)) {
         expr();
-        if (is_float) coerce_f32(); else coerce_i32();
+        if (is_float) coerce_f32(); else if (is_i64) coerce_i64(); else coerce_i32();
         vpop();
-        step_local = is_float ? alloc_local_f32() : alloc_local();
+        step_local = is_float ? alloc_local_f32() : (is_i64 ? alloc_local_i64() : alloc_local());
         emit_local_set(step_local);
         has_step = 1;
     }
@@ -255,19 +268,21 @@ static void compile_for(void) {
     if (has_step) {
         emit_global_get(vars[var].global_idx);
         emit_local_get(limit_local);
-        emit_op(is_float ? OP_F32_GT : OP_I32_GT_S);
+        emit_op(is_float ? OP_F32_GT : (is_i64 ? OP_I64_GT_S : OP_I32_GT_S));
         emit_global_get(vars[var].global_idx);
         emit_local_get(limit_local);
-        emit_op(is_float ? OP_F32_LT : OP_I32_LT_S);
+        emit_op(is_float ? OP_F32_LT : (is_i64 ? OP_I64_LT_S : OP_I32_LT_S));
         emit_local_get(step_local);
-        if (is_float) emit_f32_const(0.0f); else emit_i32_const(0);
-        emit_op(is_float ? OP_F32_GT : OP_I32_GT_S);
+        if (is_float) emit_f32_const(0.0f);
+        else if (is_i64) emit_i64_const(0);
+        else emit_i32_const(0);
+        emit_op(is_float ? OP_F32_GT : (is_i64 ? OP_I64_GT_S : OP_I32_GT_S));
         emit_op(OP_SELECT);
         emit_br_if(1);
     } else {
         emit_global_get(vars[var].global_idx);
         emit_local_get(limit_local);
-        emit_op(is_float ? OP_F32_GT : OP_I32_GT_S);
+        emit_op(is_float ? OP_F32_GT : (is_i64 ? OP_I64_GT_S : OP_I32_GT_S));
         emit_br_if(1);
     }
 
@@ -322,10 +337,8 @@ static void compile_const(void) {
         if (!vars[var].type_set) {
             vars[var].type = et;
             vars[var].type_set = 1;
-        } else if (vars[var].type == T_I32 && et == T_F32) {
-            emit_op(OP_I32_TRUNC_F32_S);
-        } else if (vars[var].type == T_F32 && et == T_I32) {
-            emit_op(OP_F32_CONVERT_I32_S);
+        } else {
+            coerce_to(vars[var].type);
         }
         emit_global_set(vars[var].global_idx);
     }
@@ -382,7 +395,7 @@ static int parse_dim_indices_to_addr(int var, int *out_addr_local, int *out_dims
     emit_i32_const((ndims + 1) * 4);
     emit_op(OP_I32_ADD);
     emit_local_get(flat_local);
-    emit_i32_const(4);
+    emit_i32_const((vars[var].type_set && vars[var].type == T_I64) ? 8 : 4);
     emit_op(OP_I32_MUL);
     emit_op(OP_I32_ADD);
     emit_local_set(addr_local);
@@ -435,7 +448,9 @@ static void compile_dim_core(int preserve) {
     int old_count_local = alloc_local();
     int new_count_local = alloc_local();
     int total_words_local = alloc_local();
+    int total_bytes_local = alloc_local();
     int new_ptr_local = alloc_local();
+    int elem_size = (vars[var].type_set && vars[var].type == T_I64) ? 8 : 4;
 
     emit_global_get(vars[var].global_idx);
     emit_local_set(old_ptr_local);
@@ -457,6 +472,13 @@ static void compile_dim_core(int preserve) {
     emit_local_get(new_count_local);
     emit_op(OP_I32_ADD);
     emit_local_set(total_words_local);
+
+    emit_i32_const((ndims + 1) * 4);
+    emit_local_get(new_count_local);
+    emit_i32_const(elem_size);
+    emit_op(OP_I32_MUL);
+    emit_op(OP_I32_ADD);
+    emit_local_set(total_bytes_local);
 
     emit_i32_const(0);
     emit_local_set(old_count_local);
@@ -483,9 +505,7 @@ static void compile_dim_core(int preserve) {
 
     if (preserve) {
         emit_local_get(old_ptr_local);
-        emit_local_get(total_words_local);
-        emit_i32_const(4);
-        emit_op(OP_I32_MUL);
+        emit_local_get(total_bytes_local);
         emit_call(IMP_REALLOC);
         emit_local_set(new_ptr_local);
     } else {
@@ -493,8 +513,7 @@ static void compile_dim_core(int preserve) {
             emit_local_get(old_ptr_local);
             emit_call(IMP_FREE);
         }
-        emit_local_get(total_words_local);
-        emit_i32_const(4);
+        emit_local_get(total_bytes_local);
         emit_call(IMP_CALLOC);
         emit_local_set(new_ptr_local);
     }
@@ -539,11 +558,12 @@ static void compile_dim_core(int preserve) {
 
         emit_local_get(data_base_local);
         emit_local_get(idx_local);
-        emit_i32_const(4);
+        emit_i32_const(elem_size);
         emit_op(OP_I32_MUL);
         emit_op(OP_I32_ADD);
         emit_i32_const(0);
-        emit_i32_store(0);
+        if (elem_size == 8) emit_i64_store(0);
+        else emit_i32_store(0);
 
         emit_local_get(idx_local);
         emit_i32_const(1);
@@ -599,7 +619,8 @@ static void compile_local(void) {
         int var = tokv;
         if (vars[sub_var].local_count >= 8) { error_at("too many LOCAL variables (max 8)"); return; }
         vars[sub_var].local_vars[vars[sub_var].local_count++] = var;
-        int saved = (vars[var].type_set && vars[var].type == T_F32) ? alloc_local_f32() : alloc_local();
+        VType vt = vars[var].type_set ? vars[var].type : T_I32;
+        int saved = alloc_local_for_vtype(vt);
         emit_global_get(vars[var].global_idx);
         emit_local_set(saved);
         if (vars[var].type == T_STR) {
@@ -618,6 +639,7 @@ static void compile_return(void) {
     int np = vars[sub_var].param_count;
 
     int sub_is_float = (vars[sub_var].type_set && vars[sub_var].type == T_F32);
+    int sub_is_i64 = (vars[sub_var].type_set && vars[sub_var].type == T_I64);
     int sub_is_str = (vars[sub_var].type_set && vars[sub_var].type == T_STR);
 
     if (!want(TOK_EOF)) {
@@ -625,9 +647,10 @@ static void compile_return(void) {
         expr();
         if (sub_is_str) { /* no coercion — string is already i32 pointer */ }
         else if (sub_is_float) coerce_f32();
+        else if (sub_is_i64) coerce_i64();
         else coerce_i32();
         vpop();
-        int ret_local = sub_is_float ? alloc_local_f32() : alloc_local();
+        int ret_local = sub_is_float ? alloc_local_f32() : (sub_is_i64 ? alloc_local_i64() : alloc_local());
         emit_local_set(ret_local);
 
         for (int i = 0; i < np; i++) {
@@ -670,7 +693,9 @@ static void compile_return(void) {
             emit_local_get(np + np + i);
             emit_global_set(vars[lvar].global_idx);
         }
-        if (sub_is_float) emit_f32_const(0.0f); else emit_i32_const(0);
+        if (sub_is_float) emit_f32_const(0.0f);
+        else if (sub_is_i64) emit_i64_const(0);
+        else emit_i32_const(0);
         emit_return();
     }
 }
@@ -682,6 +707,8 @@ static void compile_select(void) {
     int test_local;
     if (test_type == T_F32) {
         test_local = alloc_local_f32();
+    } else if (test_type == T_I64) {
+        test_local = alloc_local_i64();
     } else {
         test_local = alloc_local();
     }
@@ -754,14 +781,26 @@ static void compile_case(void) {
                 }
             } else {
                 emit_local_get(test_local);
-                expr(); coerce_i32(); vpop();
-                switch (op) {
-                case TOK_EQ: emit_op(OP_I32_EQ); break;
-                case TOK_NE: emit_op(OP_I32_NE); break;
-                case TOK_LT: emit_op(OP_I32_LT_S); break;
-                case TOK_GT: emit_op(OP_I32_GT_S); break;
-                case TOK_LE: emit_op(OP_I32_LE_S); break;
-                case TOK_GE: emit_op(OP_I32_GE_S); break;
+                if (test_type == T_I64) {
+                    expr(); coerce_i64(); vpop();
+                    switch (op) {
+                    case TOK_EQ: emit_op(OP_I64_EQ); break;
+                    case TOK_NE: emit_op(OP_I64_NE); break;
+                    case TOK_LT: emit_op(OP_I64_LT_S); break;
+                    case TOK_GT: emit_op(OP_I64_GT_S); break;
+                    case TOK_LE: emit_op(OP_I64_LE_S); break;
+                    case TOK_GE: emit_op(OP_I64_GE_S); break;
+                    }
+                } else {
+                    expr(); coerce_i32(); vpop();
+                    switch (op) {
+                    case TOK_EQ: emit_op(OP_I32_EQ); break;
+                    case TOK_NE: emit_op(OP_I32_NE); break;
+                    case TOK_LT: emit_op(OP_I32_LT_S); break;
+                    case TOK_GT: emit_op(OP_I32_GT_S); break;
+                    case TOK_LE: emit_op(OP_I32_LE_S); break;
+                    case TOK_GE: emit_op(OP_I32_GE_S); break;
+                    }
                 }
             }
         } else {
@@ -769,6 +808,10 @@ static void compile_case(void) {
                 emit_local_get(test_local);
                 expr(); coerce_f32(); vpop();
                 emit_op(OP_F32_EQ);
+            } else if (test_type == T_I64) {
+                emit_local_get(test_local);
+                expr(); coerce_i64(); vpop();
+                emit_op(OP_I64_EQ);
             } else if (test_type == T_STR) {
                 emit_local_get(test_local);
                 expr(); vpop();
@@ -895,6 +938,14 @@ static void compile_swap(void) {
         emit_global_set(vars[var_a].global_idx);
         emit_local_get(tmp);
         emit_global_set(vars[var_b].global_idx);
+    } else if (ta == T_I64) {
+        int tmp = alloc_local_i64();
+        emit_global_get(vars[var_a].global_idx);
+        emit_local_set(tmp);
+        emit_global_get(vars[var_b].global_idx);
+        emit_global_set(vars[var_a].global_idx);
+        emit_local_get(tmp);
+        emit_global_set(vars[var_b].global_idx);
     } else {
         int tmp = alloc_local();
         emit_global_get(vars[var_a].global_idx);
@@ -913,7 +964,12 @@ static void compile_data(void) {
         if (want(TOK_SUB)) neg = 1;
         if (want(TOK_NUMBER)) {
             data_items[ndata_items].type = T_I32;
-            data_items[ndata_items].ival = neg ? -tokv : tokv;
+            if (tok_num_is_i64) {
+                int64_t v = neg ? -tokq : tokq;
+                data_items[ndata_items].ival = (int32_t)v;
+            } else {
+                data_items[ndata_items].ival = neg ? -tokv : tokv;
+            }
             ndata_items++;
         } else if (want(TOK_FLOAT)) {
             data_items[ndata_items].type = T_F32;
@@ -971,6 +1027,25 @@ static void compile_read(void) {
                 emit_local_get(addr);
                 emit_i32_load(4);
                 emit_op(OP_F32_CONVERT_I32_S);
+                emit_global_set(vars[var].global_idx);
+            emit_end();
+        } else if (vars[var].type_set && vars[var].type == T_I64) {
+            int tag = alloc_local();
+            emit_local_get(addr);
+            emit_i32_load(0);
+            emit_local_set(tag);
+            emit_local_get(tag);
+            emit_i32_const(1);
+            emit_op(OP_I32_EQ);
+            emit_if_void();
+                emit_local_get(addr);
+                emit_f32_load(4);
+                emit_op(OP_I64_TRUNC_F32_S);
+                emit_global_set(vars[var].global_idx);
+            emit_else();
+                emit_local_get(addr);
+                emit_i32_load(4);
+                emit_op(OP_I64_EXTEND_I32_S);
                 emit_global_set(vars[var].global_idx);
             emit_end();
         } else {
@@ -1170,6 +1245,8 @@ static void compile_print_file(void) {
 
     if (t == T_I32) {
         emit_call(IMP_STR_FROM_INT);
+    } else if (t == T_I64) {
+        emit_call(IMP_STR_FROM_I64);
     } else if (t == T_F32) {
         emit_call(IMP_STR_FROM_FLOAT);
     }
@@ -1206,6 +1283,9 @@ static void compile_input_file(void) {
     } else if (vars[var].type == T_F32) {
         emit_call(IMP_STR_TO_FLOAT);
         if (!vars[var].type_set) { vars[var].type = T_F32; vars[var].type_set = 1; }
+        emit_global_set(vars[var].global_idx);
+    } else if (vars[var].type == T_I64) {
+        emit_call(IMP_STR_TO_I64);
         emit_global_set(vars[var].global_idx);
     } else {
         emit_call(IMP_STR_TO_INT);
@@ -1286,6 +1366,8 @@ void stmt(void) {
             emit_drop();
         } else if (t2 == T_F32) {
             emit_call(IMP_PRINT_F32);
+        } else if (t2 == T_I64) {
+            emit_call(IMP_PRINT_I64);
         } else {
             emit_call(IMP_PRINT_I32);
         }
@@ -1324,10 +1406,8 @@ void stmt(void) {
                 if (!vars[var].type_set) {
                     vars[var].type = et;
                     vars[var].type_set = 1;
-                } else if (vars[var].type == T_I32 && et == T_F32) {
-                    emit_op(OP_I32_TRUNC_F32_S);
-                } else if (vars[var].type == T_F32 && et == T_I32) {
-                    emit_op(OP_F32_CONVERT_I32_S);
+                } else {
+                    coerce_to(vars[var].type);
                 }
                 emit_global_set(vars[var].global_idx);
             }
@@ -1337,12 +1417,13 @@ void stmt(void) {
                 int ndims = 0;
                 if (!parse_dim_indices_to_addr(var, &addr_local, &ndims)) return;
                 need(TOK_EQ);
-                expr(); coerce_i32(); vpop();
-                int val_local = alloc_local();
+                expr(); coerce_to(vars[var].type_set ? vars[var].type : T_I32); vpop();
+                int val_local = alloc_local_for_vtype(vars[var].type_set ? vars[var].type : T_I32);
                 emit_local_set(val_local);
                 emit_local_get(addr_local);
                 emit_local_get(val_local);
-                emit_i32_store(0);
+                if (vars[var].type_set && vars[var].type == T_I64) emit_i64_store(0);
+                else emit_i32_store(0);
                 (void)ndims;
             } else {
                 if (!compile_builtin_expr(vars[var].name)) {
@@ -1354,6 +1435,10 @@ void stmt(void) {
                                 vars[vars[var].param_vars[nargs]].type_set &&
                                 vars[vars[var].param_vars[nargs]].type == T_F32)
                                 coerce_f32();
+                            else if (nargs < vars[var].param_count &&
+                                     vars[vars[var].param_vars[nargs]].type_set &&
+                                     vars[vars[var].param_vars[nargs]].type == T_I64)
+                                coerce_i64();
                             else if (nargs >= vars[var].param_count ||
                                      !vars[vars[var].param_vars[nargs]].type_set ||
                                      vars[vars[var].param_vars[nargs]].type != T_STR)
@@ -1377,6 +1462,10 @@ void stmt(void) {
                         vars[vars[var].param_vars[nargs]].type_set &&
                         vars[vars[var].param_vars[nargs]].type == T_F32)
                         coerce_f32();
+                    else if (nargs < vars[var].param_count &&
+                             vars[vars[var].param_vars[nargs]].type_set &&
+                             vars[vars[var].param_vars[nargs]].type == T_I64)
+                        coerce_i64();
                     else if (nargs >= vars[var].param_count ||
                              !vars[vars[var].param_vars[nargs]].type_set ||
                              vars[vars[var].param_vars[nargs]].type != T_STR)
