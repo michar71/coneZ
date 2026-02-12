@@ -41,7 +41,7 @@ basic-scripting.txt) with the following differences:
     - File management: KILL, NAME...AS, MKDIR, RMDIR
     - Exponentiation operator: ^ (right-associative, returns f32)
     - ELSEIF keyword (equivalent to ELSE IF)
-    - LBOUND() function (always returns 1)
+    - LBOUND()/UBOUND() with OPTION BASE support
 
   Additions (string):
     - String variables (A$, NAME$, etc.)
@@ -409,23 +409,33 @@ ELSEIF (compiler-only)
 LBOUND (compiler-only)
 ----------------------
 
-  LBOUND(array) returns the lower bound of an array. Since all arrays in
-  ConeZ BASIC are 1-based, this always returns 1.
+  LBOUND(array) returns the lower bound of an array.
+  Default lower bound is 1, configurable via OPTION BASE.
 
     DIM A(100)
-    FORMAT "Lower: %", LBOUND(A)   ' 1
+    FORMAT "Lower: %", LBOUND(A)   ' 1 (default)
     FORMAT "Upper: %", UBOUND(A)   ' 100
+
+    OPTION BASE 0
+    DIM B(100)
+    FORMAT "Lower: %", LBOUND(B)   ' 0
+    FORMAT "Upper: %", UBOUND(B)   ' 100
 
 
 DIM / REDIM / ERASE (compiler-only)
 -----------------------------------
 
-  Arrays support 1..8 dimensions and 1-based indexing.
+  Arrays support 1..8 dimensions and use the active OPTION BASE lower bound
+  (default 1, optionally 0).
 
     DIM A(10)
     DIM M(8, 8)
     A(1) = 42
     M(3, 4) = 7
+
+  OPTION BASE sets the default lower bound for arrays to 0 or 1:
+
+    OPTION BASE 0
 
   REDIM reallocates an existing array with a new shape:
 

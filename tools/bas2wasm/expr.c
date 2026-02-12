@@ -763,7 +763,7 @@ int compile_builtin_expr(const char *name) {
     /* LBOUND */
     if (strcmp(name, "LBOUND") == 0) {
         need(TOK_NAME); need(TOK_RP);
-        emit_i32_const(1);
+        emit_i32_const(option_base);
         vpush(T_I32);
         return 1;
     }
@@ -831,14 +831,18 @@ void base_expr(void) {
                     emit_global_get(vars[var].global_idx);
                     emit_i32_const((ndims + 1) * 4);
                     emit_op(OP_I32_ADD);
-                    emit_i32_load(0);
+                    emit_i32_load(0); /* upper bound */
+                    emit_i32_const(option_base);
+                    emit_op(OP_I32_SUB);
+                    emit_i32_const(1);
+                    emit_op(OP_I32_ADD); /* extent */
                     emit_local_set(dim_local);
 
                     emit_local_get(flat_local);
                     emit_local_get(dim_local);
                     emit_op(OP_I32_MUL);
                     emit_local_get(idx_locals[ndims]);
-                    emit_i32_const(1);
+                    emit_i32_const(option_base);
                     emit_op(OP_I32_SUB);
                     emit_op(OP_I32_ADD);
                     emit_local_set(flat_local);

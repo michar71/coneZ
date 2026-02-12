@@ -261,6 +261,7 @@ extern VType vstack[64];
 extern int vsp;
 
 extern int had_error;
+extern int option_base;
 
 extern FoldSlot fold_a, fold_b;
 
@@ -286,8 +287,9 @@ enum {
     TOK_OPEN=57, TOK_CLOSE_FILE=58, TOK_AS=59,
     TOK_KILL=60, TOK_MKDIR=61, TOK_RMDIR=62, TOK_ELSEIF=63,
     TOK_REDIM=64, TOK_ERASE=65, TOK_PRESERVE=66,
-    TOK_HASH=67,
-    TOK_POW=68
+    TOK_OPTION=67, TOK_BASE=68,
+    TOK_HASH=69,
+    TOK_POW=70
 };
 
 /* ================================================================

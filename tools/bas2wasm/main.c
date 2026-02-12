@@ -34,6 +34,7 @@ VType vstack[64];
 int vsp;
 
 int had_error;
+int option_base;
 
 FoldSlot fold_a, fold_b;
 
@@ -51,6 +52,7 @@ void compile(void) {
     data_len = 0;
     ndata_items = 0;
     had_error = 0;
+    option_base = 1;
     line_num = 0;
     src_pos = 0;
 

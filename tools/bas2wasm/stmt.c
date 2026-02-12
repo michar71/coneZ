@@ -353,14 +353,18 @@ static int parse_dim_indices_to_addr(int var, int *out_addr_local, int *out_dims
         emit_global_get(vars[var].global_idx);
         emit_i32_const((ndims + 1) * 4);
         emit_op(OP_I32_ADD);
-        emit_i32_load(0);
+        emit_i32_load(0); /* upper bound for this dimension */
+        emit_i32_const(option_base);
+        emit_op(OP_I32_SUB);
+        emit_i32_const(1);
+        emit_op(OP_I32_ADD); /* extent = upper - lower + 1 */
         emit_local_set(dim_local);
 
         emit_local_get(flat_local);
         emit_local_get(dim_local);
         emit_op(OP_I32_MUL);
         emit_local_get(idx_locals[ndims]);
-        emit_i32_const(1);
+        emit_i32_const(option_base);
         emit_op(OP_I32_SUB);
         emit_op(OP_I32_ADD);
         emit_local_set(flat_local);
@@ -441,6 +445,10 @@ static void compile_dim_core(int preserve) {
     for (int i = 0; i < ndims; i++) {
         emit_local_get(new_count_local);
         emit_local_get(dim_locals[i]);
+        emit_i32_const(option_base);
+        emit_op(OP_I32_SUB);
+        emit_i32_const(1);
+        emit_op(OP_I32_ADD);
         emit_op(OP_I32_MUL);
         emit_local_set(new_count_local);
     }
@@ -463,6 +471,10 @@ static void compile_dim_core(int preserve) {
             emit_i32_const((i + 1) * 4);
             emit_op(OP_I32_ADD);
             emit_i32_load(0);
+            emit_i32_const(option_base);
+            emit_op(OP_I32_SUB);
+            emit_i32_const(1);
+            emit_op(OP_I32_ADD);
             emit_op(OP_I32_MUL);
             emit_local_set(old_count_local);
         }
@@ -545,6 +557,16 @@ static void compile_dim_core(int preserve) {
 
     vars[var].mode = VAR_DIM;
     vars[var].dim_count = ndims;
+}
+
+static void compile_option(void) {
+    need(TOK_BASE);
+    need(TOK_NUMBER);
+    if (tokv != 0 && tokv != 1) {
+        error_at("OPTION BASE must be 0 or 1");
+        return;
+    }
+    option_base = tokv;
 }
 
 static void compile_dim(void) { compile_dim_core(0); }
@@ -1227,6 +1249,7 @@ void stmt(void) {
     case TOK_DIM:     compile_dim(); break;
     case TOK_REDIM:   compile_redim(); break;
     case TOK_ERASE:   compile_erase(); break;
+    case TOK_OPTION:  compile_option(); break;
     case TOK_CONST:   compile_const(); break;
     case TOK_SELECT:  compile_select(); break;
     case TOK_CASE:    compile_case(); break;
