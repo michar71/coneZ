@@ -3,6 +3,7 @@
 
 int gps_setup();
 int gps_loop();
+void gps_send_nmea(const char *body);  // send $body*CS\r\n with auto-checksum
 
 float get_lat(void);
 float get_lon(void);
@@ -26,8 +27,13 @@ int get_second(void);
 
 int get_satellites(void);
 int get_hdop(void);
+int get_fix_type(void);    // 0=unknown, 1=no fix, 2=2D, 3=3D
+float get_pdop(void);
+float get_vdop(void);
 
 bool get_pps(void);
+uint32_t get_pps_age_ms(void);  // ms since last PPS edge (UINT32_MAX if never)
+uint32_t get_pps_count(void);  // total PPS edges since boot
 
 // --- Unified time API ---
 void     pps_isr_init(void);     // attach PPS interrupt (called from gps_setup)

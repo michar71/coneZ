@@ -1,6 +1,7 @@
 #ifdef INCLUDE_WASM
 
 #include "wasm_internal.h"
+#include "main.h"
 #include "FS.h"
 #include <LittleFS.h>
 
@@ -200,7 +201,7 @@ m3ApiRawFunction(m3_file_exists) {
     m3ApiGetArg(int32_t, path_len);
     char path[WASM_MAX_PATH_LEN];
     if (!wasm_extract_path(runtime, path_ptr, path_len, path)) m3ApiReturn(0);
-    m3ApiReturn(LittleFS.exists(path) ? 1 : 0);
+    m3ApiReturn(file_exists(path) ? 1 : 0);
 }
 
 // i32 file_delete(i32 path_ptr, i32 path_len) -> 1 on success, 0 on failure

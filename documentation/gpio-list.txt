@@ -49,6 +49,26 @@ I2C devices:
   0x48  TMP102A temp sensor
   0x68  MPU-6500 IMU
 
+SPI bus routing notes:
+  PSRAM (GPIO 4-7) uses GPIO matrix — documented reliable max 26 MHz.
+  Currently runs at 40 MHz (works in testing, technically out of spec).
+  LoRa SPI (GPIO 8-11) also uses GPIO matrix — fine, LoRa is low speed.
+
+FSPI (SPI2) IOMUX pins on ESP32-S3 (for 80 MHz / QSPI in future revision):
+  GPIO  FSPI Function
+  ----  ----------------------
+    9   FSPI_HD  / SIO[3]
+   10   FSPI_CS0
+   11   FSPI_MOSI / SIO[0]
+   12   FSPI_CLK
+   13   FSPI_MISO / SIO[1]
+   14   FSPI_WP  / SIO[2]
+
+  Moving PSRAM to GPIO 9-14 would enable IOMUX QSPI at 80 MHz.
+  Conflict: LoRa currently uses GPIO 8-14. LoRa would need to move
+  to other GPIOs (via GPIO matrix — fine for LoRa's low data rate).
+  SPI3 has no IOMUX pins (always GPIO matrix, 26 MHz max).
+
 
 Heltec WiFi LoRa 32 V3 (BOARD_HELTEC_LORA32_V3)
 ESP32-S3 + SX1262 LoRa

@@ -48,6 +48,21 @@ static volatile bool     pps_edge_flag = false; // rising-edge flag, clear-on-re
 
 TinyGPSPlus gps;
 
+// Custom GSA fields (fix type, PDOP, VDOP)
+// Register for both GPGSA and GNGSA prefixes
+static TinyGPSCustom gsaFixType_GP(gps, "GPGSA", 1);   // 1=no fix, 2=2D, 3=3D
+static TinyGPSCustom gsaPDOP_GP(gps, "GPGSA", 14);
+static TinyGPSCustom gsaHDOP_GP(gps, "GPGSA", 15);
+static TinyGPSCustom gsaVDOP_GP(gps, "GPGSA", 16);
+static TinyGPSCustom gsaFixType_GN(gps, "GNGSA", 1);
+static TinyGPSCustom gsaPDOP_GN(gps, "GNGSA", 14);
+static TinyGPSCustom gsaHDOP_GN(gps, "GNGSA", 15);
+static TinyGPSCustom gsaVDOP_GN(gps, "GNGSA", 16);
+
+volatile int gps_fix_type = 0;      // 0=unknown, 1=no fix, 2=2D, 3=3D
+volatile float gps_pdop = 0;
+volatile float gps_vdop = 0;
+
 // Serial
 HardwareSerial GPSSerial(0);
 
@@ -97,6 +112,19 @@ void pps_isr_init(void)
 }
 
 
+void gps_send_nmea(const char *body)
+{
+    // Compute XOR checksum of all chars in body (between $ and *)
+    uint8_t cs = 0;
+    for (const char *p = body; *p; p++)
+        cs ^= (uint8_t)*p;
+    char msg[128];
+    snprintf(msg, sizeof(msg), "$%s*%02X\r\n", body, cs);
+    GPSSerial.print(msg);
+    printfnl(SOURCE_GPS, F("Sent: %s"), msg);
+}
+
+
 int gps_setup()
 {
     // Load origin from config
@@ -134,6 +162,14 @@ int gps_loop()
         }
 
         gps.encode( ch );
+
+        // Capture GSA fields (fix type, DOP values) from whichever prefix is active
+        if (gsaFixType_GP.isUpdated()) gps_fix_type = atoi(gsaFixType_GP.value());
+        if (gsaFixType_GN.isUpdated()) gps_fix_type = atoi(gsaFixType_GN.value());
+        if (gsaPDOP_GP.isUpdated()) gps_pdop = atof(gsaPDOP_GP.value());
+        if (gsaPDOP_GN.isUpdated()) gps_pdop = atof(gsaPDOP_GN.value());
+        if (gsaVDOP_GP.isUpdated()) gps_vdop = atof(gsaVDOP_GP.value());
+        if (gsaVDOP_GN.isUpdated()) gps_vdop = atof(gsaVDOP_GN.value());
 
         if( gps.location.isUpdated() )
         {
@@ -325,6 +361,21 @@ int get_hdop(void)
     return gps.hdop.value();
 }
 
+int get_fix_type(void)
+{
+    return gps_fix_type;
+}
+
+float get_pdop(void)
+{
+    return gps_pdop;
+}
+
+float get_vdop(void)
+{
+    return gps_vdop;
+}
+
 bool get_pps(void)
 {
     if (digitalRead(GPS_PPS_PIN) == HIGH)
@@ -345,6 +396,17 @@ bool get_pps_flag(void)
     pps_edge_flag = false;
     portEXIT_CRITICAL(&time_mux);
     return flag;
+}
+
+uint32_t get_pps_age_ms(void)
+{
+    if (pps_count == 0) return UINT32_MAX;  // never received
+    return millis() - pps_millis;
+}
+
+uint32_t get_pps_count(void)
+{
+    return pps_count;
 }
 
 
@@ -450,6 +512,7 @@ static volatile int gps_second = 0;
 int gps_setup() { return 0; }
 int gps_loop() { return 0; }
 void pps_isr_init(void) { }
+void gps_send_nmea(const char *) { }
 
 float get_lat(void) { return 0; }
 float get_lon(void) { return 0; }
@@ -498,8 +561,13 @@ bool get_isleapyear(void)
 
 int get_satellites(void) { return 0; }
 int get_hdop(void) { return 0; }
+int get_fix_type(void) { return 0; }
+float get_pdop(void) { return 0; }
+float get_vdop(void) { return 0; }
 bool get_pps(void) { return false; }
 bool get_pps_flag(void) { return false; }
+uint32_t get_pps_age_ms(void) { return UINT32_MAX; }
+uint32_t get_pps_count(void) { return 0; }
 
 
 bool get_time_valid(void)
