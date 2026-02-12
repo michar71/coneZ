@@ -1,21 +1,17 @@
-//! ConeZ WASM API — Rust bindings
-//!
-//! Rust equivalent of `conez_api.h`. All functions are imported from the
-//! "env" module by the ConeZ wasm3 runtime.
-//!
-//! Usage (no_std):
-//!   ```ignore
-//!   include!("../../conez_api.rs");  // adjust path to your module location
-//!   ```
-//!
-//! Or copy the `extern "C"` block into your lib.rs and keep only the
-//! functions you actually call — the linker will ignore unused imports.
-//!
-//! Entry points (export one or both):
-//!   ```ignore
-//!   #[no_mangle] pub extern "C" fn setup() { ... }
-//!   #[export_name = "loop"] pub extern "C" fn wasm_loop() { ... }
-//!   ```
+// ConeZ WASM API — Rust bindings
+//
+// Rust equivalent of `conez_api.h`. All functions are imported from the
+// "env" module by the ConeZ wasm3 runtime.
+//
+// Usage (no_std):
+//   include!("../../conez_api.rs");  // adjust path to your module location
+//
+// Or copy the `extern "C"` block into your lib.rs and keep only the
+// functions you actually call — the linker will ignore unused imports.
+//
+// Entry points (export one or both):
+//   #[no_mangle] pub extern "C" fn setup() { ... }
+//   #[export_name = "loop"] pub extern "C" fn wasm_loop() { ... }
 
 extern "C" {
     // ---- LED ----
@@ -182,17 +178,34 @@ extern "C" {
     pub fn file_tell(handle: i32) -> i32;
     pub fn file_exists(path: *const u8, path_len: i32) -> i32;
     pub fn file_delete(path: *const u8, path_len: i32) -> i32;
-    pub fn file_rename(old_path: *const u8, old_len: i32, new_path: *const u8, new_len: i32) -> i32;
+    pub fn file_rename(old_path: *const u8, old_len: i32, new_path: *const u8, new_len: i32)
+        -> i32;
 
     // ---- Curve / Interpolation ----
     /// Linear interpolation: returns a + t * (b - a).
     pub fn lerp(a: f32, b: f32, t: f32) -> f32;
     /// Smoothed clamped linear interpolation (integer).
-    pub fn larp(x_pos: i32, x_min: i32, x_max: i32, min_val: i32, max_val: i32,
-                offset: i32, window: i32, stride: i32) -> i32;
+    pub fn larp(
+        x_pos: i32,
+        x_min: i32,
+        x_max: i32,
+        min_val: i32,
+        max_val: i32,
+        offset: i32,
+        window: i32,
+        stride: i32,
+    ) -> i32;
     /// Smoothed clamped linear interpolation (float). stride = number of window subdivisions.
-    pub fn larpf(x_pos: f32, x_min: f32, x_max: f32, min_val: f32, max_val: f32,
-                 offset: f32, window: f32, stride: i32) -> f32;
+    pub fn larpf(
+        x_pos: f32,
+        x_min: f32,
+        x_max: f32,
+        min_val: f32,
+        max_val: f32,
+        offset: f32,
+        window: f32,
+        stride: i32,
+    ) -> f32;
 
     // ---- Math (host-imported transcendentals) ----
     pub fn sinf(x: f32) -> f32;
@@ -212,6 +225,12 @@ extern "C" {
     pub fn host_printf(fmt: *const u8, args: *const u8) -> i32;
     pub fn host_snprintf(buf: *mut u8, size: i32, fmt: *const u8, args: *const u8) -> i32;
     pub fn host_sscanf(str: *const u8, fmt: *const u8, args: *const u8) -> i32;
+
+    // ---- Allocator ----
+    pub fn malloc(size: usize) -> *mut u8;
+    pub fn free(ptr: *mut u8);
+    pub fn calloc(nmemb: usize, size: usize) -> *mut u8;
+    pub fn realloc(ptr: *mut u8, size: usize) -> *mut u8;
 }
 
 /// Wait-condition constants for `wait_param()`.
@@ -239,13 +258,19 @@ pub fn println(s: &str) {
 
 /// Unpack red from packed RGB int (returned by `hsv_to_rgb`).
 #[inline]
-pub const fn rgb_r(packed: i32) -> i32 { (packed >> 16) & 0xFF }
+pub const fn rgb_r(packed: i32) -> i32 {
+    (packed >> 16) & 0xFF
+}
 /// Unpack green from packed RGB int.
 #[inline]
-pub const fn rgb_g(packed: i32) -> i32 { (packed >> 8) & 0xFF }
+pub const fn rgb_g(packed: i32) -> i32 {
+    (packed >> 8) & 0xFF
+}
 /// Unpack blue from packed RGB int.
 #[inline]
-pub const fn rgb_b(packed: i32) -> i32 { packed & 0xFF }
+pub const fn rgb_b(packed: i32) -> i32 {
+    packed & 0xFF
+}
 
 /// Open a file by path string. Mode: 0=read, 1=write, 2=append.
 #[inline]
@@ -263,4 +288,56 @@ pub fn file_exists_str(path: &str) -> bool {
 #[inline]
 pub fn file_delete_str(path: &str) -> bool {
     unsafe { file_delete(path.as_ptr(), path.len() as i32) != 0 }
+}
+
+/// Optional allocator adapter for no_std + alloc crates.
+///
+/// Usage in your crate:
+///
+/// ```ignore
+/// #![no_std]
+/// extern crate alloc;
+/// include!("../../conez_api.rs");
+///
+/// #[global_allocator]
+/// static GLOBAL: ConezAllocator = ConezAllocator;
+/// ```
+pub struct ConezAllocator;
+
+unsafe impl core::alloc::GlobalAlloc for ConezAllocator {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        if layout.size() == 0 {
+            return core::ptr::null_mut();
+        }
+        // Host allocator is currently 4-byte aligned.
+        if layout.align() > 4 {
+            return core::ptr::null_mut();
+        }
+        malloc(layout.size())
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: core::alloc::Layout) {
+        if !ptr.is_null() {
+            free(ptr);
+        }
+    }
+
+    unsafe fn realloc(
+        &self,
+        ptr: *mut u8,
+        _layout: core::alloc::Layout,
+        new_size: usize,
+    ) -> *mut u8 {
+        realloc(ptr, new_size)
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
+        if layout.size() == 0 {
+            return core::ptr::null_mut();
+        }
+        if layout.align() > 4 {
+            return core::ptr::null_mut();
+        }
+        calloc(1, layout.size())
+    }
 }

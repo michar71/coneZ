@@ -713,6 +713,12 @@ It declares all host imports and provides safe convenience helpers.
 Include it with `include!("../../conez_api.rs")` or copy the extern
 block into your lib.rs.
 
+Rust bindings now include allocator imports (`malloc`, `free`, `calloc`,
+`realloc`) plus a `ConezAllocator` adapter implementing
+`core::alloc::GlobalAlloc` for no_std + alloc crates.
+See `tools/wasm/examples/rust_alloc_demo/` for a complete `Vec`-using
+example with `#[global_allocator]`.
+
 For Rust modules targeting wasm32-unknown-unknown with #![no_std],
 declare host imports as extern "C" blocks. Example:
 
@@ -779,6 +785,10 @@ signatures. Use i32 for int parameters, f32 for float, i64 for int64_t.
 The loop function must use #[export_name = "loop"] because `loop` is a
 Rust keyword.
 
+Allocator note: the current host allocator guarantees 4-byte alignment.
+`ConezAllocator` returns null for allocation requests requiring alignment
+greater than 4.
+
 
 Example Binary Sizes (stripped)
 -------------------------------
@@ -810,6 +820,13 @@ String pool management:
                                             Returns pointer or 0 on failure.
   void basic_str_free(int ptr)              Free a pool-allocated string.
                                             No-op for static/out-of-pool ptrs.
+
+General C allocator imports (declared in conez_api.h):
+
+  void* malloc(size_t size)                 Allocate from host-managed WASM pool.
+  void  free(void* ptr)                     Free pool allocation (safe no-op for 0).
+  void* calloc(size_t n, size_t size)       Allocate and zero n*size bytes.
+  void* realloc(void* ptr, size_t size)     Resize allocation (may move/copy).
 
 String operations (all return new pool-allocated strings):
 

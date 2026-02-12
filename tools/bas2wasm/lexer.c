@@ -9,7 +9,8 @@ static const char *kwd[] = {
     "BYE","BREAK","RESUME","PRINTS","STEP","CONST","NOT","XOR",
     "SELECT","CASE","DO","LOOP","UNTIL","EXIT","SWAP","IS",
     "DATA","READ","RESTORE","MOD","NEXT","WEND","FUNCTION",
-    "OPEN","CLOSE","AS","KILL","MKDIR","RMDIR","ELSEIF",NULL
+    "OPEN","CLOSE","AS","KILL","MKDIR","RMDIR","ELSEIF",
+    "REDIM","ERASE","PRESERVE",NULL
 };
 
 int next_line(void) {

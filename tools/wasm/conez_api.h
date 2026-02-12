@@ -615,6 +615,22 @@ typedef __SIZE_TYPE__ size_t;
 #define NULL ((void *)0)
 #endif
 
+/*
+ * Host-backed allocator helpers operating on WASM linear memory.
+ * These keep module code size small compared to embedding a full allocator.
+ */
+__attribute__((import_module("env"), import_name("malloc")))
+void *malloc(size_t size);
+
+__attribute__((import_module("env"), import_name("free")))
+void free(void *ptr);
+
+__attribute__((import_module("env"), import_name("calloc")))
+void *calloc(size_t nmemb, size_t size);
+
+__attribute__((import_module("env"), import_name("realloc")))
+void *realloc(void *ptr, size_t size);
+
 static inline void *memcpy(void *dst, const void *src, size_t n) {
     return __builtin_memcpy(dst, src, n);
 }
@@ -659,7 +675,7 @@ static inline char *strchr(const char *s, int c) {
         if (*s == (char)c) return (char *)s;
         s++;
     }
-    return c == 0 ? (char *)s : NULL;
+    return c == 0 ? (char *)s : (char *)NULL;
 }
 
 /* ---- Printf family ---- */

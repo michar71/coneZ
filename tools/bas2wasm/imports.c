@@ -132,6 +132,10 @@ ImportDef imp_defs[IMP_COUNT] = {
     [IMP_LERP]           = {"lerp",                 3,{_F,_F,_F},      1,{_F}},
     [IMP_LARP]           = {"larp",                 8,{_I,_I,_I,_I,_I,_I,_I,_I}, 1,{_I}},
     [IMP_LARPF]          = {"larpf",                8,{_F,_F,_F,_F,_F,_F,_F,_I}, 1,{_F}},
+    [IMP_MALLOC]         = {"malloc",               1,{_I},            1,{_I}},
+    [IMP_FREE]           = {"free",                 1,{_I},            0,{}},
+    [IMP_CALLOC]         = {"calloc",               2,{_I,_I},         1,{_I}},
+    [IMP_REALLOC]        = {"realloc",              2,{_I,_I},         1,{_I}},
 };
 #undef _I
 #undef _F

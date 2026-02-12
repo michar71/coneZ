@@ -4,7 +4,7 @@ CFLAGS  = --target=wasm32 -mbulk-memory -O2 -nostdlib -I .
 LDFLAGS = -Wl,--no-entry -Wl,--export=setup -Wl,--export=loop -Wl,--allow-undefined
 
 C_EXAMPLES    = examples/rgb_cycle.wasm examples/hsv_rainbow.wasm examples/sos_flash.wasm
-RUST_EXAMPLES = examples/rust_rainbow.wasm examples/rust_rgb_cycle.wasm
+RUST_EXAMPLES = examples/rust_rainbow.wasm examples/rust_rgb_cycle.wasm examples/rust_alloc_demo.wasm
 EXAMPLES      = $(C_EXAMPLES) $(RUST_EXAMPLES)
 
 all: $(EXAMPLES)
@@ -25,6 +25,12 @@ examples/rust_rgb_cycle.wasm: examples/rust_rgb_cycle/src/lib.rs examples/rust_r
 		examples/rust_rgb_cycle/target/wasm32-unknown-unknown/release/rust_rgb_cycle.wasm \
 		-o $@
 
+examples/rust_alloc_demo.wasm: examples/rust_alloc_demo/src/lib.rs examples/rust_alloc_demo/Cargo.toml conez_api.rs
+	cd examples/rust_alloc_demo && cargo build --release --target wasm32-unknown-unknown
+	wasm-opt --enable-bulk-memory -Oz \
+		examples/rust_alloc_demo/target/wasm32-unknown-unknown/release/rust_alloc_demo.wasm \
+		-o $@
+
 # Copy built modules to firmware/data/ for LittleFS upload
 install: $(EXAMPLES)
 	cp $(EXAMPLES) ../../firmware/data/
@@ -33,5 +39,6 @@ clean:
 	rm -f examples/*.wasm
 	cd examples/rust_rainbow && cargo clean
 	cd examples/rust_rgb_cycle && cargo clean
+	cd examples/rust_alloc_demo && cargo clean
 
 .PHONY: all install clean

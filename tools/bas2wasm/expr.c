@@ -814,12 +814,46 @@ void base_expr(void) {
         int var = tokv;
         if (want(TOK_LP)) {
             if (vars[var].mode == VAR_DIM) {
-                expr(); coerce_i32(); vpop();
+                int ndims = 0;
+                int idx_locals[8];
+                int dim_local = alloc_local();
+                int flat_local = alloc_local();
+
+                emit_i32_const(0);
+                emit_local_set(flat_local);
+
+                do {
+                    if (ndims >= 8) { error_at("too many dimensions (max 8)"); break; }
+                    expr(); coerce_i32(); vpop();
+                    idx_locals[ndims] = alloc_local();
+                    emit_local_set(idx_locals[ndims]);
+
+                    emit_global_get(vars[var].global_idx);
+                    emit_i32_const((ndims + 1) * 4);
+                    emit_op(OP_I32_ADD);
+                    emit_i32_load(0);
+                    emit_local_set(dim_local);
+
+                    emit_local_get(flat_local);
+                    emit_local_get(dim_local);
+                    emit_op(OP_I32_MUL);
+                    emit_local_get(idx_locals[ndims]);
+                    emit_i32_const(1);
+                    emit_op(OP_I32_SUB);
+                    emit_op(OP_I32_ADD);
+                    emit_local_set(flat_local);
+
+                    ndims++;
+                } while (want(TOK_COMMA));
                 need(TOK_RP);
-                int idx_local = alloc_local();
-                emit_local_set(idx_local);
+
+                if (vars[var].dim_count > 0 && vars[var].dim_count != ndims)
+                    error_at("array index dimension mismatch");
+
                 emit_global_get(vars[var].global_idx);
-                emit_local_get(idx_local);
+                emit_i32_const((ndims + 1) * 4);
+                emit_op(OP_I32_ADD);
+                emit_local_get(flat_local);
                 emit_i32_const(4); emit_op(OP_I32_MUL);
                 emit_op(OP_I32_ADD);
                 emit_i32_load(0);
@@ -858,8 +892,19 @@ void base_expr(void) {
     } else if (want(TOK_UBOUND)) {
         need(TOK_LP); need(TOK_NAME);
         int var = tokv;
+        int dim_local = alloc_local();
+        emit_i32_const(1);
+        emit_local_set(dim_local);
+        if (want(TOK_COMMA)) {
+            expr(); coerce_i32(); vpop();
+            emit_local_set(dim_local);
+        }
         need(TOK_RP);
         emit_global_get(vars[var].global_idx);
+        emit_local_get(dim_local);
+        emit_i32_const(4);
+        emit_op(OP_I32_MUL);
+        emit_op(OP_I32_ADD);
         emit_i32_load(0);
         vpush(T_I32);
     } else {

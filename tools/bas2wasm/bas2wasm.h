@@ -153,6 +153,7 @@ enum {
     IMP_FILE_OPEN, IMP_FILE_CLOSE, IMP_FILE_PRINT, IMP_FILE_READLN, IMP_FILE_EOF,
     IMP_FILE_DELETE, IMP_FILE_RENAME, IMP_FILE_MKDIR, IMP_FILE_RMDIR,
     IMP_LERP, IMP_LARP, IMP_LARPF,
+    IMP_MALLOC, IMP_FREE, IMP_CALLOC, IMP_REALLOC,
     IMP_COUNT
 };
 
@@ -189,6 +190,7 @@ typedef struct {
     int local_vars[8];
     int func_local_idx; /* index into func_bufs (0=setup, 1+=SUBs) */
     int is_const;       /* 1 if declared with CONST */
+    int dim_count;      /* number of DIM dimensions (0 if not an array) */
 } Var;
 
 typedef struct {
@@ -283,8 +285,9 @@ enum {
     TOK_MOD=53, TOK_NEXT=54, TOK_WEND=55, TOK_FUNCTION=56,
     TOK_OPEN=57, TOK_CLOSE_FILE=58, TOK_AS=59,
     TOK_KILL=60, TOK_MKDIR=61, TOK_RMDIR=62, TOK_ELSEIF=63,
-    TOK_HASH=64,
-    TOK_POW=65
+    TOK_REDIM=64, TOK_ERASE=65, TOK_PRESERVE=66,
+    TOK_HASH=67,
+    TOK_POW=68
 };
 
 /* ================================================================

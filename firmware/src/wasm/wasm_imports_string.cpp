@@ -89,6 +89,42 @@ static void pool_free(uint32_t ptr)
     }
 }
 
+static uint32_t pool_size(uint32_t ptr)
+{
+    for (int i = 0; i < str_nallocs; i++) {
+        if (str_allocs[i].offset == ptr && str_allocs[i].in_use)
+            return str_allocs[i].size;
+    }
+    return 0;
+}
+
+static uint32_t pool_realloc(IM3Runtime runtime, uint32_t ptr, int size)
+{
+    if (ptr == 0) return pool_alloc(runtime, size);
+    if (size <= 0) {
+        pool_free(ptr);
+        return 0;
+    }
+
+    size = (size + 3) & ~3;
+    uint32_t old_size = pool_size(ptr);
+    if (old_size == 0) return 0;
+    if (old_size >= (uint32_t)size) return ptr;
+
+    uint32_t nptr = pool_alloc(runtime, size);
+    if (nptr == 0) return 0;
+
+    uint32_t mem_size = m3_GetMemorySize(runtime);
+    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
+    if (!mem || ptr + old_size > mem_size || nptr + old_size > mem_size) {
+        pool_free(nptr);
+        return 0;
+    }
+    memcpy(mem + nptr, mem + ptr, old_size);
+    pool_free(ptr);
+    return nptr;
+}
+
 void wasm_string_pool_reset(void)
 {
     str_nallocs = 0;
@@ -112,6 +148,43 @@ m3ApiRawFunction(m3_str_free)
     m3ApiGetArg(int32_t, ptr);
     pool_free((uint32_t)ptr);
     m3ApiSuccess();
+}
+
+// i32 malloc(i32 size) -> pool pointer or 0
+m3ApiRawFunction(m3_malloc)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, size);
+    m3ApiReturn((int32_t)pool_alloc(runtime, size));
+}
+
+// void free(i32 ptr)
+m3ApiRawFunction(m3_free)
+{
+    m3ApiGetArg(int32_t, ptr);
+    pool_free((uint32_t)ptr);
+    m3ApiSuccess();
+}
+
+// i32 calloc(i32 nmemb, i32 size) -> pool pointer or 0 (pool_alloc already zeroes)
+m3ApiRawFunction(m3_calloc)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, nmemb);
+    m3ApiGetArg(int32_t, size);
+    if (nmemb <= 0 || size <= 0) m3ApiReturn(0);
+    int64_t total = (int64_t)nmemb * (int64_t)size;
+    if (total <= 0 || total > 0x7FFFFFFF) m3ApiReturn(0);
+    m3ApiReturn((int32_t)pool_alloc(runtime, (int)total));
+}
+
+// i32 realloc(i32 ptr, i32 size) -> pool pointer or 0
+m3ApiRawFunction(m3_realloc)
+{
+    m3ApiReturnType(int32_t);
+    m3ApiGetArg(int32_t, ptr);
+    m3ApiGetArg(int32_t, size);
+    m3ApiReturn((int32_t)pool_realloc(runtime, (uint32_t)ptr, size));
 }
 
 // i32 str_len(i32 ptr) -> length
@@ -563,6 +636,10 @@ M3Result link_string_imports(IM3Module module)
 
     LINK("basic_str_alloc",      "i(i)",   m3_str_alloc);
     LINK("basic_str_free",       "v(i)",   m3_str_free);
+    LINK("malloc",               "i(i)",   m3_malloc);
+    LINK("free",                 "v(i)",   m3_free);
+    LINK("calloc",               "i(ii)",  m3_calloc);
+    LINK("realloc",              "i(ii)",  m3_realloc);
     LINK("basic_str_len",        "i(i)",   m3_str_len);
     LINK("basic_str_copy",       "i(i)",   m3_str_copy);
     LINK("basic_str_concat",     "i(ii)",  m3_str_concat);

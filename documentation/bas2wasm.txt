@@ -417,6 +417,38 @@ LBOUND (compiler-only)
     FORMAT "Upper: %", UBOUND(A)   ' 100
 
 
+DIM / REDIM / ERASE (compiler-only)
+-----------------------------------
+
+  Arrays support 1..8 dimensions and 1-based indexing.
+
+    DIM A(10)
+    DIM M(8, 8)
+    A(1) = 42
+    M(3, 4) = 7
+
+  REDIM reallocates an existing array with a new shape:
+
+    REDIM M(16, 16)
+
+  REDIM PRESERVE keeps existing values and resizes the array:
+
+    REDIM PRESERVE M(8, 16)
+
+  REDIM PRESERVE currently requires the same number of dimensions.
+  If the new shape is larger, added elements are zero-initialized.
+
+  ERASE frees one or more DIM arrays and sets their pointers to null:
+
+    ERASE A
+    ERASE A, M
+
+  UBOUND supports an optional dimension argument:
+
+    UBOUND(M)      ' upper bound of dimension 1
+    UBOUND(M, 2)   ' upper bound of dimension 2
+
+
 SELECT CASE (compiler-only)
 --------------------------
 
@@ -689,13 +721,14 @@ that uses GETPARAM and FORMAT will import just those two functions.
 Memory layout:
 
   [0 .. data_end)       String constants
-  [data_end .. heap)    Heap for DIM arrays (bump-allocated)
+  [data_end .. heap)    Reserved (heap pointer global)
   [0x8000 .. 0xEFFF)   String pool (host-managed, for runtime strings)
   [0xF000 .. 0xF100)   FORMAT argument buffer (scratch space)
   [0xF100 .. 0xF110)   File handle table (4 x i32, init to -1)
 
-Variables are WASM globals (not in linear memory). Arrays are allocated
-from the heap in linear memory.
+Variables are WASM globals (not in linear memory). DIM arrays are allocated
+via host imports (calloc/free/realloc) in WASM linear memory with a small
+header containing dimension metadata.
 
 The exported `__line` global (mutable i32) tracks the current BASIC source
 line number. The compiler emits a `global.set __line` at the start of each

@@ -332,26 +332,241 @@ static void compile_const(void) {
     vars[var].is_const = 1;
 }
 
-static void compile_dim(void) {
+static int parse_dim_indices_to_addr(int var, int *out_addr_local, int *out_dims) {
+    int ndims = 0;
+    int idx_locals[8];
+    int dim_local = alloc_local();
+    int flat_local = alloc_local();
+
+    emit_i32_const(0);
+    emit_local_set(flat_local);
+
+    do {
+        if (ndims >= 8) {
+            error_at("too many dimensions (max 8)");
+            return 0;
+        }
+        expr(); coerce_i32(); vpop();
+        idx_locals[ndims] = alloc_local();
+        emit_local_set(idx_locals[ndims]);
+
+        emit_global_get(vars[var].global_idx);
+        emit_i32_const((ndims + 1) * 4);
+        emit_op(OP_I32_ADD);
+        emit_i32_load(0);
+        emit_local_set(dim_local);
+
+        emit_local_get(flat_local);
+        emit_local_get(dim_local);
+        emit_op(OP_I32_MUL);
+        emit_local_get(idx_locals[ndims]);
+        emit_i32_const(1);
+        emit_op(OP_I32_SUB);
+        emit_op(OP_I32_ADD);
+        emit_local_set(flat_local);
+
+        ndims++;
+    } while (want(TOK_COMMA));
+
+    need(TOK_RP);
+
+    if (vars[var].dim_count > 0 && vars[var].dim_count != ndims)
+        error_at("array index dimension mismatch");
+
+    int addr_local = alloc_local();
+    emit_global_get(vars[var].global_idx);
+    emit_i32_const((ndims + 1) * 4);
+    emit_op(OP_I32_ADD);
+    emit_local_get(flat_local);
+    emit_i32_const(4);
+    emit_op(OP_I32_MUL);
+    emit_op(OP_I32_ADD);
+    emit_local_set(addr_local);
+
+    *out_addr_local = addr_local;
+    *out_dims = ndims;
+    return 1;
+}
+
+static int parse_dim_decl_sizes(int dim_locals[8], int *out_ndims) {
+    int ndims = 0;
+    do {
+        if (ndims >= 8) {
+            error_at("too many dimensions (max 8)");
+            return 0;
+        }
+        expr(); coerce_i32(); vpop();
+        dim_locals[ndims] = alloc_local();
+        emit_local_set(dim_locals[ndims]);
+        ndims++;
+    } while (want(TOK_COMMA));
+    need(TOK_RP);
+    *out_ndims = ndims;
+    return 1;
+}
+
+static void compile_dim_core(int preserve) {
     need(TOK_NAME);
     int var = tokv;
-    vars[var].mode = VAR_DIM;
+    if (vars[var].type == T_STR || vars[var].type == T_F32) {
+        error_at("DIM/REDIM currently supports integer arrays only");
+        return;
+    }
+
     need(TOK_LP);
-    expr(); coerce_i32(); vpop();
-    need(TOK_RP);
-    int n_local = alloc_local();
-    emit_local_set(n_local);
-    emit_global_get(GLOBAL_HEAP);
-    emit_global_set(vars[var].global_idx);
+    int dim_locals[8];
+    int ndims = 0;
+    if (!parse_dim_decl_sizes(dim_locals, &ndims)) return;
+
+    if (preserve && vars[var].mode == VAR_DIM && vars[var].dim_count > 0 && vars[var].dim_count != ndims) {
+        error_at("REDIM PRESERVE requires same number of dimensions");
+        return;
+    }
+    if (preserve && vars[var].mode != VAR_DIM) {
+        error_at("REDIM PRESERVE requires an existing DIM array");
+        return;
+    }
+
+    int old_ptr_local = alloc_local();
+    int old_count_local = alloc_local();
+    int new_count_local = alloc_local();
+    int total_words_local = alloc_local();
+    int new_ptr_local = alloc_local();
+
     emit_global_get(vars[var].global_idx);
-    emit_local_get(n_local);
-    emit_i32_store(0);
-    emit_global_get(GLOBAL_HEAP);
-    emit_local_get(n_local);
-    emit_i32_const(1); emit_op(OP_I32_ADD);
-    emit_i32_const(4); emit_op(OP_I32_MUL);
+    emit_local_set(old_ptr_local);
+
+    emit_i32_const(1);
+    emit_local_set(new_count_local);
+    for (int i = 0; i < ndims; i++) {
+        emit_local_get(new_count_local);
+        emit_local_get(dim_locals[i]);
+        emit_op(OP_I32_MUL);
+        emit_local_set(new_count_local);
+    }
+
+    emit_i32_const(ndims + 1);
+    emit_local_get(new_count_local);
     emit_op(OP_I32_ADD);
-    emit_global_set(GLOBAL_HEAP);
+    emit_local_set(total_words_local);
+
+    emit_i32_const(0);
+    emit_local_set(old_count_local);
+    if (preserve) {
+        emit_local_get(old_ptr_local);
+        emit_if_void();
+        emit_i32_const(1);
+        emit_local_set(old_count_local);
+        for (int i = 0; i < ndims; i++) {
+            emit_local_get(old_count_local);
+            emit_local_get(old_ptr_local);
+            emit_i32_const((i + 1) * 4);
+            emit_op(OP_I32_ADD);
+            emit_i32_load(0);
+            emit_op(OP_I32_MUL);
+            emit_local_set(old_count_local);
+        }
+        emit_end();
+    }
+
+    if (preserve) {
+        emit_local_get(old_ptr_local);
+        emit_local_get(total_words_local);
+        emit_i32_const(4);
+        emit_op(OP_I32_MUL);
+        emit_call(IMP_REALLOC);
+        emit_local_set(new_ptr_local);
+    } else {
+        if (vars[var].mode == VAR_DIM) {
+            emit_local_get(old_ptr_local);
+            emit_call(IMP_FREE);
+        }
+        emit_local_get(total_words_local);
+        emit_i32_const(4);
+        emit_call(IMP_CALLOC);
+        emit_local_set(new_ptr_local);
+    }
+
+    emit_local_get(new_ptr_local);
+    emit_global_set(vars[var].global_idx);
+
+    emit_global_get(vars[var].global_idx);
+    emit_i32_const(ndims);
+    emit_i32_store(0);
+
+    for (int i = 0; i < ndims; i++) {
+        emit_global_get(vars[var].global_idx);
+        emit_i32_const((i + 1) * 4);
+        emit_op(OP_I32_ADD);
+        emit_local_get(dim_locals[i]);
+        emit_i32_store(0);
+    }
+
+    if (preserve) {
+        emit_local_get(new_count_local);
+        emit_local_get(old_count_local);
+        emit_op(OP_I32_GT_S);
+        emit_if_void();
+        int idx_local = alloc_local();
+        int data_base_local = alloc_local();
+
+        emit_local_get(old_count_local);
+        emit_local_set(idx_local);
+
+        emit_global_get(vars[var].global_idx);
+        emit_i32_const((ndims + 1) * 4);
+        emit_op(OP_I32_ADD);
+        emit_local_set(data_base_local);
+
+        emit_block();
+        emit_loop();
+        emit_local_get(idx_local);
+        emit_local_get(new_count_local);
+        emit_op(OP_I32_GE_S);
+        emit_br_if(1);
+
+        emit_local_get(data_base_local);
+        emit_local_get(idx_local);
+        emit_i32_const(4);
+        emit_op(OP_I32_MUL);
+        emit_op(OP_I32_ADD);
+        emit_i32_const(0);
+        emit_i32_store(0);
+
+        emit_local_get(idx_local);
+        emit_i32_const(1);
+        emit_op(OP_I32_ADD);
+        emit_local_set(idx_local);
+        emit_br(0);
+        emit_end();
+        emit_end();
+        emit_end();
+    }
+
+    vars[var].mode = VAR_DIM;
+    vars[var].dim_count = ndims;
+}
+
+static void compile_dim(void) { compile_dim_core(0); }
+
+static void compile_redim(void) {
+    int preserve = want(TOK_PRESERVE) ? 1 : 0;
+    compile_dim_core(preserve);
+}
+
+static void compile_erase(void) {
+    do {
+        need(TOK_NAME);
+        int var = tokv;
+        if (vars[var].mode != VAR_DIM) {
+            error_at("ERASE expects DIM array variable");
+            return;
+        }
+        emit_global_get(vars[var].global_idx);
+        emit_call(IMP_FREE);
+        emit_i32_const(0);
+        emit_global_set(vars[var].global_idx);
+    } while (want(TOK_COMMA));
 }
 
 static void compile_local(void) {
@@ -1010,6 +1225,8 @@ void stmt(void) {
         ctrl_stk[ctrl_sp-1].if_extra_ends++;
         break;
     case TOK_DIM:     compile_dim(); break;
+    case TOK_REDIM:   compile_redim(); break;
+    case TOK_ERASE:   compile_erase(); break;
     case TOK_CONST:   compile_const(); break;
     case TOK_SELECT:  compile_select(); break;
     case TOK_CASE:    compile_case(); break;
@@ -1093,17 +1310,17 @@ void stmt(void) {
             }
         } else if (want(TOK_LP)) {
             if (vars[var].mode == VAR_DIM) {
-                expr(); coerce_i32(); vpop();
-                need(TOK_RP);
+                int addr_local = -1;
+                int ndims = 0;
+                if (!parse_dim_indices_to_addr(var, &addr_local, &ndims)) return;
                 need(TOK_EQ);
-                int idx_local = alloc_local();
-                emit_local_set(idx_local);
-                emit_global_get(vars[var].global_idx);
-                emit_local_get(idx_local);
-                emit_i32_const(4); emit_op(OP_I32_MUL);
-                emit_op(OP_I32_ADD);
                 expr(); coerce_i32(); vpop();
+                int val_local = alloc_local();
+                emit_local_set(val_local);
+                emit_local_get(addr_local);
+                emit_local_get(val_local);
                 emit_i32_store(0);
+                (void)ndims;
             } else {
                 if (!compile_builtin_expr(vars[var].name)) {
                     int nargs = 0;
