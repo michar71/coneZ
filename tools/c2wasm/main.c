@@ -110,8 +110,8 @@ int main(int argc, char **argv) {
     src_pos = 0;
     line_num = 1;
 
-    /* Global 0 = _heap_ptr */
-    nglobals = 1;
+    /* Globals: 0 = _heap_ptr, 1 = __line */
+    nglobals = 2;
 
     /* Initialize function buffers */
     for (int i = 0; i < MAX_FUNCS; i++)

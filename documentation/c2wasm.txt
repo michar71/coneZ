@@ -24,7 +24,7 @@ Usage
   ./c2wasm --version                 # show version and build number
 
 The compiler reads a single .c source file and produces a WASM binary
-that exports setup(), loop(), and memory — matching the ConeZ runtime's
+that exports setup(), loop(), memory, and __line — matching the ConeZ runtime's
 expected entry points.
 
 
@@ -51,6 +51,9 @@ ConeZ API functions as known imports with their C types. No actual file
 reading or header parsing is performed.
 
 At least one of setup() or loop() must be defined. Both are exported.
+
+The exported mutable global `__line` is updated before each parsed
+statement and can be used by hosts for lightweight profiling/debugging.
 
 
 Supported C Features
@@ -257,6 +260,10 @@ Preprocessor:
   #elif                       Else-if chains: #if A / #elif B / #else / #endif
   #error message              Abort compilation with error message
   #warning message            Emit warning and continue compilation
+
+  Common predefined macros:
+  __LINE__, __FILE__, __DATE__, __TIME__, __COUNTER__,
+  __STDC__, __STDC_VERSION__, __STDC_HOSTED__
 
   #if supports full constant expression evaluation:
   #if 0 ... #endif            Block comment via preprocessor
@@ -573,7 +580,8 @@ Preprocessor tests: #if unsigned literal classification (1U, 100UL),
 #if unsigned 64-bit literal comparison, #if macro identifier/expression
 expansion (with recursion guard behavior), #if negative macro comparison,
 #if macro-literal-with-operator (e.g. 1ULL<<63, -1ULL), integer-literal
-width/signedness for large decimal/hex and U/L/LL suffix combinations.
+width/signedness for large decimal/hex and U/L/LL suffix combinations,
+predefined macros (__LINE__/__FILE__/__DATE__/__TIME__/__COUNTER__/__STDC*).
 
 Rejection tests: undefined variables/functions/forward declarations,
 unterminated block comments, void expression as operand, void/non-void

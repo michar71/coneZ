@@ -19,6 +19,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>
+#include <time.h>
 
 /* ================================================================
  *  Byte Buffer
@@ -453,6 +454,9 @@ extern int tok_slen;         /* string literal length */
 
 extern int had_error;
 extern int nglobals;    /* number of WASM globals (0=_heap_ptr, 1+=user) */
+
+#define GLOBAL_HEAP_PTR 0
+#define GLOBAL_LINE     1
 
 extern int has_setup;
 extern int has_loop;
