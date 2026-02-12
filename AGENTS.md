@@ -300,20 +300,24 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 
 **SPI clock and tCEM:** ESP32-S3 SPI clock = APB (80 MHz) / integer N. The driver computes the actual achieved frequency and sizes chunks accordingly. At low frequencies, the 4-byte command overhead (cmd + 3 addr) dominates — at 5 MHz only 1 byte of payload fits per tCEM window.
 
+**Runtime SPI clock changes (`psram freq`):** The Arduino SPI library's `beginTransaction()` acquires two locks that are never released (we own the FSPI bus exclusively and never call `endTransaction()`): the Arduino `paramLock` and the HAL-level `spi->lock`. Both are held by loopTask from `psram_setup()`. Since `psram freq` runs on ShellTask, it cannot use any Arduino SPI API — `setFrequency()`, `beginTransaction()`, `endTransaction()`, and even the HAL's `spiSetClockDiv()` all try to acquire one of these permanently-held locks, causing deadlock. The fix: `psram_change_freq()` writes the SPI2 clock register directly via `GPSPI2.clock.val` (from `soc/spi_struct.h`), computing the divider with `spiFrequencyToClockDiv()`. This bypasses all lock layers and is safe under `psram_mutex`. Note: `spiFrequencyToClockDiv()` and the `SPISettings` constructor compute the same dividers on this framework version; earlier ESP32 Arduino versions had a special-case APB/2 path in `SPISettings` that `spiFrequencyToClockDiv()` missed.
+
 **Throughput benchmarks (ConeZ PCB v0.1, 8MB, `psram test`):**
 
-| Actual SPI Clock | Read KB/s | Write KB/s | Notes |
-|---|---|---|---|
-| 5.00 MHz | 88 | 93 | 1 byte payload/chunk — overhead-dominated |
-| 6.67 MHz | 97 | 103 | |
-| 8.00 MHz | 346 | 374 | |
-| 10.00 MHz | 498 | 545 | |
-| 13.33 MHz | 705 | 786 | |
-| 16.00 MHz | 917 | 1,030 | |
-| 20.00 MHz | 1,233 | 1,414 | |
-| 26.67 MHz | 1,603 | 1,893 | Max documented for GPIO matrix routing |
-| 40.00 MHz | 2,216 | 2,800 | Default boot clock (APB/2) |
-| 80.00 MHz | 3,327 | 4,534 | APB/1 — requires IOMUX pins for reliability |
+Baseline measured with single-task architecture (shell in loopTask). Current numbers are ~17% lower due to ShellTask overhead (extra `vTaskDelay` yields on busier core 1, `printfnl` suspend/resume during progress output). Frequency scaling ratios are consistent between both.
+
+| Actual SPI Clock | Read KB/s | Write KB/s | Current Read | Current Write | Notes |
+|---|---|---|---|---|---|
+| 5.00 MHz | 88 | 93 | | | 1 byte payload/chunk — overhead-dominated |
+| 6.67 MHz | 97 | 103 | | | |
+| 8.00 MHz | 346 | 374 | | | |
+| 10.00 MHz | 498 | 545 | | | |
+| 13.33 MHz | 705 | 786 | | | |
+| 16.00 MHz | 917 | 1,030 | | | |
+| 20.00 MHz | 1,233 | 1,414 | | | |
+| 26.67 MHz | 1,603 | 1,893 | | | Max documented for GPIO matrix routing |
+| 40.00 MHz | 2,216 | 2,800 | 1,855 | 2,321 | Default boot clock (APB/2) |
+| 80.00 MHz | 3,327 | 4,534 | 2,736 | 3,687 | APB/1 — requires IOMUX pins for reliability |
 
 ### Configuration
 

@@ -1797,6 +1797,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("load"), loadFile);
     shell.addCommand(F("lora"), cmd_lora);
+    shell.addCommand(F("free"), cmd_mem);
     shell.addCommand(F("mem"), cmd_mem);
     shell.addCommand(F("mv"), renFile);
     shell.addCommand(F("param"), paramBasic);
