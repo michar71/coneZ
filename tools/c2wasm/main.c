@@ -27,6 +27,9 @@ char *src_file;
 
 int tok;
 int tok_ival;
+int64_t tok_i64;
+int tok_int_is_64;
+int tok_int_unsigned;
 float tok_fval;
 double tok_dval;
 char tok_sval[1024];

@@ -57,8 +57,16 @@ static int cexpr_apply(int op, int l, int r) {
 }
 
 static int cexpr_primary(void) {
-    if (tok == TOK_INT_LIT) { int v = tok_ival; next_token(); return v; }
-    if (tok == TOK_CHAR_LIT) { int v = tok_ival; next_token(); return v; }
+    if (tok == TOK_INT_LIT) { int v = (int)tok_i64; next_token(); return v; }
+    if (tok == TOK_CHAR_LIT) { int v = (int)tok_i64; next_token(); return v; }
+    if (tok == TOK_NAME) {
+        Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
+        if (mac && mac->macro_val[0]) {
+            int v = (int)strtol(mac->macro_val, NULL, 0);
+            next_token();
+            return v;
+        }
+    }
     if (tok == TOK_LPAREN) {
         next_token();
         int v = cexpr_prec(1);
@@ -92,6 +100,239 @@ static int cexpr_prec(int min_prec) {
 
 static int parse_case_value(void) {
     return cexpr_prec(1);
+}
+
+static int ctype_sizeof_bytes(CType ct) {
+    if (ct == CT_CHAR) return 1;
+    if (ct == CT_LONG_LONG || ct == CT_ULONG_LONG || ct == CT_DOUBLE) return 8;
+    return 4;
+}
+
+static void emit_store_for_ctype(CType ct) {
+    if (ct == CT_LONG_LONG || ct == CT_ULONG_LONG) {
+        emit_op(OP_I64_STORE);
+        buf_uleb(CODE, 3);
+        buf_uleb(CODE, 0);
+    } else if (ct == CT_DOUBLE) {
+        emit_op(OP_F64_STORE);
+        buf_uleb(CODE, 3);
+        buf_uleb(CODE, 0);
+    } else if (ct == CT_FLOAT) {
+        emit_op(OP_F32_STORE);
+        buf_uleb(CODE, 2);
+        buf_uleb(CODE, 0);
+    } else if (ct == CT_CHAR) {
+        emit_op(OP_I32_STORE8);
+        buf_uleb(CODE, 0);
+        buf_uleb(CODE, 0);
+    } else {
+        emit_op(OP_I32_STORE);
+        buf_uleb(CODE, 2);
+        buf_uleb(CODE, 0);
+    }
+}
+
+static void write_array_elem(int base_off, int idx, CType ct,
+                             int32_t i32v, int64_t i64v, float f32v, double f64v) {
+    int elem_size = ctype_sizeof_bytes(ct);
+    int off = base_off + idx * elem_size;
+    if (ct == CT_CHAR) {
+        data_buf[off] = (char)i32v;
+    } else if (ct == CT_FLOAT) {
+        memcpy(data_buf + off, &f32v, 4);
+    } else if (ct == CT_DOUBLE) {
+        memcpy(data_buf + off, &f64v, 8);
+    } else if (ct == CT_LONG_LONG || ct == CT_ULONG_LONG) {
+        memcpy(data_buf + off, &i64v, 8);
+    } else {
+        memcpy(data_buf + off, &i32v, 4);
+    }
+}
+
+static int parse_const_for_type(CType base_type,
+                                int32_t *out_i32, int64_t *out_i64,
+                                float *out_f32, double *out_f64) {
+    int negate = 0;
+    if (tok == TOK_MINUS) { negate = 1; next_token(); }
+
+    if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
+        int64_t v = negate ? -tok_i64 : tok_i64;
+        *out_i32 = (int32_t)v;
+        *out_i64 = v;
+        *out_f32 = (float)v;
+        *out_f64 = (double)v;
+        next_token();
+        return 1;
+    }
+
+    if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
+        double dv = (tok == TOK_DOUBLE_LIT) ? tok_dval : (double)tok_fval;
+        if (negate) dv = -dv;
+        *out_i32 = (int32_t)dv;
+        *out_i64 = (int64_t)dv;
+        *out_f32 = (float)dv;
+        *out_f64 = dv;
+        next_token();
+        return 1;
+    }
+
+    if (!negate && tok == TOK_NAME) {
+        Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
+        if (mac && mac->macro_val[0]) {
+            if (base_type == CT_DOUBLE) {
+                *out_f64 = strtod(mac->macro_val, NULL);
+                *out_f32 = (float)(*out_f64);
+                *out_i64 = (int64_t)(*out_f64);
+                *out_i32 = (int32_t)(*out_f64);
+            } else if (base_type == CT_FLOAT) {
+                *out_f32 = strtof(mac->macro_val, NULL);
+                *out_f64 = (double)(*out_f32);
+                *out_i64 = (int64_t)(*out_f32);
+                *out_i32 = (int32_t)(*out_f32);
+            } else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) {
+                if (base_type == CT_ULONG_LONG)
+                    *out_i64 = (int64_t)strtoull(mac->macro_val, NULL, 0);
+                else
+                    *out_i64 = strtoll(mac->macro_val, NULL, 0);
+                *out_i32 = (int32_t)(*out_i64);
+                *out_f32 = (float)(*out_i64);
+                *out_f64 = (double)(*out_i64);
+            } else {
+                *out_i32 = (int32_t)strtol(mac->macro_val, NULL, 0);
+                *out_i64 = (int64_t)(*out_i32);
+                *out_f32 = (float)(*out_i32);
+                *out_f64 = (double)(*out_i32);
+            }
+            next_token();
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int dims_tail_product(const int *dims, int ndims, int start) {
+    int p = 1;
+    for (int i = start; i < ndims; i++) p *= (dims[i] > 0 ? dims[i] : 1);
+    return p;
+}
+
+static void parse_global_array_init_level(Symbol *s, CType base_type,
+                                          const int *dims, int ndims,
+                                          int level, int base_elem_index) {
+    int dim = dims[level] > 0 ? dims[level] : 1;
+    int stride = dims_tail_product(dims, ndims, level + 1);
+    int had_braces = accept(TOK_LBRACE);
+    int idx = 0;
+
+    while (tok != TOK_EOF) {
+        if (had_braces && tok == TOK_RBRACE) break;
+
+        int target = idx;
+        if (had_braces && tok == TOK_LBRACKET) {
+            next_token();
+            target = parse_case_value();
+            expect(TOK_RBRACKET);
+            expect(TOK_ASSIGN);
+            idx = target;
+        }
+
+        if (target >= dim || target < 0) {
+            error_at("too many initializers for global array");
+            break;
+        }
+
+        if (level == ndims - 1) {
+            int32_t i32v = 0; int64_t i64v = 0; float f32v = 0.0f; double f64v = 0.0;
+            if (!parse_const_for_type(base_type, &i32v, &i64v, &f32v, &f64v)) {
+                error_at("global array initializer must be constant");
+                break;
+            }
+            write_array_elem(s->init_ival, base_elem_index + target, base_type, i32v, i64v, f32v, f64v);
+            idx = target + 1;
+        } else {
+            if (tok != TOK_LBRACE) {
+                error_at("nested array initializer requires braces");
+                break;
+            }
+            parse_global_array_init_level(s, base_type, dims, ndims, level + 1,
+                                          base_elem_index + target * stride);
+            idx = target + 1;
+        }
+
+        if (had_braces) {
+            if (accept(TOK_COMMA)) {
+                if (tok == TOK_RBRACE) break;
+                continue;
+            }
+            break;
+        } else {
+            break;
+        }
+    }
+
+    if (had_braces) expect(TOK_RBRACE);
+}
+
+static void parse_global_array_initializer(Symbol *s, CType base_type, const int *dims, int ndims) {
+    parse_global_array_init_level(s, base_type, dims, ndims, 0, 0);
+}
+
+static void parse_local_array_init_level(int local_idx, CType base_type, int elem_size,
+                                         const int *dims, int ndims,
+                                         int level, int base_elem_index) {
+    int dim = dims[level] > 0 ? dims[level] : 1;
+    int stride = dims_tail_product(dims, ndims, level + 1);
+    int had_braces = accept(TOK_LBRACE);
+    int idx = 0;
+
+    while (tok != TOK_EOF) {
+        if (had_braces && tok == TOK_RBRACE) break;
+
+        int target = idx;
+        if (had_braces && tok == TOK_LBRACKET) {
+            next_token();
+            target = parse_case_value();
+            expect(TOK_RBRACKET);
+            expect(TOK_ASSIGN);
+            idx = target;
+        }
+
+        if (target >= dim || target < 0) {
+            error_at("too many initializers for local array");
+            break;
+        }
+
+        if (level == ndims - 1) {
+            emit_local_get(local_idx);
+            emit_i32_const((base_elem_index + target) * elem_size);
+            emit_op(OP_I32_ADD);
+            CType rhs = assignment_expr();
+            emit_coerce(rhs, base_type);
+            emit_store_for_ctype(base_type);
+            idx = target + 1;
+        } else {
+            if (tok != TOK_LBRACE) {
+                error_at("nested array initializer requires braces");
+                break;
+            }
+            parse_local_array_init_level(local_idx, base_type, elem_size, dims, ndims,
+                                         level + 1, base_elem_index + target * stride);
+            idx = target + 1;
+        }
+
+        if (had_braces) {
+            if (accept(TOK_COMMA)) {
+                if (tok == TOK_RBRACE) break;
+                continue;
+            }
+            break;
+        } else {
+            break;
+        }
+    }
+
+    if (had_braces) expect(TOK_RBRACE);
 }
 
 /* ---- Statement parser ---- */
@@ -315,20 +556,12 @@ void parse_stmt(void) {
                 else if (depth == 1 && tok == TOK_DEFAULT) has_default = 1;
                 else if (depth == 1 && tok == TOK_CASE) {
                     next_token(); /* skip 'case' */
-                    int negate = 0;
-                    if (tok == TOK_MINUS) { negate = 1; next_token(); }
-                    if ((tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) && ncase_vals < 256) {
-                        case_vals[ncase_vals] = negate ? -tok_ival : tok_ival;
-                        next_token();
-                        /* Verify simple constant (next must be ':') */
-                        if (tok == TOK_COLON)
-                            ncase_vals++;
-                        else
-                            all_cases_resolved = 0;
-                        continue; /* already advanced past value */
-                    } else {
-                        all_cases_resolved = 0;
+                    int case_val = parse_case_value();
+                    if (tok == TOK_COLON && ncase_vals < 256) {
+                        case_vals[ncase_vals++] = case_val;
+                        continue;
                     }
+                    all_cases_resolved = 0;
                 }
                 next_token();
             }
@@ -484,6 +717,10 @@ void parse_stmt(void) {
     if (tok != TOK_SEMI) {
         CType ct = expr();
         if (ct != CT_VOID) emit_drop();
+        if (had_error && tok != TOK_SEMI && tok != TOK_RBRACE && tok != TOK_EOF) {
+            synchronize(1, 0, 0);  /* Try to recover to next statement */
+            return;
+        }
     }
     expect(TOK_SEMI);
 }
@@ -501,32 +738,180 @@ void parse_block(void) {
 /* Parse local variable declaration(s) after type specifier */
 static void parse_local_decl(CType base_type) {
     int base_const = type_had_const;
+    int base_pointer = type_had_pointer ? 1 : 0; /* first declarator may have consumed '*' in parse_type_spec */
     do {
         CType var_type = base_type;
         int var_const = base_const;
+        int is_array = 0;
+        int array_size = 0;
+        int array_dims[MAX_TYPE_DEPTH];
+        int array_ndims = 0;
+        int is_pointer = base_pointer;
+        base_pointer = 0;
         /* Check per-declarator const qualifier */
         while (tok == TOK_CONST) { var_const = 1; next_token(); }
-        /* Skip pointer stars */
-        while (tok == TOK_STAR) { next_token(); var_type = CT_INT; }
+        /* Skip pointer stars - count depth */
+        while (tok == TOK_STAR) { next_token(); is_pointer++; var_type = CT_INT; }
 
-        if (tok != TOK_NAME) { error_at("expected variable name"); return; }
+        if (tok != TOK_NAME) { 
+            error_at("expected variable name"); 
+            synchronize(1, 0, 0);  /* Skip to semicolon */
+            return; 
+        }
         char name[64];
         strncpy(name, tok_sval, sizeof(name) - 1); name[sizeof(name) - 1] = 0;
         next_token();
 
+        /* Check for array declaration(s) */
+        while (tok == TOK_LBRACKET) {
+            next_token();
+            if (tok == TOK_INT_LIT) {
+                array_size = (int)tok_i64;
+                if (array_ndims < MAX_TYPE_DEPTH) array_dims[array_ndims++] = array_size;
+                next_token();
+            } else if (tok == TOK_RBRACKET) {
+                array_size = 0; /* infer from initializer (char[] = "...") */
+                if (array_ndims < MAX_TYPE_DEPTH) array_dims[array_ndims++] = 0;
+            } else {
+                error_at("array size must be constant integer");
+                array_size = 1;
+                if (array_ndims < MAX_TYPE_DEPTH) array_dims[array_ndims++] = 1;
+            }
+            expect(TOK_RBRACKET);
+            is_array = 1;
+        }
+
         uint8_t wtype = ctype_to_wasm(var_type);
-        int local_idx = alloc_local(wtype);
+        int local_idx = -1;
+        int elem_size = ctype_sizeof_bytes(var_type);
+        int consumed_array_string_init = 0;
+        char array_init_str[1024];
+        int array_init_len = 0;
+
+        if (is_array && array_size == 0) {
+            if (array_ndims != 1) {
+                error_at("inferred size only supported for single-dimensional char[]");
+                array_size = 1;
+                if (array_ndims > 0) array_dims[array_ndims - 1] = 1;
+            }
+            if (var_type != CT_CHAR) {
+                error_at("inferred array size only supported for char[] with string initializer");
+                array_size = 1;
+                if (array_ndims > 0) array_dims[array_ndims - 1] = 1;
+            } else if (tok == TOK_ASSIGN) {
+                next_token();
+                if (tok != TOK_STR_LIT) {
+                    error_at("char[] requires string literal initializer");
+                    array_size = 1;
+                } else {
+                    array_init_len = tok_slen;
+                    if (array_init_len > (int)sizeof(array_init_str) - 1)
+                        array_init_len = (int)sizeof(array_init_str) - 1;
+                    memcpy(array_init_str, tok_sval, array_init_len);
+                    array_init_str[array_init_len] = 0;
+                    array_size = array_init_len + 1; /* include terminator */
+                    if (array_ndims > 0) array_dims[array_ndims - 1] = array_size;
+                    consumed_array_string_init = 1;
+                    next_token();
+                }
+            } else {
+                error_at("incomplete array type requires initializer");
+                array_size = 1;
+                if (array_ndims > 0) array_dims[array_ndims - 1] = 1;
+            }
+        }
+
+        if (is_array) {
+            /* Local arrays are backed by linear memory. Local symbol holds
+             * base pointer as i32. */
+            int total_elems = 1;
+            for (int d = 0; d < array_ndims; d++) {
+                int dim = array_dims[d] > 0 ? array_dims[d] : 1;
+                total_elems *= dim;
+            }
+            int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
+            int bytes = total_elems * elem_size;
+            int off = add_data_zeros(bytes, align);
+            local_idx = alloc_local(WASM_I32);
+            emit_i32_const(off);
+            emit_local_set(local_idx);
+        } else {
+            local_idx = alloc_local(wtype);
+        }
 
         Symbol *s = add_sym(name, SYM_LOCAL, var_type);
         s->idx = local_idx;
         s->scope = cur_scope;
         s->is_const = var_const;
+        s->type_info = type_base(var_type);
+        if (is_array) {
+            for (int d = array_ndims - 1; d >= 0; d--) {
+                int dim = array_dims[d] > 0 ? array_dims[d] : 1;
+                s->type_info = type_array(s->type_info, dim);
+            }
+        } else if (is_pointer) {
+            for (int i = 0; i < is_pointer; i++) {
+                s->type_info = type_pointer(s->type_info);
+            }
+        }
+        s->stack_offset = local_idx * 4;  /* Simple stack layout metadata */
+        s->is_lvalue = 1;
 
-        if (accept(TOK_ASSIGN)) {
-            CType rhs = assignment_expr();
-            emit_coerce(rhs, var_type);
-            emit_local_set(local_idx);
-        } else if (var_const) {
+        if (consumed_array_string_init) {
+            int ncopy = (array_init_len < array_size) ? array_init_len : array_size;
+            for (int i = 0; i < ncopy; i++) {
+                emit_local_get(local_idx);
+                emit_i32_const(i);
+                emit_op(OP_I32_ADD);
+                emit_i32_const((unsigned char)array_init_str[i]);
+                emit_op(OP_I32_STORE8);
+                buf_uleb(CODE, 0);
+                buf_uleb(CODE, 0);
+            }
+            if (array_size > array_init_len) {
+                emit_local_get(local_idx);
+                emit_i32_const(array_init_len);
+                emit_op(OP_I32_ADD);
+                emit_i32_const(0);
+                emit_op(OP_I32_STORE8);
+                buf_uleb(CODE, 0);
+                buf_uleb(CODE, 0);
+            }
+        } else if (accept(TOK_ASSIGN)) {
+            if (is_array) {
+                if (var_type == CT_CHAR && array_ndims == 1 && tok == TOK_STR_LIT) {
+                    int slen = tok_slen;
+                    int ncopy = (slen < array_size) ? slen : array_size;
+                    for (int i = 0; i < ncopy; i++) {
+                        emit_local_get(local_idx);
+                        emit_i32_const(i);
+                        emit_op(OP_I32_ADD);
+                        emit_i32_const((unsigned char)tok_sval[i]);
+                        emit_op(OP_I32_STORE8);
+                        buf_uleb(CODE, 0);
+                        buf_uleb(CODE, 0);
+                    }
+                    if (array_size > slen) {
+                        emit_local_get(local_idx);
+                        emit_i32_const(slen);
+                        emit_op(OP_I32_ADD);
+                        emit_i32_const(0);
+                        emit_op(OP_I32_STORE8);
+                        buf_uleb(CODE, 0);
+                        buf_uleb(CODE, 0);
+                    }
+                    next_token();
+                } else {
+                    parse_local_array_init_level(local_idx, var_type, elem_size,
+                                                 array_dims, array_ndims, 0, 0);
+                }
+            }
+            else {
+                CType rhs = assignment_expr();
+                emit_coerce(rhs, var_type);
+                emit_local_set(local_idx);
+            }
+        } else if (var_const && !is_array) {
             fprintf(stderr, "%s:%d: warning: const variable '%s' without initializer\n",
                     src_file ? src_file : "<input>", line_num, name);
         }
@@ -551,7 +936,7 @@ void parse_top_level(void) {
 
     if (!is_type_keyword(tok) && tok != TOK_NAME) {
         error_fmt("expected type or declaration, got %s", tok_name(tok));
-        next_token();
+        synchronize(1, 0, 0);  /* Skip to semicolon */
         return;
     }
 
@@ -560,13 +945,36 @@ void parse_top_level(void) {
 
     if (tok != TOK_NAME) {
         error_at("expected name after type");
-        next_token();
+        synchronize(1, 0, 0);  /* Skip to semicolon */
         return;
     }
 
     char name[64];
     strncpy(name, tok_sval, sizeof(name) - 1); name[sizeof(name) - 1] = 0;
     next_token();
+
+    /* Check for array declaration */
+    int is_array = 0;
+    int array_size = 0;
+    int array_dims[MAX_TYPE_DEPTH];
+    int array_ndims = 0;
+    while (tok == TOK_LBRACKET) {
+        next_token();
+        if (tok == TOK_INT_LIT) {
+            array_size = (int)tok_i64;
+            if (array_ndims < MAX_TYPE_DEPTH) array_dims[array_ndims++] = array_size;
+            next_token();
+        } else if (tok == TOK_RBRACKET) {
+            array_size = 0; /* infer from initializer (char[] = "...") */
+            if (array_ndims < MAX_TYPE_DEPTH) array_dims[array_ndims++] = 0;
+        } else {
+            error_at("array size must be constant integer");
+            array_size = 1;
+            if (array_ndims < MAX_TYPE_DEPTH) array_dims[array_ndims++] = 1;
+        }
+        expect(TOK_RBRACKET);
+        is_array = 1;
+    }
 
     /* Function definition or declaration */
     if (tok == TOK_LPAREN) {
@@ -581,19 +989,20 @@ void parse_top_level(void) {
             int negate = 0;
             if (tok == TOK_MINUS) { negate = 1; next_token(); }
             if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
-                int val = negate ? -tok_ival : tok_ival;
+                int64_t val64 = negate ? -tok_i64 : tok_i64;
+                int32_t val32 = (int32_t)val64;
                 if (base_type == CT_FLOAT || base_type == CT_DOUBLE || base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) {
                     int gidx = nglobals++;
                     Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
                     s->idx = gidx;
                     s->is_static = is_static;
                     s->is_const = 1;
-                    if (base_type == CT_DOUBLE) s->init_dval = (double)val;
-                    else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = (int64_t)val;
-                    else s->init_fval = (float)val;
+                    if (base_type == CT_DOUBLE) s->init_dval = (double)val64;
+                    else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = val64;
+                    else s->init_fval = (float)val64;
                 } else {
                     Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
-                    snprintf(s->macro_val, sizeof(s->macro_val), "%d", val);
+                    snprintf(s->macro_val, sizeof(s->macro_val), "%d", (int)val32);
                     s->scope = 0;
                 }
                 next_token();
@@ -620,37 +1029,114 @@ void parse_top_level(void) {
     Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
     s->idx = gidx;
     s->is_static = is_static;
+    s->type_info = type_base(base_type);
+    int array_allocated = 0;
+    if (is_array) {
+        if (array_size > 0) {
+            int total_elems = 1;
+            for (int d = 0; d < array_ndims; d++) {
+                int dim = array_dims[d] > 0 ? array_dims[d] : 1;
+                total_elems *= dim;
+            }
+            int elem_size = ctype_sizeof_bytes(base_type);
+            int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
+            int bytes = total_elems * elem_size;
+            int off = add_data_zeros(bytes, align);
+            for (int d = array_ndims - 1; d >= 0; d--) {
+                int dim = array_dims[d] > 0 ? array_dims[d] : 1;
+                s->type_info = type_array(s->type_info, dim);
+            }
+            /* Array globals are represented as pointer-like globals that hold
+             * the base address in linear memory. */
+            s->init_ival = off;
+            s->ctype = CT_INT;
+            array_allocated = 1;
+        }
+    }
 
     /* Parse and store initializer value */
+    if (is_array && array_size == 0 && tok != TOK_ASSIGN) {
+        error_at("incomplete array type requires initializer");
+        array_size = 1;
+        if (array_ndims > 0) array_dims[array_ndims - 1] = 1;
+    }
+
     if (accept(TOK_ASSIGN)) {
-        int negate = 0;
-        if (tok == TOK_MINUS) { negate = 1; next_token(); }
-        if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
-            if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_ival : (double)tok_ival;
-            else if (base_type == CT_FLOAT) s->init_fval = negate ? -(float)tok_ival : (float)tok_ival;
-            else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = negate ? -(int64_t)tok_ival : (int64_t)tok_ival;
-            else s->init_ival = negate ? -tok_ival : tok_ival;
-            next_token();
-        } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
-            if (base_type == CT_DOUBLE) s->init_dval = negate ? -tok_dval : tok_dval;
-            else s->init_fval = negate ? -tok_fval : tok_fval;
-            next_token();
-        } else if (!negate && tok == TOK_NAME) {
-            /* Unexpanded macro (depth exceeded) — use stored value directly */
-            Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
-            if (mac && mac->macro_val[0]) {
-                if (base_type == CT_DOUBLE) s->init_dval = strtod(mac->macro_val, NULL);
-                else if (base_type == CT_FLOAT) s->init_fval = strtof(mac->macro_val, NULL);
-                else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = strtoll(mac->macro_val, NULL, 0);
-                else s->init_ival = (int)strtol(mac->macro_val, NULL, 0);
+        if (is_array) {
+            if (base_type == CT_CHAR && tok == TOK_STR_LIT) {
+                int slen = tok_slen;
+                if (array_ndims != 1) {
+                    error_at("inferred size only supported for single-dimensional char[]");
+                    array_size = 1;
+                    if (array_ndims > 0) array_dims[array_ndims - 1] = 1;
+                }
+                if (array_size == 0) array_size = slen + 1;
+                if (array_ndims > 0) array_dims[array_ndims - 1] = array_size;
+                if (!array_allocated) {
+                    int elem_size = ctype_sizeof_bytes(base_type);
+                    int off = add_data_zeros(array_size * elem_size, 1);
+                    for (int d = array_ndims - 1; d >= 0; d--) {
+                        int dim = array_dims[d] > 0 ? array_dims[d] : 1;
+                        s->type_info = type_array(s->type_info, dim);
+                    }
+                    s->init_ival = off;
+                    s->ctype = CT_INT;
+                    array_allocated = 1;
+                }
+                int ncopy = (slen < array_size) ? slen : array_size;
+                for (int i = 0; i < ncopy; i++) data_buf[s->init_ival + i] = tok_sval[i];
+                if (array_size > slen) data_buf[s->init_ival + slen] = 0;
                 next_token();
+                } else {
+                    if (array_size == 0) {
+                        error_at("inferred array size requires string literal initializer");
+                        array_size = 1;
+                }
+                if (!array_allocated) {
+                        int elem_size = ctype_sizeof_bytes(base_type);
+                        int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
+                        int off = add_data_zeros(array_size * elem_size, align);
+                        for (int d = array_ndims - 1; d >= 0; d--) {
+                            int dim = array_dims[d] > 0 ? array_dims[d] : 1;
+                            s->type_info = type_array(s->type_info, dim);
+                        }
+                        s->init_ival = off;
+                        s->ctype = CT_INT;
+                        array_allocated = 1;
+                }
+                parse_global_array_initializer(s, base_type, array_dims, array_ndims);
+            }
+        } else {
+            int negate = 0;
+            if (tok == TOK_MINUS) { negate = 1; next_token(); }
+            if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
+                if (base_type == CT_DOUBLE) s->init_dval = negate ? -(double)tok_i64 : (double)tok_i64;
+                else if (base_type == CT_FLOAT) s->init_fval = negate ? -(float)tok_i64 : (float)tok_i64;
+                else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = negate ? -tok_i64 : tok_i64;
+                else s->init_ival = negate ? -(int)tok_i64 : (int)tok_i64;
+                next_token();
+            } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
+                if (base_type == CT_DOUBLE) s->init_dval = negate ? -tok_dval : tok_dval;
+                else s->init_fval = negate ? -tok_fval : tok_fval;
+                next_token();
+            } else if (!negate && tok == TOK_NAME) {
+                /* Unexpanded macro (depth exceeded) — use stored value directly */
+                Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
+                if (mac && mac->macro_val[0]) {
+                    if (base_type == CT_DOUBLE) s->init_dval = strtod(mac->macro_val, NULL);
+                    else if (base_type == CT_FLOAT) s->init_fval = strtof(mac->macro_val, NULL);
+                    else if (base_type == CT_ULONG_LONG) s->init_llval = (int64_t)strtoull(mac->macro_val, NULL, 0);
+                    else if (base_type == CT_LONG_LONG) s->init_llval = strtoll(mac->macro_val, NULL, 0);
+                    else s->init_ival = (int)strtol(mac->macro_val, NULL, 0);
+                    next_token();
+                } else {
+                    error_at("global initializer must be a constant");
+                    next_token();
+                }
             } else {
                 error_at("global initializer must be a constant");
                 next_token();
             }
-        } else {
-            error_at("global initializer must be a constant");
-            next_token();
         }
     }
 
@@ -660,23 +1146,114 @@ void parse_top_level(void) {
         if (tok != TOK_NAME) { error_at("expected variable name"); break; }
         strncpy(name, tok_sval, sizeof(name) - 1); name[sizeof(name) - 1] = 0;
         next_token();
+        int decl_is_array = 0;
+        int decl_array_size = 0;
+        int decl_array_dims[MAX_TYPE_DEPTH];
+        int decl_array_ndims = 0;
+        while (tok == TOK_LBRACKET) {
+            next_token();
+            if (tok == TOK_INT_LIT) {
+                decl_array_size = (int)tok_i64;
+                if (decl_array_ndims < MAX_TYPE_DEPTH) decl_array_dims[decl_array_ndims++] = decl_array_size;
+                next_token();
+            }
+            else if (tok == TOK_RBRACKET) {
+                decl_array_size = 0;
+                if (decl_array_ndims < MAX_TYPE_DEPTH) decl_array_dims[decl_array_ndims++] = 0;
+            }
+            else { error_at("array size must be constant integer"); decl_array_size = 1; if (decl_array_ndims < MAX_TYPE_DEPTH) decl_array_dims[decl_array_ndims++] = 1; }
+            expect(TOK_RBRACKET);
+            decl_is_array = 1;
+        }
         gidx = nglobals++;
         s = add_sym(name, SYM_GLOBAL, base_type);
         s->idx = gidx;
         s->is_static = is_static;
+        s->type_info = type_base(base_type);
+        int decl_array_allocated = 0;
+        if (decl_is_array) {
+            if (decl_array_size > 0) {
+                int total_elems = 1;
+                for (int d = 0; d < decl_array_ndims; d++) {
+                    int dim = decl_array_dims[d] > 0 ? decl_array_dims[d] : 1;
+                    total_elems *= dim;
+                }
+                int elem_size = ctype_sizeof_bytes(base_type);
+                int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
+                int bytes = total_elems * elem_size;
+                int off = add_data_zeros(bytes, align);
+                for (int d = decl_array_ndims - 1; d >= 0; d--) {
+                    int dim = decl_array_dims[d] > 0 ? decl_array_dims[d] : 1;
+                    s->type_info = type_array(s->type_info, dim);
+                }
+                s->init_ival = off;
+                s->ctype = CT_INT;
+                decl_array_allocated = 1;
+            }
+        }
+        if (decl_is_array && decl_array_size == 0 && tok != TOK_ASSIGN) {
+            error_at("incomplete array type requires initializer");
+            decl_array_size = 1;
+            if (decl_array_ndims > 0) decl_array_dims[decl_array_ndims - 1] = 1;
+        }
         if (accept(TOK_ASSIGN)) {
-            int neg = 0;
-            if (tok == TOK_MINUS) { neg = 1; next_token(); }
-            if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
-                if (base_type == CT_DOUBLE) s->init_dval = neg ? -(double)tok_ival : (double)tok_ival;
-                else if (base_type == CT_FLOAT) s->init_fval = neg ? -(float)tok_ival : (float)tok_ival;
-                else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = neg ? -(int64_t)tok_ival : (int64_t)tok_ival;
-                else s->init_ival = neg ? -tok_ival : tok_ival;
-                next_token();
-            } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
-                if (base_type == CT_DOUBLE) s->init_dval = neg ? -tok_dval : tok_dval;
-                else s->init_fval = neg ? -tok_fval : tok_fval;
-                next_token();
+            if (decl_is_array) {
+                if (base_type == CT_CHAR && tok == TOK_STR_LIT) {
+                    int slen = tok_slen;
+                    if (decl_array_ndims != 1) {
+                        error_at("inferred size only supported for single-dimensional char[]");
+                        decl_array_size = 1;
+                        if (decl_array_ndims > 0) decl_array_dims[decl_array_ndims - 1] = 1;
+                    }
+                    if (decl_array_size == 0) decl_array_size = slen + 1;
+                    if (decl_array_ndims > 0) decl_array_dims[decl_array_ndims - 1] = decl_array_size;
+                    if (!decl_array_allocated) {
+                        int off = add_data_zeros(decl_array_size, 1);
+                        for (int d = decl_array_ndims - 1; d >= 0; d--) {
+                            int dim = decl_array_dims[d] > 0 ? decl_array_dims[d] : 1;
+                            s->type_info = type_array(s->type_info, dim);
+                        }
+                        s->init_ival = off;
+                        s->ctype = CT_INT;
+                        decl_array_allocated = 1;
+                    }
+                    int ncopy = (slen < decl_array_size) ? slen : decl_array_size;
+                    for (int i = 0; i < ncopy; i++) data_buf[s->init_ival + i] = tok_sval[i];
+                    if (decl_array_size > slen) data_buf[s->init_ival + slen] = 0;
+                    next_token();
+                } else {
+                    if (decl_array_size == 0) {
+                        error_at("inferred array size requires string literal initializer");
+                        decl_array_size = 1;
+                    }
+                    if (!decl_array_allocated) {
+                        int elem_size = ctype_sizeof_bytes(base_type);
+                        int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
+                        int off = add_data_zeros(decl_array_size * elem_size, align);
+                        for (int d = decl_array_ndims - 1; d >= 0; d--) {
+                            int dim = decl_array_dims[d] > 0 ? decl_array_dims[d] : 1;
+                            s->type_info = type_array(s->type_info, dim);
+                        }
+                        s->init_ival = off;
+                        s->ctype = CT_INT;
+                        decl_array_allocated = 1;
+                    }
+                    parse_global_array_initializer(s, base_type, decl_array_dims, decl_array_ndims);
+                }
+            } else {
+                int neg = 0;
+                if (tok == TOK_MINUS) { neg = 1; next_token(); }
+                if (tok == TOK_INT_LIT || tok == TOK_CHAR_LIT) {
+                    if (base_type == CT_DOUBLE) s->init_dval = neg ? -(double)tok_i64 : (double)tok_i64;
+                    else if (base_type == CT_FLOAT) s->init_fval = neg ? -(float)tok_i64 : (float)tok_i64;
+                    else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = neg ? -tok_i64 : tok_i64;
+                    else s->init_ival = neg ? -(int)tok_i64 : (int)tok_i64;
+                    next_token();
+                } else if (tok == TOK_FLOAT_LIT || tok == TOK_DOUBLE_LIT) {
+                    if (base_type == CT_DOUBLE) s->init_dval = neg ? -tok_dval : tok_dval;
+                    else s->init_fval = neg ? -tok_fval : tok_fval;
+                    next_token();
+                }
             }
         }
     }
@@ -724,6 +1301,9 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
                 Symbol *ps = add_sym(pname, SYM_LOCAL, ptype);
                 ps->idx = fc->nparams - 1;
                 ps->scope = cur_scope;
+                ps->type_info = type_base(ptype);
+                ps->stack_offset = (fc->nparams - 1) * 4;  /* Params are at positive offsets from frame */
+                ps->is_lvalue = 1;
             }
             /* Unnamed param: counted but no symbol added */
         } while (accept(TOK_COMMA));
@@ -784,7 +1364,7 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
         /* Update the function context to the right slot */
         fc = &func_bufs[func_idx - IMP_COUNT];
         fc->return_type = ret_type;
-        free(fc->name);
+        if (fc->name) free(fc->name);
         fc->name = strdup(name);
         fc->nparams = 0;
         fc->nlocals = 0;

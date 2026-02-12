@@ -6,7 +6,7 @@ BUILDNUM_FILE = ../buildnum.txt
 BUILDNUM = $(shell cat $(BUILDNUM_FILE) 2>/dev/null || echo 0)
 NEXT_BUILDNUM = $(shell echo $$(($(BUILDNUM) + 1)))
 
-SRCS = main.c lexer.c preproc.c type.c expr.c stmt.c assemble.c buf.c imports.c
+SRCS = main.c lexer.c preproc.c type.c type_ops.c expr.c stmt.c assemble.c buf.c imports.c
 OBJS = $(SRCS:.c=.o)
 
 all: $(TARGET)

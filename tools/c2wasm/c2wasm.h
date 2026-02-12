@@ -16,6 +16,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 
@@ -273,6 +274,36 @@ typedef enum {
     CT_ULONG_LONG, /* unsigned i64 */
 } CType;
 
+/* Extended type information for pointers and arrays */
+#define MAX_TYPE_DEPTH 4  /* Max pointer/array nesting depth */
+
+typedef enum {
+    TYPE_BASE,
+    TYPE_POINTER,
+    TYPE_ARRAY
+} TypeKind;
+
+typedef struct {
+    TypeKind kinds[MAX_TYPE_DEPTH];
+    CType base;
+    int sizes[MAX_TYPE_DEPTH];  /* For arrays: element count, -1 for pointers */
+    int depth;  /* Total depth of pointer/array nesting */
+} TypeInfo;
+
+/* Type constructors */
+TypeInfo type_base(CType ct);
+TypeInfo type_pointer(TypeInfo base);
+TypeInfo type_array(TypeInfo base, int size);
+TypeInfo type_decay(TypeInfo t);  /* array -> pointer */
+
+/* Type predicates */
+int type_is_pointer(TypeInfo t);
+int type_is_array(TypeInfo t);
+int type_is_scalar(TypeInfo t);
+CType type_base_ctype(TypeInfo t);
+int type_element_size(TypeInfo t);  /* Size of element when dereferenced */
+int type_sizeof(TypeInfo t);        /* Total size of type */
+
 /* ================================================================
  *  Symbol Table
  * ================================================================ */
@@ -295,6 +326,7 @@ typedef struct {
     char name[64];
     SymKind kind;
     CType ctype;        /* return type for functions, var type for vars */
+    TypeInfo type_info; /* extended type info for pointers/arrays */
     int idx;            /* WASM global/local/func index */
     int imp_id;         /* IMP_xxx for imports, -1 otherwise */
     int scope;          /* scope depth (0=global) */
@@ -312,6 +344,11 @@ typedef struct {
     float init_fval;
     double init_dval;
     int64_t init_llval;
+    /* local variable info */
+    int stack_offset;   /* Stack frame offset for locals (for & operator) */
+    int is_lvalue;      /* 1 if this symbol can be assigned to */
+    int is_mem_backed;  /* local scalar spilled to linear memory */
+    int mem_off;        /* linear memory offset for spilled local */
 } Symbol;
 
 /* ================================================================
@@ -405,6 +442,9 @@ extern char *src_file;
 
 extern int tok;
 extern int tok_ival;
+extern int64_t tok_i64;
+extern int tok_int_is_64;
+extern int tok_int_unsigned;
 extern float tok_fval;
 extern double tok_dval;      /* double-precision float literal value */
 extern char tok_sval[1024];  /* string/name value */
@@ -472,6 +512,16 @@ static inline int add_string(const char *s, int len) {
     memcpy(data_buf + data_len, s, len);
     data_buf[data_len + len] = 0;
     data_len += len + 1;
+    return off;
+}
+
+static inline int add_data_zeros(int size, int align) {
+    if (align < 1) align = 1;
+    int off = (data_len + (align - 1)) & ~(align - 1);
+    if (off + size > MAX_STRINGS) { error_at("data section full"); return 0; }
+    if (off > data_len) memset(data_buf + data_len, 0, off - data_len);
+    memset(data_buf + off, 0, size);
+    data_len = off + size;
     return off;
 }
 
@@ -593,6 +643,7 @@ static inline void emit_coerce_f32(CType from) {
         emit_op(OP_F32_CONVERT_I64_U);
     else if (from == CT_DOUBLE)
         emit_op(OP_F32_DEMOTE_F64);
+    /* CT_FLOAT -> no-op, already f32 */
 }
 /* Coerce top of wasm stack to f64 */
 static inline void emit_promote_f64(CType from) {
@@ -629,6 +680,20 @@ static inline void emit_coerce(CType from, CType to) {
     }
 }
 
+/* Type operations (type_ops.c) */
+TypeInfo type_base(CType ct);
+TypeInfo type_pointer(TypeInfo base);
+TypeInfo type_array(TypeInfo base, int size);
+TypeInfo type_decay(TypeInfo t);
+int type_is_pointer(TypeInfo t);
+int type_is_array(TypeInfo t);
+int type_is_scalar(TypeInfo t);
+CType type_base_ctype(TypeInfo t);
+int type_element_size(TypeInfo t);
+int type_sizeof(TypeInfo t);
+TypeInfo type_deref(TypeInfo t);
+int type_compatible(TypeInfo a, TypeInfo b);
+
 /* ================================================================
  *  Cross-file function declarations
  * ================================================================ */
@@ -640,16 +705,23 @@ int peek_token(void);
 void expect(int t);
 int accept(int t);
 const char *tok_name(int t);
+void synchronize(int stop_at_semi, int stop_at_brace, int stop_at_rparen);
 
 typedef struct {
     char *saved_source;
     int saved_src_pos, saved_src_len, saved_line_num;
     int saved_tok, saved_tok_ival;
+    int64_t saved_tok_i64;
+    int saved_tok_int_is_64;
+    int saved_tok_int_unsigned;
     float saved_tok_fval;
     double saved_tok_dval;
     char saved_tok_sval[1024];
     int saved_tok_slen;
     int saved_peek_valid, saved_peek_tok, saved_peek_ival;
+    int64_t saved_peek_i64;
+    int saved_peek_int_is_64;
+    int saved_peek_int_unsigned;
     float saved_peek_fval;
     double saved_peek_dval;
     char saved_peek_sval[1024];

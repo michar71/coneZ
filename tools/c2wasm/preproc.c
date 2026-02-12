@@ -9,6 +9,7 @@
 #include "c2wasm.h"
 
 static int is_ident_char(int c) { return isalnum(c) || c == '_'; }
+static int is_ident_start(int c) { return isalpha(c) || c == '_'; }
 
 #define MAX_IFDEF_DEPTH 32
 static int ifdef_skip[MAX_IFDEF_DEPTH];
@@ -18,11 +19,13 @@ static int ifdef_depth;
 static int ifdef_overflow;  /* excess nesting beyond MAX_IFDEF_DEPTH */
 
 static int api_registered;
+static int pp_macro_eval_depth;
 
 void preproc_init(void) {
     ifdef_depth = 0;
     ifdef_overflow = 0;
     api_registered = 0;
+    pp_macro_eval_depth = 0;
 }
 
 int preproc_skipping(void) {
@@ -160,6 +163,9 @@ static ApiFunc api_funcs[] = {
     {"log",             IMP_LOG,             CT_DOUBLE, 1, {CT_DOUBLE}},
     {"log2",            IMP_LOG2,            CT_DOUBLE, 1, {CT_DOUBLE}},
     {"fmod",            IMP_FMOD,            CT_DOUBLE, 2, {CT_DOUBLE,CT_DOUBLE}},
+    {"lerp",            IMP_LERP,            CT_FLOAT,  3, {CT_FLOAT,CT_FLOAT,CT_FLOAT}},
+    {"larp",            IMP_LARP,            CT_INT,    8, {CT_INT,CT_INT,CT_INT,CT_INT,CT_INT,CT_INT,CT_INT,CT_INT}},
+    {"larpf",           IMP_LARPF,           CT_FLOAT,  8, {CT_FLOAT,CT_FLOAT,CT_FLOAT,CT_FLOAT,CT_FLOAT,CT_FLOAT,CT_FLOAT,CT_INT}},
     {"get_epoch_ms",    IMP_GET_EPOCH_MS,    CT_LONG_LONG, 0, {}},
     {"get_uptime_ms",   IMP_GET_UPTIME_MS,   CT_LONG_LONG, 0, {}},
     {"get_last_comm_ms",IMP_GET_LAST_COMM_MS,CT_LONG_LONG, 0, {}},
@@ -240,68 +246,252 @@ static void pp_skip_ws(void) {
         src_pos++;
 }
 
-static long pp_primary(void);
-static long pp_unary(void);
-static long pp_expr(int min_prec);
+typedef struct {
+    uint64_t bits;
+    int is_unsigned;
+} PPVal;
 
-static long pp_primary(void) {
+static PPVal pp_make_u(uint64_t bits, int is_unsigned) {
+    PPVal v;
+    v.bits = bits;
+    v.is_unsigned = is_unsigned;
+    return v;
+}
+
+static int64_t pp_as_s(PPVal v) { return (int64_t)v.bits; }
+static uint64_t pp_as_u(PPVal v) { return v.bits; }
+static int pp_truthy(PPVal v) { return v.bits != 0; }
+
+static int pp_classify_unsigned(unsigned long long uv, int has_u, int l_count, int is_decimal) {
+    if (l_count >= 2) return has_u || uv > (unsigned long long)LLONG_MAX;
+    if (l_count == 1) {
+        if (has_u) return uv > UINT_MAX;
+        if (uv <= INT_MAX) return 0;
+        if (!is_decimal && uv <= UINT_MAX) return 1;
+        return uv > (unsigned long long)LLONG_MAX;
+    }
+    if (has_u) return uv > UINT_MAX;
+    if (is_decimal) return uv > (unsigned long long)LLONG_MAX;
+    if (uv <= INT_MAX) return 0;
+    if (uv <= UINT_MAX) return 1;
+    return uv > (unsigned long long)LLONG_MAX;
+}
+
+static PPVal pp_primary(void);
+static PPVal pp_unary(void);
+static PPVal pp_expr(int min_prec);
+
+static long long pp_parse_char_escape(void) {
+    if (src_pos >= src_len || source[src_pos] == '\n')
+        error_at("unterminated escape sequence");
+
+    int c = source[src_pos];
+    switch (c) {
+    case 'n': src_pos++; return '\n';
+    case 't': src_pos++; return '\t';
+    case 'r': src_pos++; return '\r';
+    case 'a': src_pos++; return '\a';
+    case 'b': src_pos++; return '\b';
+    case 'f': src_pos++; return '\f';
+    case 'v': src_pos++; return '\v';
+    case '0':
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7': {
+        int val = 0;
+        int n = 0;
+        while (src_pos < src_len && source[src_pos] >= '0' && source[src_pos] <= '7' && n < 3) {
+            val = (val << 3) + (source[src_pos] - '0');
+            src_pos++;
+            n++;
+        }
+        return val;
+    }
+    case '\\': src_pos++; return '\\';
+    case '\'': src_pos++; return '\'';
+    case '"': src_pos++; return '"';
+    case '?': src_pos++; return '?';
+    case 'x': {
+        src_pos++;
+        int hex_digits = 0;
+        int xval = 0;
+        while (src_pos < src_len && isxdigit(source[src_pos]) && hex_digits < 2) {
+            int d = source[src_pos];
+            if (d >= '0' && d <= '9') xval = xval * 16 + d - '0';
+            else if (d >= 'a' && d <= 'f') xval = xval * 16 + d - 'a' + 10;
+            else xval = xval * 16 + d - 'A' + 10;
+            src_pos++;
+            hex_digits++;
+        }
+        if (!hex_digits)
+            error_at("invalid hex escape sequence");
+        return xval;
+    }
+    default:
+        src_pos++;
+        return c;
+    }
+}
+
+static PPVal pp_eval_text_expr(const char *text) {
+    if (!text) return pp_make_u(0, 0);
+    if (pp_macro_eval_depth >= 16) return pp_make_u(0, 0);
+
+    char *saved_source = source;
+    int saved_src_len = src_len;
+    int saved_src_pos = src_pos;
+    int saved_line_num = line_num;
+
+    pp_macro_eval_depth++;
+    source = (char *)text;
+    src_len = (int)strlen(text);
+    src_pos = 0;
+    line_num = 1;
     pp_skip_ws();
-    if (src_pos >= src_len || source[src_pos] == '\n') return 0;
+    if (src_pos >= src_len)
+        error_at("invalid #if expression");
+    PPVal v = pp_expr(0);
+    pp_skip_ws();
+    if (src_pos < src_len)
+        error_at("invalid #if expression");
+    pp_macro_eval_depth--;
+
+    source = saved_source;
+    src_len = saved_src_len;
+    src_pos = saved_src_pos;
+    line_num = saved_line_num;
+
+    return v;
+}
+
+static PPVal pp_parse_macro_value(const char *text) {
+    if (!text || !*text) return pp_make_u(0, 0);
+
+    const char *p = text;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '+' || *p == '-') return pp_eval_text_expr(text);
+    if (!isdigit((unsigned char)*p)) return pp_eval_text_expr(text);
+
+    char *end = NULL;
+    unsigned long long uv = strtoull(p, &end, 0);
+    if (end == p) return pp_eval_text_expr(text);
+
+    int has_u = 0, l_count = 0;
+    while (*end && (*end == 'u' || *end == 'U' || *end == 'l' || *end == 'L')) {
+        if (*end == 'u' || *end == 'U') has_u = 1;
+        else if (l_count < 2) l_count++;
+        end++;
+    }
+
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end) return pp_eval_text_expr(text);
+
+    int is_hex = (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'));
+    int is_octal = (p[0] == '0' && !is_hex);
+    int is_decimal = !(is_hex || is_octal);
+    int is_unsigned = pp_classify_unsigned(uv, has_u, l_count, is_decimal);
+    return pp_make_u((uint64_t)uv, is_unsigned);
+}
+
+static PPVal pp_primary(void) {
+    pp_skip_ws();
+    if (src_pos >= src_len || source[src_pos] == '\n') return pp_make_u(0, 0);
 
     /* Parenthesized expression */
     if (source[src_pos] == '(') {
         src_pos++;
-        long val = pp_expr(0);
+        PPVal val = pp_expr(0);
         pp_skip_ws();
         if (src_pos < src_len && source[src_pos] == ')') src_pos++;
+        else error_at("expected ')' in #if expression");
         return val;
     }
 
     /* Character literal: 'x' or '\n' */
     if (source[src_pos] == '\'') {
         src_pos++;
-        long val = 0;
+        long long val = 0;
+        if (src_pos < src_len && source[src_pos] == '\'')
+            error_at("empty character literal");
         if (src_pos < src_len && source[src_pos] == '\\') {
             src_pos++;
-            if (src_pos < src_len) {
-                switch (source[src_pos]) {
-                case 'n': val = '\n'; break;
-                case 't': val = '\t'; break;
-                case 'r': val = '\r'; break;
-                case '0': val = '\0'; break;
-                case '\\': val = '\\'; break;
-                case '\'': val = '\''; break;
-                default: val = source[src_pos]; break;
-                }
-                src_pos++;
-            }
+            val = pp_parse_char_escape();
         } else if (src_pos < src_len) {
+            if (source[src_pos] == '\n')
+                error_at("unterminated character literal");
             val = (unsigned char)source[src_pos++];
+        } else {
+            error_at("unterminated character literal");
         }
-        if (src_pos < src_len && source[src_pos] == '\'') src_pos++;
-        return val;
+        if (src_pos < src_len && source[src_pos] == '\'') {
+            src_pos++;
+        } else if (src_pos >= src_len || source[src_pos] == '\n') {
+            error_at("unterminated character literal");
+        } else {
+            while (src_pos < src_len && source[src_pos] != '\'' && source[src_pos] != '\n')
+                src_pos++;
+            if (src_pos < src_len && source[src_pos] == '\'') src_pos++;
+            error_at("multi-character character literal not supported");
+        }
+        return pp_make_u((uint64_t)val, 0);
     }
 
     /* Integer literal (decimal, hex, octal) */
     if (isdigit(source[src_pos])) {
         char nbuf[64];
         int len = 0;
+        int has_hex_digit = 0;
         if (source[src_pos] == '0' && src_pos + 1 < src_len &&
             (source[src_pos + 1] == 'x' || source[src_pos + 1] == 'X')) {
             nbuf[len++] = source[src_pos++];
             nbuf[len++] = source[src_pos++];
-            while (src_pos < src_len && isxdigit(source[src_pos]) && len < 62)
+            while (src_pos < src_len && isxdigit(source[src_pos]) && len < 62) {
                 nbuf[len++] = source[src_pos++];
+                has_hex_digit = 1;
+            }
         } else {
             while (src_pos < src_len && isdigit(source[src_pos]) && len < 62)
                 nbuf[len++] = source[src_pos++];
         }
         nbuf[len] = 0;
-        /* Skip integer suffixes */
+
+        int is_hex = (nbuf[0] == '0' && (nbuf[1] == 'x' || nbuf[1] == 'X'));
+        int is_octal = (nbuf[0] == '0' && !is_hex && nbuf[1] != '\0');
+        if (is_hex && !has_hex_digit)
+            error_at("invalid hex literal");
+        if (is_octal) {
+            for (int i = 1; nbuf[i]; i++) {
+                if (nbuf[i] > '7')
+                    error_at("invalid octal literal");
+            }
+        }
+
+        int has_u = 0, l_count = 0;
+        int u_count = 0;
         while (src_pos < src_len && (source[src_pos] == 'u' || source[src_pos] == 'U' ||
-               source[src_pos] == 'l' || source[src_pos] == 'L'))
+               source[src_pos] == 'l' || source[src_pos] == 'L')) {
+            if (source[src_pos] == 'u' || source[src_pos] == 'U') {
+                has_u = 1;
+                u_count++;
+                if (u_count > 1)
+                    error_at("invalid integer suffix");
+            } else {
+                l_count++;
+                if (l_count > 2)
+                    error_at("invalid integer suffix");
+            }
             src_pos++;
-        return strtol(nbuf, NULL, 0);
+        }
+        if (src_pos < src_len && is_ident_start(source[src_pos]))
+            error_at("invalid integer suffix");
+        unsigned long long uv = strtoull(nbuf, NULL, 0);
+        int is_decimal = !(is_hex || is_octal);
+        int is_unsigned = pp_classify_unsigned(uv, has_u, l_count, is_decimal);
+        return pp_make_u((uint64_t)uv, is_unsigned);
     }
 
     /* Identifier: defined(), macro name, or unknown (→ 0) */
@@ -318,31 +508,60 @@ static long pp_primary(void) {
             if (src_pos < src_len && source[src_pos] == '(') { has_paren = 1; src_pos++; }
             char dname[64];
             read_pp_word(dname, sizeof(dname));
+            if (!dname[0])
+                error_at("expected identifier after defined");
             if (has_paren) {
                 pp_skip_ws();
                 if (src_pos < src_len && source[src_pos] == ')') src_pos++;
+                else error_at("expected ')' after defined(identifier)");
             }
-            return (find_sym_kind(dname, SYM_DEFINE) != NULL) ? 1 : 0;
+            return pp_make_u((find_sym_kind(dname, SYM_DEFINE) != NULL) ? 1 : 0, 0);
         }
 
         /* Macro expansion */
         Symbol *mac = find_sym_kind(name, SYM_DEFINE);
         if (mac && mac->macro_val[0])
-            return strtol(mac->macro_val, NULL, 0);
-        return 0;  /* undefined identifiers → 0 per C standard */
+            return pp_parse_macro_value(mac->macro_val);
+        return pp_make_u(0, 0);  /* undefined identifiers → 0 per C standard */
     }
 
-    return 0;
+    return pp_make_u(0, 0);
 }
 
-static long pp_unary(void) {
+static PPVal pp_unary(void) {
     pp_skip_ws();
-    if (src_pos >= src_len || source[src_pos] == '\n') return 0;
+    if (src_pos >= src_len || source[src_pos] == '\n') return pp_make_u(0, 0);
 
-    if (source[src_pos] == '!') { src_pos++; return !pp_unary(); }
-    if (source[src_pos] == '~') { src_pos++; return ~pp_unary(); }
-    if (source[src_pos] == '-') { src_pos++; return -pp_unary(); }
-    if (source[src_pos] == '+') { src_pos++; return pp_unary(); }
+    if (source[src_pos] == '!') {
+        src_pos++;
+        pp_skip_ws();
+        if (src_pos >= src_len || source[src_pos] == '\n' || source[src_pos] == ')')
+            error_at("expected operand after unary operator");
+        return pp_make_u(!pp_truthy(pp_unary()), 0);
+    }
+    if (source[src_pos] == '~') {
+        src_pos++;
+        pp_skip_ws();
+        if (src_pos >= src_len || source[src_pos] == '\n' || source[src_pos] == ')')
+            error_at("expected operand after unary operator");
+        PPVal v = pp_unary();
+        return pp_make_u(~pp_as_u(v), v.is_unsigned);
+    }
+    if (source[src_pos] == '-') {
+        src_pos++;
+        pp_skip_ws();
+        if (src_pos >= src_len || source[src_pos] == '\n' || source[src_pos] == ')')
+            error_at("expected operand after unary operator");
+        PPVal v = pp_unary();
+        return pp_make_u(0ULL - pp_as_u(v), v.is_unsigned);
+    }
+    if (source[src_pos] == '+') {
+        src_pos++;
+        pp_skip_ws();
+        if (src_pos >= src_len || source[src_pos] == '\n' || source[src_pos] == ')')
+            error_at("expected operand after unary operator");
+        return pp_unary();
+    }
     return pp_primary();
 }
 
@@ -413,46 +632,67 @@ static int pp_read_op(void) {
     return -1;
 }
 
-static long pp_apply(int op, long l, long r) {
+static PPVal pp_apply(int op, PPVal l, PPVal r) {
+    int u = l.is_unsigned || r.is_unsigned;
+    uint64_t lu = pp_as_u(l), ru = pp_as_u(r);
+    int64_t ls = pp_as_s(l), rs = pp_as_s(r);
     switch (op) {
-    case PP_OP_OR:      return l || r;
-    case PP_OP_AND:     return l && r;
-    case PP_OP_BIT_OR:  return l | r;
-    case PP_OP_XOR:     return l ^ r;
-    case PP_OP_BIT_AND: return l & r;
-    case PP_OP_EQ:      return l == r;
-    case PP_OP_NE:      return l != r;
-    case PP_OP_LT:      return l < r;
-    case PP_OP_GT:      return l > r;
-    case PP_OP_LE:      return l <= r;
-    case PP_OP_GE:      return l >= r;
-    case PP_OP_SHL:     return l << r;
-    case PP_OP_SHR:     return l >> r;
-    case PP_OP_ADD:     return l + r;
-    case PP_OP_SUB:     return l - r;
-    case PP_OP_MUL:     return l * r;
-    case PP_OP_DIV:     return r ? l / r : 0;
-    case PP_OP_MOD:     return r ? l % r : 0;
-    default:            return 0;
+    case PP_OP_OR:      return pp_make_u(pp_truthy(l) || pp_truthy(r), 0);
+    case PP_OP_AND:     return pp_make_u(pp_truthy(l) && pp_truthy(r), 0);
+    case PP_OP_BIT_OR:  return pp_make_u(lu | ru, u);
+    case PP_OP_XOR:     return pp_make_u(lu ^ ru, u);
+    case PP_OP_BIT_AND: return pp_make_u(lu & ru, u);
+    case PP_OP_EQ:      return pp_make_u(u ? (lu == ru) : (ls == rs), 0);
+    case PP_OP_NE:      return pp_make_u(u ? (lu != ru) : (ls != rs), 0);
+    case PP_OP_LT:      return pp_make_u(u ? (lu < ru) : (ls < rs), 0);
+    case PP_OP_GT:      return pp_make_u(u ? (lu > ru) : (ls > rs), 0);
+    case PP_OP_LE:      return pp_make_u(u ? (lu <= ru) : (ls <= rs), 0);
+    case PP_OP_GE:      return pp_make_u(u ? (lu >= ru) : (ls >= rs), 0);
+    case PP_OP_SHL:     return pp_make_u(lu << (ru & 63ULL), u);
+    case PP_OP_SHR:     return pp_make_u(u ? (lu >> (ru & 63ULL)) : (uint64_t)(ls >> (ru & 63ULL)), u);
+    case PP_OP_ADD:     return pp_make_u(lu + ru, u);
+    case PP_OP_SUB:     return pp_make_u(lu - ru, u);
+    case PP_OP_MUL:     return pp_make_u(lu * ru, u);
+    case PP_OP_DIV:
+        if (!ru) return pp_make_u(0, 0);
+        if (u) return pp_make_u(lu / ru, 1);
+        if (ls == LLONG_MIN && rs == -1) return pp_make_u((uint64_t)LLONG_MIN, 0);
+        return pp_make_u((uint64_t)(ls / rs), 0);
+    case PP_OP_MOD:
+        if (!ru) return pp_make_u(0, 0);
+        if (u) return pp_make_u(lu % ru, 1);
+        if (ls == LLONG_MIN && rs == -1) return pp_make_u(0, 0);
+        return pp_make_u((uint64_t)(ls % rs), 0);
+    default:            return pp_make_u(0, 0);
     }
 }
 
-static long pp_expr(int min_prec) {
-    long left = pp_unary();
+static PPVal pp_expr(int min_prec) {
+    PPVal left = pp_unary();
     for (;;) {
         int prec = pp_get_prec();
         if (prec < min_prec) break;
         int op = pp_read_op();
         if (op < 0) break;
-        long right = pp_expr(prec + 1);
+        pp_skip_ws();
+        if (src_pos >= src_len || source[src_pos] == '\n' || source[src_pos] == ')')
+            error_at("expected operand after operator in #if expression");
+        PPVal right = pp_expr(prec + 1);
         left = pp_apply(op, left, right);
     }
     return left;
 }
 
 /* Evaluate the rest of the current line as a #if expression */
-static long pp_eval_if(void) {
-    return pp_expr(0);
+static PPVal pp_eval_if(void) {
+    pp_skip_ws();
+    if (src_pos >= src_len || source[src_pos] == '\n')
+        error_at("missing #if expression");
+    PPVal v = pp_expr(0);
+    pp_skip_ws();
+    if (src_pos < src_len && source[src_pos] != '\n')
+        error_at("invalid #if expression");
+    return v;
 }
 
 int preproc_line(void) {
@@ -489,8 +729,8 @@ int preproc_line(void) {
                 if (ifdef_had_else[ifdef_depth - 1])
                     error_at("#elif after #else");
                 if (!ifdef_taken[ifdef_depth - 1]) {
-                    long val = pp_eval_if();
-                    if (val) {
+                    PPVal val = pp_eval_if();
+                    if (pp_truthy(val)) {
                         ifdef_skip[ifdef_depth - 1] = 0;
                         ifdef_taken[ifdef_depth - 1] = 1;
                     }
@@ -620,14 +860,14 @@ int preproc_line(void) {
     }
 
     if (strcmp(directive, "if") == 0) {
-        long val = pp_eval_if();
+        PPVal val = pp_eval_if();
 
         if (ifdef_depth >= MAX_IFDEF_DEPTH) {
             error_at("#if too deeply nested");
             ifdef_overflow++;
         } else {
-            ifdef_skip[ifdef_depth] = (val == 0);
-            ifdef_taken[ifdef_depth] = (val != 0);
+            ifdef_skip[ifdef_depth] = !pp_truthy(val);
+            ifdef_taken[ifdef_depth] = pp_truthy(val);
             ifdef_had_else[ifdef_depth] = 0;
             ifdef_depth++;
         }

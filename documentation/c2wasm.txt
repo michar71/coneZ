@@ -87,8 +87,9 @@ Types:
                 Both 'const int' and 'int const' orderings are accepted.
   static        accepted on globals and functions
 
-  Pointers (int *, char *, const char *, void *) are parsed but treated
-  as i32. No pointer arithmetic or dereferencing.
+  Pointers (int *, char *, const char *, void *) are represented as i32.
+  Address-of (&), dereference (*), and basic pointer arithmetic are supported
+  for expression codegen (see Expressions and Limitations below).
 
   Type/WASM mapping summary:
     C type              WASM    sizeof
@@ -118,6 +119,36 @@ Declarations:
   Local variables with optional initializer:
     int i = 0;
     float dist = origin_dist();
+
+  Array declarations and initializers:
+    int a[3] = {1, 2, 3};
+    int m[2][3];
+    int grid[2][3] = {{1, 2, 3}, {4, 5, 6}};
+    int d[5] = {[1] = 2, [3] = 4};
+    int dm[2][3] = {[1] = {[2] = 9}};
+    char name[] = "cone";      // inferred size (includes '\0')
+    char tag[3] = "abc";       // exact-size char array (no trailing '\0')
+
+  Notes for char string initializers:
+    - char[] = "..." infers size as strlen + 1
+    - char[N] = "..." truncates/pads to N bytes per C-style fixed-size array behavior
+
+  Initializer forms at a glance:
+    Supported:
+      int a[3] = {1, 2, 3};
+      int m[2][2] = {{1, 2}, {3, 4}};
+      int d[5] = {[1] = 2, [3] = 4};
+      int dm[2][3] = {[1] = {[2] = 9}};
+      char s[] = "cone";
+
+    Not supported:
+      int a[3] = {f(), 2, 3};                 // non-constant global initializer expr
+      int a[4] = {[1 + x] = 7};               // non-constant designator index
+      struct P p = {.x = 1};                  // structs/designated struct init unsupported
+
+  Global vs local initializer rule:
+    - Global initializers must be constant expressions.
+    - Local initializers may use runtime expressions.
 
   Comma-separated declarations (including pointer types):
     int x = 42, y = 0;
@@ -167,6 +198,18 @@ Expressions (full C operator precedence):
                  sizeof(expr) — returns type size without evaluating expr
                  sizeof(void) returns 1 (GCC extension)
 
+  Pointer-related expression support:
+    &var          Address-of for local scalars/arrays and array lvalues
+    &arr[i]       Address-of subscripted lvalues (including local arrays)
+    &x            Address-of local scalar (via compiler-managed spill slot)
+    *ptr          Dereference load/store path
+    arr[i]        Subscript read/write path
+    arr[i][j]     Chained subscript read/write for multidimensional arrays
+    ptr + n       Pointer advance by n * element_size
+    n + ptr       Commutative pointer advance
+    ptr - n       Pointer retreat by n * element_size
+    ptr1 - ptr2   Element-distance difference (scaled subtraction)
+
   Operator precedence follows the C standard (15 levels).
   Mixed int/float expressions promote to float automatically.
   Mixed int/double or float/double expressions promote to double.
@@ -179,10 +222,27 @@ Expressions (full C operator precedence):
 
 Literals:
   Integer:       42, 0xFF, 0x1A, 0755, -1
+                 Suffixes: U/u, L/l, LL/ll (combined ULL/ull forms supported)
+                 Invalid integer suffixes are rejected
+                 Invalid octal literals (e.g. 08, 09) are rejected
+                 Invalid hex literals (e.g. 0x with no digits) are rejected
+                 Type selection follows C-style fit rules in the compiler's
+                 data model (int/long are 32-bit, long long is 64-bit):
+                 - Decimal unsuffixed: int -> long long -> unsigned long long
+                 - Hex/octal unsuffixed: int -> unsigned int -> long long -> unsigned long long
+                 - With U: unsigned int -> unsigned long long
+                 - With L (long=32-bit here): 32-bit first, then 64-bit as needed
   Float (f32):   3.14f, 0.5f (f/F suffix required for float)
   Double (f64):  1.0, .5, 5. (unsuffixed decimal = double, per C standard)
-  Character:     'A', '\n', '\t', '\\', '\0', '\x41'
+                 Invalid float suffixes are rejected
+                 Invalid exponents (e.g. 1e+, 1e-) are rejected
+                 Adjacent-dot malformed forms (e.g. 1..2) are rejected
+  Character:     'A', '\n', '\t', '\\', '\0', '\x41', '\101', '\a', '\b', '\f', '\v', '\?'
+                 Empty ('' ) and multi-character ('ab') literals are rejected
+                 Invalid hex escapes (e.g. '\x') are rejected
   String:        "hello\n", "multi" "part" (concatenation)
+                 Supports the same escape forms as character literals
+                 Invalid hex escapes (e.g. "\x") are rejected
 
 Preprocessor:
   #include "conez_api.h"      Register all ConeZ API imports
@@ -213,6 +273,18 @@ Preprocessor:
   #if 'A'                     Character literals
   #if VERSION > 2 && defined(FEATURE)
                               Complex expressions combining all of the above
+
+  The #if evaluator uses 64-bit integer arithmetic internally with
+  signed/unsigned-aware comparisons and division/modulo behavior.
+  Object-like macro values used in #if may be literals, identifiers,
+  or simple constant expressions; recursive macro cycles are bounded.
+  Signed macro values (e.g. #define NEG -1) are handled correctly.
+  Macros that start with a literal but include operators (e.g. 1ULL<<63)
+  are evaluated as full expressions in #if.
+  Trailing garbage in #if expressions is rejected.
+  Missing ')' in parenthesized #if expressions or defined(...) is rejected.
+  Missing unary/binary operands in #if expressions are rejected.
+  Empty #if expressions are rejected.
 
 Comments:
   // line comments
@@ -325,7 +397,8 @@ NOT Supported
 The following C features are NOT in scope:
 
   - struct, union, enum, typedef
-  - Arrays and pointer arithmetic
+  - Full C array semantics (see limitations below)
+  - Full pointer semantics (typed pointer graph/function pointers)
   - malloc/free (dynamic memory allocation)
   - goto, labels
   - Function pointers
@@ -336,11 +409,35 @@ The following C features are NOT in scope:
 
 For programs requiring these features, use clang --target=wasm32 instead.
 
+Current Array/Pointer Limitations
+---------------------------------
+
+  - Global and local array initializers support constant values with brace
+    lists, including multidimensional nested braces in row-major order.
+    Array designators like [i] = value are supported for array initializers.
+    Non-constant global initializer expressions are not supported.
+
+  - char[] / char[N] string-literal initialization is supported. Advanced
+    string/aggregate forms beyond this are not supported.
+
+  - Inferred-size arrays are currently limited to char[] with string literal
+    initializers.
+
+  - Taking address of local scalar variables is supported via compiler-managed
+    linear-memory spill slots. This is practical for single-threaded scripts,
+    but does not model a full C stack-frame address model.
+
+  - Taking address of non-array global WASM globals is not supported (those
+    values are not linear-memory lvalues).
+
+  - Pointer arithmetic support is lightweight and expression-driven; it is
+    not yet a full C pointer type system with complete alias/qualifier rules.
+
 
 Memory Layout
 -------------
 
-  0x0000 - data_len      String literal data section
+  0x0000 - data_len      Data section (string literals + static array backing)
   data_len - heap_start  Padding (4-byte aligned)
   heap_start+            Heap (available for host_printf args, etc.)
   0xF000 - 0xF0FF        Printf argument buffer (256 bytes)
@@ -430,7 +527,8 @@ comma operator, typed ternary (float/double/long long branches), double
 pre/post increment/decrement, double %/%= via fmod, f64 math imports
 (sin/cos/tan/etc.), sizeof(type*) for pointer types, sizeof(long long),
 #if preprocessor negation and full expressions, pointer comma-separated
-declarations (int *a, *b;), bare return in non-void functions, double
+declarations (int *a, *b;), pointer arithmetic smoke tests, array element
+assignment tests, global/local array initializer tests, bare return in non-void functions, double
 literals (f/F suffix vs unsuffixed), long long (i64) arithmetic/API/
 global init/ternary/printf, 'long long int' and 'unsigned long long int'
 type parsing, 'int const' trailing qualifier, 'long' bare warning,
@@ -444,6 +542,26 @@ signed/unsigned promotion, compound assignment, conversions), and
 rejection of undefined forward declarations, unterminated block comments,
 void expression as operand, void/non-void ternary mismatch, const variable
 assignment, forward declaration param mismatch, and #error directive.
+Includes multidimensional array indexing and nested initializer tests.
+Includes designated array initializer tests and address-of local scalar/array lvalue tests.
+Includes integer-literal width/signedness coverage for large decimal/hex and U/L/LL suffix combinations.
+Includes curve helper import registration tests (lerp/larp/larpf) and const global long long literal coverage.
+Includes unsigned 64-bit macro initializer coverage for global initialization paths.
+Includes #if unsigned 64-bit literal comparison coverage.
+Includes #if macro identifier/expression expansion coverage (with recursion guard behavior).
+Includes #if negative macro comparison coverage.
+Includes #if macro-literal-with-operator coverage (e.g. 1ULL<<63, -1ULL).
+Includes invalid octal literal rejection coverage in both lexer and #if paths.
+Includes invalid hex literal rejection coverage in both lexer and #if paths.
+Includes malformed float exponent rejection coverage.
+Includes malformed hex-escape rejection coverage in char/string literals and #if char literals.
+Includes octal/control-character escape coverage in lexer and #if char-literal paths.
+Includes empty/multi-character literal rejection coverage in lexer and #if paths.
+Includes malformed integer/float suffix rejection coverage in lexer and #if paths.
+Includes malformed adjacent-dot float rejection and trailing-garbage #if expression rejection coverage.
+Includes #if parenthesis-mismatch rejection coverage.
+Includes #if missing-operand rejection coverage for unary and binary operators.
+Includes empty #if expression rejection coverage.
 
 Adding a test: create a .c file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.c must fail compilation.
@@ -464,5 +582,5 @@ Comparison with clang
   Portability          Any C compiler      Requires LLVM target support
 
 For simple LED/sensor programs, c2wasm produces functionally identical
-output. For programs requiring structs, arrays, pointer arithmetic, or
+output. For programs requiring full struct/array/pointer semantics or
 advanced optimization, use clang.

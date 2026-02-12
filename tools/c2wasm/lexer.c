@@ -6,6 +6,9 @@
 static int peek_tok;
 static int peek_valid;
 static int peek_ival;
+static int64_t peek_i64;
+static int peek_int_is_64;
+static int peek_int_unsigned;
 static float peek_fval;
 static double peek_dval;
 static char peek_sval[1024];
@@ -15,10 +18,18 @@ static int peek_slen;
 #define MAX_MACRO_DEPTH 16
 static int macro_depth;
 
+/* Guard to prevent macro expansion during lexer save/restore (e.g., switch pre-scan) */
+static int lexer_save_active = 0;
+
 void lex_init(void) {
     peek_valid = 0;
     tok = 0;
+    tok_ival = 0;
+    tok_i64 = 0;
+    tok_int_is_64 = 0;
+    tok_int_unsigned = 0;
     macro_depth = 0;
+    lexer_save_active = 0;
 }
 
 static int ch(void) {
@@ -111,7 +122,163 @@ static int lookup_keyword(const char *name) {
     return -1;
 }
 
+static void lex_int_suffix(int *has_u, int *l_count) {
+    *has_u = 0;
+    *l_count = 0;
+    int u_count = 0;
+    while (src_pos < src_len && (ch() == 'u' || ch() == 'U' || ch() == 'l' || ch() == 'L')) {
+        if (ch() == 'u' || ch() == 'U') {
+            u_count++;
+            if (u_count > 1)
+                error_at("invalid integer suffix");
+            *has_u = 1;
+        } else {
+            (*l_count)++;
+            if (*l_count > 2)
+                error_at("invalid integer suffix");
+        }
+        advance();
+    }
+}
+
+static void classify_int_literal(unsigned long long uv, int has_u, int l_count, int is_decimal) {
+    int is_64 = 0;
+    int is_unsigned = 0;
+
+    if (l_count >= 2) {
+        is_64 = 1;
+        is_unsigned = has_u || uv > (unsigned long long)LLONG_MAX;
+    } else if (l_count == 1) {
+        if (has_u) {
+            if (uv <= UINT_MAX) {
+                is_64 = 0;
+                is_unsigned = 1;
+            } else {
+                is_64 = 1;
+                is_unsigned = 1;
+            }
+        } else {
+            /* long is 32-bit in this compiler's model */
+            if (uv <= INT_MAX) {
+                is_64 = 0;
+                is_unsigned = 0;
+            } else if (!is_decimal && uv <= UINT_MAX) {
+                is_64 = 0;
+                is_unsigned = 1;
+            } else if (uv <= (unsigned long long)LLONG_MAX) {
+                is_64 = 1;
+                is_unsigned = 0;
+            } else {
+                is_64 = 1;
+                is_unsigned = 1;
+            }
+        }
+    } else if (has_u) {
+        if (uv <= UINT_MAX) {
+            is_64 = 0;
+            is_unsigned = 1;
+        } else {
+            is_64 = 1;
+            is_unsigned = 1;
+        }
+    } else if (is_decimal) {
+        if (uv <= INT_MAX) {
+            is_64 = 0;
+            is_unsigned = 0;
+        } else if (uv <= (unsigned long long)LLONG_MAX) {
+            is_64 = 1;
+            is_unsigned = 0;
+        } else {
+            is_64 = 1;
+            is_unsigned = 1;
+        }
+    } else {
+        if (uv <= INT_MAX) {
+            is_64 = 0;
+            is_unsigned = 0;
+        } else if (uv <= UINT_MAX) {
+            is_64 = 0;
+            is_unsigned = 1;
+        } else if (uv <= (unsigned long long)LLONG_MAX) {
+            is_64 = 1;
+            is_unsigned = 0;
+        } else {
+            is_64 = 1;
+            is_unsigned = 1;
+        }
+    }
+
+    tok_i64 = (int64_t)uv;
+    tok_ival = (int32_t)uv;
+    tok_int_is_64 = is_64;
+    tok_int_unsigned = is_unsigned;
+}
+
+static int parse_escape_sequence(void) {
+    if (src_pos >= src_len || ch() == '\n')
+        error_at("unterminated escape sequence");
+
+    int c = ch();
+    switch (c) {
+    case 'n': advance(); return '\n';
+    case 't': advance(); return '\t';
+    case 'r': advance(); return '\r';
+    case 'a': advance(); return '\a';
+    case 'b': advance(); return '\b';
+    case 'f': advance(); return '\f';
+    case 'v': advance(); return '\v';
+    case '\\': advance(); return '\\';
+    case '"': advance(); return '"';
+    case '\'': advance(); return '\'';
+    case '?': advance(); return '?';
+    case 'x': {
+        advance();
+        int val = 0;
+        int hex_digits = 0;
+        while (src_pos < src_len && isxdigit(ch()) && hex_digits < 2) {
+            int d = ch();
+            if (d >= '0' && d <= '9') val = val * 16 + d - '0';
+            else if (d >= 'a' && d <= 'f') val = val * 16 + d - 'a' + 10;
+            else val = val * 16 + d - 'A' + 10;
+            advance();
+            hex_digits++;
+        }
+        if (!hex_digits)
+            error_at("invalid hex escape sequence");
+        return val;
+    }
+    default:
+        if (c >= '0' && c <= '7') {
+            int val = 0;
+            int oct_digits = 0;
+            while (src_pos < src_len && ch() >= '0' && ch() <= '7' && oct_digits < 3) {
+                val = (val << 3) + (ch() - '0');
+                advance();
+                oct_digits++;
+            }
+            return val;
+        }
+        advance();
+        return c;
+    }
+}
+
+static void append_string_segment(int *len, int max_len) {
+    while (src_pos < src_len && ch() != '"' && ch() != '\n' && *len < max_len) {
+        if (ch() == '\\') {
+            advance();
+            tok_sval[(*len)++] = (char)parse_escape_sequence();
+        } else {
+            tok_sval[(*len)++] = advance();
+        }
+    }
+}
+
 static int lex_raw(void) {
+    tok_int_is_64 = 0;
+    tok_int_unsigned = 0;
+    tok_i64 = 0;
+
     skip_ws();
     if (src_pos >= src_len) return TOK_EOF;
 
@@ -144,9 +311,10 @@ static int lex_raw(void) {
         int kw = lookup_keyword(tok_sval);
         if (kw >= 0) return kw;
 
-        /* Check for macro expansion (with depth limit to prevent mutual recursion) */
+        /* Check for macro expansion (with depth limit to prevent mutual recursion,
+         * and disabled during lexer save/restore to prevent use-after-free) */
         Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
-        if (mac && macro_depth < MAX_MACRO_DEPTH) {
+        if (mac && macro_depth < MAX_MACRO_DEPTH && !lexer_save_active) {
             /* Push macro value back into source for re-lexing */
             int vlen = strlen(mac->macro_val);
             if (vlen > 0) {
@@ -183,19 +351,47 @@ static int lex_raw(void) {
         if (c == '0' && (peek_ch() == 'x' || peek_ch() == 'X')) {
             /* Hex */
             nbuf[len++] = advance(); nbuf[len++] = advance();
-            while (src_pos < src_len && isxdigit(ch()) && len < 62)
+            int has_hex_digit = 0;
+            while (src_pos < src_len && isxdigit(ch()) && len < 62) {
                 nbuf[len++] = advance();
+                has_hex_digit = 1;
+            }
             nbuf[len] = 0;
-            tok_ival = (int)strtol(nbuf, NULL, 16);
+
+            if (!has_hex_digit)
+                error_at("invalid hex literal");
+
+            /* Optional U/L suffixes */
+            int has_u = 0, l_count = 0;
+            lex_int_suffix(&has_u, &l_count);
+            if (is_ident_start(ch()))
+                error_at("invalid integer suffix");
+
+            unsigned long long uv = strtoull(nbuf, NULL, 16);
+            classify_int_literal(uv, has_u, l_count, 0);
             return TOK_INT_LIT;
         }
 
-        if (c == '0' && peek_ch() >= '0' && peek_ch() <= '7') {
-            /* Octal */
-            while (src_pos < src_len && ch() >= '0' && ch() <= '7' && len < 62)
+        if (c == '0' && isdigit(peek_ch())) {
+            /* Octal integer (reject 8/9 digits) */
+            int bad_octal = 0;
+            nbuf[len++] = advance(); /* leading 0 */
+            while (src_pos < src_len && isdigit(ch()) && len < 62) {
+                if (ch() > '7') bad_octal = 1;
                 nbuf[len++] = advance();
+            }
             nbuf[len] = 0;
-            tok_ival = (int)strtol(nbuf, NULL, 8);
+
+            if (bad_octal)
+                error_at("invalid octal literal");
+
+            int has_u = 0, l_count = 0;
+            lex_int_suffix(&has_u, &l_count);
+            if (is_ident_start(ch()))
+                error_at("invalid integer suffix");
+
+            unsigned long long uv = strtoull(nbuf, NULL, 8);
+            classify_int_literal(uv, has_u, l_count, 0);
             return TOK_INT_LIT;
         }
 
@@ -205,16 +401,26 @@ static int lex_raw(void) {
         if (src_pos < src_len && ch() == '.') {
             is_float = 1;
             nbuf[len++] = advance();
-            while (src_pos < src_len && isdigit(ch()) && len < 62)
+            int frac_digits = 0;
+            while (src_pos < src_len && isdigit(ch()) && len < 62) {
                 nbuf[len++] = advance();
+                frac_digits = 1;
+            }
+            if (!frac_digits && ch() == '.')
+                error_at("invalid float literal");
         }
         if (src_pos < src_len && (ch() == 'e' || ch() == 'E')) {
             is_float = 1;
             nbuf[len++] = advance();
             if (src_pos < src_len && (ch() == '+' || ch() == '-'))
                 nbuf[len++] = advance();
-            while (src_pos < src_len && isdigit(ch()) && len < 62)
+            int exp_digits = 0;
+            while (src_pos < src_len && isdigit(ch()) && len < 62) {
                 nbuf[len++] = advance();
+                exp_digits = 1;
+            }
+            if (!exp_digits)
+                error_at("invalid float exponent");
         }
         nbuf[len] = 0;
 
@@ -225,16 +431,23 @@ static int lex_raw(void) {
             is_float = 1;
             has_f_suffix = 1;
         }
+        if (is_float && is_ident_start(ch()))
+            error_at("invalid float suffix");
 
         if (is_float) {
             tok_fval = strtof(nbuf, NULL);
             tok_dval = strtod(nbuf, NULL);
+            tok_i64 = 0;
+            tok_int_is_64 = 0;
+            tok_int_unsigned = 0;
             return has_f_suffix ? TOK_FLOAT_LIT : TOK_DOUBLE_LIT;
         }
-        tok_ival = (int)strtol(nbuf, NULL, 10);
-        /* Skip U/L suffixes */
-        while (src_pos < src_len && (ch() == 'u' || ch() == 'U' || ch() == 'l' || ch() == 'L'))
-            advance();
+        int has_u = 0, l_count = 0;
+        lex_int_suffix(&has_u, &l_count);
+        if (is_ident_start(ch()))
+            error_at("invalid integer suffix");
+        unsigned long long uv = strtoull(nbuf, NULL, 10);
+        classify_int_literal(uv, has_u, l_count, 1);
         return TOK_INT_LIT;
     }
 
@@ -242,36 +455,10 @@ static int lex_raw(void) {
     if (c == '"') {
         advance();
         int len = 0;
-        while (src_pos < src_len && ch() != '"' && ch() != '\n' && len < 1022) {
-            if (ch() == '\\') {
-                advance();
-                switch (ch()) {
-                case 'n': tok_sval[len++] = '\n'; advance(); break;
-                case 't': tok_sval[len++] = '\t'; advance(); break;
-                case 'r': tok_sval[len++] = '\r'; advance(); break;
-                case '\\': tok_sval[len++] = '\\'; advance(); break;
-                case '"': tok_sval[len++] = '"'; advance(); break;
-                case '0': tok_sval[len++] = '\0'; advance(); break;
-                case 'x': {
-                    advance();
-                    int val = 0;
-                    for (int i = 0; i < 2 && isxdigit(ch()); i++) {
-                        int d = ch();
-                        if (d >= '0' && d <= '9') val = val * 16 + d - '0';
-                        else if (d >= 'a' && d <= 'f') val = val * 16 + d - 'a' + 10;
-                        else val = val * 16 + d - 'A' + 10;
-                        advance();
-                    }
-                    tok_sval[len++] = val;
-                    break;
-                }
-                default: tok_sval[len++] = ch(); advance(); break;
-                }
-            } else {
-                tok_sval[len++] = advance();
-            }
-        }
+        const int MAX_STRLEN = sizeof(tok_sval) - 2; /* Reserve 1 for null, 1 for safety margin */
+        append_string_segment(&len, MAX_STRLEN);
         if (ch() == '"') advance();
+        else if (len >= MAX_STRLEN) error_at("string literal too long (max 1022 characters)");
         else error_at("unterminated string literal");
         tok_sval[len] = 0;
         tok_slen = len;
@@ -281,34 +468,10 @@ static int lex_raw(void) {
             skip_ws();
             if (ch() != '"') break;
             advance();
-            while (src_pos < src_len && ch() != '"' && ch() != '\n' && len < 1022) {
-                if (ch() == '\\') {
-                    advance();
-                    switch (ch()) {
-                    case 'n': tok_sval[len++] = '\n'; advance(); break;
-                    case 't': tok_sval[len++] = '\t'; advance(); break;
-                    case 'r': tok_sval[len++] = '\r'; advance(); break;
-                    case '\\': tok_sval[len++] = '\\'; advance(); break;
-                    case '"': tok_sval[len++] = '"'; advance(); break;
-                    case '0': tok_sval[len++] = '\0'; advance(); break;
-                    case 'x': {
-                        advance();
-                        int val = 0;
-                        for (int i = 0; i < 2 && isxdigit(ch()); i++) {
-                            int d = ch();
-                            if (d >= '0' && d <= '9') val = val * 16 + d - '0';
-                            else if (d >= 'a' && d <= 'f') val = val * 16 + d - 'a' + 10;
-                            else val = val * 16 + d - 'A' + 10;
-                            advance();
-                        }
-                        tok_sval[len++] = val;
-                        break;
-                    }
-                    default: tok_sval[len++] = ch(); advance(); break;
-                    }
-                } else {
-                    tok_sval[len++] = advance();
-                }
+            append_string_segment(&len, MAX_STRLEN);
+            if (len >= MAX_STRLEN) {
+                error_at("string literal too long after concatenation (max 1022 characters)");
+                break;
             }
             if (ch() == '"') advance();
         }
@@ -320,36 +483,31 @@ static int lex_raw(void) {
     /* Char literal */
     if (c == '\'') {
         advance();
+        if (ch() == '\'') {
+            error_at("empty character literal");
+        }
         if (ch() == '\\') {
             advance();
-            switch (ch()) {
-            case 'n': tok_ival = '\n'; advance(); break;
-            case 't': tok_ival = '\t'; advance(); break;
-            case 'r': tok_ival = '\r'; advance(); break;
-            case '0': tok_ival = '\0'; advance(); break;
-            case '\\': tok_ival = '\\'; advance(); break;
-            case '\'': tok_ival = '\''; advance(); break;
-            case 'x': {
-                advance();
-                int val = 0;
-                for (int i = 0; i < 2 && isxdigit(ch()); i++) {
-                    int d = ch();
-                    if (d >= '0' && d <= '9') val = val * 16 + d - '0';
-                    else if (d >= 'a' && d <= 'f') val = val * 16 + d - 'a' + 10;
-                    else val = val * 16 + d - 'A' + 10;
-                    advance();
-                }
-                tok_ival = val;
-                break;
-            }
-            default: tok_ival = ch(); advance(); break;
-            }
+            tok_ival = parse_escape_sequence();
         } else {
+            if (ch() == -1 || ch() == '\n')
+                error_at("unterminated character literal");
             tok_ival = ch();
             advance();
         }
-        if (ch() == '\'') advance();
-        else error_at("unterminated character literal");
+        if (ch() == '\'') {
+            advance();
+        } else if (ch() == -1 || ch() == '\n') {
+            error_at("unterminated character literal");
+        } else {
+            while (src_pos < src_len && ch() != '\'' && ch() != '\n')
+                advance();
+            if (ch() == '\'') advance();
+            error_at("multi-character character literal not supported");
+        }
+        tok_i64 = (int64_t)tok_ival;
+        tok_int_is_64 = 0;
+        tok_int_unsigned = 0;
         return TOK_CHAR_LIT;
     }
 
@@ -436,6 +594,9 @@ int next_token(void) {
     if (peek_valid) {
         tok = peek_tok;
         tok_ival = peek_ival;
+        tok_i64 = peek_i64;
+        tok_int_is_64 = peek_int_is_64;
+        tok_int_unsigned = peek_int_unsigned;
         tok_fval = peek_fval;
         tok_dval = peek_dval;
         memcpy(tok_sval, peek_sval, sizeof(tok_sval));
@@ -453,6 +614,9 @@ int peek_token(void) {
     if (peek_valid) return peek_tok;
     /* Save current state */
     int save_tok = tok, save_ival = tok_ival;
+    int64_t save_i64 = tok_i64;
+    int save_int_is_64 = tok_int_is_64;
+    int save_int_unsigned = tok_int_unsigned;
     float save_fval = tok_fval;
     double save_dval = tok_dval;
     char save_sval[1024]; int save_slen = tok_slen;
@@ -462,6 +626,9 @@ int peek_token(void) {
         peek_tok = lex_raw();
     } while (peek_tok == TOK_PP_DONE);
     peek_ival = tok_ival;
+    peek_i64 = tok_i64;
+    peek_int_is_64 = tok_int_is_64;
+    peek_int_unsigned = tok_int_unsigned;
     peek_fval = tok_fval;
     peek_dval = tok_dval;
     memcpy(peek_sval, tok_sval, sizeof(peek_sval));
@@ -469,7 +636,9 @@ int peek_token(void) {
     peek_valid = 1;
 
     /* Restore current state */
-    tok = save_tok; tok_ival = save_ival; tok_fval = save_fval; tok_dval = save_dval;
+    tok = save_tok; tok_ival = save_ival; tok_i64 = save_i64;
+    tok_int_is_64 = save_int_is_64; tok_int_unsigned = save_int_unsigned;
+    tok_fval = save_fval; tok_dval = save_dval;
     memcpy(tok_sval, save_sval, sizeof(tok_sval));
     tok_slen = save_slen;
 
@@ -489,16 +658,37 @@ int accept(int t) {
     return 0;
 }
 
+/* ---- Error recovery: skip to synchronization point ---- */
+void synchronize(int stop_at_semi, int stop_at_brace, int stop_at_rparen) {
+    while (tok != TOK_EOF) {
+        if (stop_at_semi && tok == TOK_SEMI) {
+            next_token();  /* Consume the semicolon */
+            break;
+        }
+        if (stop_at_brace && tok == TOK_RBRACE) {
+            break;  /* Don't consume - let caller handle it */
+        }
+        if (stop_at_rparen && tok == TOK_RPAREN) {
+            break;  /* Don't consume - let caller handle it */
+        }
+        next_token();
+    }
+}
+
 /* ---- Lexer save/restore for pre-scan ---- */
 
 void lexer_save(LexerSave *s) {
     s->saved_source = malloc(src_len + 1);
+    if (!s->saved_source) { fprintf(stderr, "c2wasm: out of memory\n"); exit(1); }
     memcpy(s->saved_source, source, src_len + 1);
     s->saved_src_pos = src_pos;
     s->saved_src_len = src_len;
     s->saved_line_num = line_num;
     s->saved_tok = tok;
     s->saved_tok_ival = tok_ival;
+    s->saved_tok_i64 = tok_i64;
+    s->saved_tok_int_is_64 = tok_int_is_64;
+    s->saved_tok_int_unsigned = tok_int_unsigned;
     s->saved_tok_fval = tok_fval;
     s->saved_tok_dval = tok_dval;
     memcpy(s->saved_tok_sval, tok_sval, sizeof(tok_sval));
@@ -506,11 +696,15 @@ void lexer_save(LexerSave *s) {
     s->saved_peek_valid = peek_valid;
     s->saved_peek_tok = peek_tok;
     s->saved_peek_ival = peek_ival;
+    s->saved_peek_i64 = peek_i64;
+    s->saved_peek_int_is_64 = peek_int_is_64;
+    s->saved_peek_int_unsigned = peek_int_unsigned;
     s->saved_peek_fval = peek_fval;
     s->saved_peek_dval = peek_dval;
     memcpy(s->saved_peek_sval, peek_sval, sizeof(peek_sval));
     s->saved_peek_slen = peek_slen;
     s->saved_macro_depth = macro_depth;
+    lexer_save_active = 1;
 }
 
 void lexer_restore(LexerSave *s) {
@@ -521,6 +715,9 @@ void lexer_restore(LexerSave *s) {
     line_num = s->saved_line_num;
     tok = s->saved_tok;
     tok_ival = s->saved_tok_ival;
+    tok_i64 = s->saved_tok_i64;
+    tok_int_is_64 = s->saved_tok_int_is_64;
+    tok_int_unsigned = s->saved_tok_int_unsigned;
     tok_fval = s->saved_tok_fval;
     tok_dval = s->saved_tok_dval;
     memcpy(tok_sval, s->saved_tok_sval, sizeof(tok_sval));
@@ -528,11 +725,15 @@ void lexer_restore(LexerSave *s) {
     peek_valid = s->saved_peek_valid;
     peek_tok = s->saved_peek_tok;
     peek_ival = s->saved_peek_ival;
+    peek_i64 = s->saved_peek_i64;
+    peek_int_is_64 = s->saved_peek_int_is_64;
+    peek_int_unsigned = s->saved_peek_int_unsigned;
     peek_fval = s->saved_peek_fval;
     peek_dval = s->saved_peek_dval;
     memcpy(peek_sval, s->saved_peek_sval, sizeof(peek_sval));
     peek_slen = s->saved_peek_slen;
     macro_depth = s->saved_macro_depth;
+    lexer_save_active = 0;
 }
 
 const char *tok_name(int t) {
