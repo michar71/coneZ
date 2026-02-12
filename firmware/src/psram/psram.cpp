@@ -111,9 +111,10 @@ static void psram_set_freq(uint32_t freq_hz) {
     int bytes_per_cem = (psram_freq / 1000000) * 8 / 8;
     psram_read_chunk  = bytes_per_cem - psram_read_overhead;
     psram_write_chunk = bytes_per_cem - 4;
-    spiPSRAM.endTransaction();
-    psramSettings = SPISettings(freq_hz, MSBFIRST, SPI_MODE0);
-    spiPSRAM.beginTransaction(psramSettings);
+    // Don't end/begin transaction — the SPI bus mutex was taken by loopTask
+    // during setup() and we own this bus exclusively.  setFrequency() updates
+    // the clock divider without touching the bus mutex.
+    spiPSRAM.setFrequency(freq_hz);
 }
 
 // ---- Low-level helpers ----
@@ -718,24 +719,13 @@ void psram_print_map(void) {
     PSRAM_UNLOCK();
     map[MAP_WIDTH] = '\0';
 
+    printfnl(SOURCE_COMMANDS, F("  Map:       [%s]\n"), map);
 #ifdef SHELL_USE_ANSI
-    // Colorize: green for free, yellow for partial, red for full
-    getLock();
-    Stream *out = getStream();
-    out->print("  Map:       [");
-    for (int i = 0; i < MAP_WIDTH; i++) {
-        if (map[i] == '-')      out->print("\033[38;5;240m-");
-        else if (map[i] == '+') out->print("\033[33m+");
-        else                    out->print("\033[31m*");
-    }
-    out->print("\033[0m]\n");
-    out->print("             \033[38;5;240m-\033[0m free  "
+    printfnl(SOURCE_COMMANDS, F("             \033[38;5;240m-\033[0m free  "
                "\033[33m+\033[0m partial  "
                "\033[31m*\033[0m full   "
-               "(128KB/char)\n");
-    releaseLock();
+               "(128KB/char)\n"));
 #else
-    printfnl(SOURCE_COMMANDS, F("  Map:       [%s]\n"), map);
     printfnl(SOURCE_COMMANDS, F("             - free  + partial  * full   (128KB/char)\n"));
 #endif
     #undef MAP_WIDTH
