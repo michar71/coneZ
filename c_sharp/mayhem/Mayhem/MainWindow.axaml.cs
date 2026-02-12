@@ -523,7 +523,7 @@ public partial class MainWindow : Window
     private void ChannelLanes_OnDrop(object? sender, DragEventArgs e)
     {
         _viewModel.AddDebug("Drop received.");
-        if (_channelLanesScroll == null)
+        if (_channelLanesScroll == null || _timelineScroll == null)
         {
             return;
         }
@@ -551,7 +551,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var x = position.X + (_timelineScroll?.Offset.X ?? 0);
+        var x = GetTimelineContentX(e);
         var timeMs = _viewModel.TimeFromX(Math.Max(0, x));
         timeMs = SnapToCue(timeMs);
         if (text.StartsWith("effect:", StringComparison.OrdinalIgnoreCase))
@@ -946,7 +946,7 @@ public partial class MainWindow : Window
         }
 
         var pos = e.GetPosition(_channelLanesScroll);
-        var x = pos.X + (_timelineScroll?.Offset.X ?? 0);
+        var x = GetTimelineContentX(e);
 
         if (_isResizingEffect)
         {
@@ -971,6 +971,28 @@ public partial class MainWindow : Window
         }
 
         _viewModel.MoveEffect(_draggingEffect, channel, timeMs);
+    }
+
+    private double GetTimelineContentX(PointerEventArgs e)
+    {
+        if (_timelineScroll == null)
+        {
+            return 0;
+        }
+
+        var pos = e.GetPosition(_timelineScroll);
+        return pos.X + _timelineScroll.Offset.X;
+    }
+
+    private double GetTimelineContentX(DragEventArgs e)
+    {
+        if (_timelineScroll == null)
+        {
+            return 0;
+        }
+
+        var pos = e.GetPosition(_timelineScroll);
+        return pos.X + _timelineScroll.Offset.X;
     }
 
     private void Effect_OnPointerReleased(object? sender, PointerReleasedEventArgs e)

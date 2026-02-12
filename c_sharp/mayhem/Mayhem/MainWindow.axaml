@@ -84,8 +84,11 @@
                   Name="MainContentGrid"
                   ColumnDefinitions="260,Auto,*,Auto,260"
                   RowDefinitions="*,Auto,80">
-                <Border Grid.Column="0" Background="#1E1E1E" Name="LeftPanel">
-                    <TabControl FontSize="11">
+                <Border Grid.Column="0"
+                        Background="#1E1E1E"
+                        Name="LeftPanel">
+                    <TabControl FontSize="11"
+                                TextElement.Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}">
                         <TabItem>
                             <TabItem.Header>
                                 <TextBlock Text="Files" FontSize="10" />
@@ -100,13 +103,45 @@
                                             Click="NewScript_OnClick" />
                                 </Grid>
                                 <ListBox ItemsSource="{Binding ScriptFiles}">
+                                    <ListBox.Styles>
+                                        <Style Selector="ListBoxItem">
+                                            <Setter Property="Background" Value="Transparent" />
+                                            <Setter Property="BorderBrush" Value="Transparent" />
+                                            <Setter Property="BorderThickness" Value="0" />
+                                            <Setter Property="FocusAdorner" Value="{x:Null}" />
+                                        </Style>
+                                        <Style Selector="ListBoxItem:selected">
+                                            <Setter Property="Background" Value="Transparent" />
+                                            <Setter Property="BorderBrush" Value="Transparent" />
+                                            <Setter Property="BorderThickness" Value="0" />
+                                        </Style>
+                                        <Style Selector="ListBoxItem Border#ScriptItemBorder">
+                                            <Setter Property="Background" Value="#1A1A1A" />
+                                            <Setter Property="BorderBrush" Value="#2A2A2A" />
+                                        </Style>
+                                        <Style Selector="ListBoxItem:pointerover Border#ScriptItemBorder">
+                                            <Setter Property="Background" Value="#242424" />
+                                            <Setter Property="BorderBrush" Value="#3A3A3A" />
+                                        </Style>
+                                        <Style Selector="ListBoxItem:selected Border#ScriptItemBorder">
+                                            <Setter Property="Background" Value="#303030" />
+                                            <Setter Property="BorderBrush" Value="#585858" />
+                                        </Style>
+                                        <Style Selector="ListBoxItem:selected:pointerover Border#ScriptItemBorder">
+                                            <Setter Property="Background" Value="#3A3A3A" />
+                                            <Setter Property="BorderBrush" Value="#666666" />
+                                        </Style>
+                                    </ListBox.Styles>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="vm:ScriptFileItem">
-                                            <Border Padding="6,4"
-                                                    Background="#1A1A1A"
+                                            <Border Name="ScriptItemBorder"
+                                                    Padding="6,4"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3"
                                                     PointerPressed="ScriptFile_OnPointerPressed"
                                                     DoubleTapped="ScriptFile_OnDoubleTapped">
-                                                <TextBlock Text="{Binding Name}" />
+                                                <TextBlock Text="{Binding Name}"
+                                                           Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}" />
                                             </Border>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -439,8 +474,12 @@
                               Background="#2A2A2A"
                               ResizeDirection="Columns" />
 
-                <Border Grid.Column="4" Background="#1E1E1E" Name="PropertiesPanel">
-                    <Grid Name="RightPanelGrid" RowDefinitions="*,Auto,240">
+                <Border Grid.Column="4"
+                        Background="#1E1E1E"
+                        Name="PropertiesPanel">
+                    <Grid Name="RightPanelGrid"
+                          RowDefinitions="*,Auto,240"
+                          TextElement.Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}">
                         <Border Grid.Row="0" Background="#1E1E1E">
                             <Grid>
                                 <StackPanel Margin="12" Spacing="10"

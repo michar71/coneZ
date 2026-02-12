@@ -59,11 +59,12 @@ Workflow
 1) Generate a cue -list for a piece  (Mayhem)
 2) Assoicated Effects with cues (Mayhem)
 3) Develop/Simulate effects
-4) Export Cuelist/Scripts as "Piece" package
-5) Compibne multiple pieces into a show.
-6) Deploy Data to devices
+4) Compile Scriupts into WASM code 
+5) Export Cuelist/Scripts as "Piece" package (Mayhem)
+6) Compibne multiple pieces into a show.
+7) Deploy Data to devices
 
-7) Control parameters and Peice selectors in real-time
+8) Control parameters and Peice selectors in real-time
 
 
 Cue-Types
