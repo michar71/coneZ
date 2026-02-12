@@ -136,6 +136,10 @@ static void write_array_elem(int base_off, int idx, CType ct,
                              int32_t i32v, int64_t i64v, float f32v, double f64v) {
     int elem_size = ctype_sizeof_bytes(ct);
     int off = base_off + idx * elem_size;
+    if (off < 0 || off + elem_size > MAX_STRINGS) {
+        error_at("array initializer out of bounds");
+        return;
+    }
     if (ct == CT_CHAR) {
         data_buf[off] = (char)i32v;
     } else if (ct == CT_FLOAT) {
@@ -147,6 +151,20 @@ static void write_array_elem(int base_off, int idx, CType ct,
     } else {
         memcpy(data_buf + off, &i32v, 4);
     }
+}
+
+static void alloc_global_scalar_storage(Symbol *s) {
+    if (!s) return;
+    int elem_size = ctype_sizeof_bytes(s->ctype);
+    int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
+    int off = add_data_zeros(elem_size, align);
+    s->is_mem_backed = 1;
+    s->mem_off = off;
+}
+
+static void write_global_scalar_init(Symbol *s) {
+    if (!s || !s->is_mem_backed) return;
+    write_array_elem(s->mem_off, 0, s->ctype, s->init_ival, s->init_llval, s->init_fval, s->init_dval);
 }
 
 static int parse_const_for_type(CType base_type,
@@ -176,16 +194,18 @@ static int parse_const_for_type(CType base_type,
         return 1;
     }
 
-    if (!negate && tok == TOK_NAME) {
+    if (tok == TOK_NAME) {
         Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
         if (mac && mac->macro_val[0]) {
             if (base_type == CT_DOUBLE) {
                 *out_f64 = strtod(mac->macro_val, NULL);
+                if (negate) *out_f64 = -(*out_f64);
                 *out_f32 = (float)(*out_f64);
                 *out_i64 = (int64_t)(*out_f64);
                 *out_i32 = (int32_t)(*out_f64);
             } else if (base_type == CT_FLOAT) {
                 *out_f32 = strtof(mac->macro_val, NULL);
+                if (negate) *out_f32 = -(*out_f32);
                 *out_f64 = (double)(*out_f32);
                 *out_i64 = (int64_t)(*out_f32);
                 *out_i32 = (int32_t)(*out_f32);
@@ -194,11 +214,13 @@ static int parse_const_for_type(CType base_type,
                     *out_i64 = (int64_t)strtoull(mac->macro_val, NULL, 0);
                 else
                     *out_i64 = strtoll(mac->macro_val, NULL, 0);
+                if (negate) *out_i64 = -(*out_i64);
                 *out_i32 = (int32_t)(*out_i64);
                 *out_f32 = (float)(*out_i64);
                 *out_f64 = (double)(*out_i64);
             } else {
                 *out_i32 = (int32_t)strtol(mac->macro_val, NULL, 0);
+                if (negate) *out_i32 = -(*out_i32);
                 *out_i64 = (int64_t)(*out_i32);
                 *out_f32 = (float)(*out_i32);
                 *out_f64 = (double)(*out_i32);
@@ -547,6 +569,7 @@ void parse_stmt(void) {
         int has_default = 0;
         int all_cases_resolved = 1;
         {
+            int saved_error = had_error;
             LexerSave lsave;
             lexer_save(&lsave);
             int depth = 1; /* already consumed opening brace */
@@ -566,6 +589,7 @@ void parse_stmt(void) {
                 next_token();
             }
             lexer_restore(&lsave);
+            had_error = saved_error;
         }
 
         /* If default is present, pre-compute found = (val==c1)||(val==c2)||... */
@@ -997,9 +1021,11 @@ void parse_top_level(void) {
                     s->idx = gidx;
                     s->is_static = is_static;
                     s->is_const = 1;
+                    alloc_global_scalar_storage(s);
                     if (base_type == CT_DOUBLE) s->init_dval = (double)val64;
                     else if (base_type == CT_LONG_LONG || base_type == CT_ULONG_LONG) s->init_llval = val64;
                     else s->init_fval = (float)val64;
+                    write_global_scalar_init(s);
                 } else {
                     Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
                     snprintf(s->macro_val, sizeof(s->macro_val), "%d", (int)val32);
@@ -1013,8 +1039,10 @@ void parse_top_level(void) {
                 s->idx = gidx;
                 s->is_static = is_static;
                 s->is_const = 1;
+                alloc_global_scalar_storage(s);
                 if (base_type == CT_DOUBLE) s->init_dval = negate ? -tok_dval : tok_dval;
                 else s->init_fval = negate ? -tok_fval : tok_fval;
+                write_global_scalar_init(s);
                 next_token();
             } else {
                 error_at("expected constant value");
@@ -1030,6 +1058,8 @@ void parse_top_level(void) {
     s->idx = gidx;
     s->is_static = is_static;
     s->type_info = type_base(base_type);
+    if (!is_array)
+        alloc_global_scalar_storage(s);
     int array_allocated = 0;
     if (is_array) {
         if (array_size > 0) {
@@ -1140,6 +1170,9 @@ void parse_top_level(void) {
         }
     }
 
+    if (!is_array)
+        write_global_scalar_init(s);
+
     /* Handle multiple declarations: static int a = 0, b = 0; or int *a, *b; */
     while (accept(TOK_COMMA)) {
         while (tok == TOK_STAR) next_token();  /* skip pointer stars */
@@ -1170,6 +1203,8 @@ void parse_top_level(void) {
         s->idx = gidx;
         s->is_static = is_static;
         s->type_info = type_base(base_type);
+        if (!decl_is_array)
+            alloc_global_scalar_storage(s);
         int decl_array_allocated = 0;
         if (decl_is_array) {
             if (decl_array_size > 0) {
@@ -1256,6 +1291,9 @@ void parse_top_level(void) {
                 }
             }
         }
+
+        if (!decl_is_array)
+            write_global_scalar_init(s);
     }
     expect(TOK_SEMI);
 }

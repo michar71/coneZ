@@ -426,7 +426,7 @@ static int lex_raw(void) {
 
         /* Check for f/F suffix — explicit float vs implicit double */
         int has_f_suffix = 0;
-        if (src_pos < src_len && (ch() == 'f' || ch() == 'F')) {
+        if (is_float && src_pos < src_len && (ch() == 'f' || ch() == 'F')) {
             advance();
             is_float = 1;
             has_f_suffix = 1;

@@ -265,12 +265,12 @@ static int pp_truthy(PPVal v) { return v.bits != 0; }
 static int pp_classify_unsigned(unsigned long long uv, int has_u, int l_count, int is_decimal) {
     if (l_count >= 2) return has_u || uv > (unsigned long long)LLONG_MAX;
     if (l_count == 1) {
-        if (has_u) return uv > UINT_MAX;
+        if (has_u) return 1;
         if (uv <= INT_MAX) return 0;
         if (!is_decimal && uv <= UINT_MAX) return 1;
         return uv > (unsigned long long)LLONG_MAX;
     }
-    if (has_u) return uv > UINT_MAX;
+    if (has_u) return 1;
     if (is_decimal) return uv > (unsigned long long)LLONG_MAX;
     if (uv <= INT_MAX) return 0;
     if (uv <= UINT_MAX) return 1;

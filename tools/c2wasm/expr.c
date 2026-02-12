@@ -82,6 +82,35 @@ static void ensure_local_mem_backed(Symbol *sym) {
     sym->is_mem_backed = 1;
 }
 
+static void emit_sym_store_and_reload(Symbol *sym) {
+    if (!sym) return;
+    if (sym->kind == SYM_LOCAL) {
+        if (sym->is_mem_backed) {
+            int tmp = alloc_local(ctype_to_wasm(sym->ctype));
+            emit_local_tee(tmp);
+            emit_i32_const(sym->mem_off);
+            emit_local_get(tmp);
+            emit_mem_store_for_ctype(sym->ctype);
+        } else {
+            emit_local_tee(sym->idx);
+        }
+        return;
+    }
+
+    if (sym->kind == SYM_GLOBAL) {
+        if (sym->is_mem_backed) {
+            int tmp = alloc_local(ctype_to_wasm(sym->ctype));
+            emit_local_tee(tmp);
+            emit_i32_const(sym->mem_off);
+            emit_local_get(tmp);
+            emit_mem_store_for_ctype(sym->ctype);
+        } else {
+            emit_global_set(sym->idx);
+            emit_global_get(sym->idx);
+        }
+    }
+}
+
 /* Helper to emit store to lvalue */
 static void emit_lvalue_store(CType rhs_type) {
     if (last_var_sym) {
@@ -97,17 +126,16 @@ static void emit_lvalue_store(CType rhs_type) {
             } else {
                 emit_local_tee(last_var_sym->idx);
             }
-        } else { emit_global_set(last_var_sym->idx); emit_global_get(last_var_sym->idx); }
+        } else {
+            emit_sym_store_and_reload(last_var_sym);
+        }
     } else if (lvalue_addr_local >= 0) {
         /* Complex lvalue (array element, dereferenced pointer) */
         /* Stack: [rhs_value] */
-        /* Get address */
-        emit_local_get(lvalue_addr_local);
-        /* Stack: [rhs_value, address] - need to swap */
         int tmp = alloc_local(ctype_to_wasm(rhs_type));
-        emit_local_set(tmp);
-        emit_local_get(lvalue_addr_local);
-        emit_local_get(tmp);
+        emit_local_set(tmp);              /* save rhs */
+        emit_local_get(lvalue_addr_local); /* push addr */
+        emit_local_get(tmp);              /* push rhs */
         /* Stack: [address, rhs_value] */
         emit_coerce(rhs_type, lvalue_type);
         /* Store */
@@ -461,7 +489,7 @@ static CType primary_expr(void) {
             expr_last_has_type = 1;
             expr_last_type = sym->type_info;
         } else if (sym->kind == SYM_GLOBAL) {
-            emit_global_get(sym->idx);
+            emit_sym_load(sym);
             last_var_sym = sym;  /* Track for potential postfix ++/-- */
             expr_last_is_ptr = type_is_pointer(sym->type_info) || type_is_array(sym->type_info);
             expr_last_elem_size = expr_last_is_ptr ? type_element_size(sym->type_info) : ctype_sizeof(sym->ctype);
@@ -499,7 +527,14 @@ static void emit_sym_load(Symbol *sym) {
         } else {
             emit_local_get(sym->idx);
         }
-    } else if (sym->kind == SYM_GLOBAL) emit_global_get(sym->idx);
+    } else if (sym->kind == SYM_GLOBAL) {
+        if (sym->is_mem_backed) {
+            emit_i32_const(sym->mem_off);
+            emit_mem_load_for_ctype(sym->ctype);
+        } else {
+            emit_global_get(sym->idx);
+        }
+    }
 }
 
 /* Helper: emit store for a symbol */
@@ -514,7 +549,17 @@ static void emit_sym_store(Symbol *sym) {
         } else {
             emit_local_set(sym->idx);
         }
-    } else if (sym->kind == SYM_GLOBAL) emit_global_set(sym->idx);
+    } else if (sym->kind == SYM_GLOBAL) {
+        if (sym->is_mem_backed) {
+            int tmp = alloc_local(ctype_to_wasm(sym->ctype));
+            emit_local_set(tmp);
+            emit_i32_const(sym->mem_off);
+            emit_local_get(tmp);
+            emit_mem_store_for_ctype(sym->ctype);
+        } else {
+            emit_global_set(sym->idx);
+        }
+    }
 }
 
 /* ---- Postfix expressions: a++, a--, subscript ---- */
@@ -603,7 +648,10 @@ static CType postfix_expr(void) {
                     emit_i64_const(1);
                     emit_op(is_inc ? OP_I64_ADD : OP_I64_SUB);
                 } else {
-                    emit_i32_const(1);
+                    int step = 1;
+                    if (type_is_pointer(sym->type_info))
+                        step = type_element_size(sym->type_info);
+                    emit_i32_const(step);
                     emit_op(is_inc ? OP_I32_ADD : OP_I32_SUB);
                 }
                 emit_sym_store(sym);
@@ -722,10 +770,14 @@ static CType unary_expr(void) {
                 emit_i32_const(sym->mem_off);
             }
             else if (sym->kind == SYM_GLOBAL) {
-                error_fmt("address-of global pointer variable '%s' is not supported", name);
-                emit_i32_const(0);
-                expr_set_scalar_type(CT_INT);
-                return CT_INT;
+                if (sym->is_mem_backed) {
+                    emit_i32_const(sym->mem_off);
+                } else {
+                    error_fmt("address-of global pointer variable '%s' is not supported", name);
+                    emit_i32_const(0);
+                    expr_set_scalar_type(CT_INT);
+                    return CT_INT;
+                }
             }
             else {
                 error_fmt("cannot take address of '%s'", name);
@@ -735,10 +787,14 @@ static CType unary_expr(void) {
             }
         } else {
             if (sym->kind == SYM_GLOBAL) {
-                error_fmt("address-of global scalar variable '%s' is not supported", name);
-                emit_i32_const(0);
-                expr_set_scalar_type(CT_INT);
-                return CT_INT;
+                if (sym->is_mem_backed) {
+                    emit_i32_const(sym->mem_off);
+                } else {
+                    error_fmt("address-of global scalar variable '%s' is not supported", name);
+                    emit_i32_const(0);
+                    expr_set_scalar_type(CT_INT);
+                    return CT_INT;
+                }
             } else {
                 ensure_local_mem_backed(sym);
                 emit_i32_const(sym->mem_off);
@@ -833,7 +889,10 @@ static CType unary_expr(void) {
             emit_i64_const(1);
             emit_op(is_inc ? OP_I64_ADD : OP_I64_SUB);
         } else {
-            emit_i32_const(1);
+            int step = 1;
+            if (type_is_pointer(sym->type_info))
+                step = type_element_size(sym->type_info);
+            emit_i32_const(step);
             emit_op(is_inc ? OP_I32_ADD : OP_I32_SUB);
         }
         /* Tee so the new value stays on stack and is stored */
@@ -1155,17 +1214,7 @@ CType assignment_expr(void) {
             if (sym->is_const) error_fmt("assignment to const variable '%s'", name);
             CType rhs = assignment_expr();
             emit_coerce(rhs, sym->ctype);
-            if (sym->kind == SYM_LOCAL) {
-                if (sym->is_mem_backed) {
-                    int tmp = alloc_local(ctype_to_wasm(sym->ctype));
-                    emit_local_tee(tmp);
-                    emit_i32_const(sym->mem_off);
-                    emit_local_get(tmp);
-                    emit_mem_store_for_ctype(sym->ctype);
-                } else {
-                    emit_local_tee(sym->idx);
-                }
-            } else { emit_global_set(sym->idx); emit_global_get(sym->idx); }
+            emit_sym_store_and_reload(sym);
             expr_last_is_ptr = type_is_pointer(sym->type_info) || type_is_array(sym->type_info);
             expr_last_elem_size = expr_last_is_ptr ? type_element_size(sym->type_info) : ctype_sizeof(sym->ctype);
             return sym->ctype;
@@ -1225,17 +1274,7 @@ CType assignment_expr(void) {
             }
 
             if (result != sym->ctype) emit_coerce(result, sym->ctype);
-            if (sym->kind == SYM_LOCAL) {
-                if (sym->is_mem_backed) {
-                    int tmp = alloc_local(ctype_to_wasm(sym->ctype));
-                    emit_local_tee(tmp);
-                    emit_i32_const(sym->mem_off);
-                    emit_local_get(tmp);
-                    emit_mem_store_for_ctype(sym->ctype);
-                } else {
-                    emit_local_tee(sym->idx);
-                }
-            } else { emit_global_set(sym->idx); emit_global_get(sym->idx); }
+            emit_sym_store_and_reload(sym);
             expr_last_is_ptr = type_is_pointer(sym->type_info) || type_is_array(sym->type_info);
             expr_last_elem_size = expr_last_is_ptr ? type_element_size(sym->type_info) : ctype_sizeof(sym->ctype);
             return sym->ctype;
@@ -1255,7 +1294,12 @@ CType assignment_expr(void) {
             if (sym->ctype == CT_DOUBLE) { emit_f64_const(1.0); emit_op(is_inc ? OP_F64_ADD : OP_F64_SUB); }
             else if (sym->ctype == CT_FLOAT) { emit_f32_const(1.0f); emit_op(is_inc ? OP_F32_ADD : OP_F32_SUB); }
             else if (sym->ctype == CT_LONG_LONG || sym->ctype == CT_ULONG_LONG) { emit_i64_const(1); emit_op(is_inc ? OP_I64_ADD : OP_I64_SUB); }
-            else { emit_i32_const(1); emit_op(is_inc ? OP_I32_ADD : OP_I32_SUB); }
+            else {
+                int step = 1;
+                if (type_is_pointer(sym->type_info))
+                    step = type_element_size(sym->type_info);
+                emit_i32_const(step); emit_op(is_inc ? OP_I32_ADD : OP_I32_SUB);
+            }
             emit_sym_store(sym);
             expr_last_is_ptr = 0;
             return sym->ctype;
@@ -1283,7 +1327,10 @@ CType assignment_expr(void) {
             assignment_expr(); /* parse rhs for error recovery */
             return CT_INT;
         }
-        
+
+        /* Drop the old value loaded by unary_expr() */
+        if (lhs_type != CT_VOID) emit_drop();
+
         next_token(); /* skip '=' */
         CType rhs = assignment_expr();
         
@@ -1292,17 +1339,7 @@ CType assignment_expr(void) {
             /* Simple variable */
             if (last_var_sym->is_const) error_fmt("assignment to const variable '%s'", last_var_sym->name);
             emit_coerce(rhs, last_var_sym->ctype);
-            if (last_var_sym->kind == SYM_LOCAL) {
-                if (last_var_sym->is_mem_backed) {
-                    int tmp = alloc_local(ctype_to_wasm(last_var_sym->ctype));
-                    emit_local_tee(tmp);
-                    emit_i32_const(last_var_sym->mem_off);
-                    emit_local_get(tmp);
-                    emit_mem_store_for_ctype(last_var_sym->ctype);
-                } else {
-                    emit_local_tee(last_var_sym->idx);
-                }
-            } else { emit_global_set(last_var_sym->idx); emit_global_get(last_var_sym->idx); }
+            emit_sym_store_and_reload(last_var_sym);
             expr_last_is_ptr = type_is_pointer(last_var_sym->type_info) || type_is_array(last_var_sym->type_info);
             expr_last_elem_size = expr_last_is_ptr ? type_element_size(last_var_sym->type_info) : ctype_sizeof(last_var_sym->ctype);
             return last_var_sym->ctype;
@@ -1313,9 +1350,80 @@ CType assignment_expr(void) {
             return lvalue_type;
         }
     }
-    
-    
-    
+
+    /* Compound assignment for complex lvalues: arr[i] += expr, *p -= expr, etc. */
+    if (tok >= TOK_PLUS_EQ && tok <= TOK_RSHIFT_EQ &&
+        (last_var_sym != NULL || lvalue_addr_local >= 0)) {
+        int aop = tok;
+        next_token(); /* skip op= */
+
+        /* Stack: [old_value from unary_expr] */
+        /* Parse rhs */
+        CType rhs = assignment_expr();
+
+        CType var_type = last_var_sym ? last_var_sym->ctype : lvalue_type;
+        CType result = promote(var_type, rhs);
+
+        /* Coerce operands to common type */
+        if (result == CT_FLOAT && rhs != CT_FLOAT) emit_coerce(rhs, CT_FLOAT);
+        if (result == CT_FLOAT && var_type != CT_FLOAT) {
+            int tmp = alloc_local(ctype_to_wasm(result));
+            emit_local_set(tmp); emit_coerce(var_type, result); emit_local_get(tmp);
+        }
+        if (result == CT_DOUBLE && rhs != CT_DOUBLE) emit_promote_f64(rhs);
+        if (result == CT_DOUBLE && var_type != CT_DOUBLE) {
+            int tmp = alloc_local(WASM_F64);
+            emit_local_set(tmp); emit_promote_f64(var_type); emit_local_get(tmp);
+        }
+        if ((result == CT_LONG_LONG || result == CT_ULONG_LONG) && rhs != CT_LONG_LONG && rhs != CT_ULONG_LONG)
+            emit_coerce_i64(rhs);
+        if ((result == CT_LONG_LONG || result == CT_ULONG_LONG) && var_type != CT_LONG_LONG && var_type != CT_ULONG_LONG) {
+            int tmp = alloc_local(WASM_I64);
+            emit_local_set(tmp); emit_coerce_i64(var_type); emit_local_get(tmp);
+        }
+
+        /* Bitwise compound ops coerce float/double to int */
+        if (aop == TOK_AMP_EQ || aop == TOK_PIPE_EQ || aop == TOK_CARET_EQ || aop == TOK_LSHIFT_EQ || aop == TOK_RSHIFT_EQ) {
+            if (result == CT_FLOAT || result == CT_DOUBLE) {
+                emit_coerce_i32(result);
+                int tmp = alloc_local(WASM_I32);
+                emit_local_set(tmp); emit_coerce_i32(result); emit_local_get(tmp);
+                result = CT_INT;
+            }
+        }
+
+        /* Apply operator */
+        switch (aop) {
+        case TOK_PLUS_EQ:   emit_op(result == CT_DOUBLE ? OP_F64_ADD : result == CT_FLOAT ? OP_F32_ADD : (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_ADD : OP_I32_ADD); break;
+        case TOK_MINUS_EQ:  emit_op(result == CT_DOUBLE ? OP_F64_SUB : result == CT_FLOAT ? OP_F32_SUB : (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_SUB : OP_I32_SUB); break;
+        case TOK_STAR_EQ:   emit_op(result == CT_DOUBLE ? OP_F64_MUL : result == CT_FLOAT ? OP_F32_MUL : (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_MUL : OP_I32_MUL); break;
+        case TOK_SLASH_EQ:  if (result == CT_DOUBLE) emit_op(OP_F64_DIV); else if (result == CT_FLOAT) emit_op(OP_F32_DIV); else if (result == CT_ULONG_LONG) emit_op(OP_I64_DIV_U); else if (result == CT_LONG_LONG) emit_op(OP_I64_DIV_S); else if (result == CT_UINT) emit_op(OP_I32_DIV_U); else emit_op(OP_I32_DIV_S); break;
+        case TOK_PERCENT_EQ: if (result == CT_DOUBLE) emit_call(IMP_FMOD); else if (result == CT_FLOAT) emit_call(IMP_FMODF); else if (result == CT_ULONG_LONG) emit_op(OP_I64_REM_U); else if (result == CT_LONG_LONG) emit_op(OP_I64_REM_S); else if (result == CT_UINT) emit_op(OP_I32_REM_U); else emit_op(OP_I32_REM_S); break;
+        case TOK_AMP_EQ:    emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_AND : OP_I32_AND); break;
+        case TOK_PIPE_EQ:   emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_OR : OP_I32_OR); break;
+        case TOK_CARET_EQ:  emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_XOR : OP_I32_XOR); break;
+        case TOK_LSHIFT_EQ: emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_SHL : OP_I32_SHL); break;
+        case TOK_RSHIFT_EQ: if (result == CT_ULONG_LONG) emit_op(OP_I64_SHR_U); else if (result == CT_LONG_LONG) emit_op(OP_I64_SHR_S); else if (result == CT_UINT) emit_op(OP_I32_SHR_U); else emit_op(OP_I32_SHR_S); break;
+        }
+
+        /* Coerce result to variable type */
+        if (result != var_type) emit_coerce(result, var_type);
+
+        /* Store result */
+        if (last_var_sym) {
+            if (last_var_sym->is_const) error_fmt("assignment to const variable '%s'", last_var_sym->name);
+            emit_sym_store_and_reload(last_var_sym);
+            expr_last_is_ptr = type_is_pointer(last_var_sym->type_info) || type_is_array(last_var_sym->type_info);
+            expr_last_elem_size = expr_last_is_ptr ? type_element_size(last_var_sym->type_info) : ctype_sizeof(var_type);
+            return var_type;
+        } else {
+            /* Complex lvalue */
+            emit_lvalue_store(var_type);
+            expr_last_is_ptr = 0;
+            return lvalue_type;
+        }
+    }
+
     /* Not an assignment — continue parsing from already-read lhs */
     CType t = prec_expr_tail(lhs_type, 1);
 

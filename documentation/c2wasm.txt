@@ -397,8 +397,8 @@ NOT Supported
 The following C features are NOT in scope:
 
   - struct, union, enum, typedef
-  - Full C array semantics (see limitations below)
-  - Full pointer semantics (typed pointer graph/function pointers)
+  - Full C array semantics (see limitations below; basic arrays work)
+  - Full pointer semantics (see limitations below; basic pointer ops work)
   - malloc/free (dynamic memory allocation)
   - goto, labels
   - Function pointers
@@ -412,26 +412,43 @@ For programs requiring these features, use clang --target=wasm32 instead.
 Current Array/Pointer Limitations
 ---------------------------------
 
-  - Global and local array initializers support constant values with brace
-    lists, including multidimensional nested braces in row-major order.
-    Array designators like [i] = value are supported for array initializers.
-    Non-constant global initializer expressions are not supported.
+  Supported:
+  - Global and local array initializers with constant brace lists, including
+    multidimensional nested braces in row-major order. Designated initializers
+    like [i] = value are supported. Negated macros (-MACRO) work in initializers.
+    Out-of-bounds initializer indices are detected and reported as errors.
 
-  - char[] / char[N] string-literal initialization is supported. Advanced
-    string/aggregate forms beyond this are not supported.
+  - char[] / char[N] string-literal initialization. Inferred-size arrays are
+    currently limited to char[] with string literal initializers.
 
-  - Inferred-size arrays are currently limited to char[] with string literal
-    initializers.
+  - Array element assignment (arr[i] = x) and read (x = arr[i]), including
+    multidimensional chained subscripts (arr[i][j]).
 
-  - Taking address of local scalar variables is supported via compiler-managed
-    linear-memory spill slots. This is practical for single-threaded scripts,
+  - Compound assignment on array elements: arr[i] += / -= / *= / /= / %= /
+    &= / |= / ^= / <<= / >>= all work, including mixed-type coercion and
+    correct signed/unsigned opcode selection.
+
+  - Pointer dereference assignment (*p = x) and read (x = *p).
+
+  - Compound assignment through pointer dereference (*p += x, etc.).
+
+  - Pointer increment/decrement (++p, p++, --p, p--) correctly scales by
+    the element size (sizeof(*p)), not by 1.
+
+  - Taking address of local scalar variables via compiler-managed
+    linear-memory spill slots. Practical for single-threaded scripts,
     but does not model a full C stack-frame address model.
 
-  - Taking address of non-array global WASM globals is not supported (those
-    values are not linear-memory lvalues).
+  - Pointer arithmetic: ptr + n, n + ptr, ptr - n, ptr1 - ptr2 (all scaled
+    by element size).
 
-  - Pointer arithmetic support is lightweight and expression-driven; it is
-    not yet a full C pointer type system with complete alias/qualifier rules.
+  Not supported:
+  - Non-constant global initializer expressions (e.g. int a[3] = {f(), 2, 3})
+  - Taking address of non-array global WASM globals (those values are not
+    linear-memory lvalues)
+  - Full C pointer type system with complete alias/qualifier rules
+  - Pointer comparison (<, >, ==, etc.)
+  - Array parameters (arrays cannot be passed to/from functions by pointer)
 
 
 Memory Layout
@@ -527,41 +544,45 @@ comma operator, typed ternary (float/double/long long branches), double
 pre/post increment/decrement, double %/%= via fmod, f64 math imports
 (sin/cos/tan/etc.), sizeof(type*) for pointer types, sizeof(long long),
 #if preprocessor negation and full expressions, pointer comma-separated
-declarations (int *a, *b;), pointer arithmetic smoke tests, array element
-assignment tests, global/local array initializer tests, bare return in non-void functions, double
-literals (f/F suffix vs unsuffixed), long long (i64) arithmetic/API/
-global init/ternary/printf, 'long long int' and 'unsigned long long int'
-type parsing, 'int const' trailing qualifier, 'long' bare warning,
-case labels with constant expressions, const globals (int/float/double),
-short/signed/_Bool/bool type keywords, const local enforcement, #define
-line continuation, #if macro name expansion and comparison expressions,
-unnamed function parameters, forward declaration param matching, switch
-warning for statements before first case, unsigned integer operations
-(uint32_t/uint64_t comparison, division, remainder, right shift, mixed
-signed/unsigned promotion, compound assignment, conversions), and
-rejection of undefined forward declarations, unterminated block comments,
-void expression as operand, void/non-void ternary mismatch, const variable
-assignment, forward declaration param mismatch, and #error directive.
-Includes multidimensional array indexing and nested initializer tests.
-Includes designated array initializer tests and address-of local scalar/array lvalue tests.
-Includes integer-literal width/signedness coverage for large decimal/hex and U/L/LL suffix combinations.
-Includes curve helper import registration tests (lerp/larp/larpf) and const global long long literal coverage.
-Includes unsigned 64-bit macro initializer coverage for global initialization paths.
-Includes #if unsigned 64-bit literal comparison coverage.
-Includes #if macro identifier/expression expansion coverage (with recursion guard behavior).
-Includes #if negative macro comparison coverage.
-Includes #if macro-literal-with-operator coverage (e.g. 1ULL<<63, -1ULL).
-Includes invalid octal literal rejection coverage in both lexer and #if paths.
-Includes invalid hex literal rejection coverage in both lexer and #if paths.
-Includes malformed float exponent rejection coverage.
-Includes malformed hex-escape rejection coverage in char/string literals and #if char literals.
-Includes octal/control-character escape coverage in lexer and #if char-literal paths.
-Includes empty/multi-character literal rejection coverage in lexer and #if paths.
-Includes malformed integer/float suffix rejection coverage in lexer and #if paths.
-Includes malformed adjacent-dot float rejection and trailing-garbage #if expression rejection coverage.
-Includes #if parenthesis-mismatch rejection coverage.
-Includes #if missing-operand rejection coverage for unary and binary operators.
-Includes empty #if expression rejection coverage.
+declarations (int *a, *b;), pointer arithmetic smoke tests, bare return
+in non-void functions, double literals (f/F suffix vs unsuffixed),
+long long (i64) arithmetic/API/global init/ternary/printf, 'long long int'
+and 'unsigned long long int' type parsing, 'int const' trailing qualifier,
+'long' bare warning, case labels with constant expressions, const globals
+(int/float/double), short/signed/_Bool/bool type keywords, const local
+enforcement, #define line continuation, #if macro name expansion and
+comparison expressions, unnamed function parameters, forward declaration
+param matching, switch warning for statements before first case, unsigned
+integer operations (uint32_t/uint64_t comparison, division, remainder,
+right shift, mixed signed/unsigned promotion, compound assignment,
+conversions), curve helper import registration tests (lerp/larp/larpf).
+
+Array/pointer tests: array element assignment (arr[i] = x stores value not
+address), pointer dereference assignment (*p = x), assignment in if/else
+(stack balance), compound assignment on array elements (+=, -=, *=, /=,
+&=, |=, ^=, <<=), compound assignment through pointer dereference (*p +=),
+pointer increment/decrement scaling by element size (++p, p++, --p, p--),
+negated macros in array initializers (-MACRO), array initializer bounds
+checking, multidimensional array indexing and nested initializer tests,
+designated array initializer tests, address-of local/global scalar plus
+array lvalue tests, global/local array initializer tests.
+
+Preprocessor tests: #if unsigned literal classification (1U, 100UL),
+#if unsigned 64-bit literal comparison, #if macro identifier/expression
+expansion (with recursion guard behavior), #if negative macro comparison,
+#if macro-literal-with-operator (e.g. 1ULL<<63, -1ULL), integer-literal
+width/signedness for large decimal/hex and U/L/LL suffix combinations.
+
+Rejection tests: undefined variables/functions/forward declarations,
+unterminated block comments, void expression as operand, void/non-void
+ternary mismatch, const variable assignment, forward declaration param
+mismatch, #error directive, invalid octal/hex literals (both lexer and
+#if), malformed float exponents, malformed hex-escapes (char/string
+literals and #if), empty/multi-character char literals, invalid integer
+suffix (including f/F suffix on plain integers), invalid float suffixes,
+adjacent-dot malformed floats, trailing-garbage #if expressions,
+parenthesis-mismatch in #if, missing operands (unary/binary) in #if,
+empty #if expressions.
 
 Adding a test: create a .c file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.c must fail compilation.
@@ -582,5 +603,5 @@ Comparison with clang
   Portability          Any C compiler      Requires LLVM target support
 
 For simple LED/sensor programs, c2wasm produces functionally identical
-output. For programs requiring full struct/array/pointer semantics or
+output. For programs requiring structs, full pointer semantics, or
 advanced optimization, use clang.
