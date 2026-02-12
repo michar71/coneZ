@@ -708,7 +708,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  time                               Show current date/time\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  uptime                             Show system uptime\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  psram [test [forever]]              PSRAM status, memory test, or loop test\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  psram [test [forever]] [freq <MHz>] PSRAM status, test, or set SPI clock\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  version                            Show firmware version\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  wasm [status|info <file>]           WASM runtime status/info\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  wifi                               Show WiFi status\n\n" ) );
@@ -756,9 +756,29 @@ int cmd_psram(int argc, char **argv)
         bool forever = (argc >= 3 && !strcasecmp(argv[2], "forever"));
         return psram_test(forever);
     }
+    if (argc >= 3 && !strcasecmp(argv[1], "freq")) {
+        uint32_t mhz = strtol(argv[2], NULL, 10);
+        if (mhz < 5 || mhz > 80) {
+            printfnl(SOURCE_COMMANDS, F("Usage: psram freq <5-80>  (MHz)\n"));
+            return 1;
+        }
+        if (psram_change_freq(mhz * 1000000) < 0) {
+            printfnl(SOURCE_COMMANDS, F("Failed to change PSRAM frequency\n"));
+            return 1;
+        }
+        uint32_t actual = psram_get_freq();
+        if (actual != mhz * 1000000)
+            printfnl(SOURCE_COMMANDS, F("PSRAM SPI clock: requested %u MHz, actual %.2f MHz\n"),
+                     mhz, actual / 1000000.0f);
+        else
+            printfnl(SOURCE_COMMANDS, F("PSRAM SPI clock set to %u MHz\n"), mhz);
+        return 0;
+    }
     // Default: show status
     printfnl(SOURCE_COMMANDS, F("PSRAM:\n"));
     printfnl(SOURCE_COMMANDS, F("  Available:   %s\n"), psram_available() ? "yes" : "no");
+    if (psram_get_freq())
+        printfnl(SOURCE_COMMANDS, F("  SPI clock:   %.2f MHz\n"), psram_get_freq() / 1000000.0f);
     printfnl(SOURCE_COMMANDS, F("  Size:        %u bytes (%u KB)\n"), psram_size(), psram_size()/1024);
     printfnl(SOURCE_COMMANDS, F("  Used:        %u bytes\n"), psram_bytes_used());
     printfnl(SOURCE_COMMANDS, F("  Free:        %u bytes\n"), psram_bytes_free());

@@ -70,23 +70,51 @@ static void psram_fb_free_all(void) {
 #define PSRAM_CMD_RESET      0x99
 #define PSRAM_CMD_READ_ID    0x9F
 
-#define PSRAM_SPI_FREQ       33000000   // 33 MHz — within fast-read spec (133 MHz max)
+#define PSRAM_SPI_FREQ_DEFAULT  40000000  // 40 MHz boot default (exact APB/2 divider)
+#define PSRAM_SPI_FREQ_MAX      80000000  // ESP32-S3 FSPI bus max
 
 // Virtual address offset: public API addresses = raw SPI address + this offset.
 // Keeps addresses well above 0 so they can't be confused with NULL.
 // Must stay below 0x3C000000 so IS_ADDRESS_MAPPED() still returns false.
 #define PSRAM_ADDR_OFFSET    0x10000000UL
 
-// At PSRAM_SPI_FREQ, compute max payload per CE# assertion.
-// tCEM = 8us, so max total bytes = freq_hz * 8e-6 / 8 (bits per byte).
-// Subtract overhead: fast_read = 5 bytes (cmd+3addr+wait), write = 4 bytes (cmd+3addr).
-static constexpr int PSRAM_BYTES_PER_CEM = (PSRAM_SPI_FREQ / 1000000) * 8 / 8;  // 33 at 33 MHz
-static constexpr int PSRAM_READ_CHUNK  = PSRAM_BYTES_PER_CEM - 5;  // 28 at 33 MHz
-static constexpr int PSRAM_WRITE_CHUNK = PSRAM_BYTES_PER_CEM - 4;  // 29 at 33 MHz
+// Runtime SPI frequency and derived chunk sizes.
+// Use slow read (0x03, no wait byte) at <= 33 MHz, fast read (0x0B, 1 wait byte) above.
+static uint32_t psram_freq       = PSRAM_SPI_FREQ_DEFAULT;
+static bool     psram_fast_read  = true;    // recalculated by psram_set_freq()
+static int      psram_read_overhead = 5;    // recalculated by psram_set_freq()
+static int      psram_read_chunk = 35;      // recalculated by psram_set_freq()
+static int      psram_write_chunk = 36;     // recalculated by psram_set_freq()
+
+// Buffers sized for max frequency (80 MHz = 80 bytes/CEM)
+static constexpr int PSRAM_MAX_BYTES_PER_CEM = PSRAM_SPI_FREQ_MAX / 1000000;  // 80
+static constexpr int PSRAM_MAX_READ_CHUNK  = PSRAM_MAX_BYTES_PER_CEM - 4;     // 76
+static constexpr int PSRAM_MAX_WRITE_CHUNK = PSRAM_MAX_BYTES_PER_CEM - 4;     // 76
 
 static SPIClass    spiPSRAM(FSPI);
-static SPISettings psramSettings(PSRAM_SPI_FREQ, MSBFIRST, SPI_MODE0);
+static SPISettings psramSettings(PSRAM_SPI_FREQ_DEFAULT, MSBFIRST, SPI_MODE0);
 static bool        psram_ok = false;
+
+// Compute actual SPI clock: APB / ceil(APB / requested), same as hardware divider.
+static uint32_t psram_actual_freq(uint32_t requested) {
+    if (requested >= APB_CLK_FREQ) return APB_CLK_FREQ;
+    uint32_t divider = (APB_CLK_FREQ + requested - 1) / requested;
+    return APB_CLK_FREQ / divider;
+}
+
+// Recalculate chunk sizes and read mode for a given frequency.
+// Caller must hold psram_mutex (or call before mutex-protected operations begin).
+static void psram_set_freq(uint32_t freq_hz) {
+    psram_freq = psram_actual_freq(freq_hz);
+    psram_fast_read = (psram_freq > 33000000);
+    psram_read_overhead = psram_fast_read ? 5 : 4;
+    int bytes_per_cem = (psram_freq / 1000000) * 8 / 8;
+    psram_read_chunk  = bytes_per_cem - psram_read_overhead;
+    psram_write_chunk = bytes_per_cem - 4;
+    spiPSRAM.endTransaction();
+    psramSettings = SPISettings(freq_hz, MSBFIRST, SPI_MODE0);
+    spiPSRAM.beginTransaction(psramSettings);
+}
 
 // ---- Low-level helpers ----
 
@@ -118,27 +146,27 @@ static uint16_t psram_read_id() {
 
 // ---- Core read/write (single chunk, bulk SPI transfer, respects tCEM) ----
 
-// Read up to PSRAM_READ_CHUNK bytes in one CE# assertion.
-// Uses transferBytes() for a single SPI FIFO transaction (well within the
-// ESP32-S3's 64-byte FIFO) instead of per-byte transfer() calls.
-static void psram_read_chunk(uint32_t addr, uint8_t *buf, size_t len) {
-    uint8_t tx[5 + PSRAM_READ_CHUNK] = {};  // cmd + 3 addr + 1 wait + zeros
-    uint8_t rx[5 + PSRAM_READ_CHUNK];
-    tx[0] = PSRAM_CMD_FAST_READ;
+// Read up to psram_read_chunk bytes in one CE# assertion.
+// Uses transferBytes() for a single SPI FIFO transaction.
+// At <= 33 MHz uses slow read (0x03, no wait); above uses fast read (0x0B, 1 wait byte).
+static void psram_read_chunk_fn(uint32_t addr, uint8_t *buf, size_t len) {
+    uint8_t tx[5 + PSRAM_MAX_READ_CHUNK] = {};  // sized for max freq
+    uint8_t rx[5 + PSRAM_MAX_READ_CHUNK];
+    tx[0] = psram_fast_read ? PSRAM_CMD_FAST_READ : PSRAM_CMD_READ;
     tx[1] = (addr >> 16) & 0xFF;
     tx[2] = (addr >> 8)  & 0xFF;
     tx[3] = addr & 0xFF;
-    // tx[4] = 0x00 (wait byte, already zero)
-    size_t total = 5 + len;
+    // If fast read, tx[4] is the wait byte (already zero)
+    size_t total = psram_read_overhead + len;
     cs_low();
     spiPSRAM.transferBytes(tx, rx, total);
     cs_high();
-    memcpy(buf, &rx[5], len);
+    memcpy(buf, &rx[psram_read_overhead], len);
 }
 
-// Write up to PSRAM_WRITE_CHUNK bytes in one CE# assertion.
-static void psram_write_chunk(uint32_t addr, const uint8_t *buf, size_t len) {
-    uint8_t tx[4 + PSRAM_WRITE_CHUNK];  // cmd + 3 addr + data
+// Write up to psram_write_chunk bytes in one CE# assertion.
+static void psram_write_chunk_fn(uint32_t addr, const uint8_t *buf, size_t len) {
+    uint8_t tx[4 + PSRAM_MAX_WRITE_CHUNK];  // sized for max freq
     tx[0] = PSRAM_CMD_WRITE;
     tx[1] = (addr >> 16) & 0xFF;
     tx[2] = (addr >> 8)  & 0xFF;
@@ -154,16 +182,16 @@ static void psram_write_chunk(uint32_t addr, const uint8_t *buf, size_t len) {
 
 static void psram_raw_read(uint32_t addr, uint8_t *buf, size_t len) {
     while (len > 0) {
-        size_t n = (len > (size_t)PSRAM_READ_CHUNK) ? PSRAM_READ_CHUNK : len;
-        psram_read_chunk(addr, buf, n);
+        size_t n = (len > (size_t)psram_read_chunk) ? psram_read_chunk : len;
+        psram_read_chunk_fn(addr, buf, n);
         addr += n; buf += n; len -= n;
     }
 }
 
 static void psram_raw_write(uint32_t addr, const uint8_t *buf, size_t len) {
     while (len > 0) {
-        size_t n = (len > (size_t)PSRAM_WRITE_CHUNK) ? PSRAM_WRITE_CHUNK : len;
-        psram_write_chunk(addr, buf, n);
+        size_t n = (len > (size_t)psram_write_chunk) ? psram_write_chunk : len;
+        psram_write_chunk_fn(addr, buf, n);
         addr += n; buf += n; len -= n;
     }
 }
@@ -524,7 +552,7 @@ int psram_setup(void) {
     // left active for the lifetime of the driver.  No other peripheral shares
     // this bus, so endTransaction is unnecessary.
     spiPSRAM.begin(PSR_SCK, PSR_MISO, PSR_MOSI, -1);  // no auto-CS
-    spiPSRAM.beginTransaction(psramSettings);
+    psram_set_freq(PSRAM_SPI_FREQ_DEFAULT);
 
     psram_reset();
 
@@ -583,8 +611,10 @@ int psram_test(bool forever) {
     uint32_t size = BOARD_PSRAM_SIZE;
     uint32_t pass = 0;
 
-    if (forever)
+    if (forever) {
         printfnl(SOURCE_COMMANDS, "PSRAM test forever: %u bytes, press any key to stop\n", size);
+        while (Serial.available()) Serial.read();  // Drain stale input
+    }
 
     do {
         uint32_t errors = 0;
@@ -654,6 +684,18 @@ int psram_test(bool forever) {
 
 uint32_t psram_size(void) { return BOARD_PSRAM_SIZE; }
 bool psram_available(void) { return psram_ok; }
+
+uint32_t psram_get_freq(void) { return psram_freq; }
+
+int psram_change_freq(uint32_t freq_hz) {
+    if (!psram_ok) return -1;
+    if (freq_hz < 5000000 || freq_hz > PSRAM_SPI_FREQ_MAX) return -1;
+    PSRAM_LOCK();
+    psram_cache_flush();
+    psram_set_freq(freq_hz);
+    PSRAM_UNLOCK();
+    return 0;
+}
 
 // ======================================================================
 #elif defined(BOARD_HAS_NATIVE_PSRAM)  // Native memory-mapped PSRAM (ESP32-S3)
@@ -815,8 +857,10 @@ int psram_test(bool forever) {
 
     uint32_t pass = 0;
 
-    if (forever)
+    if (forever) {
         printfnl(SOURCE_COMMANDS, "PSRAM test forever: %u bytes, press any key to stop\n", avail);
+        while (Serial.available()) Serial.read();  // Drain stale input
+    }
 
     int result = 0;
     do {
@@ -883,6 +927,8 @@ uint32_t psram_cache_misses(void) { return 0; }
 
 uint32_t psram_size(void) { return ESP.getPsramSize(); }
 bool psram_available(void) { return psram_ok; }
+uint32_t psram_get_freq(void) { return 0; }
+int psram_change_freq(uint32_t) { return -1; }
 
 // ======================================================================
 #else  // No PSRAM — stubs (all allocations go through system heap)
@@ -935,6 +981,8 @@ void     psram_cache_flush(void) {}
 void     psram_cache_invalidate(void) {}
 uint32_t psram_cache_hits(void)   { return 0; }
 uint32_t psram_cache_misses(void) { return 0; }
+uint32_t psram_get_freq(void) { return 0; }
+int psram_change_freq(uint32_t) { return -1; }
 
 #endif  // BOARD_HAS_IMPROVISED_PSRAM / BOARD_HAS_NATIVE_PSRAM / stubs
 
