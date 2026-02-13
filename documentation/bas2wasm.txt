@@ -5,15 +5,20 @@ bas2wasm compiles ConeZ BASIC scripts (.bas) into WASM 1.0 binaries (.wasm)
 that run on the ConeZ WASM runtime. The compiled output uses the same host
 API as hand-written WASM modules (see wasm-api.txt).
 
-The compiler is a single C file with no dependencies beyond libc. It can be
-built on any system with a C compiler:
+The compiler has no dependencies beyond libc. Build standalone:
 
-    cc -o bas2wasm tools/bas2wasm/bas2wasm.c
+    cd tools/bas2wasm && make
     ./bas2wasm script.bas -o script.wasm
 
 The .wasm file can then be uploaded to the ConeZ filesystem and run with:
 
     run /script.wasm
+
+The compiler also works as an embedded library in the firmware and
+simulator. On the firmware, the `compile` command compiles .bas files
+to .wasm directly on the device. In the simulator, compilation is
+built in — no external bas2wasm binary needed. See the Embedded Mode
+section below for details.
 
 
 Differences from the BASIC Interpreter
@@ -904,6 +909,66 @@ Example:
       FORMAT "Read: $", LINE$
   WEND
   CLOSE #2
+
+
+Embedded Mode
+-------------
+
+bas2wasm can be compiled as a library for embedding in the ESP32
+firmware or the Qt simulator. This is controlled by the
+BAS2WASM_EMBEDDED preprocessor define.
+
+Platform abstraction (bas2wasm_platform.h):
+
+  In standalone mode (default), bw_malloc/bw_error/bw_fatal are
+  #defined to malloc/fprintf/exit — zero overhead.
+
+  In embedded mode, they become real functions that redirect to
+  host-provided callbacks. Fatal errors use longjmp(bw_bail) instead
+  of exit(1). Diagnostic messages are routed through bw_on_error
+  and bw_on_info function pointer callbacks.
+
+Library API:
+
+  Buf bas2wasm_compile_buffer(const char *src, int len);
+      Compile BASIC source to WASM. Returns a Buf with the .wasm
+      binary (len == 0 on error). Caller must call buf_free() on
+      the result and bas2wasm_reset() after each compilation.
+
+  void bas2wasm_reset(void);
+      Reset all compiler state for reuse. Must be called between
+      compilations.
+
+Single-TU embedding:
+
+  Both the firmware and simulator include all bas2wasm .c files into
+  a single compilation unit (bas2wasm_embed.c) via #include. This
+  keeps static variables and functions internal. The wrapper defines
+  BAS2WASM_EMBEDDED before including the sources.
+
+Symbol prefixing:
+
+  In embedded mode, shared global names (source, had_error, func_bufs,
+  expr, assemble_to_buf, etc.) are macro-prefixed to bw_source,
+  bw_had_error, etc. This avoids link-time collisions when both
+  bas2wasm and c2wasm are linked into the same binary.
+
+Firmware usage:
+
+  The compile CLI command compiles .bas files on-device:
+
+    compile /script.bas           compile to /script.wasm
+    compile /script.bas run       compile and auto-run
+
+  Guarded by INCLUDE_BASIC_COMPILER build flag in platformio.ini.
+  The same command also supports .c files (via c2wasm) when
+  INCLUDE_C_COMPILER is enabled.
+
+Simulator usage:
+
+  The simulator links bas2wasm as a static library (bas2wasm-embed
+  in CMakeLists.txt). CompilerWorker calls bas2wasm_compile_buffer()
+  directly — no subprocess spawning.
 
 
 Limitations

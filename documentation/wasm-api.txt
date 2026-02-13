@@ -27,6 +27,9 @@ C modules (Option 1 — c2wasm, no external dependencies):
   unavailable. See documentation/c2wasm.txt for the full language
   reference and limitations.
 
+  c2wasm is also embedded in firmware and the simulator — use
+  "compile /file.c" on-device or "run file.c" in the simulator.
+
 C modules (Option 2 — clang, full C with optimization):
 
   cd tools/wasm

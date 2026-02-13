@@ -26,6 +26,7 @@ Quick Reference
   cat {filename}                     Show file contents
   clear / cls                        Clear screen (requires ANSI)
   color [on|off]                     Show or toggle ANSI color output
+  compile {file.bas} [run]           Compile BASIC to WASM on-device
   config [set|unset|reset]           Show or change settings
   cp {src} {dst}                     Copy file
   cue [load|start|stop|status]       Cue timeline engine control
@@ -98,6 +99,18 @@ color [on|off]
       Disable all ANSI escape codes. Output is plain text only.
       Commands that require ANSI (art, clear, game, winamp) will
       print an error. The editor falls back to a line-based mode.
+
+compile {file.bas|file.c} [run]
+  Compile a BASIC or C source file to a WASM binary on-device.
+  Uses the embedded bas2wasm compiler for .bas files and the
+  embedded c2wasm compiler for .c files. The output file has the
+  same name with a .wasm extension (e.g. /test.c → /test.wasm).
+  Optionally pass "run" to auto-run the compiled WASM immediately.
+  Requires INCLUDE_BASIC_COMPILER (.bas) or INCLUDE_C_COMPILER (.c).
+  Examples: compile /test.bas
+            compile /test.bas run
+            compile /demo.c
+            compile /demo.c run
 
 cp {src} {dst}
   Copy a file on LittleFS.

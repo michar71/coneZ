@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <math.h>
 
+#include "bas2wasm_platform.h"
+
 /* ================================================================
  *  Byte Buffer
  * ================================================================ */
@@ -180,17 +182,30 @@ enum {
     IMP_COUNT
 };
 
-extern ImportDef imp_defs[IMP_COUNT];
+extern const ImportDef imp_defs[IMP_COUNT];
 extern uint8_t imp_used[IMP_COUNT];
 
 /* ================================================================
  *  Compiler State
  * ================================================================ */
 
-#define MAX_VARS    256
-#define MAX_FUNCS   64
-#define MAX_CTRL    64
-#define MAX_STRINGS 8192
+#ifdef BAS2WASM_EMBEDDED
+  #define MAX_VARS         64
+  #define MAX_FUNCS        16
+  #define MAX_CTRL         32
+  #define MAX_STRINGS    4096
+  #define MAX_DATA_ITEMS  256
+  #define BW_MAX_LOCALS    64
+  #define BW_MAX_FIXUPS   128
+#else
+  #define MAX_VARS        256
+  #define MAX_FUNCS        64
+  #define MAX_CTRL         64
+  #define MAX_STRINGS    8192
+  #define MAX_DATA_ITEMS 1024
+  #define BW_MAX_LOCALS   128
+  #define BW_MAX_FIXUPS   512
+#endif
 #define FMT_BUF_SIZE 256
 #define FILE_TABLE_BASE 0xF100  /* 4 i32 handles at 0xF100..0xF10F */
 
@@ -221,9 +236,9 @@ typedef struct {
     int nparams;            /* WASM param count */
     uint8_t param_types[8]; /* WASM_I32 or WASM_F32 per param */
     int nlocals;
-    uint8_t local_types[128];
+    uint8_t local_types[BW_MAX_LOCALS];
     int sub_var;            /* variable index of SUB, -1 for setup */
-    int call_fixups[512];   /* code offsets of call target LEB128s */
+    int call_fixups[BW_MAX_FIXUPS];   /* code offsets of call target LEB128s */
     int ncall_fixups;
 } FuncCtx;
 
@@ -241,7 +256,6 @@ typedef struct {
 } CtrlEntry;
 
 /* DATA items (compile-time collection, assembled into data section) */
-#define MAX_DATA_ITEMS 1024
 typedef struct { VType type; int32_t ival; float fval; int str_off; } DataItem;
 
 /* Constant folding */
@@ -254,19 +268,32 @@ typedef struct {
 } FoldSlot;
 
 /* Global compiler state */
+#ifdef BAS2WASM_EMBEDDED
+extern Var *vars;
+extern FuncCtx *func_bufs;
+extern CtrlEntry *ctrl_stk;
+  #ifdef BAS2WASM_USE_PSRAM
+extern uint32_t data_buf;       /* PSRAM address */
+extern uint32_t data_items;     /* PSRAM address */
+  #else
+extern char *data_buf;
+extern DataItem *data_items;
+  #endif
+#else
 extern Var vars[MAX_VARS];
-extern int nvar;
 extern FuncCtx func_bufs[MAX_FUNCS];
+extern CtrlEntry ctrl_stk[MAX_CTRL];
+extern char data_buf[MAX_STRINGS];
+extern DataItem data_items[MAX_DATA_ITEMS];
+#endif
+extern int nvar;
 extern int nfuncs;
 extern int cur_func;
-extern CtrlEntry ctrl_stk[MAX_CTRL];
 extern int ctrl_sp;
 extern int block_depth;
 
-extern char data_buf[MAX_STRINGS];
 extern int data_len;
 
-extern DataItem data_items[MAX_DATA_ITEMS];
 extern int ndata_items;
 
 extern char *source;
@@ -324,7 +351,7 @@ enum {
 #define CODE (&func_bufs[cur_func].code)
 
 static inline void error_at(const char *msg) {
-    fprintf(stderr, "ERROR line %d: %s\n", line_num, msg);
+    bw_error("ERROR line %d: %s\n", line_num, msg);
     had_error = 1;
 }
 
@@ -359,7 +386,7 @@ static inline int add_var(const char *name) {
 
 static inline int alloc_local(void) {
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= 128) { error_at("too many locals in function"); return 0; }
+    if (f->nlocals >= BW_MAX_LOCALS) { error_at("too many locals in function"); return 0; }
     int idx = f->nparams + f->nlocals;
     f->local_types[f->nlocals++] = WASM_I32;
     return idx;
@@ -367,7 +394,7 @@ static inline int alloc_local(void) {
 
 static inline int alloc_local_f32(void) {
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= 128) { error_at("too many locals in function"); return 0; }
+    if (f->nlocals >= BW_MAX_LOCALS) { error_at("too many locals in function"); return 0; }
     int idx = f->nparams + f->nlocals;
     f->local_types[f->nlocals++] = WASM_F32;
     return idx;
@@ -375,7 +402,7 @@ static inline int alloc_local_f32(void) {
 
 static inline int alloc_local_i64(void) {
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= 128) { error_at("too many locals in function"); return 0; }
+    if (f->nlocals >= BW_MAX_LOCALS) { error_at("too many locals in function"); return 0; }
     int idx = f->nparams + f->nlocals;
     f->local_types[f->nlocals++] = WASM_I64;
     return idx;
@@ -396,8 +423,14 @@ static inline int alloc_local_for_vtype(VType t) {
 static inline int add_string(const char *s, int len) {
     if (data_len + len + 1 > MAX_STRINGS) { error_at("string table full"); return 0; }
     int off = data_len;
+#ifdef BAS2WASM_USE_PSRAM
+    bw_psram_write(data_buf + data_len, s, len);
+    uint8_t z = 0;
+    bw_psram_write(data_buf + data_len + len, &z, 1);
+#else
     memcpy(data_buf + data_len, s, len);
     data_buf[data_len + len] = 0;
+#endif
     data_len += len + 1;
     return off;
 }
@@ -440,7 +473,7 @@ static inline void emit_i64_const(int64_t v) {
 static inline void emit_call(int func_idx) {
     buf_byte(CODE, OP_CALL);
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->ncall_fixups >= 512) { error_at("too many call sites in function"); }
+    if (f->ncall_fixups >= BW_MAX_FIXUPS) { error_at("too many call sites in function"); }
     else f->call_fixups[f->ncall_fixups++] = f->code.len;
     buf_uleb(CODE, func_idx);
     if (func_idx < IMP_COUNT) imp_used[func_idx] = 1;
@@ -549,9 +582,17 @@ int compile_builtin_expr(const char *name);
 void stmt(void);
 
 /* assemble.c */
+Buf  assemble_to_buf(void);
 void assemble(const char *outpath);
 
+/* stmt.c */
+void stmt_reset(void);
+
 /* main.c */
-void compile(void);
+void bw_compile(void);
+
+/* Library API (embedded use) */
+Buf  bas2wasm_compile_buffer(const char *src, int len);
+void bas2wasm_reset(void);
 
 #endif /* BAS2WASM_H */

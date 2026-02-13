@@ -24,6 +24,43 @@
 #include "cue.h"
 #include "editor.h"
 #include "psram.h"
+#include <csetjmp>
+/*
+ * Forward-declare only the embedded compiler APIs we need.
+ * Can't include both bas2wasm.h and c2wasm.h in the same TU because
+ * they share type/macro names (Buf, buf_init, source, etc.).
+ */
+extern "C" {
+
+#ifdef INCLUDE_BASIC_COMPILER
+typedef void (*bw_diag_fn)(const char *msg, void *ctx);
+extern bw_diag_fn bw_on_error;
+extern bw_diag_fn bw_on_info;
+extern void *bw_cb_ctx;
+extern jmp_buf bw_bail;
+
+typedef struct { uint8_t *data; int len, cap; } bw_Buf;
+bw_Buf bas2wasm_compile_buffer(const char *src, int len);
+void bas2wasm_reset(void);
+void bw_buf_init(bw_Buf *b);
+void bw_buf_free(bw_Buf *b);
+#endif
+
+#ifdef INCLUDE_C_COMPILER
+typedef void (*cw_diag_fn)(const char *msg, void *ctx);
+extern cw_diag_fn cw_on_error;
+extern cw_diag_fn cw_on_info;
+extern void *cw_cb_ctx;
+extern jmp_buf cw_bail;
+
+typedef struct { uint8_t *data; int len, cap; } cw_Buf;
+cw_Buf c2wasm_compile_buffer(const char *src, int len, const char *filename);
+void c2wasm_reset(void);
+void cw_buf_init(cw_Buf *b);
+void cw_buf_free(cw_Buf *b);
+#endif
+
+} /* extern "C" */
 
 
 //Serial/Telnet Shell comamnds
@@ -755,7 +792,9 @@ int cmd_ps(int argc, char **argv)
     static const char *taskNames[] = {
         "loopTask",     // Arduino main loop
         "ShellTask",    // Shell / CLI
+#ifdef INCLUDE_BASIC
         "BasicTask",    // BASIC interpreter
+#endif
         "WasmTask",     // WASM runtime
         "led_render",   // LED render task
         "IDLE0",        // Idle task core 0
@@ -1988,6 +2027,140 @@ int cmd_psram(int argc, char **argv)
 }
 
 
+#if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
+
+#ifdef INCLUDE_BASIC_COMPILER
+static void bw_diag_cb(const char *msg, void *) {
+    printfnl(SOURCE_COMMANDS, "%s", msg);
+}
+#endif
+
+#ifdef INCLUDE_C_COMPILER
+static void cw_diag_cb(const char *msg, void *) {
+    printfnl(SOURCE_COMMANDS, "%s", msg);
+}
+#endif
+
+int cmd_compile(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: compile <file.bas|file.c> [run]\n"));
+        return 1;
+    }
+
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+
+    // Check extension
+    const char *dot = strrchr(path, '.');
+    int is_bas = 0, is_c = 0;
+#ifdef INCLUDE_BASIC_COMPILER
+    if (dot && strcmp(dot, ".bas") == 0) is_bas = 1;
+#endif
+#ifdef INCLUDE_C_COMPILER
+    if (dot && strcmp(dot, ".c") == 0) is_c = 1;
+#endif
+    if (!is_bas && !is_c) {
+        printfnl(SOURCE_COMMANDS, F("Unsupported file type (use .bas or .c)\n"));
+        return 1;
+    }
+
+    // Read source file
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        return 1;
+    }
+    int slen = f.size();
+    char *src = (char *)malloc(slen + 1);
+    if (!src) {
+        f.close();
+        printfnl(SOURCE_COMMANDS, F("Out of memory\n"));
+        return 1;
+    }
+    f.readBytes(src, slen);
+    src[slen] = 0;
+    f.close();
+
+    // Compile
+    // Use bw_ or cw_ prefixed Buf type depending on compiler
+    // Both are identical structs: { uint8_t *data; int len, cap; }
+    uint8_t *wasm_data = NULL;
+    int wasm_len = 0;
+
+#ifdef INCLUDE_BASIC_COMPILER
+    if (is_bas) {
+        bw_on_error = bw_diag_cb;
+        bw_on_info = bw_diag_cb;
+        bw_cb_ctx = NULL;
+
+        bw_Buf result;
+        bw_buf_init(&result);
+        if (setjmp(bw_bail) == 0) {
+            result = bas2wasm_compile_buffer(src, slen);
+        }
+        free(src);
+
+        if (result.len == 0) {
+            printfnl(SOURCE_COMMANDS, F("Compilation failed\n"));
+            bas2wasm_reset();
+            return 1;
+        }
+        wasm_data = result.data;
+        wasm_len = result.len;
+        // Don't free result yet — data pointer used below
+        bas2wasm_reset();
+    }
+#endif
+
+#ifdef INCLUDE_C_COMPILER
+    if (is_c) {
+        cw_on_error = cw_diag_cb;
+        cw_on_info = cw_diag_cb;
+        cw_cb_ctx = NULL;
+
+        cw_Buf result;
+        cw_buf_init(&result);
+        if (setjmp(cw_bail) == 0) {
+            result = c2wasm_compile_buffer(src, slen, path);
+        }
+        free(src);
+
+        if (result.len == 0) {
+            printfnl(SOURCE_COMMANDS, F("Compilation failed\n"));
+            c2wasm_reset();
+            return 1;
+        }
+        wasm_data = result.data;
+        wasm_len = result.len;
+        c2wasm_reset();
+    }
+#endif
+
+    // Write .wasm output
+    char out_path[64];
+    snprintf(out_path, sizeof(out_path), "%.*s.wasm", (int)(dot - path), path);
+
+    File out = LittleFS.open(out_path, FILE_WRITE);
+    if (!out) {
+        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), out_path);
+        free(wasm_data);
+        return 1;
+    }
+    out.write(wasm_data, wasm_len);
+    out.close();
+    printfnl(SOURCE_COMMANDS, F("Wrote %d bytes to %s\n"), wasm_len, out_path);
+    free(wasm_data);
+
+    // Optionally auto-run
+    if (argc >= 3 && strcmp(argv[2], "run") == 0) {
+        set_script_program(out_path);
+    }
+
+    return 0;
+}
+#endif /* INCLUDE_BASIC_COMPILER || INCLUDE_C_COMPILER */
+
 void init_commands(Stream *dev)
 {
     shell.attach(*dev);
@@ -2003,6 +2176,9 @@ void init_commands(Stream *dev)
     shell.addCommand(F("clear"), cmd_clear);
     shell.addCommand(F("cls"), cmd_clear);
     shell.addCommand(F("color"), cmd_color);
+#if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
+    shell.addCommand(F("compile"), cmd_compile);
+#endif
     shell.addCommand(F("config"), cmd_config);
     shell.addCommand(F("cp"), cmd_cp);
     shell.addCommand(F("cue"), cmd_cue);

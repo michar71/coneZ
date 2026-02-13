@@ -16,7 +16,7 @@ static int find_or_add_ftype(int np, const uint8_t *p, int nr, const uint8_t *r)
         for (int j = 0; j < nr && match; j++) if (ftypes[i].r[j] != r[j]) match = 0;
         if (match) return i;
     }
-    if (nftypes >= 128) { fprintf(stderr, "too many function types\n"); exit(1); }
+    if (nftypes >= 128) { bw_fatal("too many function types\n"); }
     ftypes[nftypes].np = np;
     memcpy(ftypes[nftypes].p, p, np);
     ftypes[nftypes].nr = nr;
@@ -24,7 +24,8 @@ static int find_or_add_ftype(int np, const uint8_t *p, int nr, const uint8_t *r)
     return nftypes++;
 }
 
-void assemble(const char *outpath) {
+Buf assemble_to_buf(void) {
+    nftypes = 0;
     Buf out; buf_init(&out);
 
     /* WASM magic + version */
@@ -67,7 +68,7 @@ void assemble(const char *outpath) {
                 buf_byte(&nc, f->code.data[pos++]);
             }
         }
-        free(f->code.data);
+        bw_free(f->code.data);
         f->code = nc;
     }
 
@@ -75,7 +76,7 @@ void assemble(const char *outpath) {
     int imp_type_idx[IMP_COUNT];
     for (int i = 0; i < IMP_COUNT; i++) {
         if (!imp_used[i]) continue;
-        ImportDef *d = &imp_defs[i];
+        const ImportDef *d = &imp_defs[i];
         imp_type_idx[i] = find_or_add_ftype(d->np, d->p, d->nr, d->r);
     }
 
@@ -257,20 +258,31 @@ void assemble(const char *outpath) {
             total_data += 4 + ndata_items * 8;
 
         if (total_data > 0) {
-            uint8_t *full_data = calloc(total_data, 1);
+            uint8_t *full_data = bw_calloc(total_data, 1);
+#ifdef BAS2WASM_USE_PSRAM
+            bw_psram_read(data_buf, full_data, data_len);
+#else
             memcpy(full_data, data_buf, data_len);
+#endif
             if (ndata_items > 0) {
                 uint8_t *p = full_data + data_table_start;
                 int32_t count = ndata_items;
                 memcpy(p, &count, 4); p += 4;
                 for (int i = 0; i < ndata_items; i++) {
+                    DataItem di;
+#ifdef BAS2WASM_USE_PSRAM
+                    bw_psram_read(data_items + i * sizeof(DataItem),
+                                  &di, sizeof(DataItem));
+#else
+                    di = data_items[i];
+#endif
                     int32_t type_tag = 0;
                     int32_t value = 0;
-                    switch (data_items[i].type) {
-                    case T_I32: type_tag = 0; value = data_items[i].ival; break;
-                    case T_F32: type_tag = 1; memcpy(&value, &data_items[i].fval, 4); break;
-                    case T_STR: type_tag = 2; value = data_items[i].str_off; break;
-                    case T_I64: type_tag = 0; value = (int32_t)data_items[i].ival; break;
+                    switch (di.type) {
+                    case T_I32: type_tag = 0; value = di.ival; break;
+                    case T_F32: type_tag = 1; memcpy(&value, &di.fval, 4); break;
+                    case T_STR: type_tag = 2; value = di.str_off; break;
+                    case T_I64: type_tag = 0; value = (int32_t)di.ival; break;
                     }
                     memcpy(p, &type_tag, 4); p += 4;
                     memcpy(p, &value, 4); p += 4;
@@ -285,22 +297,31 @@ void assemble(const char *outpath) {
             buf_bytes(&sec, full_data, total_data);
             buf_section(&out, 11, &sec);
             buf_free(&sec);
-            free(full_data);
+            bw_free(full_data);
         }
     }
 
-    /* Write output */
+    return out;
+}
+
+void assemble(const char *outpath) {
+    Buf out = assemble_to_buf();
+
     FILE *fp = fopen(outpath, "wb");
-    if (!fp) { fprintf(stderr, "Cannot open %s for writing\n", outpath); exit(1); }
+    if (!fp) { bw_fatal("Cannot open %s for writing\n", outpath); }
     if ((int)fwrite(out.data, 1, out.len, fp) != out.len) {
-        fprintf(stderr, "Write error on %s\n", outpath);
         fclose(fp);
         buf_free(&out);
-        exit(1);
+        bw_fatal("Write error on %s\n", outpath);
     }
     fclose(fp);
-    printf("Wrote %d bytes to %s\n", out.len, outpath);
-    printf("  %d imports, %d local functions, %d globals, %d bytes data (%d DATA items)\n",
-           num_used_imports, nfuncs, 4 + nvar, data_len, ndata_items);
+    bw_info("Wrote %d bytes to %s\n", out.len, outpath);
+
+    /* Count used imports for info message */
+    int num_imp = 0;
+    for (int i = 0; i < IMP_COUNT; i++)
+        if (imp_used[i]) num_imp++;
+    bw_info("  %d imports, %d local functions, %d globals, %d bytes data (%d DATA items)\n",
+           num_imp, nfuncs, 4 + nvar, data_len, ndata_items);
     buf_free(&out);
 }

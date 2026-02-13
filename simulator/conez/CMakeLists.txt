@@ -30,6 +30,24 @@ target_compile_definitions(m3 PRIVATE
 # Suppress warnings in vendored code
 target_compile_options(m3 PRIVATE -w)
 
+# ---- Embedded compilers (pure C, single-TU each) ----
+# Separate libraries because both compilers share file names (buf.c, expr.c, etc.)
+# and need different -I paths to resolve #include "file.c" correctly.
+
+add_library(bas2wasm-embed STATIC src/compiler/bas2wasm_embed.c)
+target_include_directories(bas2wasm-embed PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../tools/bas2wasm
+)
+target_compile_definitions(bas2wasm-embed PRIVATE BUILD_NUMBER=${BUILD_NUMBER})
+target_compile_options(bas2wasm-embed PRIVATE -w)
+
+add_library(c2wasm-embed STATIC src/compiler/c2wasm_embed.c)
+target_include_directories(c2wasm-embed PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../tools/c2wasm
+)
+target_compile_definitions(c2wasm-embed PRIVATE BUILD_NUMBER=${BUILD_NUMBER})
+target_compile_options(c2wasm-embed PRIVATE -w)
+
 # ---- simulator executable ----
 set(SIM_SOURCES
     src/main.cpp
@@ -73,7 +91,7 @@ target_compile_definitions(conez-simulator PRIVATE
     BUILD_NUMBER=${BUILD_NUMBER}
 )
 
-target_link_libraries(conez-simulator PRIVATE Qt6::Widgets m3 m)
+target_link_libraries(conez-simulator PRIVATE Qt6::Widgets m3 bas2wasm-embed c2wasm-embed m)
 
 # Increment build number after successful build
 add_custom_command(TARGET conez-simulator POST_BUILD

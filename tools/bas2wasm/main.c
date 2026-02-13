@@ -4,19 +4,32 @@
 #include "bas2wasm.h"
 
 /* Global compiler state definitions */
+#ifdef BAS2WASM_EMBEDDED
+Var *vars;
+FuncCtx *func_bufs;
+CtrlEntry *ctrl_stk;
+  #ifdef BAS2WASM_USE_PSRAM
+uint32_t data_buf;
+uint32_t data_items;
+  #else
+char *data_buf;
+DataItem *data_items;
+  #endif
+#else
 Var vars[MAX_VARS];
-int nvar;
 FuncCtx func_bufs[MAX_FUNCS];
+CtrlEntry ctrl_stk[MAX_CTRL];
+char data_buf[MAX_STRINGS];
+DataItem data_items[MAX_DATA_ITEMS];
+#endif
+int nvar;
 int nfuncs;
 int cur_func;
-CtrlEntry ctrl_stk[MAX_CTRL];
 int ctrl_sp;
 int block_depth;
 
-char data_buf[MAX_STRINGS];
 int data_len;
 
-DataItem data_items[MAX_DATA_ITEMS];
 int ndata_items;
 
 char *source;
@@ -40,11 +53,12 @@ int option_base;
 
 FoldSlot fold_a, fold_b;
 
-void compile(void) {
+void bw_compile(void) {
     nfuncs = 1;
     buf_init(&func_bufs[0].code);
     func_bufs[0].nparams = 0;
     func_bufs[0].nlocals = 0;
+    func_bufs[0].ncall_fixups = 0;
     func_bufs[0].sub_var = -1;
     cur_func = 0;
     block_depth = 0;
@@ -57,6 +71,9 @@ void compile(void) {
     option_base = 1;
     line_num = 0;
     src_pos = 0;
+    fold_a.valid = 0;
+    fold_b.valid = 0;
+    memset(imp_used, 0, sizeof(imp_used));
 
     /* Initialize file handle table to -1 (closed) */
     for (int i = 0; i < 4; i++) {
@@ -76,6 +93,92 @@ void compile(void) {
         error_at("unterminated block (missing END)");
     }
 }
+
+/* ================================================================
+ *  Library API
+ * ================================================================ */
+
+Buf bas2wasm_compile_buffer(const char *src, int len) {
+    Buf result;
+    buf_init(&result);
+
+#ifdef BAS2WASM_EMBEDDED
+    vars = (Var *)bw_calloc(MAX_VARS, sizeof(Var));
+    func_bufs = (FuncCtx *)bw_calloc(MAX_FUNCS, sizeof(FuncCtx));
+    ctrl_stk = (CtrlEntry *)bw_calloc(MAX_CTRL, sizeof(CtrlEntry));
+#ifdef BAS2WASM_USE_PSRAM
+    data_buf = bw_psram_alloc(MAX_STRINGS);
+    data_items = bw_psram_alloc(MAX_DATA_ITEMS * sizeof(DataItem));
+#else
+    data_buf = (char *)bw_calloc(MAX_STRINGS, 1);
+    data_items = (DataItem *)bw_calloc(MAX_DATA_ITEMS, sizeof(DataItem));
+#endif
+    if (!vars || !func_bufs || !ctrl_stk || !data_buf || !data_items) {
+        bw_error("bas2wasm: out of memory\n");
+        bas2wasm_reset();
+        return result;
+    }
+#endif
+
+    source = (char *)src;
+    src_len = len;
+
+    bw_compile();
+
+    if (had_error) {
+        return result;  /* len == 0 signals error */
+    }
+
+    result = assemble_to_buf();
+    return result;
+}
+
+void bas2wasm_reset(void) {
+    /* Free any allocated code buffers */
+#ifdef BAS2WASM_EMBEDDED
+    if (func_bufs)
+#endif
+    {
+        for (int i = 0; i < nfuncs; i++)
+            buf_free(&func_bufs[i].code);
+    }
+#ifdef BAS2WASM_EMBEDDED
+    bw_free(vars);       vars = NULL;
+    bw_free(func_bufs);  func_bufs = NULL;
+    bw_free(ctrl_stk);   ctrl_stk = NULL;
+#ifdef BAS2WASM_USE_PSRAM
+    bw_psram_free(data_buf);   data_buf = 0;
+    bw_psram_free(data_items); data_items = 0;
+#else
+    bw_free(data_buf);   data_buf = NULL;
+    bw_free(data_items); data_items = NULL;
+#endif
+#endif
+    nfuncs = 0;
+    nvar = 0;
+    cur_func = 0;
+    ctrl_sp = 0;
+    block_depth = 0;
+    data_len = 0;
+    ndata_items = 0;
+    had_error = 0;
+    option_base = 1;
+    vsp = 0;
+    fold_a.valid = 0;
+    fold_b.valid = 0;
+    memset(imp_used, 0, sizeof(imp_used));
+    stmt_reset();
+    source = NULL;
+    src_len = 0;
+    src_pos = 0;
+    line_num = 0;
+}
+
+/* ================================================================
+ *  Standalone main()
+ * ================================================================ */
+
+#ifndef BAS2WASM_EMBEDDED
 
 int main(int argc, char **argv) {
     const char *inpath = NULL;
@@ -128,7 +231,7 @@ int main(int argc, char **argv) {
 
     printf("bas2wasm %d.%d.%04d compiling %s...\n",
            BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER, inpath);
-    compile();
+    bw_compile();
 
     if (had_error) {
         fprintf(stderr, "Compilation failed.\n");
@@ -140,3 +243,5 @@ int main(int argc, char **argv) {
     free(source);
     return 0;
 }
+
+#endif /* !BAS2WASM_EMBEDDED */

@@ -6,7 +6,7 @@
 #define _I WASM_I32
 #define _F WASM_F32
 #define _D WASM_F64
-ImportDef imp_defs[IMP_COUNT] = {
+const ImportDef imp_defs[IMP_COUNT] = {
     [IMP_DELAY_MS]      = {"delay_ms",      1,{_I},            0,{}},
     [IMP_MILLIS]         = {"millis",         0,{},              1,{_I}},
     [IMP_GET_PARAM]      = {"get_param",      1,{_I},            1,{_I}},

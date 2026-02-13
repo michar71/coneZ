@@ -9,7 +9,7 @@ void buf_grow(Buf *b, int need) {
     if (b->len + need <= b->cap) return;
     int nc = b->cap ? b->cap * 2 : 256;
     while (nc < b->len + need) nc *= 2;
-    b->data = realloc(b->data, nc);
+    b->data = bw_realloc(b->data, nc);
     b->cap = nc;
 }
 
@@ -21,7 +21,7 @@ void buf_bytes(Buf *b, const void *p, int n) {
     buf_grow(b, n); memcpy(b->data + b->len, p, n); b->len += n;
 }
 
-void buf_free(Buf *b) { free(b->data); buf_init(b); }
+void buf_free(Buf *b) { bw_free(b->data); buf_init(b); }
 
 void buf_uleb(Buf *b, uint32_t v) {
     do {

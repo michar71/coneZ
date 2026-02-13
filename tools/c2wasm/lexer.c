@@ -392,15 +392,15 @@ static int lex_raw(void) {
         Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
         if (mac && macro_depth < MAX_MACRO_DEPTH && !lexer_save_active) {
             /* Push macro value back into source for re-lexing */
-            int vlen = strlen(mac->macro_val);
+            int vlen = HAS_MACRO_VAL(mac) ? (int)strlen(mac->macro_val) : 0;
             if (vlen > 0) {
                 int remain = src_len - src_pos;
-                char *new_src = malloc(src_pos + vlen + remain + 1);
+                char *new_src = cw_malloc(src_pos + vlen + remain + 1);
                 memcpy(new_src, source, src_pos);
                 memcpy(new_src + src_pos, mac->macro_val, vlen);
                 memcpy(new_src + src_pos + vlen, source + src_pos, remain);
                 new_src[src_pos + vlen + remain] = 0;
-                free(source);
+                cw_free(source);
                 source = new_src;
                 src_len = src_pos + vlen + remain;
                 macro_depth++;
@@ -754,8 +754,7 @@ void synchronize(int stop_at_semi, int stop_at_brace, int stop_at_rparen) {
 /* ---- Lexer save/restore for pre-scan ---- */
 
 void lexer_save(LexerSave *s) {
-    s->saved_source = malloc(src_len + 1);
-    if (!s->saved_source) { fprintf(stderr, "c2wasm: out of memory\n"); exit(1); }
+    s->saved_source = cw_malloc(src_len + 1);
     memcpy(s->saved_source, source, src_len + 1);
     s->saved_src_pos = src_pos;
     s->saved_src_len = src_len;
@@ -784,7 +783,7 @@ void lexer_save(LexerSave *s) {
 }
 
 void lexer_restore(LexerSave *s) {
-    free(source);
+    cw_free(source);
     source = s->saved_source;
     src_pos = s->saved_src_pos;
     src_len = s->saved_src_len;

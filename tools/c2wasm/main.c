@@ -4,19 +4,23 @@
 #include "c2wasm.h"
 
 /* Global compiler state */
+#ifdef C2WASM_EMBEDDED
+Symbol *syms;
+FuncCtx *func_bufs;
+CtrlEntry *ctrl_stk;
+char *data_buf;
+#else
 Symbol syms[MAX_SYMS];
+FuncCtx func_bufs[MAX_FUNCS];
+CtrlEntry ctrl_stk[MAX_CTRL];
+char data_buf[MAX_STRINGS];
+#endif
 int nsym;
 int cur_scope;
-
-FuncCtx func_bufs[MAX_FUNCS];
 int nfuncs;
 int cur_func;
-
-CtrlEntry ctrl_stk[MAX_CTRL];
 int ctrl_sp;
 int block_depth;
-
-char data_buf[MAX_STRINGS];
 int data_len;
 
 char *source;
@@ -44,7 +48,7 @@ int type_had_pointer;
 int type_had_const;
 int type_had_unsigned;
 
-void compile(void) {
+void cw_compile(void) {
     lex_init();
     preproc_init();
     next_token();
@@ -52,6 +56,135 @@ void compile(void) {
         parse_top_level();
     }
 }
+
+/* ================================================================
+ *  Library API
+ * ================================================================ */
+
+Buf c2wasm_compile_buffer(const char *src, int len, const char *filename) {
+    Buf result;
+    buf_init(&result);
+
+#ifdef C2WASM_EMBEDDED
+    syms = (Symbol *)cw_calloc(MAX_SYMS, sizeof(Symbol));
+    func_bufs = (FuncCtx *)cw_calloc(MAX_FUNCS, sizeof(FuncCtx));
+    ctrl_stk = (CtrlEntry *)cw_calloc(MAX_CTRL, sizeof(CtrlEntry));
+    data_buf = (char *)cw_calloc(MAX_STRINGS, 1);
+    if (!syms || !func_bufs || !ctrl_stk || !data_buf) {
+        cw_error("c2wasm: out of memory\n");
+        c2wasm_reset();
+        return result;
+    }
+#endif
+
+    source = (char *)src;
+    src_len = len;
+    src_pos = 0;
+    line_num = 1;
+    src_file = filename ? (char *)filename : NULL;
+
+    /* Globals: 0 = _heap_ptr, 1 = __line */
+    nglobals = 2;
+    nsym = 0;
+    cur_scope = 0;
+    nfuncs = 0;
+    cur_func = 0;
+    ctrl_sp = 0;
+    block_depth = 0;
+    data_len = 0;
+    had_error = 0;
+    has_setup = 0;
+    has_loop = 0;
+    type_had_pointer = 0;
+    type_had_const = 0;
+    type_had_unsigned = 0;
+    memset(imp_used, 0, sizeof(imp_used));
+
+    /* Initialize function buffers */
+    for (int i = 0; i < MAX_FUNCS; i++) {
+        buf_init(&func_bufs[i].code);
+        func_bufs[i].name = NULL;
+        func_bufs[i].nparams = 0;
+        func_bufs[i].nlocals = 0;
+        func_bufs[i].ncall_fixups = 0;
+        func_bufs[i].return_type = CT_VOID;
+    }
+
+    cw_compile();
+
+    /* Check for forward-declared but undefined functions */
+    for (int i = 0; i < nsym; i++) {
+        if (syms[i].kind == SYM_FUNC && !syms[i].is_defined) {
+            cw_error("%s: error: function '%s' declared but not defined\n",
+                    src_file ? src_file : "<input>", syms[i].name);
+            had_error = 1;
+        }
+    }
+
+    if (had_error) {
+        return result;  /* len == 0 signals error */
+    }
+
+    if (!has_setup && !has_loop) {
+        cw_error("c2wasm: no setup() or loop() function defined\n");
+        had_error = 1;
+        return result;
+    }
+
+    result = assemble_to_buf();
+    return result;
+}
+
+void c2wasm_reset(void) {
+    /* Free any allocated code buffers and names */
+#ifdef C2WASM_EMBEDDED
+    if (func_bufs)
+#endif
+    {
+        for (int i = 0; i < MAX_FUNCS; i++) {
+            buf_free(&func_bufs[i].code);
+            cw_free(func_bufs[i].name);
+            func_bufs[i].name = NULL;
+        }
+    }
+#ifdef C2WASM_EMBEDDED
+    /* Free heap-allocated macro_val strings */
+    if (syms) {
+        for (int i = 0; i < nsym; i++)
+            cw_free(syms[i].macro_val);
+    }
+    cw_free(syms); syms = NULL;
+    cw_free(func_bufs); func_bufs = NULL;
+    cw_free(ctrl_stk); ctrl_stk = NULL;
+    cw_free(data_buf); data_buf = NULL;
+#endif
+    nfuncs = 0;
+    nsym = 0;
+    cur_scope = 0;
+    cur_func = 0;
+    ctrl_sp = 0;
+    block_depth = 0;
+    data_len = 0;
+    nglobals = 0;
+    had_error = 0;
+    has_setup = 0;
+    has_loop = 0;
+    type_had_pointer = 0;
+    type_had_const = 0;
+    type_had_unsigned = 0;
+    memset(imp_used, 0, sizeof(imp_used));
+    source = NULL;
+    src_len = 0;
+    src_pos = 0;
+    line_num = 0;
+    src_file = NULL;
+}
+
+/* ================================================================
+ *  Standalone main()
+ * ================================================================ */
+
+#ifndef C2WASM_EMBEDDED
 
 static char *read_file(const char *path, int *out_len) {
     FILE *fp = fopen(path, "rb");
@@ -117,7 +250,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < MAX_FUNCS; i++)
         buf_init(&func_bufs[i].code);
 
-    compile();
+    cw_compile();
 
     /* Check for forward-declared but undefined functions */
     for (int i = 0; i < nsym; i++) {
@@ -153,3 +286,5 @@ cleanup:
     }
     return ret;
 }
+
+#endif /* !C2WASM_EMBEDDED */

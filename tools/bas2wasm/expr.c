@@ -358,7 +358,7 @@ int compile_builtin_expr(const char *name) {
             emit_op(OP_I32_TRUNC_F32_S);
             vpush(T_I32);
         } else {
-            ImportDef *id = &imp_defs[b->imp];
+            const ImportDef *id = &imp_defs[b->imp];
             if (id->nr > 0 && id->r[0] == WASM_F32) vpush(T_F32);
             else if (id->nr > 0 && id->r[0] == WASM_I64) vpush(T_I64);
             else vpush(T_I32);

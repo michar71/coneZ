@@ -4,9 +4,11 @@
 #include "bas2wasm.h"
 
 #define _I WASM_I32
+#pragma push_macro("_L")
+#undef _L
 #define _L WASM_I64
 #define _F WASM_F32
-ImportDef imp_defs[IMP_COUNT] = {
+const ImportDef imp_defs[IMP_COUNT] = {
     [IMP_DELAY_MS]      = {"delay_ms",      1,{_I},            0,{}},
     [IMP_MILLIS]         = {"millis",         0,{},              1,{_I}},
     [IMP_MILLIS64]       = {"millis64",       0,{},              1,{_L}},
@@ -145,6 +147,7 @@ ImportDef imp_defs[IMP_COUNT] = {
 };
 #undef _I
 #undef _L
+#pragma pop_macro("_L")
 #undef _F
 
 uint8_t imp_used[IMP_COUNT];
