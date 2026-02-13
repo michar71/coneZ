@@ -318,8 +318,6 @@ static void wasm_task_fun(void *parameter)
 void setup_wasm()
 {
     wasm_mutex = xSemaphoreCreateMutex();
-    // TODO: monitor stack watermark via `ps` command under real workloads and adjust
-    xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, 0);
 }
 
 bool set_wasm_program(const char *path)
@@ -328,6 +326,11 @@ bool set_wasm_program(const char *path)
         strncpy(next_wasm, path, sizeof(next_wasm) - 1);
         next_wasm[sizeof(next_wasm) - 1] = '\0';
         xSemaphoreGive(wasm_mutex);
+
+        // Create task on first use
+        if (wasm_task_handle == NULL)
+            xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
+
         return true;
     }
     return false;

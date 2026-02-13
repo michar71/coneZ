@@ -12,7 +12,9 @@ led, sensors, time, uptime, version, wasm. Hardware-only commands are
 not available in the simulator.
 
 Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
-Up arrow recalls the last command.
+Up/Down arrows navigate command history (32 entries on PSRAM boards,
+1 entry on Heltec). Duplicate consecutive commands are suppressed.
+File paths are auto-normalized (/ prepended if missing).
 
 
 Quick Reference
@@ -22,34 +24,43 @@ Quick Reference
   art                                Display ANSI traffic cone art
   clear / cls                        Clear screen
   config [set|unset|reset]           Show or change settings
+  cp {src} {dst}                     Copy file
   cue [load|start|stop|status]       Cue timeline engine control
   debug [off | {source} [on|off]]    Show or set debug message types
   del {filename}                     Delete file
-  dir                                List files
+  dir [path]                         List files (optionally in subdirectory)
+  edit {filename}                    Full-screen text editor
   game                               Conway's Game of Life
   gpio [set|out|in|read]             Show or control GPIO pins
   gps [info|set|save|restart|send]   Show GPS status or configure module
   help                               Show help (same as ?)
+  hexdump {filename} [count]         Hex+ASCII dump of file (default 256 bytes)
   history                            Show command history
   led                                Show LED configuration
   list {filename}                    Show file contents
   load {filename}                    Receive file via serial (CTRL+Z to end)
   lora                               Show LoRa radio status
+  free                               Show heap memory (alias for mem)
   mem                                Show heap memory stats
+  mkdir {path}                       Create directory
+  mv {oldname} {newname}             Rename/move file (alias for ren)
   param {id} {value}                 Set script parameter
   ps                                 Show task list and stack watermarks
   psram [test|freq]                  Show PSRAM status or run diagnostics
   reboot                             Reboot the device
   ren {oldname} {newname}            Rename file
+  rmdir {path}                       Remove empty directory
   run {filename}                     Run script (.bas or .wasm)
   sensors                            Show sensor readings
   stop                               Stop running script
   tc                                 Show thread count per core
   time                               Show current date/time and source
   uptime                             Show system uptime
+  ver                                Show firmware version (alias for version)
   version                            Show firmware version and board info
   wasm [status|info <file>]          WASM runtime status/info
   wifi                               Show WiFi status
+  winamp                             Audio visualizer (LED effect)
 
 
 Detailed Command Descriptions
@@ -63,6 +74,10 @@ art
 
 clear / cls
   Clear the terminal screen. Requires ANSI terminal support.
+
+cp {src} {dst}
+  Copy a file on LittleFS.
+  Example: cp /startup.bas /startup_backup.bas
 
 config
   Show all current configuration settings. See documentation/config.txt
@@ -117,11 +132,21 @@ game
   coloring. Runs at ~10 FPS. Press any key to exit.
 
 del {filename}
-  Delete a file from LittleFS. Path must start with /.
+  Delete a file from LittleFS.
   Example: del /old_script.bas
 
-dir
-  List all files and directories on LittleFS with sizes.
+dir [path]
+  List all files and directories on LittleFS with sizes. Optionally
+  specify a subdirectory to list only its contents.
+  Examples: dir
+            dir /scripts
+
+edit {filename}
+  Open the full-screen text editor for on-device script editing. Creates
+  the file if it doesn't exist. Supports arrow key navigation, line
+  editing, goto line (Ctrl-G), and save (Ctrl-S). Press Ctrl-Q to quit.
+  Runs in the ShellTask and does not block hardware polling.
+  Example: edit /startup.bas
 
 gpio
   With no arguments, shows all GPIO pin states (direction and level).
@@ -186,9 +211,16 @@ gps
 help
   Show all available commands. Same as ?.
 
+hexdump {filename} [count]
+  Show a hex+ASCII dump of a file. Default shows first 256 bytes.
+  Optionally specify byte count.
+  Examples: hexdump /test.wasm
+            hexdump /data.bin 1024
+
 history
-  Show command history. Currently stores the single most recent command.
-  Up arrow also recalls the last command for editing.
+  Show command history. On PSRAM boards, stores up to 32 commands in a
+  ring buffer. On boards without PSRAM, stores only the most recent
+  command. Up/Down arrows navigate history.
 
 led
   Show LED strip configuration (number of LEDs per strip).
@@ -211,6 +243,14 @@ mem
   Show heap memory: free bytes, minimum since boot, largest allocatable
   block. Also shows PSRAM summary if available.
 
+mkdir {path}
+  Create a directory on LittleFS.
+  Example: mkdir /scripts
+
+mv {oldname} {newname}
+  Alias for ren. Rename or move a file on LittleFS.
+  Example: mv /old.bas /new.bas
+
 param {id} {value}
   Set a script parameter. Parameters are a 16-slot integer array shared
   between the main loop and running scripts (BASIC or WASM). BASIC reads
@@ -227,9 +267,14 @@ psram
   hit rate. Available on all boards (shows "not available" on boards
   without PSRAM hardware).
 
+  The default output includes a 64-character allocation map where each
+  character represents 128KB of PSRAM: - (free), + (partially used),
+  * (fully allocated). ANSI colored when available.
+
   psram test
       Run a full PSRAM memory test with read/write verification and
-      throughput benchmark. Requires no existing PSRAM allocations.
+      throughput benchmark. Temporarily frees the shell history ring
+      buffer to get exclusive PSRAM access, then re-allocates it after.
 
   psram test forever
       Run the memory test in a loop until an error occurs or a key is
@@ -247,11 +292,16 @@ ren {oldname} {newname}
   Rename a file on LittleFS.
   Example: ren /old.bas /new.bas
 
+rmdir {path}
+  Remove an empty directory from LittleFS.
+  Example: rmdir /scripts
+
 run {filename}
   Run a script file. The file extension determines the runtime: .bas
   files run on the BASIC interpreter task, .wasm files run on the WASM
-  interpreter task. Both tasks run on Core 0. Only one script of each
-  type can run at a time.
+  interpreter task. Both tasks are unpinned (tskNO_AFFINITY) and run on
+  whichever core has bandwidth. Only one script of each type can run at
+  a time.
   Examples: run /test.bas
             run /rgb_cycle.wasm
 
@@ -277,6 +327,9 @@ time
 uptime
   Show time since boot in days, hours, minutes, seconds.
 
+ver
+  Alias for version.
+
 version
   Show firmware project name, version, build date/time, and board type.
 
@@ -292,3 +345,7 @@ wasm
 
 wifi
   Show WiFi status: SSID, connection state, IP address, RSSI.
+
+winamp
+  Audio visualizer LED effect. Displays a retro-style equalizer on
+  LED strips. Press any key to exit.

@@ -69,18 +69,51 @@ There are standalone test projects under `tests/` (psram_test, thread_test) — 
 
 ### Dual-Core Threading Model
 
-- **Core 1 (main loop):** Hardware drivers — LoRa RX, GPS parsing, sensor polling, WiFi/HTTP, CLI shell, "direct effects" (speed-of-sound sync). Runs in `loop()` in `main.cpp`.
-- **Core 1 (LED render task):** Dedicated FreeRTOS task (`led_task_fun` in `led/led.cpp`, 4KB stack, priority 2) that calls `FastLED.show()` at ~30 FPS when the dirty flag is set, and at least once per second unconditionally. This is the **only** place `FastLED.show()` is called after `setup()`.
-- **Core 0 (BASIC task):** Dedicated FreeRTOS task (`basic_task_fun` in `basic/basic_wrapper.cpp`, 65KB stack) that runs user BASIC scripts. Guarded by `INCLUDE_BASIC` build flag.
-- **Core 0 (WASM task):** Dedicated FreeRTOS task (`wasm_task_fun` in `wasm/wasm_wrapper.cpp`, 65KB stack) that runs `.wasm` modules via wasm3 interpreter. Guarded by `INCLUDE_WASM` build flag. Both tasks coexist on Core 0.
+FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUSE_PREEMPTION=1`, `configUSE_TIME_SLICING=1`, 1000 Hz tick). Equal-priority tasks on the same core are time-sliced at 1ms intervals. Higher-priority tasks preempt immediately.
 
-**Critical rule:** After `setup()`, only the LED render task calls `FastLED.show()`. All other code (BASIC scripts, WASM modules, effects, etc.) writes to the global LED buffers (`leds1`-`leds4`) and calls `led_show()` to set the dirty flag. During `setup()` only, `led_show_now()` may be used for immediate display.
+| Task | Core | Priority | Stack | Source | Lifecycle |
+|------|------|----------|-------|--------|-----------|
+| loopTask | 1 | 1 | 8192 | Arduino `loop()` in `main.cpp` | Always running |
+| ShellTask | 1 | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
+| led_render | 1 | 2 | 4096 | `led_task_fun` in `led/led.cpp` | Always running |
+| BasicTask | any | 1 | 16384 | `basic_task_fun` in `basic/basic_wrapper.cpp` | Created on first script |
+| WasmTask | any | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Created on first script |
+
+**Core 1 tasks:**
+- **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi/HTTP, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration.
+- **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
+- **led_render** — Calls `FastLED.show()` at ~30 FPS when dirty, at least 1/sec unconditionally. Priority 2 preempts both loopTask and ShellTask.
+
+**Unpinned tasks (created on first use, not at boot):**
+- **BasicTask** — BASIC interpreter. `tskNO_AFFINITY` — scheduler places on whichever core has bandwidth (typically core 0 since core 1 is busier).
+- **WasmTask** — WASM interpreter. Same as BasicTask.
+
+**Critical rules:**
+- After `setup()`, only `led_render` calls `FastLED.show()`. All other code writes to `leds1`-`leds4` and calls `led_show()` to set the dirty flag. During `setup()` only, `led_show_now()` may be used.
+- `vTaskDelay()` calls in task loops are for CPU efficiency (avoid busy spin), not for yielding — FreeRTOS preempts at 1ms ticks regardless. Do NOT add yields inside `editor_draw()` or similar atomic screen-update functions; it would cause visible screen tearing.
+
+### USB Serial (HWCDC) Thread Safety
+
+**The ESP32-S3 USB CDC (HWCDC) has a known bug that causes data corruption when accessed from multiple cores.** This is a hardware/driver-level race condition in the HWCDC TX FIFO, documented in multiple open issues against the Espressif Arduino core ([#9378](https://github.com/espressif/arduino-esp32/issues/9378), [#10836](https://github.com/espressif/arduino-esp32/issues/10836), [#11959](https://github.com/espressif/arduino-esp32/issues/11959)). Espressif's official USB Serial/JTAG documentation does not mention this limitation.
+
+**Root cause:** The HWCDC has a 64-byte TX FIFO drained by a USB interrupt handler. `Serial.begin()` in `setup()` binds that interrupt to the calling core (core 1 on Arduino). When task code calls `Serial.write()` from a different core, the write and the interrupt handler access the FIFO registers simultaneously — a true hardware race that no software mutex can prevent, because the interrupt doesn't respect FreeRTOS mutexes. Symptoms: garbled output, lost bytes, interleaved fragments from different `print()` calls.
+
+**The fix:** Pin all tasks that write to Serial to core 1, the same core as the HWCDC interrupt. On a single core, the interrupt *preempts* the task (cleanly saving/restoring state) rather than *racing* it on a separate core. This is the model the FIFO hardware was designed for.
+
+**Mandatory constraints:**
+1. **ShellTask MUST be pinned to core 1** (`xTaskCreatePinnedToCore(..., 1)`) — same core as loopTask and the HWCDC interrupt handler. This is the primary fix for the corruption bug.
+2. **All Serial output after `setup()` must go through `printfnl()`** which holds `print_mutex`. Direct `Serial.print()` calls from any task will bypass the mutex and corrupt output.
+3. **DualStream and TelnetServer both override `write(const uint8_t*, size_t)`** for efficient bulk writes. The per-byte `write(uint8_t)` override still exists for compatibility.
+4. **ESP-IDF component logging is suppressed** via `esp_log_level_set("*", ESP_LOG_NONE)` before ShellTask creation. With `ARDUINO_USB_CDC_ON_BOOT=1`, ESP-IDF log output shares the same USB CDC and bypasses `print_mutex`.
+5. **Interactive apps** (editor, game) use `setInteractive(true)` which makes `printfnl()` return immediately without writing. The app then writes directly to the stream under `getLock()`/`releaseLock()`. This is safe because ShellTask is the only task writing to Serial at that point.
+
+**If you add a new FreeRTOS task that needs Serial output:** Route it through `printfnl()`. Never call `Serial.print()` directly. If the task must be on core 0 (e.g., for a peripheral interrupt), use `printfnl()` — it acquires the mutex, so the actual `Serial.write()` happens on whatever core the calling task is on. However, this means the HWCDC FIFO is being written from core 0 while its interrupt handler runs on core 1, which can trigger the corruption bug. If this becomes a problem, the next step is a FreeRTOS StreamBuffer to queue output and have a dedicated core 1 task drain it to Serial.
 
 ### Thread Communication
 
-- **printManager** (`console/printManager.cpp/h`): Mutex-protected logging. All text output outside of `setup()` must go through `printfnl()`. Each message has a `source_e` tag (SOURCE_BASIC, SOURCE_WASM, SOURCE_GPS, SOURCE_LORA, etc.) for filtering.
+- **printManager** (`console/printManager.cpp/h`): Mutex-protected logging. All text output outside of `setup()` must go through `printfnl()`. Each message has a `source_e` tag (SOURCE_BASIC, SOURCE_WASM, SOURCE_GPS, SOURCE_LORA, etc.) for filtering. The mutex also protects shell suspend/resume (erasing and redrawing the input line around background output).
 - **Params** (`set_basic_param` / `get_basic_param`): 16-slot integer array for passing values between main loop and scripting runtimes. Accessed via `GETPARAM(id)` in BASIC or `get_param(id)`/`set_param(id,val)` in WASM.
-- **Script loading** (`set_script_program`): Auto-detects `.bas` vs `.wasm` by extension, routes to the appropriate runtime's mutex-protected queue.
+- **Script loading** (`set_script_program`): Auto-detects `.bas` vs `.wasm` by extension, routes to the appropriate runtime's mutex-protected queue. Creates the interpreter task on first use (lazy initialization).
 
 ### BASIC Interpreter Extensions
 
@@ -222,7 +255,7 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 - **Temp:** TMP102 on I2C 0x48
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
 - **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`
-- **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) handles IAC WILL ECHO + WILL SGA negotiation. Arrow keys, Home/End/Delete, Ctrl-A/E/U, single-command history. ANSI color output when `SHELL_USE_ANSI` is defined. See `documentation/cli-commands.txt` for the full command reference.
+- **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) handles IAC WILL ECHO + WILL SGA negotiation. Arrow keys, Home/End/Delete, Ctrl-A/E/U, 32-entry command history (PSRAM-backed ring buffer on ConeZ PCB, single-entry DRAM fallback on Heltec). ANSI color output when `SHELL_USE_ANSI` is defined. `CORE_DEBUG_LEVEL=0` in `platformio.ini` suppresses Arduino library log macros (`log_e`/`log_w`/etc.) at compile time — these bypass `esp_log_level_set()` and would corrupt HWCDC output. File commands auto-normalize paths (prepend `/` if missing) via `normalize_path()` in `main.h`. Full-screen text editor (`console/editor.cpp/h`) for on-device script editing. See `documentation/cli-commands.txt` for the full command reference.
 
 ### Time System
 
@@ -261,26 +294,30 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 
 **Thread safety:** All public functions are protected by a recursive FreeRTOS mutex. Safe to call from any task. The memory test (`psram_test`) runs without the mutex and requires exclusive access — refuses to run if any allocations exist.
 
-**CLI:** `psram` shows status (size, used/free, contiguous, alloc slots used/max, cache hit rate, SPI clock). `psram test` runs a full memory test with throughput benchmark. `psram test forever` loops until error or keypress. `psram freq <MHz>` changes SPI clock at runtime (5–80 MHz) for benchmarking. `mem` also includes a PSRAM summary.
+**CLI:** `psram` shows status (size, used/free, contiguous, alloc slots used/max, cache hit rate, SPI clock) plus a 64-character allocation map (`-` free, `+` partial, `*` full, ANSI colored). `psram test` runs a full memory test with throughput benchmark (frees/re-allocates shell history ring buffer for exclusive PSRAM access). `psram test forever` loops until error or keypress. `psram freq <MHz>` changes SPI clock at runtime (5–80 MHz) for benchmarking. `mem` also includes a PSRAM summary.
 
 **Hardware details (ConeZ PCB):** LY68L6400SLIT (Lyontek), 64Mbit/8MB, 23-bit address, SPI-only wiring (no quad), FSPI bus (SPI2) on GPIO 5/4/6/7 (CE/MISO/SCK/MOSI). These are **GPIO matrix** routed (not IOMUX), so the documented reliable max is 26 MHz; IOMUX pins (GPIO 10–13) would allow 80 MHz. Default boot clock: 40 MHz (APB/2). Read command auto-selects: slow read `0x03` (no wait, max 33 MHz) vs fast read `0x0B` (8 wait cycles, max 133 MHz). 8µs tCEM max per CE# assertion — driver chunks transfers to stay within budget. 1KB page size. Datasheet: `hardware/datasheets/LY68L6400SLIT.pdf`.
 
 **SPI clock and tCEM:** ESP32-S3 SPI clock = APB (80 MHz) / integer N. The driver computes the actual achieved frequency and sizes chunks accordingly. At low frequencies, the 4-byte command overhead (cmd + 3 addr) dominates — at 5 MHz only 1 byte of payload fits per tCEM window.
 
+**Runtime SPI clock changes (`psram freq`):** The Arduino SPI library's `beginTransaction()` acquires two locks that are never released (we own the FSPI bus exclusively and never call `endTransaction()`): the Arduino `paramLock` and the HAL-level `spi->lock`. Both are held by loopTask from `psram_setup()`. Since `psram freq` runs on ShellTask, it cannot use any Arduino SPI API — `setFrequency()`, `beginTransaction()`, `endTransaction()`, and even the HAL's `spiSetClockDiv()` all try to acquire one of these permanently-held locks, causing deadlock. The fix: `psram_change_freq()` writes the SPI2 clock register directly via `GPSPI2.clock.val` (from `soc/spi_struct.h`), computing the divider with `spiFrequencyToClockDiv()`. This bypasses all lock layers and is safe under `psram_mutex`. Note: `spiFrequencyToClockDiv()` and the `SPISettings` constructor compute the same dividers on this framework version; earlier ESP32 Arduino versions had a special-case APB/2 path in `SPISettings` that `spiFrequencyToClockDiv()` missed.
+
 **Throughput benchmarks (ConeZ PCB v0.1, 8MB, `psram test`):**
 
-| Actual SPI Clock | Read KB/s | Write KB/s | Notes |
-|---|---|---|---|
-| 5.00 MHz | 88 | 93 | 1 byte payload/chunk — overhead-dominated |
-| 6.67 MHz | 97 | 103 | |
-| 8.00 MHz | 346 | 374 | |
-| 10.00 MHz | 498 | 545 | |
-| 13.33 MHz | 705 | 786 | |
-| 16.00 MHz | 917 | 1,030 | |
-| 20.00 MHz | 1,233 | 1,414 | |
-| 26.67 MHz | 1,603 | 1,893 | Max documented for GPIO matrix routing |
-| 40.00 MHz | 2,216 | 2,800 | Default boot clock (APB/2) |
-| 80.00 MHz | 3,327 | 4,534 | APB/1 — requires IOMUX pins for reliability |
+Baseline measured with single-task architecture (shell in loopTask). Current numbers are ~17% lower due to ShellTask overhead (extra `vTaskDelay` yields on busier core 1, `printfnl` suspend/resume during progress output). Frequency scaling ratios are consistent between both.
+
+| Actual SPI Clock | Read KB/s | Write KB/s | Current Read | Current Write | Notes |
+|---|---|---|---|---|---|
+| 5.00 MHz | 88 | 93 | | | 1 byte payload/chunk — overhead-dominated |
+| 6.67 MHz | 97 | 103 | | | |
+| 8.00 MHz | 346 | 374 | | | |
+| 10.00 MHz | 498 | 545 | | | |
+| 13.33 MHz | 705 | 786 | | | |
+| 16.00 MHz | 917 | 1,030 | | | |
+| 20.00 MHz | 1,233 | 1,414 | | | |
+| 26.67 MHz | 1,603 | 1,893 | | | Max documented for GPIO matrix routing |
+| 40.00 MHz | 2,216 | 2,800 | 1,855 | 2,321 | Default boot clock (APB/2) |
+| 80.00 MHz | 3,327 | 4,534 | 2,736 | 3,687 | APB/1 — requires IOMUX pins for reliability |
 
 ### Configuration
 

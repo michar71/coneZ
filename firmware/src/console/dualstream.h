@@ -15,6 +15,11 @@ public:
         telnet.write(b);
         return 1;
     }
+    size_t write(const uint8_t *buffer, size_t size) override {
+        if (Serial) Serial.write(buffer, size);
+        telnet.write(buffer, size);
+        return size;
+    }
     int available() override {
         return Serial.available() + telnet.available();
     }

@@ -191,4 +191,13 @@ void psram_memset(uint32_t dst, uint8_t val, size_t len);
 void psram_memcpy(uint32_t dst, uint32_t src, size_t len);
 int  psram_memcmp(uint32_t addr1, uint32_t addr2, size_t len);
 
+// ---- Visual memory map ----
+//
+// Prints a text-art bar showing allocation status across the PSRAM address
+// space. Each character represents an equal slice of the total capacity.
+// '-' = entirely free, '+' = partially allocated, '*' = fully allocated.
+// No-op on boards without PSRAM or with native (memory-mapped) PSRAM
+// where the internal block layout is not tracked.
+void psram_print_map(void);
+
 #endif

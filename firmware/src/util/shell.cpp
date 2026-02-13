@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "shell.h"
 #include "printManager.h"
+#include "psram.h"
 
 // Prompt and color strings — ANSI version uses colored prompt + input
 #ifdef SHELL_USE_ANSI
@@ -82,6 +83,10 @@ ConezShell::ConezShell()
 {
     resetBuffer();
     history[0] = '\0';
+    hist_addr = 0;
+    hist_count = 0;
+    hist_write = 0;
+    hist_nav = -1;
     inputActive = false;
 
     addCommand(F("history"), ConezShell::printHistory);
@@ -119,20 +124,24 @@ bool ConezShell::executeIfInput(void)
         pending[0] = '\0';
         if (linebuffer[0] != '\0')
             strncpy(pending, linebuffer, SHELL_BUFSIZE);
+        getLock();
         inputActive = false;
+        releaseLock();
         execute();
         // Update history after execute so 'history' command sees previous entry
-        if (pending[0] != '\0') {
-            strncpy(history, pending, SHELL_BUFSIZE);
-            history[SHELL_BUFSIZE - 1] = '\0';
-        }
+        if (pending[0] != '\0')
+            historyAdd(pending);
         if (shellConnection)
         {
             getLock();
             shellConnection->print(F(SH_PROMPT));
+            inputActive = true;
+            releaseLock();
+        } else {
+            getLock();
+            inputActive = true;
             releaseLock();
         }
-        inputActive = true;
     }
     return didSomething;
 }
@@ -146,93 +155,112 @@ void ConezShell::attach(Stream & requester)
 //////////////////////////////////////////////////////////////////////////////
 void ConezShell::showPrompt(void)
 {
+    getLock();
     if (shellConnection) {
-        getLock();
         shellConnection->print(F(SH_PROMPT));
-        releaseLock();
     }
     inputActive = true;
+    releaseLock();
 }
 
 //////////////////////////////////////////////////////////////////////////////
+// Process pending input characters.  The print_mutex is held around the
+// read, buffer modifications and echo writes so that (a) the underlying
+// Serial/Telnet objects are never accessed concurrently from two tasks,
+// and (b) printfnl's suspendLine / resumeLine always see consistent
+// linebuffer/inptr/cursor state.
 bool ConezShell::prepInput(void)
 {
     bool bufferReady = false; // assume not ready
     bool moreData = true;
 
     do {
+        // Hold the lock for the entire read + process + echo cycle.
+        // read() returns immediately (-1 if nothing), so this only
+        // blocks other writers for microseconds per iteration.
+        getLock();
+
         int c = -1;
         if (shellConnection)
-        {
-            getLock();
-            c  = shellConnection->read();
-            releaseLock();
-        }
+            c = shellConnection->read();
 
-        if (c == -1) { moreData = false; continue; }
-        if (c == 0) continue; // throw away NUL
+        if (c == -1) { releaseLock(); moreData = false; continue; }
+        if (c == 0) { releaseLock(); continue; } // throw away NUL
 
         // Escape sequence state machine
         if (escState == 1) {
             if (c == '[') { escState = 2; }
             else          { escState = 0; } // unknown escape, discard
+            releaseLock();
             continue;
         }
         if (escState == 2) {
             escState = 0;
             int prevLen = inptr;
             switch (c) {
-                case 'A': // Up arrow — recall history
-                    if (history[0] != '\0') {
-                        strncpy(linebuffer, history, SHELL_BUFSIZE - 1);
-                        linebuffer[SHELL_BUFSIZE - 1] = '\0';
-                        inptr = strlen(linebuffer);
-                        cursor = inptr;
-                        redrawLine(prevLen);
+                case 'A': // Up arrow — recall older history entry
+                    {
+                        int next = hist_nav + 1;
+                        char hbuf[SHELL_BUFSIZE];
+                        if (historyGet(next, hbuf)) {
+                            hist_nav = next;
+                            strncpy(linebuffer, hbuf, SHELL_BUFSIZE - 1);
+                            linebuffer[SHELL_BUFSIZE - 1] = '\0';
+                            inptr = strlen(linebuffer);
+                            cursor = inptr;
+                            redrawLine(prevLen);
+                        }
                     }
                     break;
-                case 'B': // Down arrow — clear line
-                    inptr = 0; cursor = 0;
-                    linebuffer[0] = '\0';
-                    redrawLine(prevLen);
+                case 'B': // Down arrow — recall newer history entry or clear
+                    {
+                        if (hist_nav > 0) {
+                            hist_nav--;
+                            char hbuf[SHELL_BUFSIZE];
+                            if (historyGet(hist_nav, hbuf)) {
+                                strncpy(linebuffer, hbuf, SHELL_BUFSIZE - 1);
+                                linebuffer[SHELL_BUFSIZE - 1] = '\0';
+                                inptr = strlen(linebuffer);
+                                cursor = inptr;
+                                redrawLine(prevLen);
+                            }
+                        } else {
+                            hist_nav = -1;
+                            inptr = 0; cursor = 0;
+                            linebuffer[0] = '\0';
+                            redrawLine(prevLen);
+                        }
+                    }
                     break;
                 case 'C': // Right arrow
                     if (cursor < inptr && shellConnection) {
                         cursor++;
-                        getLock();
 #ifdef SHELL_USE_ANSI
                         shellConnection->print(F("\033[C"));
 #else
                         shellConnection->print(F(SH_PROMPT_CR));
                         shellConnection->write((const uint8_t*)linebuffer, cursor);
 #endif
-                        releaseLock();
                     }
                     break;
                 case 'D': // Left arrow
                     if (cursor > 0 && shellConnection) {
                         cursor--;
-                        getLock();
 #ifdef SHELL_USE_ANSI
                         shellConnection->print(F("\033[D"));
 #else
                         shellConnection->print(F(SH_PROMPT_CR));
                         shellConnection->write((const uint8_t*)linebuffer, cursor);
 #endif
-                        releaseLock();
                     }
                     break;
                 case 'H': // Home
-                    if (shellConnection) {
-                        getLock();
+                    if (shellConnection)
                         shellConnection->print(F(SH_PROMPT_CR));
-                        releaseLock();
-                    }
                     cursor = 0;
                     break;
                 case 'F': // End
                     if (shellConnection) {
-                        getLock();
 #ifdef SHELL_USE_ANSI
                         for (int i = cursor; i < inptr; i++)
                             shellConnection->print(F("\033[C"));
@@ -240,7 +268,6 @@ bool ConezShell::prepInput(void)
                         shellConnection->print(F(SH_PROMPT_CR));
                         shellConnection->write((const uint8_t*)linebuffer, inptr);
 #endif
-                        releaseLock();
                     }
                     cursor = inptr;
                     break;
@@ -255,6 +282,7 @@ bool ConezShell::prepInput(void)
                 default:  // unknown CSI sequence, discard
                     break;
             }
+            releaseLock();
             continue;
         }
         if (escState == 3) {
@@ -269,10 +297,12 @@ bool ConezShell::prepInput(void)
                     redrawLine(prevLen);
                 }
             }
+            releaseLock();
             continue;
         }
         if (escState == 4) {
             escState = 0;  // consume trailing ~ from Insert/PgUp/PgDn
+            releaseLock();
             continue;
         }
 
@@ -289,11 +319,8 @@ bool ConezShell::prepInput(void)
                     int prevLen = inptr;
                     if (cursor == inptr) {
                         // simple backspace at end of line
-                        if (shellConnection) {
-                            getLock();
+                        if (shellConnection)
                             shellConnection->print(F("\b \b"));
-                            releaseLock();
-                        }
                         linebuffer[--inptr] = '\0';
                         cursor--;
                     } else {
@@ -308,17 +335,13 @@ bool ConezShell::prepInput(void)
                 break;
 
             case 0x01: // CTRL-A — Home
-                if (shellConnection) {
-                    getLock();
+                if (shellConnection)
                     shellConnection->print(F(SH_PROMPT_CR));
-                    releaseLock();
-                }
                 cursor = 0;
                 break;
 
             case 0x05: // CTRL-E — End
                 if (shellConnection) {
-                    getLock();
 #ifdef SHELL_USE_ANSI
                     for (int i = cursor; i < inptr; i++)
                         shellConnection->print(F("\033[C"));
@@ -326,7 +349,6 @@ bool ConezShell::prepInput(void)
                     shellConnection->print(F(SH_PROMPT_CR));
                     shellConnection->write((const uint8_t*)linebuffer, inptr);
 #endif
-                    releaseLock();
                 }
                 cursor = inptr;
                 break;
@@ -334,11 +356,9 @@ bool ConezShell::prepInput(void)
             case 0x12: //CTRL('R')
                 if (shellConnection)
                 {
-                    getLock();
                     shellConnection->print(F("\r\n"));
                     shellConnection->print(F(SH_PROMPT));
                     shellConnection->print(linebuffer);
-                    releaseLock();
                     cursor = inptr;
                 }
                 break;
@@ -354,12 +374,9 @@ bool ConezShell::prepInput(void)
             case ';':
             case '\r':
                 inputActive = false;
+                hist_nav = -1;
                 if (shellConnection)
-                {
-                    getLock();
                     shellConnection->print(F(SH_RESET "\n"));
-                    releaseLock();
-                }
                 bufferReady = true;
                 break;
 
@@ -376,11 +393,8 @@ bool ConezShell::prepInput(void)
                     linebuffer[inptr++] = c;
                     linebuffer[inptr] = '\0';
                     cursor++;
-                    if (echoEnabled && shellConnection) {
-                        getLock();
+                    if (echoEnabled && shellConnection)
                         shellConnection->write(c);
-                        releaseLock();
-                    }
                 } else {
                     // insert mid-line
                     int prevLen = inptr;
@@ -396,6 +410,9 @@ bool ConezShell::prepInput(void)
                 }
                 break;
         }
+
+        releaseLock();
+
     } while (moreData && !bufferReady);
 
     return bufferReady;
@@ -412,6 +429,7 @@ int ConezShell::execute(const char commandString[])
 {
     // overwrites anything in linebuffer; hope you don't need it!
     strncpy(linebuffer, commandString, SHELL_BUFSIZE);
+    linebuffer[SHELL_BUFSIZE - 1] = '\0';
     return execute();
 }
 
@@ -485,21 +503,17 @@ int ConezShell::report(const __FlashStringHelper * constMsg, int errorCode)
     if (errorCode != EXIT_SUCCESS)
     {
         String message(constMsg);
-        if (shellConnection )
+        if (shellConnection)
         {
             getLock();
             shellConnection->print(errorCode);
-            releaseLock();
-        }
-        if (message[0] != '\0')
-        {
-            if (shellConnection )
-            {
-                getLock();
+            if (message[0] != '\0') {
                 shellConnection->print(F(": "));
                 shellConnection->println(message);
-                releaseLock();
+            } else {
+                shellConnection->println();
             }
+            releaseLock();
         }
     }
     resetBuffer();
@@ -540,10 +554,10 @@ void ConezShell::resumeLine(Stream *out)
 }
 
 //////////////////////////////////////////////////////////////////////////////
+// Caller must hold print_mutex.
 void ConezShell::redrawLine(int prevLen)
 {
     if (!shellConnection) return;
-    getLock();
     shellConnection->print(F(SH_PROMPT_CR));
     shellConnection->write((const uint8_t*)linebuffer, inptr);
     // clear leftover characters from a longer previous line
@@ -551,13 +565,113 @@ void ConezShell::redrawLine(int prevLen)
     // reposition cursor
     int backup = (prevLen > inptr ? prevLen : inptr) - cursor;
     for (int i = 0; i < backup; i++) shellConnection->write('\b');
-    releaseLock();
 }
 
 //////////////////////////////////////////////////////////////////////////////
+// PSRAM-backed history ring buffer
+
+void ConezShell::historyInit(void)
+{
+    if (hist_addr) return;  // already allocated
+    uint32_t size = HIST_MAX * SHELL_BUFSIZE;
+    hist_addr = psram_malloc(size);
+    if (hist_addr) {
+        psram_memset(hist_addr, 0, size);
+        // Migrate DRAM fallback entry into ring if it exists
+        if (history[0] != '\0') {
+            psram_write(hist_addr, (const uint8_t *)history, SHELL_BUFSIZE);
+            hist_count = 1;
+            hist_write = 1;
+        } else {
+            hist_count = 0;
+            hist_write = 0;
+        }
+    }
+    hist_nav = -1;
+}
+
+void ConezShell::historyFree(void)
+{
+    if (!hist_addr) return;
+    // Save most recent entry to DRAM fallback before freeing
+    if (hist_count > 0) {
+        int last = (hist_write - 1 + HIST_MAX) % HIST_MAX;
+        psram_read(hist_addr + last * SHELL_BUFSIZE,
+                   (uint8_t *)history, SHELL_BUFSIZE);
+        history[SHELL_BUFSIZE - 1] = '\0';
+    }
+    psram_free(hist_addr);
+    hist_addr = 0;
+    hist_count = 0;
+    hist_write = 0;
+    hist_nav = -1;
+}
+
+void ConezShell::historyAdd(const char *cmd)
+{
+    if (!cmd || cmd[0] == '\0') return;
+
+    // Always update DRAM fallback
+    strncpy(history, cmd, SHELL_BUFSIZE);
+    history[SHELL_BUFSIZE - 1] = '\0';
+
+    if (hist_addr) {
+        // Skip duplicate of most recent entry
+        if (hist_count > 0) {
+            int last = (hist_write - 1 + HIST_MAX) % HIST_MAX;
+            char prev[SHELL_BUFSIZE];
+            psram_read(hist_addr + last * SHELL_BUFSIZE,
+                       (uint8_t *)prev, SHELL_BUFSIZE);
+            if (strncmp(prev, cmd, SHELL_BUFSIZE) == 0)
+                return;
+        }
+
+        // Write to ring
+        char buf[SHELL_BUFSIZE];
+        memset(buf, 0, SHELL_BUFSIZE);
+        strncpy(buf, cmd, SHELL_BUFSIZE - 1);
+        psram_write(hist_addr + hist_write * SHELL_BUFSIZE,
+                    (const uint8_t *)buf, SHELL_BUFSIZE);
+        hist_write = (hist_write + 1) % HIST_MAX;
+        if (hist_count < HIST_MAX) hist_count++;
+    }
+
+    hist_nav = -1;
+}
+
+// Get history entry by offset (0 = most recent, 1 = previous, ...)
+// Returns false if offset is out of range.
+bool ConezShell::historyGet(int offset, char *buf)
+{
+    if (hist_addr && hist_count > 0) {
+        if (offset < 0 || offset >= hist_count) return false;
+        int idx = (hist_write - 1 - offset + HIST_MAX * 2) % HIST_MAX;
+        psram_read(hist_addr + idx * SHELL_BUFSIZE,
+                   (uint8_t *)buf, SHELL_BUFSIZE);
+        buf[SHELL_BUFSIZE - 1] = '\0';
+        return true;
+    }
+
+    // DRAM fallback: only offset 0 is valid
+    if (offset == 0 && history[0] != '\0') {
+        strncpy(buf, history, SHELL_BUFSIZE);
+        buf[SHELL_BUFSIZE - 1] = '\0';
+        return true;
+    }
+    return false;
+}
+
 int ConezShell::printHistory(int /*argc*/, char ** /*argv*/)
 {
-    if (theShell.history[0] != '\0') {
+    if (theShell.hist_addr && theShell.hist_count > 0) {
+        char buf[SHELL_BUFSIZE];
+        getLock();
+        for (int i = theShell.hist_count - 1; i >= 0; i--) {
+            if (theShell.historyGet(i, buf))
+                shell.printf("  %2d  %s\n", theShell.hist_count - i, buf);
+        }
+        releaseLock();
+    } else if (theShell.history[0] != '\0') {
         getLock();
         shell.print(F("  1  "));
         shell.println(theShell.history);

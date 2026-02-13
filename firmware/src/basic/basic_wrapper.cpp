@@ -219,11 +219,16 @@ void basic_task_fun( void * parameter )
 
 bool set_basic_program(char* prog)
 {
-    if (xSemaphoreTake(basic_mutex, 1000) == pdTRUE) 
+    if (xSemaphoreTake(basic_mutex, 1000) == pdTRUE)
     {
         strncpy(next_code, prog, sizeof(next_code) - 1);
         next_code[sizeof(next_code) - 1] = '\0';
         xSemaphoreGive(basic_mutex);
+
+        // Create task on first use
+        if (basic_task == NULL)
+            xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 16384, NULL, 1, &basic_task, tskNO_AFFINITY);
+
         return true;
     }
     return false;
@@ -409,10 +414,8 @@ void setup_basic()
     register_sync_callback(getSyncEvent);
     register_env_callback(getENVdata);
 
-    //Start Own Thread
-    basic_mutex = xSemaphoreCreateMutex();    
-    // TODO: monitor stack watermark via `ps` command under real workloads and adjust
-    xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 16384, NULL, 1, &basic_task, 0);
+    //Create mutex (task created on first run)
+    basic_mutex = xSemaphoreCreateMutex();
     //xTaskCreate(basic_task_fun, "BasicTask", 65535, NULL, 128, NULL);
 }
 

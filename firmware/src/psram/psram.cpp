@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <SPI.h>
+#include <soc/spi_struct.h>
 #include <freertos/semphr.h>
 #include "board.h"
 #include "psram.h"
@@ -92,7 +93,6 @@ static constexpr int PSRAM_MAX_READ_CHUNK  = PSRAM_MAX_BYTES_PER_CEM - 4;     //
 static constexpr int PSRAM_MAX_WRITE_CHUNK = PSRAM_MAX_BYTES_PER_CEM - 4;     // 76
 
 static SPIClass    spiPSRAM(FSPI);
-static SPISettings psramSettings(PSRAM_SPI_FREQ_DEFAULT, MSBFIRST, SPI_MODE0);
 static bool        psram_ok = false;
 
 // Compute actual SPI clock: APB / ceil(APB / requested), same as hardware divider.
@@ -103,6 +103,7 @@ static uint32_t psram_actual_freq(uint32_t requested) {
 }
 
 // Recalculate chunk sizes and read mode for a given frequency.
+// Called during setup (with full SPI reconfiguration) and at runtime.
 // Caller must hold psram_mutex (or call before mutex-protected operations begin).
 static void psram_set_freq(uint32_t freq_hz) {
     psram_freq = psram_actual_freq(freq_hz);
@@ -111,9 +112,9 @@ static void psram_set_freq(uint32_t freq_hz) {
     int bytes_per_cem = (psram_freq / 1000000) * 8 / 8;
     psram_read_chunk  = bytes_per_cem - psram_read_overhead;
     psram_write_chunk = bytes_per_cem - 4;
-    spiPSRAM.endTransaction();
-    psramSettings = SPISettings(freq_hz, MSBFIRST, SPI_MODE0);
-    spiPSRAM.beginTransaction(psramSettings);
+    // SPI clock is set by the caller — setup uses endTransaction/beginTransaction
+    // (which takes the SPI bus mutex on loopTask), runtime uses setFrequency()
+    // (which doesn't touch the bus mutex, safe from ShellTask).
 }
 
 // ---- Low-level helpers ----
@@ -548,11 +549,14 @@ int psram_setup(void) {
     pinMode(PSR_CE, OUTPUT);
     cs_high();
 
-    // We own the FSPI bus exclusively — beginTransaction is called once and
-    // left active for the lifetime of the driver.  No other peripheral shares
-    // this bus, so endTransaction is unnecessary.
+    // We own the FSPI bus exclusively — no other peripheral shares it.
+    // beginTransaction configures the SPI correctly (SPISettings has a
+    // special-case divider for >= APB/2 that spiFrequencyToClockDiv misses).
+    // The transaction stays open — loopTask holds the bus lock permanently.
+    // Runtime freq changes from ShellTask write the clock register directly.
     spiPSRAM.begin(PSR_SCK, PSR_MISO, PSR_MOSI, -1);  // no auto-CS
     psram_set_freq(PSRAM_SPI_FREQ_DEFAULT);
+    spiPSRAM.beginTransaction(SPISettings(PSRAM_SPI_FREQ_DEFAULT, MSBFIRST, SPI_MODE0));
 
     psram_reset();
 
@@ -688,6 +692,48 @@ int psram_test(bool forever) {
     return 0;
 }
 
+void psram_print_map(void) {
+    if (!psram_ok) return;
+
+    #define MAP_WIDTH 64
+    char map[MAP_WIDTH + 1];
+    uint32_t region_size = BOARD_PSRAM_SIZE / MAP_WIDTH;  // 128KB per char
+
+    PSRAM_LOCK();
+    for (int m = 0; m < MAP_WIDTH; m++) {
+        uint32_t rstart = (uint32_t)m * region_size;
+        uint32_t rend   = rstart + region_size;
+        uint32_t used = 0;
+
+        for (int i = 0; i < psram_block_count; i++) {
+            if (!psram_blocks[i].used) continue;
+            uint32_t bstart = psram_blocks[i].addr;
+            uint32_t bend   = bstart + psram_blocks[i].size;
+            if (bend <= rstart || bstart >= rend) continue;
+            uint32_t os = (bstart > rstart) ? bstart : rstart;
+            uint32_t oe = (bend < rend) ? bend : rend;
+            used += oe - os;
+        }
+
+        if (used == 0)           map[m] = '-';
+        else if (used >= region_size) map[m] = '*';
+        else                     map[m] = '+';
+    }
+    PSRAM_UNLOCK();
+    map[MAP_WIDTH] = '\0';
+
+    printfnl(SOURCE_COMMANDS, F("  Map:       [%s]\n"), map);
+#ifdef SHELL_USE_ANSI
+    printfnl(SOURCE_COMMANDS, F("             \033[38;5;240m-\033[0m free  "
+               "\033[33m+\033[0m partial  "
+               "\033[31m*\033[0m full   "
+               "(128KB/char)\n"));
+#else
+    printfnl(SOURCE_COMMANDS, F("             - free  + partial  * full   (128KB/char)\n"));
+#endif
+    #undef MAP_WIDTH
+}
+
 uint32_t psram_size(void) { return BOARD_PSRAM_SIZE; }
 bool psram_available(void) { return psram_ok; }
 
@@ -699,6 +745,13 @@ int psram_change_freq(uint32_t freq_hz) {
     PSRAM_LOCK();
     psram_cache_flush();
     psram_set_freq(freq_hz);
+    // Write the SPI2 clock register directly via the SOC peripheral struct.
+    // beginTransaction() in setup permanently holds both paramLock and the HAL
+    // spi->lock on loopTask (endTransaction is never called — we own the bus
+    // exclusively).  So we can't use any Arduino SPI API from ShellTask.
+    // Direct register write is safe under psram_mutex.  GPSPI2 is the SPI2
+    // (FSPI) peripheral on ESP32-S3.
+    GPSPI2.clock.val = spiFrequencyToClockDiv(freq_hz);
     PSRAM_UNLOCK();
     return 0;
 }
@@ -934,6 +987,8 @@ void     psram_cache_invalidate(void) {}
 uint32_t psram_cache_hits(void)   { return 0; }
 uint32_t psram_cache_misses(void) { return 0; }
 
+void psram_print_map(void) {}  // No block table for native PSRAM
+
 uint32_t psram_size(void) { return ESP.getPsramSize(); }
 bool psram_available(void) { return psram_ok; }
 uint32_t psram_get_freq(void) { return 0; }
@@ -990,6 +1045,7 @@ void     psram_cache_flush(void) {}
 void     psram_cache_invalidate(void) {}
 uint32_t psram_cache_hits(void)   { return 0; }
 uint32_t psram_cache_misses(void) { return 0; }
+void     psram_print_map(void) {}
 uint32_t psram_get_freq(void) { return 0; }
 int psram_change_freq(uint32_t) { return -1; }
 

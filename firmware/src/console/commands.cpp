@@ -22,6 +22,7 @@
 #include "led.h"
 #include "config.h"
 #include "cue.h"
+#include "editor.h"
 #include "psram.h"
 
 
@@ -235,72 +236,203 @@ int cmd_debug( int argc, char **argv )
     return 0;
 }
 
-int delFile(int argc, char **argv) 
+int delFile(int argc, char **argv)
 {
     if (argc != 2)
     {
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
-    deleteFile(LittleFS,argv[1]);
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+    deleteFile(LittleFS, path);
     return 0;
 }
 
-int renFile(int argc, char **argv) 
+int renFile(int argc, char **argv)
 {
     if (argc != 3)
     {
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
-    renameFile(LittleFS,argv[1], argv[2]);
+    char path1[64], path2[64];
+    normalize_path(path1, sizeof(path1), argv[1]);
+    normalize_path(path2, sizeof(path2), argv[2]);
+    renameFile(LittleFS, path1, path2);
     return 0;
 }
 
-int listFile(int argc, char **argv) 
+int listFile(int argc, char **argv)
 {
     if (argc != 2)
     {
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
         return 1;
     }
-
-    readFile(LittleFS,argv[1]); 
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+    readFile(LittleFS, path);
     printfnl(SOURCE_COMMANDS, F("\n"));
     return 0;
 }
 
-int listDir(int argc, char **argv) 
+int listDir(int argc, char **argv)
 {
-    if (argc != 1)
-    {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
-        return 1;
+    if (argc == 1) {
+        listDir(LittleFS, "/", 1);
+    } else {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[1]);
+        listDir(LittleFS, path, 1);
     }
-    listDir(LittleFS,"/",1); 
     return 0;
 }
 
-int loadFile(int argc, char **argv) 
+int cmd_cp(int argc, char **argv)
+{
+    if (argc != 3) {
+        printfnl(SOURCE_COMMANDS, F("Usage: cp <source> <dest>\n"));
+        return 1;
+    }
+    char src[64], dst[64];
+    normalize_path(src, sizeof(src), argv[1]);
+    normalize_path(dst, sizeof(dst), argv[2]);
+
+    File in = LittleFS.open(src, "r");
+    if (!in) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), src);
+        return 1;
+    }
+    File out = LittleFS.open(dst, FILE_WRITE);
+    if (!out) {
+        in.close();
+        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), dst);
+        return 1;
+    }
+
+    uint8_t buf[256];
+    size_t total = 0;
+    while (in.available()) {
+        size_t n = in.read(buf, sizeof(buf));
+        out.write(buf, n);
+        total += n;
+    }
+    in.close();
+    out.close();
+    printfnl(SOURCE_COMMANDS, F("Copied %u bytes: %s -> %s\n"), (unsigned)total, src, dst);
+    return 0;
+}
+
+int cmd_hexdump(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: hexdump <filename> [count]\n"));
+        return 1;
+    }
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        return 1;
+    }
+
+    int limit = (argc >= 3) ? atoi(argv[2]) : 256;
+    if (limit <= 0) limit = 256;
+
+    size_t fsize = f.size();
+    printfnl(SOURCE_COMMANDS, F("%s  (%u bytes)\n"), path, (unsigned)fsize);
+
+    uint8_t buf[16];
+    int offset = 0;
+    while (f.available() && offset < limit) {
+        int n = f.read(buf, 16);
+        if (n <= 0) break;
+        if (offset + n > limit) n = limit - offset;
+
+        // Address
+        getLock();
+        Stream *out = getStream();
+        out->printf("%04x  ", offset);
+
+        // Hex bytes
+        for (int i = 0; i < 16; i++) {
+            if (i == 8) out->print(' ');
+            if (i < n)
+                out->printf("%02x ", buf[i]);
+            else
+                out->print("   ");
+        }
+
+        // ASCII
+        out->print(" |");
+        for (int i = 0; i < n; i++)
+            out->write((buf[i] >= 32 && buf[i] < 127) ? buf[i] : '.');
+        out->println("|");
+        releaseLock();
+
+        offset += n;
+    }
+    f.close();
+    if ((int)fsize > limit)
+        printfnl(SOURCE_COMMANDS, F("... (%u more bytes)\n"), (unsigned)(fsize - limit));
+    return 0;
+}
+
+int cmd_mkdir(int argc, char **argv)
+{
+    if (argc != 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: mkdir <dirname>\n"));
+        return 1;
+    }
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+    if (LittleFS.mkdir(path))
+        printfnl(SOURCE_COMMANDS, F("Created %s\n"), path);
+    else
+        printfnl(SOURCE_COMMANDS, F("Failed to create %s\n"), path);
+    return 0;
+}
+
+int cmd_rmdir(int argc, char **argv)
+{
+    if (argc != 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: rmdir <dirname>\n"));
+        return 1;
+    }
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+    if (LittleFS.rmdir(path))
+        printfnl(SOURCE_COMMANDS, F("Removed %s\n"), path);
+    else
+        printfnl(SOURCE_COMMANDS, F("Failed to remove %s (not empty?)\n"), path);
+    return 0;
+}
+
+int loadFile(int argc, char **argv)
 {
     if (argc != 2)
     {
         printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
-        return 1;       
+        return 1;
     }
     else
     {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[1]);
         int linecount = 0;
         int charcount = 0;
         char line[256];
         char inchar;
         bool isDone = false;
-        printfnl(SOURCE_COMMANDS, F("Ready for file. Press CTRL+Z to end transmission and save file %s\n"), argv[1]);
+        printfnl(SOURCE_COMMANDS, F("Ready for file. Press CTRL+Z to end transmission and save file %s\n"), path);
         //Flush serial buffer
         getLock();
         getStream()->flush();
         //create file
-        File file = LittleFS.open(argv[1], FILE_WRITE);
+        File file = LittleFS.open(path, FILE_WRITE);
         if (!file)
         {
             releaseLock();
@@ -374,7 +506,9 @@ int runBasic(int argc, char **argv)
     }
     else
     {
-        if (false == set_script_program(argv[1]))
+        char path[64];
+        normalize_path(path, sizeof(path), argv[1]);
+        if (false == set_script_program(path))
           printfnl(SOURCE_COMMANDS, F("Script already running or unknown type\n") );
         return 0;
     }
@@ -438,6 +572,7 @@ int cmd_ps(int argc, char **argv)
     // Known task names (application + typical Arduino/ESP-IDF system tasks)
     static const char *taskNames[] = {
         "loopTask",     // Arduino main loop
+        "ShellTask",    // Shell / CLI
         "BasicTask",    // BASIC interpreter
         "WasmTask",     // WASM runtime
         "led_render",   // LED render task
@@ -1229,6 +1364,7 @@ static void wa_repeat(Stream *out, const char *ch, int n)
 
 int cmd_winamp(int argc, char **argv)
 {
+    setInteractive(true);
     vTaskDelay(pdMS_TO_TICKS(50));
     while (getStream()->available()) getStream()->read();
 
@@ -1378,6 +1514,7 @@ int cmd_winamp(int argc, char **argv)
         }
     }
 
+    setInteractive(false);
     getLock();
     getStream()->print("\033[?25h" WR "\n");
     releaseLock();
@@ -1397,6 +1534,7 @@ int cmd_winamp(int argc, char **argv)
 
 int cmd_game(int argc, char **argv)
 {
+    setInteractive(true);
     const int W = 30, H = 20;
     uint8_t grid[H][W], next[H][W], age[H][W];
 
@@ -1479,6 +1617,7 @@ int cmd_game(int argc, char **argv)
             }
     }
 
+    setInteractive(false);
     getLock();
     getStream()->print("\033[?25h\033[0m\n");  // show cursor + reset
     releaseLock();
@@ -1502,25 +1641,30 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  art                                 Is it art?\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  clear                               Clear screen\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]            Show or change settings\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  cp {source} {dest}                  Copy file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]        Cue timeline engine\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]     Show or set debug message types\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  del {filename}                      Delete file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  edit {filename}                     Edit file (nano-like editor)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  game                                Waste time\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  dir                                 List files\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  dir [path]                          List files\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  gpio [set|out|in|read]              Show or configure GPIO pins\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  gps                                 Show GPS status\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  help                                Show this help\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  history                             Show command history\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  led                                 Show LED configuration\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  list {filename}                     Show file contents\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  load {filename}                     Load program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mem                                 Show heap memory stats\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mkdir {dirname}                     Create directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                 Set program arguments\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  ps                                  Show task list and stack watermarks\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  psram [test [forever]] [freq <MHz>] PSRAM status, test, or set clock\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  reboot                              Reboot the system\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  ren {oldname} {newname}             Rename file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  rmdir {dirname}                     Remove empty directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  run {filename}                      Run program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  sensors                             Show sensor readings\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  stop                                Stop running program\n" ) );
@@ -1554,12 +1698,14 @@ int cmd_wasm(int argc, char **argv)
             printfnl(SOURCE_COMMANDS, F("Usage: wasm info <file.wasm>\n"));
             return 1;
         }
-        File f = LittleFS.open(argv[2], "r");
+        char path[64];
+        normalize_path(path, sizeof(path), argv[2]);
+        File f = LittleFS.open(path, "r");
         if (!f) {
-            printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), argv[2]);
+            printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
             return 1;
         }
-        printfnl(SOURCE_COMMANDS, F("WASM Module: %s\n"), argv[2]);
+        printfnl(SOURCE_COMMANDS, F("WASM Module: %s\n"), path);
         printfnl(SOURCE_COMMANDS, F("  Size: %u bytes\n"), (unsigned)f.size());
         f.close();
         return 0;
@@ -1574,7 +1720,10 @@ int cmd_psram(int argc, char **argv)
 {
     if (argc >= 2 && !strcasecmp(argv[1], "test")) {
         bool forever = (argc >= 3 && !strcasecmp(argv[2], "forever"));
-        return psram_test(forever);
+        shell.historyFree();
+        int result = psram_test(forever);
+        shell.historyInit();
+        return result;
     }
     if (argc >= 3 && !strcasecmp(argv[1], "freq")) {
         uint32_t mhz = strtol(argv[2], NULL, 10);
@@ -1604,6 +1753,7 @@ int cmd_psram(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, F("  Free:        %u bytes\n"), psram_bytes_free());
     printfnl(SOURCE_COMMANDS, F("  Contiguous:  %u bytes\n"), psram_bytes_contiguous());
     printfnl(SOURCE_COMMANDS, F("  Alloc slots: %d / %d\n"), psram_alloc_count(), psram_alloc_entries_max());
+    psram_print_map();
 #if PSRAM_CACHE_PAGES > 0
     uint32_t hits = psram_cache_hits(), misses = psram_cache_misses();
     uint32_t total = hits + misses;
@@ -1620,6 +1770,7 @@ int cmd_psram(int argc, char **argv)
 void init_commands(Stream *dev)
 {
     shell.attach(*dev);
+    shell.historyInit();
 
     //Test Commands
     shell.addCommand(F("test"), test);
@@ -1630,30 +1781,38 @@ void init_commands(Stream *dev)
     shell.addCommand(F("clear"), cmd_clear);
     shell.addCommand(F("cls"), cmd_clear);
     shell.addCommand(F("config"), cmd_config);
+    shell.addCommand(F("cp"), cmd_cp);
     shell.addCommand(F("cue"), cmd_cue);
     shell.addCommand(F("debug"), cmd_debug );
     shell.addCommand(F("del"), delFile);
     shell.addCommand(F("dir"), listDir);
+    shell.addCommand(F("edit"), cmd_edit);
+    shell.addCommand(F("mkdir"), cmd_mkdir);
     shell.addCommand(F("game"), cmd_game);
     shell.addCommand(F("gpio"), cmd_gpio);
     shell.addCommand(F("gps"), cmd_gps);
     shell.addCommand(F("help"), cmd_help);
+    shell.addCommand(F("hexdump"), cmd_hexdump);
     shell.addCommand(F("led"), cmd_led);
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("load"), loadFile);
     shell.addCommand(F("lora"), cmd_lora);
+    shell.addCommand(F("free"), cmd_mem);
     shell.addCommand(F("mem"), cmd_mem);
+    shell.addCommand(F("mv"), renFile);
     shell.addCommand(F("param"), paramBasic);
     shell.addCommand(F("ps"), cmd_ps);
     shell.addCommand(F("psram"), cmd_psram);
     shell.addCommand(F("reboot"), cmd_reboot );
     shell.addCommand(F("ren"), renFile);
+    shell.addCommand(F("rmdir"), cmd_rmdir);
     shell.addCommand(F("run"), runBasic);
     shell.addCommand(F("sensors"), cmd_sensors);
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);
     shell.addCommand(F("uptime"), cmd_uptime);
+    shell.addCommand(F("ver"), cmd_version);
     shell.addCommand(F("version"), cmd_version);
     shell.addCommand(F("wifi"), cmd_wifi);
     shell.addCommand(F("winamp"), cmd_winamp);
