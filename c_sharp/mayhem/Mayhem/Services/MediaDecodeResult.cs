@@ -52,14 +52,14 @@ public sealed class DecodedVideo
 public sealed class VideoFrameData
 {
     public long TimestampMs { get; }
-    public byte[] Rgba { get; }
+    public byte[] Bgra { get; }
     public int Width { get; }
     public int Height { get; }
 
-    public VideoFrameData(long timestampMs, byte[] rgba, int width, int height)
+    public VideoFrameData(long timestampMs, byte[] bgra, int width, int height)
     {
         TimestampMs = timestampMs;
-        Rgba = rgba;
+        Bgra = bgra;
         Width = width;
         Height = height;
     }

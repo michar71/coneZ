@@ -10,6 +10,7 @@ public sealed class EffectInstanceViewModel : ObservableObject
     private double _x;
     private double _width;
     private bool _isSelected;
+    private IBrush? _fillCache;
 
     public Effect Effect { get; }
     public ChannelEntry Channel { get; private set; }
@@ -49,15 +50,17 @@ public sealed class EffectInstanceViewModel : ObservableObject
     {
         get
         {
+            if (_fillCache != null) return _fillCache;
             var c = Effect.Color;
-            return new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
+            _fillCache = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
+            return _fillCache;
         }
     }
 
-    public IBrush Border
-    {
-        get => IsSelected ? new SolidColorBrush(Color.Parse("#FF4444")) : new SolidColorBrush(Color.Parse("#4A4A4A"));
-    }
+    private static readonly IBrush SelectedBorder = new SolidColorBrush(Color.Parse("#FF4444"));
+    private static readonly IBrush UnselectedBorder = new SolidColorBrush(Color.Parse("#4A4A4A"));
+
+    public IBrush Border => IsSelected ? SelectedBorder : UnselectedBorder;
 
     public Thickness BorderThickness => IsSelected ? new Thickness(2) : new Thickness(1);
 
@@ -85,6 +88,12 @@ public sealed class EffectInstanceViewModel : ObservableObject
         }
         X = x;
         Width = width;
+    }
+
+    public void NotifyColorChanged()
+    {
+        _fillCache = null;
+        OnPropertyChanged(nameof(Fill));
     }
 
     public void MoveToChannel(ChannelEntry channel)

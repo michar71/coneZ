@@ -27,22 +27,19 @@
                 <MenuItem Header="E_xit" Click="Exit_OnClick" />
             </MenuItem>
             <MenuItem Header="_Edit">
-                <MenuItem Header="_Undo" />
-                <MenuItem Header="_Redo" />
+                <MenuItem Header="_Undo" IsEnabled="False" />
+                <MenuItem Header="_Redo" IsEnabled="False" />
                 <Separator />
-                <MenuItem Header="Cu_t" />
-                <MenuItem Header="_Copy" />
-                <MenuItem Header="_Paste" />
+                <MenuItem Header="Cu_t" Click="MenuCut_OnClick" />
+                <MenuItem Header="_Copy" Click="MenuCopy_OnClick" />
+                <MenuItem Header="_Paste" Click="MenuPaste_OnClick" />
                 <Separator />
-                <MenuItem Header="_Delete" />
+                <MenuItem Header="_Delete" Click="MenuDelete_OnClick" />
             </MenuItem>
             <MenuItem Header="_View">
-                <MenuItem Header="_Zoom In" />
-                <MenuItem Header="Zoom _Out" />
-                <MenuItem Header="_Reset Zoom" />
-            </MenuItem>
-            <MenuItem Header="_Help">
-                <MenuItem Header="_About Mayhem" />
+                <MenuItem Header="_Zoom In" Click="MenuZoomIn_OnClick" />
+                <MenuItem Header="Zoom _Out" Click="MenuZoomOut_OnClick" />
+                <MenuItem Header="_Reset Zoom" Click="MenuZoomReset_OnClick" />
             </MenuItem>
         </Menu>
 
@@ -165,11 +162,12 @@
                                 <TextBlock Text="Project Setup" FontWeight="Bold" />
                                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                     <TextBlock Text="Channels:" VerticalAlignment="Center" />
-                                    <TextBox Width="60"
-                                             Text="{Binding ChannelCount, Mode=TwoWay}"
-                                             HorizontalContentAlignment="Center" />
+                                    <NumericUpDown Width="80"
+                                                   Minimum="1"
+                                                   Maximum="255"
+                                                   Increment="1"
+                                                   Value="{Binding ChannelCount, Mode=TwoWay}" />
                                 </StackPanel>
-                                <TextBlock Text="(1-255)" Opacity="0.6" FontSize="10" />
                             </StackPanel>
                         </TabItem>
                     </TabControl>

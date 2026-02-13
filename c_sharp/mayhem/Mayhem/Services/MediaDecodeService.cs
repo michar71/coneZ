@@ -146,16 +146,35 @@ public sealed unsafe class MediaDecodeService
                 ffmpeg.av_channel_layout_default(&outLayout, outputChannels);
 
                 var swr = ffmpeg.swr_alloc();
+                if (swr == null)
+                {
+                    ffmpeg.av_channel_layout_uninit(&outLayout);
+                    return new DecodedAudio(Array.Empty<short>(), 0, 0, new List<double>());
+                }
                 ffmpeg.av_opt_set_chlayout(swr, "in_chlayout", &codecContext->ch_layout, 0);
                 ffmpeg.av_opt_set_int(swr, "in_sample_rate", codecContext->sample_rate, 0);
                 ffmpeg.av_opt_set_sample_fmt(swr, "in_sample_fmt", codecContext->sample_fmt, 0);
                 ffmpeg.av_opt_set_chlayout(swr, "out_chlayout", &outLayout, 0);
                 ffmpeg.av_opt_set_int(swr, "out_sample_rate", codecContext->sample_rate, 0);
                 ffmpeg.av_opt_set_sample_fmt(swr, "out_sample_fmt", AVSampleFormat.AV_SAMPLE_FMT_S16, 0);
-                ffmpeg.swr_init(swr);
+                if (ffmpeg.swr_init(swr) < 0)
+                {
+                    ffmpeg.swr_free(&swr);
+                    ffmpeg.av_channel_layout_uninit(&outLayout);
+                    return new DecodedAudio(Array.Empty<short>(), 0, 0, new List<double>());
+                }
 
                 var packet = ffmpeg.av_packet_alloc();
                 var frame = ffmpeg.av_frame_alloc();
+                if (packet == null || frame == null)
+                {
+                    if (packet != null) ffmpeg.av_packet_free(&packet);
+                    if (frame != null) ffmpeg.av_frame_free(&frame);
+                    ffmpeg.swr_free(&swr);
+                    ffmpeg.av_channel_layout_uninit(&outLayout);
+                    return new DecodedAudio(Array.Empty<short>(), 0, 0, new List<double>());
+                }
+
                 var samples = new List<short>();
 
                 try
@@ -181,39 +200,14 @@ public sealed unsafe class MediaDecodeService
                         }
 
                         ffmpeg.av_packet_unref(packet);
+                        DrainAudioFrames(codecContext, swr, frame, outData, outputChannels, samples);
+                    }
 
-                        while (ffmpeg.avcodec_receive_frame(codecContext, frame) == 0)
-                        {
-                            var outSamples = ffmpeg.swr_get_out_samples(swr, frame->nb_samples);
-                            var outBufferSize = ffmpeg.av_samples_get_buffer_size(null, outputChannels, outSamples, AVSampleFormat.AV_SAMPLE_FMT_S16, 1);
-                            if (outBufferSize <= 0)
-                            {
-                                ffmpeg.av_frame_unref(frame);
-                                continue;
-                            }
-
-                            var outBuffer = (byte*)ffmpeg.av_malloc((ulong)outBufferSize);
-                            try
-                            {
-                            outData[0] = outBuffer;
-                            var outSamplesConverted = ffmpeg.swr_convert(swr, outData, outSamples, frame->extended_data, frame->nb_samples);
-                                if (outSamplesConverted > 0)
-                                {
-                                    var totalSamples = outSamplesConverted * outputChannels;
-                                    for (var i = 0; i < totalSamples; i++)
-                                    {
-                                        var value = *(short*)(outBuffer + i * sizeof(short));
-                                        samples.Add(value);
-                                    }
-                                }
-                            }
-                            finally
-                            {
-                                ffmpeg.av_free(outBuffer);
-                            }
-
-                            ffmpeg.av_frame_unref(frame);
-                        }
+                    // Flush decoder: send null packet to drain buffered frames
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        ffmpeg.avcodec_send_packet(codecContext, null);
+                        DrainAudioFrames(codecContext, swr, frame, outData, outputChannels, samples);
                     }
                 }
                 finally
@@ -323,15 +317,48 @@ public sealed unsafe class MediaDecodeService
 
                 var width = codecContext->width;
                 var height = codecContext->height;
+                if (width <= 0 || height <= 0)
+                {
+                    return new DecodedVideo(0, 0, new List<VideoFrameData>());
+                }
                 var sws = ffmpeg.sws_getContext(width, height, codecContext->pix_fmt,
                     width, height, AVPixelFormat.AV_PIX_FMT_BGRA, (int)SwsFlags.SWS_BICUBIC, null, null, null);
+                if (sws == null)
+                {
+                    return new DecodedVideo(0, 0, new List<VideoFrameData>());
+                }
 
                 var packet = ffmpeg.av_packet_alloc();
                 var frame = ffmpeg.av_frame_alloc();
                 var rgbFrame = ffmpeg.av_frame_alloc();
+                if (packet == null || frame == null || rgbFrame == null)
+                {
+                    if (packet != null) ffmpeg.av_packet_free(&packet);
+                    if (frame != null) ffmpeg.av_frame_free(&frame);
+                    if (rgbFrame != null) ffmpeg.av_frame_free(&rgbFrame);
+                    ffmpeg.sws_freeContext(sws);
+                    return new DecodedVideo(0, 0, new List<VideoFrameData>());
+                }
 
                 var bufferSize = ffmpeg.av_image_get_buffer_size(AVPixelFormat.AV_PIX_FMT_BGRA, width, height, 1);
+                if (bufferSize <= 0)
+                {
+                    ffmpeg.av_packet_free(&packet);
+                    ffmpeg.av_frame_free(&frame);
+                    ffmpeg.av_frame_free(&rgbFrame);
+                    ffmpeg.sws_freeContext(sws);
+                    return new DecodedVideo(0, 0, new List<VideoFrameData>());
+                }
                 var buffer = (byte*)ffmpeg.av_malloc((ulong)bufferSize);
+                if (buffer == null)
+                {
+                    ffmpeg.av_packet_free(&packet);
+                    ffmpeg.av_frame_free(&frame);
+                    ffmpeg.av_frame_free(&rgbFrame);
+                    ffmpeg.sws_freeContext(sws);
+                    return new DecodedVideo(0, 0, new List<VideoFrameData>());
+                }
+
                 var dstData4 = new byte_ptrArray4();
                 var dstLinesize4 = new int_array4();
                 ffmpeg.av_image_fill_arrays(ref dstData4, ref dstLinesize4, buffer, AVPixelFormat.AV_PIX_FMT_BGRA, width, height, 1);
@@ -365,34 +392,16 @@ public sealed unsafe class MediaDecodeService
                         }
 
                         ffmpeg.av_packet_unref(packet);
+                        DrainVideoFrames(codecContext, sws, frame, rgbFrame, buffer, bufferSize,
+                            timeBase, width, height, frames, ref nextFrameMs, frameIntervalMs);
+                    }
 
-                        while (ffmpeg.avcodec_receive_frame(codecContext, frame) == 0)
-                        {
-                            var pts = frame->best_effort_timestamp;
-                            if (pts == ffmpeg.AV_NOPTS_VALUE)
-                            {
-                                ffmpeg.av_frame_unref(frame);
-                                continue;
-                            }
-
-                            var timeSeconds = pts * ffmpeg.av_q2d(timeBase);
-                            var timestampMs = (long)(timeSeconds * 1000.0);
-
-                            if (timestampMs < nextFrameMs)
-                            {
-                                ffmpeg.av_frame_unref(frame);
-                                continue;
-                            }
-
-                            ffmpeg.sws_scale(sws, frame->data, frame->linesize, 0, height, rgbFrame->data, rgbFrame->linesize);
-
-                            var managed = new byte[bufferSize];
-                            Marshal.Copy((IntPtr)buffer, managed, 0, bufferSize);
-                            frames.Add(new VideoFrameData(timestampMs, managed, width, height));
-
-                            nextFrameMs += frameIntervalMs;
-                            ffmpeg.av_frame_unref(frame);
-                        }
+                    // Flush decoder: send null packet to drain buffered frames
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        ffmpeg.avcodec_send_packet(codecContext, null);
+                        DrainVideoFrames(codecContext, sws, frame, rgbFrame, buffer, bufferSize,
+                            timeBase, width, height, frames, ref nextFrameMs, frameIntervalMs);
                     }
                 }
                 finally
@@ -414,6 +423,83 @@ public sealed unsafe class MediaDecodeService
         finally
         {
             ffmpeg.avformat_close_input(&formatContext);
+        }
+    }
+
+    private static void DrainAudioFrames(AVCodecContext* codecContext, SwrContext* swr,
+        AVFrame* frame, byte** outData, int outputChannels, List<short> samples)
+    {
+        while (ffmpeg.avcodec_receive_frame(codecContext, frame) == 0)
+        {
+            var outSamples = ffmpeg.swr_get_out_samples(swr, frame->nb_samples);
+            var outBufferSize = ffmpeg.av_samples_get_buffer_size(null, outputChannels, outSamples, AVSampleFormat.AV_SAMPLE_FMT_S16, 1);
+            if (outBufferSize <= 0)
+            {
+                ffmpeg.av_frame_unref(frame);
+                continue;
+            }
+
+            var outBuffer = (byte*)ffmpeg.av_malloc((ulong)outBufferSize);
+            if (outBuffer == null)
+            {
+                ffmpeg.av_frame_unref(frame);
+                continue;
+            }
+
+            try
+            {
+                outData[0] = outBuffer;
+                var outSamplesConverted = ffmpeg.swr_convert(swr, outData, outSamples, frame->extended_data, frame->nb_samples);
+                if (outSamplesConverted > 0)
+                {
+                    var totalSamples = outSamplesConverted * outputChannels;
+                    for (var i = 0; i < totalSamples; i++)
+                    {
+                        var value = *(short*)(outBuffer + i * sizeof(short));
+                        samples.Add(value);
+                    }
+                }
+            }
+            finally
+            {
+                ffmpeg.av_free(outBuffer);
+            }
+
+            ffmpeg.av_frame_unref(frame);
+        }
+    }
+
+    private static void DrainVideoFrames(AVCodecContext* codecContext, SwsContext* sws,
+        AVFrame* frame, AVFrame* rgbFrame, byte* buffer, int bufferSize,
+        AVRational timeBase, int width, int height,
+        List<VideoFrameData> frames, ref long nextFrameMs, long frameIntervalMs)
+    {
+        while (ffmpeg.avcodec_receive_frame(codecContext, frame) == 0)
+        {
+            var pts = frame->best_effort_timestamp;
+            if (pts == ffmpeg.AV_NOPTS_VALUE)
+            {
+                ffmpeg.av_frame_unref(frame);
+                continue;
+            }
+
+            var timeSeconds = pts * ffmpeg.av_q2d(timeBase);
+            var timestampMs = (long)(timeSeconds * 1000.0);
+
+            if (timestampMs < nextFrameMs)
+            {
+                ffmpeg.av_frame_unref(frame);
+                continue;
+            }
+
+            ffmpeg.sws_scale(sws, frame->data, frame->linesize, 0, height, rgbFrame->data, rgbFrame->linesize);
+
+            var managed = new byte[bufferSize];
+            Marshal.Copy((IntPtr)buffer, managed, 0, bufferSize);
+            frames.Add(new VideoFrameData(timestampMs, managed, width, height));
+
+            nextFrameMs += frameIntervalMs;
+            ffmpeg.av_frame_unref(frame);
         }
     }
 }

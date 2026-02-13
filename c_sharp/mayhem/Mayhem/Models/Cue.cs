@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Mayhem.Models;
 
@@ -8,6 +9,7 @@ public sealed class Cue
     public CueType Type { get; set; }
     public RgbColor Color { get; set; }
 
+    [JsonConstructor]
     public Cue(int timeMs, CueType type, RgbColor color)
     {
         TimeMs = timeMs;

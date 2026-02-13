@@ -42,6 +42,9 @@ public sealed class EffectList
 
     public void Delete(EffectNode node)
     {
+        if (node.Previous == null && node.Next == null && node != _head)
+            return;
+
         if (node.Previous != null)
         {
             node.Previous.Next = node.Next;

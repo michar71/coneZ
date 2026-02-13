@@ -1,9 +1,12 @@
+using System;
 using Avalonia.Media.Imaging;
 
 namespace Mayhem.ViewModels;
 
-public sealed class VideoFrameThumbnail
+public sealed class VideoFrameThumbnail : IDisposable
 {
+    private bool _disposed;
+
     public long TimestampMs { get; }
     public double X { get; set; }
     public Bitmap Bitmap { get; }
@@ -13,5 +16,12 @@ public sealed class VideoFrameThumbnail
         TimestampMs = timestampMs;
         Bitmap = bitmap;
         X = x;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Bitmap.Dispose();
     }
 }

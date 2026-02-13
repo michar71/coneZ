@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Threading;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -50,6 +51,7 @@ public partial class MainWindow : Window
     private bool _isResizingEffect;
     private double _resizeStartX;
     private double _resizeStartWidth;
+    private CancellationTokenSource? _decodeCts;
 
     public MainWindow()
     {
@@ -71,7 +73,6 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(33)
         };
         _playbackTimer.Tick += PlaybackTimerOnTick;
-        _playbackTimer.Start();
 
         _edgeScrollTimer = new DispatcherTimer
         {
@@ -90,10 +91,20 @@ public partial class MainWindow : Window
         }
 
         _viewModel.AddDebug($"Importing media: {path}");
+        _decodeCts?.Cancel();
+        _decodeCts?.Dispose();
+        _decodeCts = new CancellationTokenSource();
+        var token = _decodeCts.Token;
+        void ThreadSafeLog(string msg) => Dispatcher.UIThread.Post(() => _viewModel.AddDebug(msg));
         MediaDecodeResult decode;
         try
         {
-            decode = await _mediaDecodeService.DecodeAsync(path, default, _viewModel.AddDebug);
+            decode = await _mediaDecodeService.DecodeAsync(path, token, ThreadSafeLog);
+        }
+        catch (OperationCanceledException)
+        {
+            _viewModel.AddDebug("Media import canceled.");
+            return;
         }
         catch (Exception ex)
         {
@@ -101,6 +112,7 @@ public partial class MainWindow : Window
             _viewModel.AddDebug($"FFmpeg error: {ex}");
             return;
         }
+        if (token.IsCancellationRequested) return;
         var project = _viewModel.Project;
         project.MediaLink = path;
         _viewModel.SetMedia(project, path, decode);
@@ -128,6 +140,7 @@ public partial class MainWindow : Window
 
     private void ResetPlayback()
     {
+        _playbackTimer.Stop();
         if (_audioPlayback.IsPlaying)
         {
             _audioPlayback.Stop();
@@ -184,9 +197,15 @@ public partial class MainWindow : Window
 
         if (!string.IsNullOrWhiteSpace(mediaPath) && System.IO.File.Exists(mediaPath))
         {
+            _decodeCts?.Cancel();
+            _decodeCts?.Dispose();
+            _decodeCts = new CancellationTokenSource();
+            var token = _decodeCts.Token;
+            void ThreadSafeLog(string msg) => Dispatcher.UIThread.Post(() => _viewModel.AddDebug(msg));
             try
             {
-                var decode = await _mediaDecodeService.DecodeAsync(mediaPath, default, _viewModel.AddDebug);
+                var decode = await _mediaDecodeService.DecodeAsync(mediaPath, token, ThreadSafeLog);
+                if (token.IsCancellationRequested) return;
                 project.MediaLink = mediaPath;
                 _viewModel.SetMedia(project, mediaPath, decode);
                 _decodedAudio = decode.Audio;
@@ -195,6 +214,10 @@ public partial class MainWindow : Window
                 {
                     _audioPlayback.LoadPcm(_decodedAudio.Samples, _decodedAudio.SampleRate, _decodedAudio.Channels);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                _viewModel.AddDebug("Media decode canceled.");
             }
             catch (Exception ex)
             {
@@ -338,6 +361,7 @@ public partial class MainWindow : Window
                 _pendingSeekSeconds = absoluteMs / 1000.0;
                 _viewModel.SetCurrentTime(absoluteMs);
                 _audioPlayback.Pause();
+                _playbackTimer.Stop();
                 _viewModel.AddDebug("Audio paused.");
                 _playbackBaseMs = absoluteMs;
             }
@@ -348,6 +372,7 @@ public partial class MainWindow : Window
                 _playbackBaseMs = (long)(_pendingSeekSeconds * 1000.0);
                 _viewModel.SetCurrentTime(_playbackBaseMs);
                 _audioPlayback.Play();
+                _playbackTimer.Start();
                 _viewModel.AddDebug("Audio playing.");
             }
         }
@@ -357,11 +382,13 @@ public partial class MainWindow : Window
             {
                 _fallbackOffsetMs += _fallbackClock.ElapsedMilliseconds;
                 _fallbackClock.Reset();
+                _playbackTimer.Stop();
                 _viewModel.AddDebug("Video clock paused.");
             }
             else
             {
                 _fallbackClock.Start();
+                _playbackTimer.Start();
                 _viewModel.AddDebug("Video clock running.");
             }
         }
@@ -821,6 +848,7 @@ public partial class MainWindow : Window
     {
         if (!System.IO.File.Exists(fullPath))
         {
+            _viewModel.SetStatus($"Status: Script not found: {System.IO.Path.GetFileName(fullPath)}");
             _viewModel.AddDebug($"Script not found: {fullPath}");
             return;
         }
@@ -855,7 +883,7 @@ public partial class MainWindow : Window
                     Text = value,
                     Height = lineHeight,
                     LineHeight = lineHeight,
-                    FontFamily = new FontFamily("Menlo"),
+                    FontFamily = new FontFamily("Cascadia Mono, JetBrains Mono, Consolas, Menlo, monospace"),
                     FontSize = 12,
                     VerticalAlignment = VerticalAlignment.Center
                 });
@@ -880,25 +908,31 @@ public partial class MainWindow : Window
             AcceptsReturn = true,
             TextWrapping = TextWrapping.NoWrap,
             LineHeight = lineHeight,
-            FontFamily = new FontFamily("Menlo"),
+            FontFamily = new FontFamily("Cascadia Mono, JetBrains Mono, Consolas, Menlo, monospace"),
             FontSize = 12
         };
 
-        editor.TextChanged += (_, _) =>
+        EventHandler<EventArgs>? textChangedHandler = null;
+        textChangedHandler = (_, _) =>
         {
             UpdateLineNumbers(editor.Text ?? string.Empty);
             RebuildLineItems();
         };
+        editor.TextChanged += textChangedHandler;
 
+        ScrollViewer? editorScroll = null;
+        EventHandler<ScrollChangedEventArgs>? scrollHandler = null;
         editor.AttachedToVisualTree += (_, _) =>
         {
-            var editorScroll = editor.FindDescendantOfType<ScrollViewer>();
+            if (editorScroll != null) return;
+            editorScroll = editor.FindDescendantOfType<ScrollViewer>();
             if (editorScroll != null)
             {
-                editorScroll.ScrollChanged += (_, _) =>
+                scrollHandler = (_, _) =>
                 {
                     lineScroll.Offset = new Vector(0, editorScroll.Offset.Y);
                 };
+                editorScroll.ScrollChanged += scrollHandler;
             }
         };
 
@@ -959,6 +993,14 @@ public partial class MainWindow : Window
             _viewModel.AddDebug($"Saved script: {fullPath}");
         };
         closeButton.Click += (_, _) => dialog.Close();
+        dialog.Closed += (_, _) =>
+        {
+            editor.TextChanged -= textChangedHandler;
+            if (editorScroll != null && scrollHandler != null)
+            {
+                editorScroll.ScrollChanged -= scrollHandler;
+            }
+        };
 
         await dialog.ShowDialog(this);
     }
@@ -1148,11 +1190,11 @@ public partial class MainWindow : Window
 
     private void Timeline_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        _isScrubbing = true;
         if (sender is not Control control)
         {
             return;
         }
+        _isScrubbing = true;
         var position = e.GetPosition(control);
         _draggingCue = FindCueNearX(position.X);
         if (_draggingCue != null)
@@ -1224,9 +1266,13 @@ public partial class MainWindow : Window
         }
         else
         {
+            var wasRunning = _fallbackClock.IsRunning;
             _fallbackOffsetMs = timeMs;
             _fallbackClock.Reset();
-            _fallbackClock.Start();
+            if (wasRunning)
+            {
+                _fallbackClock.Start();
+            }
         }
 
         AutoScrollTimelineIfNeeded();
@@ -1373,6 +1419,62 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MenuCut_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel.CutSelectedEffect())
+        {
+            _viewModel.AddDebug("Effect cut.");
+        }
+    }
+
+    private void MenuCopy_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel.CopySelectedEffect())
+        {
+            _viewModel.AddDebug("Effect copied.");
+        }
+    }
+
+    private void MenuPaste_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var pasted = _viewModel.PasteClipboardEffectAt(_viewModel.CurrentTimeMs);
+        if (pasted != null)
+        {
+            var pasteEndMs = pasted.Effect.StartMs + pasted.Effect.DurationMs;
+            _viewModel.SetCurrentTime(pasteEndMs);
+            AutoScrollTimelineIfNeeded();
+            _viewModel.AddDebug($"Effect pasted at {pasted.Effect.StartMs} ms on {pasted.Channel.Name}.");
+        }
+    }
+
+    private void MenuDelete_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel.SelectedEffect != null)
+        {
+            _viewModel.RemoveEffect(_viewModel.SelectedEffect);
+            _viewModel.AddDebug("Effect deleted.");
+        }
+        else
+        {
+            _viewModel.RemoveSelectedCue();
+        }
+    }
+
+    private void MenuZoomIn_OnClick(object? sender, RoutedEventArgs e)
+    {
+        _viewModel.Zoom = Math.Min(4.0, _viewModel.Zoom * 1.25);
+    }
+
+    private void MenuZoomOut_OnClick(object? sender, RoutedEventArgs e)
+    {
+        _viewModel.Zoom = Math.Max(0.05, _viewModel.Zoom / 1.25);
+    }
+
+    private void MenuZoomReset_OnClick(object? sender, RoutedEventArgs e)
+    {
+        _viewModel.Zoom = 1.0;
+    }
+
     protected override void OnOpened(EventArgs e)
     {
         base.OnOpened(e);
@@ -1382,6 +1484,11 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);
+        _playbackTimer.Stop();
+        _edgeScrollTimer.Stop();
+        _decodeCts?.Cancel();
+        _decodeCts?.Dispose();
         _audioPlayback.Dispose();
+        _viewModel.DisposeAllMedia();
     }
 }

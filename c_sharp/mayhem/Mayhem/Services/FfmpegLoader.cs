@@ -9,6 +9,7 @@ namespace Mayhem.Services;
 public static class FfmpegLoader
 {
     private static bool _initialized;
+    private static readonly object _lock = new();
     private static readonly List<nint> _handles = new();
 
     public static void Initialize(Action<string>? log = null)
@@ -18,45 +19,53 @@ public static class FfmpegLoader
             return;
         }
 
-        var rootPath = ResolveFFmpegPath();
-        if (string.IsNullOrWhiteSpace(rootPath))
+        lock (_lock)
         {
-            throw new DirectoryNotFoundException("FFmpeg libraries not found. Set FFMPEG_PATH to the directory containing libavformat.");
-        }
+            if (_initialized)
+            {
+                return;
+            }
 
-        log?.Invoke($"FFmpeg root path: {rootPath}");
-        ffmpeg.RootPath = rootPath;
-        RegisterResolver(rootPath, log);
-        LoadNativeLibraries(rootPath, log);
+            var rootPath = ResolveFFmpegPath();
+            if (string.IsNullOrWhiteSpace(rootPath))
+            {
+                throw new DirectoryNotFoundException("FFmpeg libraries not found. Set FFMPEG_PATH to the directory containing libavformat.");
+            }
 
-        try
-        {
-            ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
-        }
-        catch (NotSupportedException)
-        {
-            // Some dynamic bindings don't expose this API on all platforms.
-        }
+            log?.Invoke($"FFmpeg root path: {rootPath}");
+            ffmpeg.RootPath = rootPath;
+            RegisterResolver(rootPath, log);
+            LoadNativeLibraries(rootPath, log);
 
-        try
-        {
-            ffmpeg.avformat_network_init();
-        }
-        catch (NotSupportedException)
-        {
-            // Safe to ignore for local file decoding.
-        }
+            try
+            {
+                ffmpeg.av_log_set_level(ffmpeg.AV_LOG_ERROR);
+            }
+            catch (NotSupportedException)
+            {
+                // Some dynamic bindings don't expose this API on all platforms.
+            }
 
-        try
-        {
-            var version = ffmpeg.avformat_version();
-            log?.Invoke($"FFmpeg avformat_version: {version}");
+            try
+            {
+                ffmpeg.avformat_network_init();
+            }
+            catch (NotSupportedException)
+            {
+                // Safe to ignore for local file decoding.
+            }
+
+            try
+            {
+                var version = ffmpeg.avformat_version();
+                log?.Invoke($"FFmpeg avformat_version: {version}");
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke($"FFmpeg avformat_version failed: {ex.Message}");
+            }
+            _initialized = true;
         }
-        catch (Exception ex)
-        {
-            log?.Invoke($"FFmpeg avformat_version failed: {ex.Message}");
-        }
-        _initialized = true;
     }
 
     private static string? ResolveFFmpegPath()
@@ -159,7 +168,8 @@ public static class FfmpegLoader
     {
         NativeLibrary.SetDllImportResolver(typeof(ffmpeg).Assembly, (name, assembly, path) =>
         {
-            if (name.Contains("libdl", StringComparison.OrdinalIgnoreCase))
+            if (name.Contains("libdl", StringComparison.OrdinalIgnoreCase) &&
+                RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
                 try
                 {

@@ -21,7 +21,7 @@ public static class ParamMath
         }
 
         var range = xMax - xMin;
-        var offsetInt = (range / 2) * offset / 100;
+        var offsetInt = range * offset / 200;
         var windowInt = offsetInt * window / 100;
 
         if (stride <= 0)

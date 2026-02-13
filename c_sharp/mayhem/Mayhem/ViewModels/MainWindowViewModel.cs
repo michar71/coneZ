@@ -94,7 +94,8 @@ public sealed class MainWindowViewModel : ObservableObject
         get => _zoom;
         set
         {
-            if (SetField(ref _zoom, value))
+            var clamped = Math.Clamp(value, 0.05, 4.0);
+            if (SetField(ref _zoom, clamped))
             {
                 UpdateTimelineWidth();
             }
@@ -193,6 +194,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             if (SetField(ref _editStartRgb, value))
             {
+                _editStartBrushCache = null;
                 OnPropertyChanged(nameof(EditStartBrush));
                 RebuildColorCurveGeometry();
                 ApplyEffectEdits();
@@ -207,6 +209,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             if (SetField(ref _editEndRgb, value))
             {
+                _editEndBrushCache = null;
                 OnPropertyChanged(nameof(EditEndBrush));
                 RebuildColorCurveGeometry();
                 ApplyEffectEdits();
@@ -248,8 +251,28 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetField(ref _colorCurveGeometry, value);
     }
 
-    public IBrush EditStartBrush => new SolidColorBrush(Color.FromRgb(EditStartRgb.R, EditStartRgb.G, EditStartRgb.B));
-    public IBrush EditEndBrush => new SolidColorBrush(Color.FromRgb(EditEndRgb.R, EditEndRgb.G, EditEndRgb.B));
+    private IBrush? _editStartBrushCache;
+    private IBrush? _editEndBrushCache;
+
+    public IBrush EditStartBrush
+    {
+        get
+        {
+            if (_editStartBrushCache != null) return _editStartBrushCache;
+            _editStartBrushCache = new SolidColorBrush(Color.FromRgb(EditStartRgb.R, EditStartRgb.G, EditStartRgb.B));
+            return _editStartBrushCache;
+        }
+    }
+
+    public IBrush EditEndBrush
+    {
+        get
+        {
+            if (_editEndBrushCache != null) return _editEndBrushCache;
+            _editEndBrushCache = new SolidColorBrush(Color.FromRgb(EditEndRgb.R, EditEndRgb.G, EditEndRgb.B));
+            return _editEndBrushCache;
+        }
+    }
 
     public int ChannelCount
     {
@@ -282,7 +305,14 @@ public sealed class MainWindowViewModel : ObservableObject
     public Bitmap? CurrentVideoFrame
     {
         get => _currentVideoFrame;
-        set => SetField(ref _currentVideoFrame, value);
+        set
+        {
+            var old = _currentVideoFrame;
+            if (SetField(ref _currentVideoFrame, value))
+            {
+                old?.Dispose();
+            }
+        }
     }
 
     public long CurrentTimeMs
@@ -337,6 +367,7 @@ public sealed class MainWindowViewModel : ObservableObject
         _videoFrames = new List<VideoFrameData>();
         WaveformPoints.Clear();
         WaveformGeometry = null;
+        DisposeVideoFrames();
         VideoFrames.Clear();
         CurrentVideoFrame = null;
 
@@ -453,7 +484,7 @@ public sealed class MainWindowViewModel : ObservableObject
             node = node.Next;
         }
 
-        for (var i = list.Count - 1; i >= 0; i--)
+        for (var i = 0; i < list.Count; i++)
         {
             Channels.Add(list[i]);
         }
@@ -554,8 +585,9 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             effect = Effect.FromJson(_effectClipboardJson);
         }
-        catch
+        catch (Exception ex)
         {
+            AddDebug($"Paste failed: {ex.Message}");
             return null;
         }
 
@@ -611,33 +643,39 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         _suppressEffectApply = true;
-        EditStartMs = SelectedEffect.Effect.StartMs;
-        EditDurationMs = SelectedEffect.Effect.DurationMs;
-        if (SelectedEffect.Effect is ColorEffect color)
+        try
         {
-            EditStartRgb = color.StartRgb;
-            EditEndRgb = color.EndRgb;
-            EditOffset = color.Offset;
-            EditWindow = color.Window;
+            EditStartMs = SelectedEffect.Effect.StartMs;
+            EditDurationMs = SelectedEffect.Effect.DurationMs;
+            if (SelectedEffect.Effect is ColorEffect color)
+            {
+                EditStartRgb = color.StartRgb;
+                EditEndRgb = color.EndRgb;
+                EditOffset = color.Offset;
+                EditWindow = color.Window;
+            }
+            else
+            {
+                EditStartRgb = RgbColor.Yellow;
+                EditEndRgb = RgbColor.Yellow;
+                EditOffset = 0;
+                EditWindow = 100;
+            }
+            IsColorEffectSelected = SelectedEffect.Effect is ColorEffect;
+            IsScriptEffectSelected = SelectedEffect.Effect is ScriptEffect;
+            if (SelectedEffect.Effect is ScriptEffect script)
+            {
+                SelectedScriptLink = script.ScriptLink;
+            }
+            else
+            {
+                SelectedScriptLink = string.Empty;
+            }
         }
-        else
+        finally
         {
-            EditStartRgb = RgbColor.Yellow;
-            EditEndRgb = RgbColor.Yellow;
-            EditOffset = 0;
-            EditWindow = 100;
+            _suppressEffectApply = false;
         }
-        IsColorEffectSelected = SelectedEffect.Effect is ColorEffect;
-        IsScriptEffectSelected = SelectedEffect.Effect is ScriptEffect;
-        if (SelectedEffect.Effect is ScriptEffect script)
-        {
-            SelectedScriptLink = script.ScriptLink;
-        }
-        else
-        {
-            SelectedScriptLink = string.Empty;
-        }
-        _suppressEffectApply = false;
         RebuildColorCurveGeometry();
     }
 
@@ -655,32 +693,6 @@ public sealed class MainWindowViewModel : ObservableObject
             var relative = System.IO.Path.GetRelativePath(System.IO.Directory.GetCurrentDirectory(), file);
             ScriptFiles.Add(new ScriptFileItem(name, relative, file));
         }
-    }
-
-    public ScriptFileItem CreateNewScript()
-    {
-        if (!System.IO.Directory.Exists(_scriptsDirectory))
-        {
-            System.IO.Directory.CreateDirectory(_scriptsDirectory);
-        }
-
-        var baseName = "new_script";
-        var fileName = $"{baseName}.bas";
-        var fullPath = System.IO.Path.Combine(_scriptsDirectory, fileName);
-        var counter = 1;
-        while (System.IO.File.Exists(fullPath))
-        {
-            fileName = $"{baseName}_{counter}.bas";
-            fullPath = System.IO.Path.Combine(_scriptsDirectory, fileName);
-            counter++;
-        }
-
-        System.IO.File.WriteAllText(fullPath, "' New script");
-        var item = new ScriptFileItem(System.IO.Path.GetFileNameWithoutExtension(fullPath),
-            System.IO.Path.GetRelativePath(System.IO.Directory.GetCurrentDirectory(), fullPath),
-            fullPath);
-        ScriptFiles.Add(item);
-        return item;
     }
 
     private void ApplyEffectEdits(bool force = false)
@@ -704,6 +716,7 @@ public sealed class MainWindowViewModel : ObservableObject
             color.Offset = EditOffset;
             color.Window = EditWindow;
             SelectedEffect.Effect.SetColor(EditStartRgb);
+            SelectedEffect.NotifyColorChanged();
         }
 
         SelectedEffect.UpdateLayout(this);
@@ -832,8 +845,24 @@ public sealed class MainWindowViewModel : ObservableObject
         return geometry;
     }
 
+    public void DisposeAllMedia()
+    {
+        DisposeVideoFrames();
+        VideoFrames.Clear();
+        CurrentVideoFrame = null;
+    }
+
+    private void DisposeVideoFrames()
+    {
+        foreach (var thumbnail in VideoFrames)
+        {
+            thumbnail.Dispose();
+        }
+    }
+
     private void ApplyVideoFrames()
     {
+        DisposeVideoFrames();
         VideoFrames.Clear();
         if (_videoFrames.Count == 0)
         {
@@ -1014,9 +1043,9 @@ public sealed class MainWindowViewModel : ObservableObject
             {
                 unsafe
                 {
-                    fixed (byte* src = frame.Rgba)
+                    fixed (byte* src = frame.Bgra)
                     {
-                        Buffer.MemoryCopy(src, (void*)locked.Address, locked.RowBytes * frame.Height, frame.Rgba.Length);
+                        Buffer.MemoryCopy(src, (void*)locked.Address, locked.RowBytes * frame.Height, frame.Bgra.Length);
                     }
                 }
             }
@@ -1051,7 +1080,6 @@ public sealed class MainWindowViewModel : ObservableObject
         }
         catch
         {
-            source.Dispose();
             target.Dispose();
             return null;
         }
@@ -1063,9 +1091,14 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public static List<Point> NormalizeWaveform(IReadOnlyList<double> samples, double width)
     {
+        if (samples.Count == 0)
+        {
+            return new List<Point>();
+        }
+
         var points = new List<Point>(samples.Count);
         var halfHeight = WaveformHeight / 2.0;
-        var count = Math.Max(1, samples.Count);
+        var count = samples.Count;
         for (var i = 0; i < count; i++)
         {
             var normalized = ApplyLogScale(samples[i]);

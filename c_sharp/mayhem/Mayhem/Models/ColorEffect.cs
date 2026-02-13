@@ -8,7 +8,7 @@ public sealed class ColorEffect : Effect
     public int Window { get; set; }
 
     public ColorEffect(int startMs, int durationMs, RgbColor startRgb, RgbColor endRgb, int offset = 0, int window = 100)
-        : base(startMs, durationMs, EffectType.Color, RgbColor.Yellow)
+        : base(startMs, durationMs, EffectType.Color, startRgb)
     {
         StartRgb = startRgb;
         EndRgb = endRgb;

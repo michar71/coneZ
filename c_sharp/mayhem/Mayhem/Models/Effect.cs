@@ -51,17 +51,13 @@ public abstract class Effect
             EffectType.Fx => new FxEffect(dto.StartMs, dto.DurationMs, dto.FxId ?? 0,
                 ParamList.FromList(dto.Params ?? new List<float>())),
             EffectType.Script => new ScriptEffect(dto.StartMs, dto.DurationMs,
-                dto.ScriptLink ?? string.Empty,
+                dto.ScriptLink ?? throw new JsonException("ScriptEffect missing ScriptLink."),
                 ParamList.FromList(dto.Params ?? new List<float>())),
             EffectType.Media => new MediaEffect(dto.StartMs, dto.DurationMs,
-                dto.MediaLink ?? string.Empty),
+                dto.MediaLink ?? throw new JsonException("MediaEffect missing MediaLink.")),
             _ => throw new JsonException($"Unsupported effect type: {dto.Type}")
         };
         effect.Color = NormalizeColor(dto.Color, effect.Color);
-        if (effect is ColorEffect colorEffect)
-        {
-            effect.Color = colorEffect.StartRgb;
-        }
         return effect;
     }
 

@@ -25,17 +25,32 @@ public sealed class AudioPlaybackService : IDisposable
         _device = ALC.OpenDevice(null);
         if (_device == ALDevice.Null)
         {
-            throw new InvalidOperationException("Failed to open OpenAL device.");
+            return;
         }
 
         unsafe
         {
             _context = ALC.CreateContext(_device, (int*)null);
         }
+        if (_context == ALContext.Null)
+        {
+            ALC.CloseDevice(_device);
+            _device = ALDevice.Null;
+            return;
+        }
         ALC.MakeContextCurrent(_context);
 
         _buffer = AL.GenBuffer();
         _source = AL.GenSource();
+        if (AL.GetError() != ALError.NoError)
+        {
+            ALC.MakeContextCurrent(ALContext.Null);
+            ALC.DestroyContext(_context);
+            _context = ALContext.Null;
+            ALC.CloseDevice(_device);
+            _device = ALDevice.Null;
+            return;
+        }
         _initialized = true;
     }
 
@@ -59,16 +74,19 @@ public sealed class AudioPlaybackService : IDisposable
 
     public void Play()
     {
+        if (!_initialized) return;
         AL.SourcePlay(_source);
     }
 
     public void Pause()
     {
+        if (!_initialized) return;
         AL.SourcePause(_source);
     }
 
     public void Stop()
     {
+        if (!_initialized) return;
         AL.SourceStop(_source);
     }
 
@@ -76,6 +94,7 @@ public sealed class AudioPlaybackService : IDisposable
     {
         get
         {
+            if (!_initialized) return false;
             AL.GetSource(_source, ALGetSourcei.SourceState, out int state);
             return (ALSourceState)state == ALSourceState.Playing;
         }
@@ -83,12 +102,14 @@ public sealed class AudioPlaybackService : IDisposable
 
     public double GetPositionSeconds()
     {
+        if (!_initialized) return 0;
         AL.GetSource(_source, ALSourcef.SecOffset, out var seconds);
         return seconds;
     }
 
     public void SeekSeconds(double seconds)
     {
+        if (!_initialized) return;
         if (seconds < 0)
         {
             seconds = 0;
@@ -145,17 +166,18 @@ public sealed class AudioPlaybackService : IDisposable
             remainingSamples = samples.Length;
             sampleOffset = 0;
         }
-        var data = new byte[remainingSamples * sizeof(short)];
-        Buffer.BlockCopy(samples, sampleOffset * sizeof(short), data, 0, data.Length);
+
+        var byteCount = remainingSamples * sizeof(short);
 
         AL.SourceStop(_source);
         AL.Source(_source, ALSourcei.Buffer, 0);
 
         unsafe
         {
-            fixed (byte* ptr = data)
+            fixed (short* ptr = samples)
             {
-                AL.BufferData(_buffer, format, (nint)ptr, data.Length, sampleRate);
+                var offsetPtr = (byte*)(ptr + sampleOffset);
+                AL.BufferData(_buffer, format, (nint)offsetPtr, byteCount, sampleRate);
             }
         }
         AL.Source(_source, ALSourcei.Buffer, _buffer);
