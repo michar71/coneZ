@@ -402,6 +402,41 @@ public partial class MainWindow : Window
 
     private void Window_OnKeyDown(object? sender, KeyEventArgs e)
     {
+        var isCommandShortcut = e.KeyModifiers.HasFlag(KeyModifiers.Meta) || e.KeyModifiers.HasFlag(KeyModifiers.Control);
+        if (isCommandShortcut && e.Key == Key.C)
+        {
+            if (_viewModel.CopySelectedEffect())
+            {
+                _viewModel.AddDebug("Effect copied.");
+                e.Handled = true;
+            }
+            return;
+        }
+
+        if (isCommandShortcut && e.Key == Key.X)
+        {
+            if (_viewModel.CutSelectedEffect())
+            {
+                _viewModel.AddDebug("Effect cut.");
+                e.Handled = true;
+            }
+            return;
+        }
+
+        if (isCommandShortcut && e.Key == Key.V)
+        {
+            var pasted = _viewModel.PasteClipboardEffectAt(_viewModel.CurrentTimeMs);
+            if (pasted != null)
+            {
+                var pasteEndMs = pasted.Effect.StartMs + pasted.Effect.DurationMs;
+                _viewModel.SetCurrentTime(pasteEndMs);
+                AutoScrollTimelineIfNeeded();
+                _viewModel.AddDebug($"Effect pasted at {pasted.Effect.StartMs} ms on {pasted.Channel.Name}.");
+                e.Handled = true;
+            }
+            return;
+        }
+
         if (e.Key == Key.Space)
         {
             PlayPause_OnClick(sender, e);
@@ -416,9 +451,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (e.Key == Key.Delete)
+        if (e.Key == Key.Delete || e.Key == Key.Back)
         {
-            _viewModel.RemoveSelectedCue();
+            if (_viewModel.SelectedEffect != null)
+            {
+                _viewModel.RemoveEffect(_viewModel.SelectedEffect);
+                _viewModel.AddDebug("Effect deleted.");
+            }
+            else
+            {
+                _viewModel.RemoveSelectedCue();
+            }
             e.Handled = true;
         }
     }

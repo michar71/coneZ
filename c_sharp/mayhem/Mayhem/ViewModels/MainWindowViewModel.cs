@@ -47,6 +47,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _isColorEffectSelected;
     private bool _isScriptEffectSelected;
     private string _selectedScriptLink = string.Empty;
+    private string? _effectClipboardJson;
+    private ChannelEntry? _effectClipboardChannel;
 
     private readonly string _scriptsDirectory;
 
@@ -484,21 +486,13 @@ public sealed class MainWindowViewModel : ObservableObject
     public EffectInstanceViewModel AddColorEffect(ChannelEntry channel, long startMs, int durationMs)
     {
         var effect = new ColorEffect((int)startMs, durationMs, new RgbColor(255, 255, 0), new RgbColor(255, 255, 0));
-        channel.Channel.Effects.Add(effect);
-        var vm = new EffectInstanceViewModel(effect, channel);
-        vm.UpdateLayout(this);
-        channel.AddEffect(vm);
-        return vm;
+        return AddEffectInstance(channel, effect);
     }
 
     public EffectInstanceViewModel AddScriptEffect(ChannelEntry channel, long startMs, int durationMs, string scriptLink)
     {
         var effect = new ScriptEffect((int)startMs, durationMs, scriptLink);
-        channel.Channel.Effects.Add(effect);
-        var vm = new EffectInstanceViewModel(effect, channel);
-        vm.UpdateLayout(this);
-        channel.AddEffect(vm);
-        return vm;
+        return AddEffectInstance(channel, effect);
     }
 
     public void MoveEffect(EffectInstanceViewModel effect, ChannelEntry newChannel, long startMs)
@@ -513,6 +507,73 @@ public sealed class MainWindowViewModel : ObservableObject
             effect.MoveToChannel(newChannel);
         }
         effect.UpdateLayout(this);
+    }
+
+    public bool CopySelectedEffect()
+    {
+        if (SelectedEffect == null)
+        {
+            return false;
+        }
+
+        _effectClipboardJson = SelectedEffect.Effect.ToJson();
+        _effectClipboardChannel = SelectedEffect.Channel;
+        return true;
+    }
+
+    public bool CutSelectedEffect()
+    {
+        if (SelectedEffect == null)
+        {
+            return false;
+        }
+
+        if (!CopySelectedEffect())
+        {
+            return false;
+        }
+
+        RemoveEffect(SelectedEffect);
+        return true;
+    }
+
+    public EffectInstanceViewModel? PasteClipboardEffectAt(long startMs)
+    {
+        if (string.IsNullOrWhiteSpace(_effectClipboardJson))
+        {
+            return null;
+        }
+
+        if (_effectClipboardChannel == null || !Channels.Contains(_effectClipboardChannel))
+        {
+            return null;
+        }
+
+        Effect effect;
+        try
+        {
+            effect = Effect.FromJson(_effectClipboardJson);
+        }
+        catch
+        {
+            return null;
+        }
+
+        effect.StartMs = (int)Math.Max(0, startMs);
+        var vm = AddEffectInstance(_effectClipboardChannel, effect);
+        SelectEffect(vm);
+        return vm;
+    }
+
+    public void RemoveEffect(EffectInstanceViewModel effect)
+    {
+        if (ReferenceEquals(SelectedEffect, effect))
+        {
+            SelectEffect(null);
+        }
+
+        effect.Channel.RemoveEffect(effect);
+        RemoveEffectFromList(effect.Channel.Channel, effect.Effect);
     }
 
     public void SelectEffect(EffectInstanceViewModel? effect)
@@ -709,6 +770,15 @@ public sealed class MainWindowViewModel : ObservableObject
                 effect.UpdateLayout(this);
             }
         }
+    }
+
+    private EffectInstanceViewModel AddEffectInstance(ChannelEntry channel, Effect effect)
+    {
+        channel.Channel.Effects.Add(effect);
+        var vm = new EffectInstanceViewModel(effect, channel);
+        vm.UpdateLayout(this);
+        channel.AddEffect(vm);
+        return vm;
     }
 
     private void RemoveEffectFromList(Channel channel, Effect effect)
