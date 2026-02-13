@@ -234,6 +234,29 @@ See `documentation/simulator.txt` for full reference.
 
 The general rule: if a WASM program's behavior would differ between firmware and simulator after a change, both must be updated together.
 
+### Mayhem (Cue-List Editor)
+
+Avalonia/C# desktop application in `c_sharp/mayhem/` for authoring timeline-based lighting choreography. Users arrange effects (color gradients, FX presets, BASIC/WASM scripts, audio/video media) on a multi-channel timeline, set timing cues, and export bundled cue-lists for deployment to hardware. Projects save as `.clf` (JSON).
+
+```bash
+# Linux (Debian/Ubuntu)
+sudo apt install dotnet-sdk-10.0 ffmpeg libavcodec-dev libavformat-dev \
+    libswscale-dev libswresample-dev libavutil-dev
+cd c_sharp/mayhem
+FFMPEG_PATH=/usr/lib/x86_64-linux-gnu dotnet run --project Mayhem/Mayhem.csproj
+
+# macOS (Homebrew)
+brew install dotnet ffmpeg
+cd c_sharp/mayhem
+FFMPEG_PATH=/opt/homebrew/opt/ffmpeg/lib dotnet run --project Mayhem/Mayhem.csproj
+```
+
+**Dependencies:** .NET 10.0 SDK, Avalonia 11.3, FFmpeg libraries (audio/video decoding via FFmpeg.AutoGen bindings).
+
+**Source layout:** `Models/` (Project, Channel, Effect types, Cue), `ViewModels/` (MVVM), `Services/` (FFmpeg decoding, audio playback, project file I/O), `Converters/` (XAML value converters). Sample scripts in `Scripts/`.
+
+See `c_sharp/mayhem/readme.md` for quick-start instructions.
+
 ### Build Flags
 
 `INCLUDE_BASIC` and `INCLUDE_WASM` in `platformio.ini` build_flags control which scripting runtimes are compiled in. Both are enabled by default. Remove either flag to exclude that runtime and save flash space (~67KB for wasm3).

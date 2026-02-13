@@ -1,14 +1,32 @@
-Mayhem is the software used rot assemble cue-lists and accociated effects ina timeline-like UI.
-It then allows to bundle those cue-lists and effect-scripts into a "Piece" that czn be deployed.
+Mayhem is the software used to assemble cue-lists and associated effects in a timeline-like UI.
+It then allows to bundle those cue-lists and effect-scripts into a "Piece" that can be deployed.
 
-Mayham is developed in C#.
+Mayhem is developed in C# using the Avalonia UI framework.
 
-- Install the Microsoft .Net package for your system (Win/Linux/OS C)
-- For Development also cloen  the Avalonia UI git into the "Avalonia" directory.
-https://github.com/AvaloniaUI/Avalonia
-(Might also require other steps like precompiling libraries on mac OS)
-- Install ffMpeg as a command-line tool
 
-- Start app like this:
-export FFMPEG_PATH=/opt/homebrew/opt/ffmpeg/lib
-dotnet run --project Mayhem/Mayhem.csproj
+Requirements
+------------
+
+- .NET 10.0 SDK (or later)
+- FFmpeg libraries (for audio/video decoding)
+
+
+Linux (Debian/Ubuntu)
+---------------------
+
+  sudo apt install dotnet-sdk-10.0 ffmpeg libavcodec-dev libavformat-dev \
+      libswscale-dev libswresample-dev libavutil-dev
+
+  cd c_sharp/mayhem
+  export FFMPEG_PATH=/usr/lib/x86_64-linux-gnu
+  dotnet run --project Mayhem/Mayhem.csproj
+
+
+macOS (Homebrew)
+----------------
+
+  brew install dotnet ffmpeg
+
+  cd c_sharp/mayhem
+  export FFMPEG_PATH=/opt/homebrew/opt/ffmpeg/lib
+  dotnet run --project Mayhem/Mayhem.csproj
