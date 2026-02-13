@@ -33,7 +33,6 @@
 .DS_Store
 .DS_Store
 firmware/buildnum.txt
-documentation/cue-system-design.txt
 tools/wasm/examples/rust_rainbow/target/
 tools/wasm/examples/rust_rgb_cycle/target/
 tools/__pycache__/

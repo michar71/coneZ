@@ -1,0 +1,371 @@
+ConeZ Cue System Design Notes
+==============================
+
+Status: Brainstorming / pre-implementation
+
+
+Problem
+-------
+
+Traffic cones with LED strips are distributed over large geographic areas.
+They need to play synchronized lighting shows timed to music, triggered by
+a LoRa "music started at GPS timestamp T" packet. The lighting programs
+(effects + timelines) must be updatable without reflashing firmware, since
+LoRa throughput is too low for distributing firmware builds to hundreds of
+cones.
+
+
+Architecture: Hybrid Timeline Engine
+-------------------------------------
+
+Three layers:
+
+  1. Timeline engine (native C++ in firmware, stable, rarely updated)
+     - GPS time sync
+     - LoRa "music start" listener
+     - Cue file loader and cursor
+     - Effect dispatch: loads and calls .bas or .wasm effect files
+     - LED buffer management and show output at ~30 FPS
+
+  2. Effect files (.bas or .wasm, stored on LittleFS, distributable)
+     Two invocation modes (selected by flags bit 0), either mode
+     works with either file type:
+     - Per-frame (bit 0 clear): engine calls render() ~30x/sec with
+       elapsed time. Effect writes to LED buffer and returns.
+     - Fire-and-forget (bit 0 set): engine calls effect once at cue
+       start. Effect runs its own animation loop until duration
+       expires or a stop cue fires.
+
+  3. Cue files (.cue, binary, stored on LittleFS, distributable)
+     - Timeline of cue entries referencing effect files by name
+     - Sorted by start_ms
+     - Multiple cues can overlap (layering/blending)
+
+A complete show package (one .cue file + a handful of effect files) is
+~10-20KB, small enough to distribute over LoRa.
+
+
+Cue File Format
+---------------
+
+Header followed by an array of cue entries, sorted by start_ms.
+
+    struct cue_header {
+        uint32_t magic;             //  4  file identifier
+        uint16_t version;           //  2  format version
+        uint16_t num_cues;          //  2  number of cue entries
+        uint16_t record_size;       //  2  sizeof(cue_entry) at authoring time
+        uint8_t  reserved[54];      // 54  future use (set to 0)
+    };                              // 64 bytes (matches cue_entry size)
+
+Header is padded to 64 bytes so every record in the file is uniform.
+Cue N is at file offset (N+1) * 64. The reserved space leaves room
+for future header fields (show name, total duration, BPM, CRC, etc.).
+
+Record_size enables forward compatibility: if a newer cue file has
+larger records than the firmware expects, the engine reads the fields
+it knows and skips the extra bytes per record. New fields are always
+appended to the end of cue_entry so older fields stay at fixed offsets.
+
+    struct cue_entry {
+        // — identity (4 bytes, aligns start_ms to offset 4) —
+        uint8_t  cue_type;          //  1  see Cue Types table
+        uint8_t  channel;           //  1  LED channel 1-4
+        uint16_t group;             //  2  see Group Targeting section
+        // — timing (8 bytes) —
+        uint32_t start_ms;          //  4  offset from music start
+        uint32_t duration_ms;       //  4  0 = instantaneous / one-shot
+        // — spatial (16 bytes) —
+        float    spatial_delay;     //  4  ms per meter
+        float    spatial_param1;    //  4  lat or north_m (see mode)
+        float    spatial_param2;    //  4  lon or east_m (see mode)
+        uint16_t spatial_angle;     //  2  compass bearing (degrees, directional only)
+        uint8_t  spatial_mode;      //  1  see Spatial Modes table
+        uint8_t  flags;             //  1  see Flags table
+        // — effect (36 bytes) —
+        char     effect_file[20];   // 20  e.g. "/shows/fire_v2.wasm"
+        uint8_t  params[16];        // 16  effect-specific parameters
+    };                              // 64 bytes per cue
+
+All 4-byte fields (uint32_t, float) land on 4-byte-aligned offsets.
+The uint16_t fields land on 2-byte-aligned offsets. No padding is
+wasted — the struct is naturally aligned at 64 bytes and safe for
+direct access on Xtensa (ESP32-S3) without packed tricks.
+
+The engine keeps a cursor into the sorted cue list and advances it as
+elapsed time progresses.
+
+
+Cue Types
+---------
+
+The cue_type field selects what the engine does when the cue fires:
+
+    Type  Name       Description
+    ----  ---------  ------------------------------------------------
+     0    stop       Stop a running effect on the specified channel
+     1    effect     Run effect_file (.bas or .wasm), pass params[]
+     2    fill       Solid color, no effect file (params = RGB)
+     3    blackout   All channels off (channel field ignored)
+     4    global     Engine-level state: brightness, blend mode, etc.
+                     (params encode the specific setting)
+
+Type 0 (stop) as default means a zeroed-out record is a safe no-op.
+Types 1 and 2 use spatial_mode for per-cone timing offsets. Types 0,
+3, and 4 typically use spatial_mode 0 (simultaneous) but could use
+spatial offsets for a rippling blackout, etc.
+
+
+Group Targeting
+---------------
+
+The 16-bit group field selects which cones a cue applies to. The upper
+4 bits specify the mode; the lower 12 bits carry the value.
+
+    group field:  [MMMM VVVV VVVV VVVV]
+                   mode   value (12 bits)
+
+    Mode  Name         Value interpretation
+    ----  -----------  ------------------------------------------------
+    0x0   all          ignored (0x0000 = all cones, safe zeroed default)
+    0x1   cone_id      specific cone ID (0-4095)
+    0x2   group_id     single group number (0-4095)
+    0x3   group_mask   bitmask of up to 12 groups (bits 0-11)
+    0x4   not_cone_id  exclude this cone ID (all others fire)
+    0x5   not_group_id exclude this group number (all others fire)
+    0x6   not_mask     inverted bitmask (fire on unset bits)
+    0x7+  reserved
+
+Each cone has a cone ID and group number set via config (config.cone_id,
+config.cone_group). The engine evaluates the group field per cue:
+
+    bool cue_matches(uint16_t group, int my_id, int my_group) {
+        int mode  = group >> 12;
+        int value = group & 0x0FFF;
+        switch (mode) {
+            case 0: return true;
+            case 1: return my_id == value;
+            case 2: return my_group == value;
+            case 3: return (value >> my_group) & 1;
+            case 4: return my_id != value;
+            case 5: return my_group != value;
+            case 6: return !((value >> my_group) & 1);
+            default: return false;
+        }
+    }
+
+Mode 0x2 (group_id) supports up to 4095 distinct groups for large
+deployments. Mode 0x3 (group_mask) supports fewer groups (12) but
+allows a single cue to target any combination of them. Both modes
+coexist — the show designer picks whichever fits the situation.
+
+
+Flags
+-----
+
+The flags byte controls per-cue behavior:
+
+    Bit  Name            Description
+    ---  --------------  ------------------------------------------------
+     0   fire_forget     0 = per-frame (engine calls render ~30x/sec)
+                         1 = fire-and-forget (engine calls once at start,
+                             effect runs its own loop until duration
+                             expires or a stop cue fires)
+     1   loop            reserved — loop effect when duration expires
+     2   blend           reserved — blend mode (0=replace, 1=additive)
+    3-7  reserved        set to 0
+
+Either invocation mode works with both .bas and .wasm effects. The
+mode is an authoring choice, not dictated by the file type.
+
+
+Effect Contract
+---------------
+
+Per-frame mode (flags bit 0 = 0):
+  The engine calls the effect's render function ~30x/sec with:
+    - elapsed       ms since this cue started (after spatial offset)
+    - duration      total cue duration in ms
+    - channel       which LED strip (1-4)
+    - num_leds      number of pixels on that channel
+    - params[]      the 16 parameter bytes from the cue entry
+  The effect writes colors into the LED buffer and returns.
+
+Fire-and-forget mode (flags bit 0 = 1):
+  The engine calls the effect once at cue start. The effect manages
+  its own animation loop internally. The engine stops it when
+  duration_ms expires or a stop cue fires on the same channel.
+
+
+Spatial Modes
+-------------
+
+Each cone knows its GPS position and the configured GPS origin. The
+spatial_mode byte selects how the engine computes a per-cone time offset
+for each cue. Wave shape and origin source are two independent axes:
+
+  Wave shape:
+    - Radial:       offset = distance_from_origin * spatial_delay
+    - Directional:  offset = projection_along_bearing * spatial_delay
+                    (signed dot product of cone displacement onto the
+                    unit vector at spatial_angle degrees compass bearing)
+
+  Origin source:
+    - Config:    uses config.origin_lat / config.origin_lon
+    - Absolute:  uses spatial_param1 as lat, spatial_param2 as lon
+    - Relative:  uses config origin + spatial_param1 as meters north,
+                 spatial_param2 as meters east
+
+  Mode table:
+
+    Mode  Shape        Origin     Fields used
+    ----  -----------  ---------  -------------------------------------------
+     0    none         —          (all spatial fields ignored)
+     1    radial       config     delay
+     2    radial       absolute   delay, param1=lat, param2=lon
+     3    radial       relative   delay, param1=north_m, param2=east_m
+     4    directional  config     delay, angle
+     5    directional  absolute   delay, angle, param1=lat, param2=lon
+     6    directional  relative   delay, angle, param1=north_m, param2=east_m
+
+  Relative origins make show files portable between venues — change
+  config.origin_lat/lon for the new location and all relative offsets
+  follow. Absolute origins are useful for fixed landmarks.
+
+The effective start time for a cue on a given cone:
+
+    effective_start = cue.start_ms + spatial_offset
+
+where spatial_offset is computed per the mode.
+
+Example spatial_delay values:
+
+  - spatial_delay = 0      All cones fire simultaneously
+  - spatial_delay = 3.0    Ripple outward at ~333 m/s (speed of sound —
+                           visually syncs with a bass hit propagating)
+  - spatial_delay = -2.0   Ripple inward (implosion), far cones fire first
+  - spatial_delay = 10.0   Slow visible wave rolling across the field
+
+No inter-cone communication needed. Every cone independently computes
+the same timing from its own GPS position.
+
+Duration note: spatially-offset cues keep their full duration, so the
+wave effect ripples through both start and end. The show designer must
+account for max_distance * spatial_delay as additional tail time before
+the next cue. An authoring tool can compute and display this.
+
+
+BASIC vs WASM for Effects
+-------------------------
+
+Both can be supported. Tradeoffs:
+
+BASIC (.bas):
+  + Already in the firmware
+  + Easy to author in the field with a text editor
+  + Low barrier to entry
+  - Current architecture runs one BASIC script on a dedicated Core 0 task;
+    using it for per-frame callbacks needs rework
+  - Slower than WASM
+
+WASM (.wasm) via wasm3:
+  + Clean per-frame calling convention: wasm3_CallV(render, ...) from C++
+  + Sandboxed execution
+  + ~10-50x faster than interpreted BASIC
+  + Effects authored in C (or Rust, AssemblyScript) and compiled to .wasm
+  + Tiny files (200-500 bytes per typical effect)
+  + wasm3-arduino exists as a PlatformIO library
+  - Requires a C-to-wasm toolchain for authoring (clang/emscripten)
+  - Adds ~64KB flash + ~10KB RAM for the wasm3 runtime
+
+Both could coexist: the engine checks the file extension and dispatches
+to the appropriate runtime.
+
+References:
+  - wasm3: https://github.com/wasm3/wasm3
+  - wasm3-arduino: https://github.com/wasm3/wasm3-arduino
+
+
+LoRa Show Distribution
+----------------------
+
+A simple file transfer protocol over LoRa:
+  - Chunk files into LoRa-sized packets with sequence numbers
+  - Broadcast to all cones
+  - Cones request retransmits for missing chunks
+  - Total show package: ~10-20KB (one .cue + handful of effects)
+
+This avoids firmware OTA entirely for show content updates.
+
+
+Synchronization Flow
+--------------------
+
+  1. Cones boot, GPS locks, compute distance from origin
+  2. Cue file and effect files already on LittleFS (pre-loaded or
+     received via LoRa file transfer)
+  3. LoRa packet received: "music starts at GPS timestamp T"
+  4. Each cone runs: elapsed_ms = gps_now - T
+  5. Timeline engine walks cue list, applying spatial offsets,
+     dispatching to effect files at ~30 FPS
+  6. All cones are frame-locked via GPS (~100ns accuracy)
+
+
+Open Questions
+--------------
+
+  - TODO: GPS millisecond time wraps at midnight (86400000 ms). The current
+    get_gps_time_ms() returns time-of-day only. Shows that span midnight
+    will compute incorrect elapsed times. Fix: incorporate the date into
+    the timestamp (e.g. days-since-epoch * 86400000 + time_of_day_ms), or
+    detect and handle the wraparound in cue_loop().
+  - Cue layering: how do overlapping cues on the same channel blend?
+    Options: last-wins, additive, alpha blending, max per-component.
+    Flags bit 2 (blend) is reserved for this; could also be a global
+    engine setting.
+  - Effect scratch memory: how much state can an effect preserve
+    between frames? Fixed-size scratch buffer per active cue?
+  - Authoring tool: Python script? Desktop app? Web-based editor
+    with waveform display for music alignment?
+  - File transfer reliability over LoRa: ARQ protocol design,
+    handling cones that join late or miss the broadcast.
+  - Max concurrent active cues: how many cues can be active at once?
+    Determines engine memory budget for effect state.
+  - BASIC integration: the current BASIC task runs one script on
+    Core 0. Per-frame effect callbacks need either a lightweight
+    "evaluate" mode or a rethink of the BASIC task architecture.
+  - Config keys needed: config.cone_id, config.cone_group for group
+    targeting. What ranges/defaults make sense?
+  - Cue file naming convention: single active show, or multiple
+    .cue files selectable via LoRa command?
+
+
+Notes and Ideas
+---------------
+
+  - spatial_delay = ~3.0 ms/m matches the speed of sound (~343 m/s),
+    which would make a light ripple visually sync with a bass hit
+    propagating across the field.
+  - Negative spatial_delay creates inward-rippling (implosion) effects.
+  - The cue_header reserved space (54 bytes) could hold show metadata:
+    show name, total duration, BPM, author, creation timestamp, CRC
+    of the cue data for integrity checking.
+  - Fire-and-forget mode maps directly to how BASIC scripts work
+    today (set_basic_program launches a script that runs autonomously),
+    so no BASIC task rework is needed for that mode.
+  - For very large deployments, group_mode 0x2 (group_id) supports up
+    to 4095 groups. For smaller setups, mode 0x3 (group_mask) lets a
+    single cue target any combination of 12 groups.
+  - Distance-band targeting (only cones within X-Y meters of origin)
+    could be encoded in params[] for cue types that need it, or as
+    a future spatial_mode extension.
+  - The 20-byte effect_file field supports paths like
+    "/shows/fire_v2.wasm", allowing organized directory structures.
+  - A "playlist" concept — sequence of .cue files with inter-show
+    gaps — could be triggered by LoRa commands or a master schedule.
+  - Cue files could be generated programmatically from a higher-level
+    show description language, compiled by a Python tool into the
+    binary .cue format.
+  - ESP32-S3 Xtensa LX7 traps on unaligned 16/32-bit access. The
+    cue_entry struct is designed for natural alignment so all fields
+    can be accessed directly without packed-struct byte shuffling.
