@@ -70,13 +70,46 @@ public static class FfmpegLoader
             }
         }
 
-        var candidates = new[]
+        var candidates = new List<string>
         {
+            // macOS Homebrew
             "/opt/homebrew/opt/ffmpeg/lib",
             "/usr/local/opt/ffmpeg/lib",
+            // Linux standard paths
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib/aarch64-linux-gnu",
+            "/usr/lib64",
+            "/usr/lib",
+            // Generic
             "/usr/local/lib",
             "/opt/local/lib"
         };
+
+        // If ffmpeg is on PATH, check for libraries relative to the binary
+        var ffmpegBin = FindOnPath("ffmpeg");
+        if (ffmpegBin != null)
+        {
+            var binDir = Path.GetDirectoryName(ffmpegBin);
+            if (binDir != null)
+            {
+                var parentDir = Path.GetDirectoryName(binDir);
+                if (parentDir != null)
+                {
+                    candidates.Insert(0, Path.Combine(parentDir, "lib"));
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    {
+                        var arch = RuntimeInformation.OSArchitecture switch
+                        {
+                            Architecture.X64 => "x86_64-linux-gnu",
+                            Architecture.Arm64 => "aarch64-linux-gnu",
+                            _ => null
+                        };
+                        if (arch != null)
+                            candidates.Insert(0, Path.Combine(parentDir, "lib", arch));
+                    }
+                }
+            }
+        }
 
         foreach (var candidate in candidates)
         {
@@ -216,5 +249,21 @@ public static class FfmpegLoader
     private static bool HasFfmpegLibraries(string rootPath)
     {
         return FindLibraryPath(rootPath, "libavformat") != null;
+    }
+
+    private static string? FindOnPath(string executable)
+    {
+        var pathVar = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathVar))
+            return null;
+
+        var separator = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ';' : ':';
+        foreach (var dir in pathVar.Split(separator))
+        {
+            var fullPath = Path.Combine(dir, executable);
+            if (File.Exists(fullPath))
+                return fullPath;
+        }
+        return null;
     }
 }
