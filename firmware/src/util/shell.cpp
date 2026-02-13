@@ -3,16 +3,25 @@
 #include "printManager.h"
 #include "psram.h"
 
-// Prompt and color strings — ANSI version uses colored prompt + input
-#ifdef SHELL_USE_ANSI
-#define SH_PROMPT      "\033[1;32m> \033[33m"      // bold green "> ", then yellow
-#define SH_PROMPT_CR   "\r\033[1;32m> \033[33m"     // with leading CR
-#define SH_RESET       "\033[0m"                    // reset to default
-#else
-#define SH_PROMPT      "> "
-#define SH_PROMPT_CR   "\r> "
-#define SH_RESET       ""
-#endif
+// Prompt and color strings — selected at runtime via getAnsiEnabled()
+#define SH_PROMPT_ANSI      "\033[1;32m> \033[33m"      // bold green "> ", then yellow
+#define SH_PROMPT_CR_ANSI   "\r\033[1;32m> \033[33m"     // with leading CR
+#define SH_RESET_ANSI       "\033[0m"                    // reset to default
+#define SH_PROMPT_PLAIN     "> "
+#define SH_PROMPT_CR_PLAIN  "\r> "
+#define SH_RESET_PLAIN      ""
+
+static inline const char *sh_prompt(void) {
+    return getAnsiEnabled() ? SH_PROMPT_ANSI : SH_PROMPT_PLAIN;
+}
+
+static inline const char *sh_prompt_cr(void) {
+    return getAnsiEnabled() ? SH_PROMPT_CR_ANSI : SH_PROMPT_CR_PLAIN;
+}
+
+static inline const char *sh_reset(void) {
+    return getAnsiEnabled() ? SH_RESET_ANSI : SH_RESET_PLAIN;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Serial command shell — based on ConezShell by Phil Jansen,
@@ -134,7 +143,7 @@ bool ConezShell::executeIfInput(void)
         if (shellConnection)
         {
             getLock();
-            shellConnection->print(F(SH_PROMPT));
+            shellConnection->print(sh_prompt());
             inputActive = true;
             releaseLock();
         } else {
@@ -157,7 +166,7 @@ void ConezShell::showPrompt(void)
 {
     getLock();
     if (shellConnection) {
-        shellConnection->print(F(SH_PROMPT));
+        shellConnection->print(sh_prompt());
     }
     inputActive = true;
     releaseLock();
@@ -235,39 +244,39 @@ bool ConezShell::prepInput(void)
                 case 'C': // Right arrow
                     if (cursor < inptr && shellConnection) {
                         cursor++;
-#ifdef SHELL_USE_ANSI
-                        shellConnection->print(F("\033[C"));
-#else
-                        shellConnection->print(F(SH_PROMPT_CR));
-                        shellConnection->write((const uint8_t*)linebuffer, cursor);
-#endif
+                        if (getAnsiEnabled())
+                            shellConnection->print(F("\033[C"));
+                        else {
+                            shellConnection->print(sh_prompt_cr());
+                            shellConnection->write((const uint8_t*)linebuffer, cursor);
+                        }
                     }
                     break;
                 case 'D': // Left arrow
                     if (cursor > 0 && shellConnection) {
                         cursor--;
-#ifdef SHELL_USE_ANSI
-                        shellConnection->print(F("\033[D"));
-#else
-                        shellConnection->print(F(SH_PROMPT_CR));
-                        shellConnection->write((const uint8_t*)linebuffer, cursor);
-#endif
+                        if (getAnsiEnabled())
+                            shellConnection->print(F("\033[D"));
+                        else {
+                            shellConnection->print(sh_prompt_cr());
+                            shellConnection->write((const uint8_t*)linebuffer, cursor);
+                        }
                     }
                     break;
                 case 'H': // Home
                     if (shellConnection)
-                        shellConnection->print(F(SH_PROMPT_CR));
+                        shellConnection->print(sh_prompt_cr());
                     cursor = 0;
                     break;
                 case 'F': // End
                     if (shellConnection) {
-#ifdef SHELL_USE_ANSI
-                        for (int i = cursor; i < inptr; i++)
-                            shellConnection->print(F("\033[C"));
-#else
-                        shellConnection->print(F(SH_PROMPT_CR));
-                        shellConnection->write((const uint8_t*)linebuffer, inptr);
-#endif
+                        if (getAnsiEnabled())
+                            for (int i = cursor; i < inptr; i++)
+                                shellConnection->print(F("\033[C"));
+                        else {
+                            shellConnection->print(sh_prompt_cr());
+                            shellConnection->write((const uint8_t*)linebuffer, inptr);
+                        }
                     }
                     cursor = inptr;
                     break;
@@ -336,19 +345,19 @@ bool ConezShell::prepInput(void)
 
             case 0x01: // CTRL-A — Home
                 if (shellConnection)
-                    shellConnection->print(F(SH_PROMPT_CR));
+                    shellConnection->print(sh_prompt_cr());
                 cursor = 0;
                 break;
 
             case 0x05: // CTRL-E — End
                 if (shellConnection) {
-#ifdef SHELL_USE_ANSI
-                    for (int i = cursor; i < inptr; i++)
-                        shellConnection->print(F("\033[C"));
-#else
-                    shellConnection->print(F(SH_PROMPT_CR));
-                    shellConnection->write((const uint8_t*)linebuffer, inptr);
-#endif
+                    if (getAnsiEnabled())
+                        for (int i = cursor; i < inptr; i++)
+                            shellConnection->print(F("\033[C"));
+                    else {
+                        shellConnection->print(sh_prompt_cr());
+                        shellConnection->write((const uint8_t*)linebuffer, inptr);
+                    }
                 }
                 cursor = inptr;
                 break;
@@ -357,7 +366,7 @@ bool ConezShell::prepInput(void)
                 if (shellConnection)
                 {
                     shellConnection->print(F("\r\n"));
-                    shellConnection->print(F(SH_PROMPT));
+                    shellConnection->print(sh_prompt());
                     shellConnection->print(linebuffer);
                     cursor = inptr;
                 }
@@ -371,12 +380,13 @@ bool ConezShell::prepInput(void)
                 }
                 break;
 
-            case ';':
             case '\r':
                 inputActive = false;
                 hist_nav = -1;
-                if (shellConnection)
-                    shellConnection->print(F(SH_RESET "\n"));
+                if (shellConnection) {
+                    shellConnection->print(sh_reset());
+                    shellConnection->print(F("\n"));
+                }
                 bufferReady = true;
                 break;
 
@@ -534,20 +544,21 @@ void ConezShell::resetBuffer(void)
 void ConezShell::suspendLine(Stream *out)
 {
     if (!inputActive || !out) return;
-#ifdef SHELL_USE_ANSI
-    out->print(F(SH_RESET "\r\033[K"));
-#else
-    out->print(F("\r"));
-    for (int i = 0; i < inptr + 2; i++) out->write(' ');
-    out->print(F("\r"));
-#endif
+    if (getAnsiEnabled()) {
+        out->print(sh_reset());
+        out->print(F("\r\033[K"));
+    } else {
+        out->print(F("\r"));
+        for (int i = 0; i < inptr + 2; i++) out->write(' ');
+        out->print(F("\r"));
+    }
 }
 
 // Called by printManager under mutex — redraw the prompt+input line
 void ConezShell::resumeLine(Stream *out)
 {
     if (!inputActive || !out) return;
-    out->print(F(SH_PROMPT));
+    out->print(sh_prompt());
     out->write((const uint8_t*)linebuffer, inptr);
     // reposition cursor if not at end
     for (int i = cursor; i < inptr; i++) out->write('\b');
@@ -558,7 +569,7 @@ void ConezShell::resumeLine(Stream *out)
 void ConezShell::redrawLine(int prevLen)
 {
     if (!shellConnection) return;
-    shellConnection->print(F(SH_PROMPT_CR));
+    shellConnection->print(sh_prompt_cr());
     shellConnection->write((const uint8_t*)linebuffer, inptr);
     // clear leftover characters from a longer previous line
     for (int i = inptr; i < prevLen; i++) shellConnection->write(' ');

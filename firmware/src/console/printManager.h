@@ -76,6 +76,10 @@ void releaseLock(void);
 void setInteractive(bool active);
 bool isInteractive(void);
 
+// Runtime ANSI color/escape code toggle
+void setAnsiEnabled(bool enabled);
+bool getAnsiEnabled(void);
+
 bool getDebug(source_e source);
 void inc_thread_count(int thread);
 long get_thread_count(int thread);

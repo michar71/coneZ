@@ -14,6 +14,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
+#include <QDirIterator>
 #include <QAction>
 #include <QDateTime>
 #include <chrono>
@@ -135,13 +136,27 @@ void MainWindow::onCommand(const QString &cmd)
     } else if (verb == "open") {
         onOpen();
     } else if (verb == "dir") {
-        cmdDir();
+        cmdDir(parts);
     } else if (verb == "del") {
         cmdDel(parts);
-    } else if (verb == "list") {
+    } else if (verb == "cat" || verb == "list") {
         cmdList(parts);
-    } else if (verb == "ren") {
+    } else if (verb == "ren" || verb == "mv") {
         cmdRen(parts);
+    } else if (verb == "cp") {
+        cmdCp(parts);
+    } else if (verb == "mkdir") {
+        cmdMkdir(parts);
+    } else if (verb == "rmdir") {
+        cmdRmdir(parts);
+    } else if (verb == "grep") {
+        cmdGrep(parts);
+    } else if (verb == "hexdump") {
+        cmdHexdump(parts);
+    } else if (verb == "df") {
+        cmdDf();
+    } else if (verb == "clear" || verb == "cls") {
+        cmdClear();
     } else if (verb == "param") {
         cmdParam(parts);
     } else if (verb == "led") {
@@ -152,7 +167,7 @@ void MainWindow::onCommand(const QString &cmd)
         cmdTime();
     } else if (verb == "uptime") {
         cmdUptime();
-    } else if (verb == "version") {
+    } else if (verb == "ver" || verb == "version") {
         cmdVersion();
     } else if (verb == "wasm") {
         cmdWasm(parts);
@@ -227,32 +242,47 @@ void MainWindow::onWasmFinished()
 void MainWindow::cmdHelp()
 {
     m_console->appendText(
-        "Commands:\n"
-        "  ?                    Show this help\n"
-        "  run <file>           Run script (.bas, .c, .wasm)\n"
-        "  stop                 Stop running program\n"
-        "  open                 Open file dialog\n"
-        "  dir                  List files in data directory\n"
-        "  del <file>           Delete file\n"
-        "  list <file>          Show file contents\n"
-        "  ren <old> <new>      Rename file\n"
-        "  param <id> [value]   Get/set script parameter (0-15)\n"
-        "  led                  Show LED configuration\n"
-        "  sensors              Show sensor values\n"
-        "  time                 Show current time\n"
-        "  uptime               Show time since start\n"
-        "  version              Show version info\n"
-        "  wasm [status]        Show WASM runtime status\n"
-        "  wasm info <file>     Show WASM file info\n"
+        "Available commands:\n"
+        "  cat {filename}                      Show file contents\n"
+        "  clear                               Clear console\n"
+        "  cp {source} {dest}                  Copy file\n"
+        "  del {filename}                      Delete file\n"
+        "  df                                  Show filesystem usage\n"
+        "  dir [path]                          List files\n"
+        "  grep {pattern} [file]               Search file contents\n"
+        "  help                                Show this help\n"
+        "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n"
+        "  led                                 Show LED configuration\n"
+        "  mkdir {dirname}                     Create directory\n"
+        "  open                                Open file dialog\n"
+        "  param {id} [value]                  Get/set script parameter (0-15)\n"
+        "  ren {oldname} {newname}             Rename file\n"
+        "  rmdir {dirname}                     Remove empty directory\n"
+        "  run {filename}                      Run program (.bas, .c, .wasm)\n"
+        "  sensors                             Show sensor readings\n"
+        "  stop                                Stop running program\n"
+        "  time                                Show current date/time\n"
+        "  uptime                              Show time since start\n"
+        "  version                             Show simulator version\n"
+        "  wasm [status|info {file}]           WASM runtime status/info\n"
         "\n"
     );
 }
 
-void MainWindow::cmdDir()
+void MainWindow::cmdDir(const QStringList &args)
 {
-    QDir dir(QString::fromStdString(simConfig().sandbox_path));
+    QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+    QString dirPath = sandbox;
+    if (args.size() >= 2) {
+        QString sub = args[1];
+        if (sub.startsWith('/'))
+            sub = sub.mid(1);
+        dirPath = sandbox + "/" + sub;
+    }
+
+    QDir dir(dirPath);
     if (!dir.exists()) {
-        m_console->appendText("Data directory not found.\n");
+        m_console->appendText("Not a directory: " + args.value(1, "/") + "\n");
         return;
     }
 
@@ -261,17 +291,21 @@ void MainWindow::cmdDir()
     QString out;
     qint64 totalSize = 0;
     int fileCount = 0;
+    int dirCount = 0;
     for (const auto &fi : entries) {
-        QString name = ("/" + fi.fileName()).leftJustified(30);
         if (fi.isDir()) {
-            out += "  " + name + " <DIR>\n";
+            out += QString("  %-30s <DIR>\n").arg(fi.fileName() + "/");
+            dirCount++;
         } else {
-            out += "  " + name + " " + QString::number(fi.size()) + "\n";
+            out += QString("  %-30s %6lld\n").arg(fi.fileName()).arg(fi.size());
             totalSize += fi.size();
             fileCount++;
         }
     }
-    out += QString("\n  %1 file(s), %2 bytes\n").arg(fileCount).arg(totalSize);
+    out += QString("%1 file%2, %3 dir%4, %5 bytes\n")
+        .arg(fileCount).arg(fileCount == 1 ? "" : "s")
+        .arg(dirCount).arg(dirCount == 1 ? "" : "s")
+        .arg(totalSize);
     m_console->appendText(out);
 }
 
@@ -301,7 +335,7 @@ void MainWindow::cmdDel(const QStringList &args)
 void MainWindow::cmdList(const QStringList &args)
 {
     if (args.size() < 2) {
-        m_console->appendText("Usage: list <filename>\n");
+        m_console->appendText("Usage: cat <filename>\n");
         return;
     }
     QString path = resolvePath(args[1]);
@@ -319,7 +353,7 @@ void MainWindow::cmdList(const QStringList &args)
 void MainWindow::cmdRen(const QStringList &args)
 {
     if (args.size() < 3) {
-        m_console->appendText("Usage: ren <oldname> <newname>\n");
+        m_console->appendText("Usage: ren/mv <oldname> <newname>\n");
         return;
     }
     QString oldPath = resolvePath(args[1]);
@@ -339,6 +373,215 @@ void MainWindow::cmdRen(const QStringList &args)
     } else {
         m_console->appendText("Failed to rename.\n");
     }
+}
+
+void MainWindow::cmdCp(const QStringList &args)
+{
+    if (args.size() < 3) {
+        m_console->appendText("Usage: cp <source> <dest>\n");
+        return;
+    }
+    QString srcPath = resolvePath(args[1]);
+    if (!QFileInfo::exists(srcPath)) {
+        m_console->appendText("File not found: " + args[1] + "\n");
+        return;
+    }
+    QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+    QString dstName = args[2];
+    if (dstName.startsWith('/'))
+        dstName = dstName.mid(1);
+    QString dstPath = sandbox + "/" + dstName;
+
+    if (QFile::copy(srcPath, dstPath)) {
+        m_console->appendText("Copied: " + args[1] + " -> " + args[2] + "\n");
+    } else {
+        m_console->appendText("Failed to copy.\n");
+    }
+}
+
+void MainWindow::cmdMkdir(const QStringList &args)
+{
+    if (args.size() < 2) {
+        m_console->appendText("Usage: mkdir <dirname>\n");
+        return;
+    }
+    QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+    QString name = args[1];
+    if (name.startsWith('/'))
+        name = name.mid(1);
+    QString path = sandbox + "/" + name;
+
+    if (QDir().mkpath(path)) {
+        m_console->appendText("Created: " + args[1] + "\n");
+    } else {
+        m_console->appendText("Failed to create directory.\n");
+    }
+}
+
+void MainWindow::cmdRmdir(const QStringList &args)
+{
+    if (args.size() < 2) {
+        m_console->appendText("Usage: rmdir <dirname>\n");
+        return;
+    }
+    QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+    QString name = args[1];
+    if (name.startsWith('/'))
+        name = name.mid(1);
+    QString path = sandbox + "/" + name;
+
+    QDir dir(path);
+    if (!dir.exists()) {
+        m_console->appendText("Directory not found: " + args[1] + "\n");
+        return;
+    }
+    // rmdir only removes empty directories
+    if (dir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries).count() > 0) {
+        m_console->appendText("Directory not empty: " + args[1] + "\n");
+        return;
+    }
+    if (QDir().rmdir(path)) {
+        m_console->appendText("Removed: " + args[1] + "\n");
+    } else {
+        m_console->appendText("Failed to remove directory.\n");
+    }
+}
+
+static void grepFile(const QString &pattern, const QString &filePath,
+                     bool showFilename, ConsoleWidget *console)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return;
+
+    int lineno = 0;
+    while (!file.atEnd()) {
+        QString line = QString::fromUtf8(file.readLine());
+        if (line.endsWith('\n'))
+            line.chop(1);
+        if (line.endsWith('\r'))
+            line.chop(1);
+        lineno++;
+
+        if (line.contains(pattern, Qt::CaseInsensitive)) {
+            if (showFilename)
+                console->appendText(QString("%1:%2: %3\n").arg(filePath).arg(lineno).arg(line));
+            else
+                console->appendText(QString("%1: %2\n").arg(lineno, 3).arg(line));
+        }
+    }
+}
+
+static void grepDir(const QString &pattern, const QString &dirPath,
+                    ConsoleWidget *console)
+{
+    QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        grepFile(pattern, it.filePath(), true, console);
+    }
+}
+
+void MainWindow::cmdGrep(const QStringList &args)
+{
+    if (args.size() < 2) {
+        m_console->appendText("Usage: grep <pattern> [file]  (no file = search all)\n");
+        return;
+    }
+    QString pattern = args[1];
+
+    if (args.size() >= 3) {
+        QString path = resolvePath(args[2]);
+        if (!QFileInfo::exists(path)) {
+            m_console->appendText("File not found: " + args[2] + "\n");
+            return;
+        }
+        grepFile(pattern, path, false, m_console);
+    } else {
+        QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+        grepDir(pattern, sandbox, m_console);
+    }
+}
+
+void MainWindow::cmdHexdump(const QStringList &args)
+{
+    if (args.size() < 2) {
+        m_console->appendText("Usage: hexdump <filename> [count]\n");
+        return;
+    }
+    QString path = resolvePath(args[1]);
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_console->appendText("Cannot open: " + args[1] + "\n");
+        return;
+    }
+
+    int limit = (args.size() >= 3) ? args[2].toInt() : 256;
+    if (limit <= 0) limit = 256;
+
+    qint64 fsize = file.size();
+    m_console->appendText(QString("%1  (%2 bytes)\n").arg(args[1]).arg(fsize));
+
+    char buf[16];
+    int offset = 0;
+    while (!file.atEnd() && offset < limit) {
+        qint64 n = file.read(buf, 16);
+        if (n <= 0) break;
+        if (offset + n > limit) n = limit - offset;
+
+        QString line = QString("%1  ").arg(offset, 4, 16, QChar('0'));
+
+        // Hex bytes
+        for (int i = 0; i < 16; i++) {
+            if (i == 8) line += ' ';
+            if (i < n)
+                line += QString("%1 ").arg((unsigned char)buf[i], 2, 16, QChar('0'));
+            else
+                line += "   ";
+        }
+
+        // ASCII
+        line += " |";
+        for (int i = 0; i < n; i++) {
+            unsigned char c = buf[i];
+            line += (c >= 32 && c < 127) ? QChar(c) : QChar('.');
+        }
+        line += "|\n";
+        m_console->appendText(line);
+
+        offset += n;
+    }
+    if (fsize > limit)
+        m_console->appendText(QString("... (%1 more bytes)\n").arg(fsize - limit));
+}
+
+void MainWindow::cmdDf()
+{
+    QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+    qint64 totalSize = 0;
+    int fileCount = 0;
+
+    QDirIterator it(sandbox, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        totalSize += it.fileInfo().size();
+        fileCount++;
+    }
+
+    m_console->appendText(
+        QString("Filesystem: sandbox\n"
+                "  Path:  %1\n"
+                "  Files: %2\n"
+                "  Used:  %3 bytes (%4 KB)\n")
+        .arg(sandbox)
+        .arg(fileCount)
+        .arg(totalSize)
+        .arg(totalSize / 1024));
+}
+
+void MainWindow::cmdClear()
+{
+    m_console->clear();
 }
 
 void MainWindow::cmdParam(const QStringList &args)

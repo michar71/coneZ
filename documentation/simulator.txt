@@ -84,7 +84,7 @@ that path is used instead. If neither is found, /tmp/conez_sandbox is
 used as a fallback.
 
 The data directory is used by:
-  - CLI commands (dir, list, del, ren) to manage files
+  - CLI commands (dir, cat, del, ren, cp, mkdir, rmdir, grep, hexdump, df)
   - WASM file I/O imports for runtime read/write
   - The run command for path resolution of bare filenames
 
@@ -140,26 +140,35 @@ runtime messages (start, stop, errors with BASIC line numbers).
 
 Console Commands:
 
-  ?                    Show available commands
-  run <file>           Run script (.bas, .c, .wasm)
-  stop                 Stop running program
-  open                 Open file dialog
-  dir                  List files in data directory
+  ?/help               Show available commands
+  cat <file>           Show file contents (alias: list)
+  clear/cls            Clear console output
+  cp <src> <dst>       Copy file
   del <file>           Delete file from data directory
-  list <file>          Show file contents
-  ren <old> <new>      Rename file
-  param <id> [value]   Get/set script parameter (0-15)
+  df                   Show filesystem usage (file count and total size)
+  dir [path]           List files in data directory (optional subdirectory)
+  grep <pat> [file]    Search file contents (case-insensitive, recursive)
+  hexdump <file> [n]   Hex+ASCII dump (default 256 bytes)
   led                  Show LED channel configuration
+  mkdir <dir>          Create directory
+  mv <old> <new>       Rename/move file (alias: ren)
+  open                 Open file dialog
+  param <id> [value]   Get/set script parameter (0-15)
+  ren <old> <new>      Rename file (alias: mv)
+  rmdir <dir>          Remove empty directory
+  run <file>           Run script (.bas, .c, .wasm)
   sensors              Show current sensor mock values
+  stop                 Stop running program
   time                 Show current date/time and epoch
   uptime               Show time since simulator start
-  version              Show simulator version and build info
+  ver/version          Show simulator version and build info
   wasm [status]        Show WASM runtime status
   wasm info <file>     Show WASM file size
 
 These commands mirror the firmware CLI where applicable. Hardware-only
-commands (config, cue, debug, gps, load, lora, mem, ps, reboot, tc,
-wifi) are not available in the simulator.
+commands (art, color, config, cue, debug, edit, game, gpio, gps,
+history, load, lora, mem, ps, psram, reboot, tc, wifi, winamp) are
+not available in the simulator.
 
 
 Architecture

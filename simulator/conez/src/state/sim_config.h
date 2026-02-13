@@ -12,6 +12,7 @@ struct SimConfig {
 
     std::string sandbox_path = "/tmp/conez_sandbox";
     std::string bas2wasm_path = "bas2wasm";
+    std::string c2wasm_path = "c2wasm";
     std::string clang_path = "clang";
     std::string api_header_dir;  // path to conez_api.h directory
 

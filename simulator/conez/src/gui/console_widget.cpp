@@ -58,6 +58,11 @@ void ConsoleWidget::appendText(const QString &text)
     m_output->moveCursor(QTextCursor::End);
 }
 
+void ConsoleWidget::clear()
+{
+    m_output->clear();
+}
+
 void ConsoleWidget::onReturn()
 {
     QString cmd = m_input->text().trimmed();

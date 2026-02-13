@@ -723,14 +723,13 @@ void psram_print_map(void) {
     map[MAP_WIDTH] = '\0';
 
     printfnl(SOURCE_COMMANDS, F("  Map:       [%s]\n"), map);
-#ifdef SHELL_USE_ANSI
-    printfnl(SOURCE_COMMANDS, F("             \033[38;5;240m-\033[0m free  "
-               "\033[33m+\033[0m partial  "
-               "\033[31m*\033[0m full   "
-               "(128KB/char)\n"));
-#else
-    printfnl(SOURCE_COMMANDS, F("             - free  + partial  * full   (128KB/char)\n"));
-#endif
+    if (getAnsiEnabled())
+        printfnl(SOURCE_COMMANDS, F("             \033[38;5;240m-\033[0m free  "
+                   "\033[33m+\033[0m partial  "
+                   "\033[31m*\033[0m full   "
+                   "(128KB/char)\n"));
+    else
+        printfnl(SOURCE_COMMANDS, F("             - free  + partial  * full   (128KB/char)\n"));
     #undef MAP_WIDTH
 }
 

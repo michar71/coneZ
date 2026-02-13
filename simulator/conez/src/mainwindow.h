@@ -31,10 +31,17 @@ private:
 
     // CLI commands
     void cmdHelp();
-    void cmdDir();
+    void cmdDir(const QStringList &args);
     void cmdDel(const QStringList &args);
     void cmdList(const QStringList &args);
     void cmdRen(const QStringList &args);
+    void cmdCp(const QStringList &args);
+    void cmdMkdir(const QStringList &args);
+    void cmdRmdir(const QStringList &args);
+    void cmdGrep(const QStringList &args);
+    void cmdHexdump(const QStringList &args);
+    void cmdDf();
+    void cmdClear();
     void cmdParam(const QStringList &args);
     void cmdLed();
     void cmdSensors();

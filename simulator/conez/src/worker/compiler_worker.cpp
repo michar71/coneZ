@@ -4,6 +4,7 @@
 #include <QProcess>
 #include <QFileInfo>
 #include <QTemporaryFile>
+#include <QStandardPaths>
 
 CompilerWorker::CompilerWorker(QObject *parent)
     : QObject(parent)
@@ -31,7 +32,7 @@ void CompilerWorker::compile(const QString &inputPath)
     connect(proc, &QProcess::errorOccurred, [this, proc](QProcess::ProcessError err) {
         if (err == QProcess::FailedToStart) {
             emit error("Failed to start compiler: " + proc->program() +
-                       "\nCheck that it is installed and on PATH, or use --bas2wasm / --clang.");
+                       "\nCheck that it is installed and on PATH, or use --bas2wasm / --c2wasm / --clang.");
             proc->deleteLater();
         }
     });
@@ -53,16 +54,25 @@ void CompilerWorker::compile(const QString &inputPath)
         emit outputReady("$ " + compiler + " " + args.join(" ") + "\n");
         proc->start(compiler, args);
     } else if (ext == "c") {
-        // clang --target=wasm32
-        QString compiler = QString::fromStdString(simConfig().clang_path);
-        QStringList args = {
-            "--target=wasm32", "-O2", "-nostdlib",
-            "-Wl,--no-entry", "-Wl,--export=setup", "-Wl,--export=loop",
-            "-Wl,--allow-undefined",
-            "-o", tmpWasm, inputPath
-        };
-        if (!simConfig().api_header_dir.empty()) {
-            args.insert(3, "-I" + QString::fromStdString(simConfig().api_header_dir));
+        // Prefer c2wasm, fall back to clang --target=wasm32.
+        QString c2wasm = QString::fromStdString(simConfig().c2wasm_path);
+        QString compiler;
+        QStringList args;
+        if (!QStandardPaths::findExecutable(c2wasm).isEmpty()) {
+            compiler = c2wasm;
+            args = {inputPath, "-o", tmpWasm};
+        } else {
+            compiler = QString::fromStdString(simConfig().clang_path);
+            args = {
+                "--target=wasm32", "-O2", "-nostdlib",
+                "-Wl,--no-entry", "-Wl,--export=setup", "-Wl,--export=loop",
+                "-Wl,--allow-undefined",
+                "-o", tmpWasm, inputPath
+            };
+            if (!simConfig().api_header_dir.empty()) {
+                args.insert(3, "-I" + QString::fromStdString(simConfig().api_header_dir));
+            }
+            emit outputReady("[info] c2wasm not found, falling back to clang\n");
         }
         emit outputReady("$ " + compiler + " " + args.join(" ") + "\n");
         proc->start(compiler, args);

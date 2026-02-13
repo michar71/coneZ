@@ -518,6 +518,239 @@ static void editor_goto_line(EditorState *ed, Stream *out)
 }
 
 // ---------------------------------------------------------------------------
+// Line editor (non-ANSI fallback)
+// ---------------------------------------------------------------------------
+
+static void line_editor_list(EditorState *ed, int from, int to)
+{
+    char buf[ED_LINE_MAX];
+    if (from < 0) from = 0;
+    if (to >= ed->num_lines) to = ed->num_lines - 1;
+    for (int i = from; i <= to; i++) {
+        ed_read_line(ed, i, buf);
+        buf[ED_LINE_MAX - 1] = '\0';
+        printfnl(SOURCE_NONE, "%3d: %s\n", i + 1, buf);
+    }
+}
+
+// Read a line of input from the shell stream, blocking.
+// Returns length, or -1 if stream closes.
+static int line_editor_readline(Stream *s, char *buf, int maxlen)
+{
+    int pos = 0;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        while (s->available()) {
+            int c = s->read();
+            if (c == '\r' || c == '\n') {
+                buf[pos] = '\0';
+                getLock();
+                s->print(F("\n"));
+                releaseLock();
+                return pos;
+            }
+            if ((c == 127 || c == '\b') && pos > 0) {
+                pos--;
+                getLock();
+                s->print(F("\b \b"));
+                releaseLock();
+            } else if (c >= 32 && c < 127 && pos < maxlen - 1) {
+                buf[pos++] = (char)c;
+                getLock();
+                s->write((uint8_t)c);
+                releaseLock();
+            }
+        }
+    }
+}
+
+static int line_editor(EditorState *ed)
+{
+    Stream *s = getStream();
+    bool modified = ed->modified;
+    char cmd[ED_LINE_MAX];
+
+    printfnl(SOURCE_NONE, "Editing %s (%d lines)\n", ed->filepath, ed->num_lines);
+    line_editor_list(ed, 0, ed->num_lines - 1);
+
+    for (;;) {
+        getLock();
+        s->print(F("edit> "));
+        releaseLock();
+
+        int len = line_editor_readline(s, cmd, sizeof(cmd));
+        if (len < 0) break;
+
+        // Trim leading whitespace
+        char *p = cmd;
+        while (*p == ' ' || *p == '\t') p++;
+
+        // Empty line or 'l' — list all
+        if (*p == '\0' || (*p == 'l' && p[1] == '\0')) {
+            line_editor_list(ed, 0, ed->num_lines - 1);
+            continue;
+        }
+
+        // 'q' — quit (with unsaved check)
+        if (*p == 'q') {
+            if (p[1] == '!') break;
+            if (modified) {
+                printfnl(SOURCE_NONE, "Unsaved changes. Use 'q!' to discard, or 'w' to save first.\n");
+                continue;
+            }
+            break;
+        }
+
+        // 'w' — save
+        if (*p == 'w' && (p[1] == '\0' || p[1] == ' ')) {
+            if (editor_save(ed)) {
+                modified = false;
+                printfnl(SOURCE_NONE, "Saved %d lines\n", ed->num_lines);
+            } else {
+                printfnl(SOURCE_NONE, "Save FAILED\n");
+            }
+            continue;
+        }
+
+        // 'p N M' — print range
+        if (*p == 'p' && p[1] == ' ') {
+            int n1 = 0, n2 = 0;
+            if (sscanf(p + 2, "%d %d", &n1, &n2) == 2 && n1 >= 1 && n2 >= n1) {
+                line_editor_list(ed, n1 - 1, n2 - 1);
+            } else {
+                printfnl(SOURCE_NONE, "Usage: p <from> <to>\n");
+            }
+            continue;
+        }
+
+        // 'i N' — insert before line N
+        if (*p == 'i' && p[1] == ' ') {
+            int n = atoi(p + 2);
+            if (n < 1 || n > ed->num_lines + 1) {
+                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines + 1);
+                continue;
+            }
+            printfnl(SOURCE_NONE, "Insert before line %d (empty line to stop):\n", n);
+            int at = n - 1;
+            for (;;) {
+                getLock();
+                s->print(F("  > "));
+                releaseLock();
+                char line[ED_LINE_MAX];
+                int ll = line_editor_readline(s, line, sizeof(line));
+                if (ll <= 0) break;
+
+                if (ed->num_lines >= ED_MAX_LINES) {
+                    printfnl(SOURCE_NONE, "Max lines reached\n");
+                    break;
+                }
+                if (!ed_ensure_capacity(ed, ed->num_lines + 1)) {
+                    printfnl(SOURCE_NONE, "Out of memory\n");
+                    break;
+                }
+                ed_invalidate_work(ed);
+                ed_shift_down(ed, at);
+                ed->num_lines++;
+                char buf[ED_LINE_MAX];
+                memset(buf, 0, ED_LINE_MAX);
+                strncpy(buf, line, ED_LINE_MAX - 1);
+                ed_write_line(ed, at, buf);
+                modified = true;
+                at++;
+            }
+            continue;
+        }
+
+        // 'a' — append at end
+        if (*p == 'a' && (p[1] == '\0' || p[1] == ' ')) {
+            printfnl(SOURCE_NONE, "Append (empty line to stop):\n");
+            for (;;) {
+                getLock();
+                s->print(F("  > "));
+                releaseLock();
+                char line[ED_LINE_MAX];
+                int ll = line_editor_readline(s, line, sizeof(line));
+                if (ll <= 0) break;
+
+                if (ed->num_lines >= ED_MAX_LINES) {
+                    printfnl(SOURCE_NONE, "Max lines reached\n");
+                    break;
+                }
+                if (!ed_ensure_capacity(ed, ed->num_lines + 1)) {
+                    printfnl(SOURCE_NONE, "Out of memory\n");
+                    break;
+                }
+                char buf[ED_LINE_MAX];
+                memset(buf, 0, ED_LINE_MAX);
+                strncpy(buf, line, ED_LINE_MAX - 1);
+                ed_write_line(ed, ed->num_lines, buf);
+                ed->num_lines++;
+                modified = true;
+            }
+            continue;
+        }
+
+        // 'd N' — delete line
+        if (*p == 'd' && p[1] == ' ') {
+            int n = atoi(p + 2);
+            if (n < 1 || n > ed->num_lines) {
+                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines);
+                continue;
+            }
+            ed_invalidate_work(ed);
+            if (ed->num_lines == 1) {
+                char empty[ED_LINE_MAX];
+                memset(empty, 0, ED_LINE_MAX);
+                ed_write_line(ed, 0, empty);
+            } else {
+                ed_shift_up(ed, n - 1);
+                ed->num_lines--;
+            }
+            modified = true;
+            printfnl(SOURCE_NONE, "Deleted line %d\n", n);
+            continue;
+        }
+
+        // 'r N' — replace line
+        if (*p == 'r' && p[1] == ' ') {
+            int n = atoi(p + 2);
+            if (n < 1 || n > ed->num_lines) {
+                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines);
+                continue;
+            }
+            printfnl(SOURCE_NONE, "Replace line %d:\n", n);
+            getLock();
+            s->print(F("  > "));
+            releaseLock();
+            char line[ED_LINE_MAX];
+            line_editor_readline(s, line, sizeof(line));
+            char buf[ED_LINE_MAX];
+            memset(buf, 0, ED_LINE_MAX);
+            strncpy(buf, line, ED_LINE_MAX - 1);
+            ed_write_line(ed, n - 1, buf);
+            modified = true;
+            continue;
+        }
+
+        // Bare number — show that line
+        if (*p >= '0' && *p <= '9') {
+            int n = atoi(p);
+            if (n >= 1 && n <= ed->num_lines) {
+                line_editor_list(ed, n - 1, n - 1);
+            } else {
+                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines);
+            }
+            continue;
+        }
+
+        printfnl(SOURCE_NONE, "Commands: l(ist) | N | i N | a | d N | r N | p N M | w | q\n");
+    }
+
+    ed->modified = modified;
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Main editor command
 // ---------------------------------------------------------------------------
 
@@ -539,6 +772,13 @@ int cmd_edit(int argc, char **argv)
     if (!editor_load(&ed, path)) {
         printfnl(SOURCE_COMMANDS, F("Failed to allocate PSRAM for editor\n"));
         return 1;
+    }
+
+    // Non-ANSI: use line editor fallback
+    if (!getAnsiEnabled()) {
+        int result = line_editor(&ed);
+        ed_free_blocks(&ed);
+        return result;
     }
 
     setInteractive(true);

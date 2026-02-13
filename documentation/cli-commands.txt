@@ -7,8 +7,9 @@ The Telnet server negotiates IAC WILL ECHO + WILL SGA so clients
 operate in character mode with server-side echo.
 
 The desktop simulator (see simulator.txt) supports a subset of these
-commands in its console: ?, run, stop, open, dir, del, list, ren, param,
-led, sensors, time, uptime, version, wasm. Hardware-only commands are
+commands in its console: ?/help, run, stop, open, dir, del, cat/list,
+ren/mv, cp, mkdir, rmdir, grep, hexdump, df, clear/cls, param, led,
+sensors, time, uptime, ver/version, wasm. Hardware-only commands are
 not available in the simulator.
 
 Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
@@ -21,23 +22,26 @@ Quick Reference
 ---------------
 
   ?                                  Show help
-  art                                Display ANSI traffic cone art
-  clear / cls                        Clear screen
+  art                                Display ANSI traffic cone art (requires ANSI)
+  cat {filename}                     Show file contents
+  clear / cls                        Clear screen (requires ANSI)
+  color [on|off]                     Show or toggle ANSI color output
   config [set|unset|reset]           Show or change settings
   cp {src} {dst}                     Copy file
   cue [load|start|stop|status]       Cue timeline engine control
   debug [off | {source} [on|off]]    Show or set debug message types
   del {filename}                     Delete file
+  df                                 Show filesystem usage
   dir [path]                         List files (optionally in subdirectory)
-  edit {filename}                    Full-screen text editor
-  game                               Conway's Game of Life
+  edit {filename}                    Text editor (line editor if ANSI off)
+  game                               Conway's Game of Life (requires ANSI)
   gpio [set|out|in|read]             Show or control GPIO pins
   gps [info|set|save|restart|send]   Show GPS status or configure module
+  grep {pattern} [file]              Search file contents (case-insensitive)
   help                               Show help (same as ?)
   hexdump {filename} [count]         Hex+ASCII dump of file (default 256 bytes)
   history                            Show command history
   led                                Show LED configuration
-  list {filename}                    Show file contents
   load {filename}                    Receive file via serial (CTRL+Z to end)
   lora                               Show LoRa radio status
   free                               Show heap memory (alias for mem)
@@ -60,7 +64,7 @@ Quick Reference
   version                            Show firmware version and board info
   wasm [status|info <file>]          WASM runtime status/info
   wifi                               Show WiFi status
-  winamp                             Audio visualizer (LED effect)
+  winamp                             Audio visualizer (requires ANSI)
 
 
 Detailed Command Descriptions
@@ -71,9 +75,29 @@ Detailed Command Descriptions
 
 art
   Display an ANSI art traffic cone. Uses 256-color escapes.
+  Requires ANSI mode (color on).
+
+cat {filename}
+  Print the contents of a file to the console. Alias: list.
+  Example: cat /startup.bas
 
 clear / cls
-  Clear the terminal screen. Requires ANSI terminal support.
+  Clear the terminal screen. Requires ANSI mode (color on).
+
+color [on|off]
+  Show or toggle ANSI color/escape code output. Default is on.
+
+  color
+      Show current state (on or off).
+
+  color on
+      Enable ANSI escape codes. Colored timestamps, source tags,
+      and prompt are restored.
+
+  color off
+      Disable all ANSI escape codes. Output is plain text only.
+      Commands that require ANSI (art, clear, game, winamp) will
+      print an error. The editor falls back to a line-based mode.
 
 cp {src} {dst}
   Copy a file on LittleFS.
@@ -130,10 +154,14 @@ debug
 game
   Conway's Game of Life on a 30x20 toroidal grid with RGB age-based
   coloring. Runs at ~10 FPS. Press any key to exit.
+  Requires ANSI mode (color on).
 
 del {filename}
   Delete a file from LittleFS.
   Example: del /old_script.bas
+
+df
+  Show LittleFS filesystem usage: total, used, and free space.
 
 dir [path]
   List all files and directories on LittleFS with sizes. Optionally
@@ -142,10 +170,13 @@ dir [path]
             dir /scripts
 
 edit {filename}
-  Open the full-screen text editor for on-device script editing. Creates
-  the file if it doesn't exist. Supports arrow key navigation, line
-  editing, goto line (Ctrl-G), and save (Ctrl-S). Press Ctrl-Q to quit.
-  Runs in the ShellTask and does not block hardware polling.
+  Open the text editor for on-device script editing. Creates the file
+  if it doesn't exist. In ANSI mode, opens a full-screen nano-like
+  editor with arrow key navigation, goto line (Ctrl-G), cut/paste
+  (Ctrl-K/U), save (Ctrl-W), and quit (Ctrl-X). When ANSI is off
+  (color off), falls back to a line editor with numbered lines and
+  commands: l(ist), i(nsert) N, a(ppend), d(elete) N, r(eplace) N,
+  p(rint) N M, w(rite), q(uit).
   Example: edit /startup.bas
 
 gpio
@@ -164,6 +195,14 @@ gpio
 
   gpio read <pin>
       Read the digital level of a single pin.
+
+grep {pattern} [file]
+  Case-insensitive substring search in file contents. With a filename,
+  searches that file and shows matching lines with line numbers. Without
+  a filename, searches all files on LittleFS recursively and prefixes
+  matches with the file path.
+  Examples: grep PRINT /test.bas
+            grep TODO
 
 gps
   With no arguments, shows GPS status: fix type, satellites, HDOP/VDOP/
@@ -227,7 +266,7 @@ led
   Only available on boards with RGB LEDs.
 
 list {filename}
-  Print the contents of a file to the console.
+  Alias for cat. Print the contents of a file to the console.
   Example: list /startup.bas
 
 load {filename}
@@ -348,4 +387,4 @@ wifi
 
 winamp
   Audio visualizer LED effect. Displays a retro-style equalizer on
-  LED strips. Press any key to exit.
+  LED strips. Press any key to exit. Requires ANSI mode (color on).

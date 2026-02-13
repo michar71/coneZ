@@ -20,6 +20,7 @@ int main(int argc, char *argv[])
     parser.addOption({"leds", "LED count per channel", "count", "50"});
     parser.addOption({"sandbox", "Sandbox directory for file I/O", "path"});
     parser.addOption({"bas2wasm", "Path to bas2wasm compiler", "path", "bas2wasm"});
+    parser.addOption({"c2wasm", "Path to c2wasm compiler", "path", "c2wasm"});
     parser.addOption({"clang", "Path to clang compiler", "path", "clang"});
     parser.addOption({"api-dir", "Path to directory containing conez_api.h", "path"});
     parser.addPositionalArgument("file", "Script to run on startup (.bas, .c, .wasm)");
@@ -30,6 +31,7 @@ int main(int argc, char *argv[])
     if (leds > 0) {
         cfg.led_count1 = cfg.led_count2 = cfg.led_count3 = cfg.led_count4 = leds;
     }
+    if (parser.isSet("c2wasm"))   cfg.c2wasm_path    = parser.value("c2wasm").toStdString();
     if (parser.isSet("clang"))    cfg.clang_path     = parser.value("clang").toStdString();
     if (parser.isSet("api-dir"))  cfg.api_header_dir = parser.value("api-dir").toStdString();
 

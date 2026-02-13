@@ -11,6 +11,7 @@ public:
     explicit ConsoleWidget(QWidget *parent = nullptr);
 
     void appendText(const QString &text);
+    void clear();
 
 signals:
     void commandEntered(const QString &cmd);

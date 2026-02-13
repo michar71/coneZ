@@ -49,32 +49,98 @@ void deleteFile(fs::FS &fs, const char *path)
 }
 
 
-void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
+// Directory entry for sorted, aligned listing
+struct DirEntry {
+    char name[64];
+    uint32_t size;
+    time_t mtime;
+    bool isDir;
+};
+
+static int dir_entry_cmp(const void *a, const void *b)
 {
-  printfnl(SOURCE_COMMANDS, F("Listing directory: %s\r\n"), dirname);
+    const DirEntry *ea = (const DirEntry *)a;
+    const DirEntry *eb = (const DirEntry *)b;
+    // Directories first, then alphabetical
+    if (ea->isDir != eb->isDir) return ea->isDir ? -1 : 1;
+    return strcasecmp(ea->name, eb->name);
+}
 
-  File root = fs.open(dirname);
-  if (!root) {
-    printfnl(SOURCE_COMMANDS, F("- failed to open directory\n") );
-    return;
-  }
-  if (!root.isDirectory()) {
-    printfnl(SOURCE_COMMANDS, F(" - not a directory\n") );
-    return;
-  }
+static void dir_list(fs::FS &fs, const char *dirname, int indent,
+                     Stream *out, bool showTime, int nameWidth,
+                     int *fileCount, int *dirCount, uint32_t *totalSize)
+{
+    File root = fs.open(dirname);
+    if (!root || !root.isDirectory()) return;
 
-  File file = root.openNextFile();
-  while (file) {
-    if (file.isDirectory()) {
-      printfnl(SOURCE_COMMANDS, F("  DIR : %s\n"), file.name());
-      if (levels) {
-        listDir(fs, file.path(), levels - 1);
-      }
-    } else {
-      printfnl(SOURCE_COMMANDS, F("  FILE: %s \tSIZE: %d\n"), file.name(),file.size());
+    // Collect entries
+    DirEntry entries[32];
+    int n = 0;
+    File file = root.openNextFile();
+    while (file && n < 32) {
+        DirEntry *e = &entries[n];
+        strncpy(e->name, file.name(), sizeof(e->name) - 1);
+        e->name[sizeof(e->name) - 1] = '\0';
+        e->isDir = file.isDirectory();
+        e->size = e->isDir ? 0 : file.size();
+        e->mtime = file.getLastWrite();
+        n++;
+        file = root.openNextFile();
     }
-    file = root.openNextFile();
-  }
+
+    qsort(entries, n, sizeof(DirEntry), dir_entry_cmp);
+
+    // Print entries — dirs first (with trailing /), then files
+    for (int i = 0; i < n; i++) {
+        DirEntry *e = &entries[i];
+        if (e->isDir) {
+            out->printf("%*s%s/\n", indent, "", e->name);
+            (*dirCount)++;
+            // Recurse with increased indent
+            char subpath[128];
+            snprintf(subpath, sizeof(subpath), "%s%s%s",
+                     dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
+                     e->name);
+            dir_list(fs, subpath, indent + 2, out, showTime, nameWidth,
+                     fileCount, dirCount, totalSize);
+        } else {
+            *totalSize += e->size;
+            (*fileCount)++;
+            if (showTime && e->mtime > 0) {
+                struct tm tm;
+                localtime_r(&e->mtime, &tm);
+                out->printf("%*s%-*s  %6u  %s %02d %02d:%02d\n",
+                    indent, "", nameWidth, e->name, e->size,
+                    (const char *[]){"Jan","Feb","Mar","Apr","May","Jun",
+                     "Jul","Aug","Sep","Oct","Nov","Dec"}[tm.tm_mon],
+                    tm.tm_mday, tm.tm_hour, tm.tm_min);
+            } else {
+                out->printf("%*s%-*s  %6u\n",
+                    indent, "", nameWidth, e->name, e->size);
+            }
+        }
+    }
+}
+
+// Pre-scan to find longest filename at any level
+static void dir_max_name(fs::FS &fs, const char *dirname, int *maxLen)
+{
+    File root = fs.open(dirname);
+    if (!root || !root.isDirectory()) return;
+
+    File file = root.openNextFile();
+    while (file) {
+        int len = strlen(file.name());
+        if (len > *maxLen) *maxLen = len;
+        if (file.isDirectory()) {
+            char subpath[128];
+            snprintf(subpath, sizeof(subpath), "%s%s%s",
+                     dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
+                     file.name());
+            dir_max_name(fs, subpath, maxLen);
+        }
+        file = root.openNextFile();
+    }
 }
 
 void readFile(fs::FS &fs, const char *path) 
@@ -279,15 +345,131 @@ int listFile(int argc, char **argv)
 
 int listDir(int argc, char **argv)
 {
-    if (argc == 1) {
-        listDir(LittleFS, "/", 1);
-    } else {
-        char path[64];
+    char path[64];
+    if (argc >= 2)
         normalize_path(path, sizeof(path), argv[1]);
-        listDir(LittleFS, path, 1);
+    else
+        strcpy(path, "/");
+
+    File root = LittleFS.open(path);
+    if (!root || !root.isDirectory()) {
+        printfnl(SOURCE_COMMANDS, F("Not a directory: %s\n"), path);
+        return 1;
+    }
+    root.close();
+
+    // Find longest filename for column alignment
+    int nameWidth = 8;
+    dir_max_name(LittleFS, path, &nameWidth);
+
+    bool showTime = get_time_valid();
+    int fileCount = 0, dirCount = 0;
+    uint32_t totalSize = 0;
+
+    getLock();
+    Stream *out = getStream();
+    dir_list(LittleFS, path, 0, out, showTime, nameWidth,
+             &fileCount, &dirCount, &totalSize);
+    out->printf("%d file%s, %d dir%s, %u bytes\n",
+        fileCount, fileCount == 1 ? "" : "s",
+        dirCount, dirCount == 1 ? "" : "s",
+        totalSize);
+    releaseLock();
+    return 0;
+}
+
+int cmd_df(int argc, char **argv)
+{
+    size_t total = LittleFS.totalBytes();
+    size_t used  = LittleFS.usedBytes();
+    size_t free  = total - used;
+    unsigned pct = total ? (unsigned)(used * 100 / total) : 0;
+
+    printfnl(SOURCE_COMMANDS, F("Filesystem: LittleFS\n"));
+    printfnl(SOURCE_COMMANDS, F("  Total: %u bytes (%u KB)\n"), (unsigned)total, (unsigned)(total / 1024));
+    printfnl(SOURCE_COMMANDS, F("  Used:  %u bytes (%u KB)  %u%%\n"), (unsigned)used, (unsigned)(used / 1024), pct);
+    printfnl(SOURCE_COMMANDS, F("  Free:  %u bytes (%u KB)\n"), (unsigned)free, (unsigned)(free / 1024));
+    return 0;
+}
+
+
+static void grep_file(const char *pattern, const char *path, bool show_filename)
+{
+    File f = LittleFS.open(path, "r");
+    if (!f || f.isDirectory()) return;
+
+    char buf[256];
+    int lineno = 0;
+    while (f.available()) {
+        int len = f.readBytesUntil('\n', buf, sizeof(buf) - 1);
+        buf[len] = '\0';
+        if (len > 0 && buf[len - 1] == '\r') buf[--len] = '\0';
+        lineno++;
+
+        // Case-insensitive substring search
+        // Build lowercase copies for comparison
+        char lower_buf[256], lower_pat[64];
+        for (int i = 0; buf[i]; i++)
+            lower_buf[i] = (buf[i] >= 'A' && buf[i] <= 'Z') ? buf[i] + 32 : buf[i];
+        lower_buf[len] = '\0';
+        int plen = strlen(pattern);
+        for (int i = 0; i < plen && i < 63; i++)
+            lower_pat[i] = (pattern[i] >= 'A' && pattern[i] <= 'Z') ? pattern[i] + 32 : pattern[i];
+        lower_pat[plen < 63 ? plen : 63] = '\0';
+
+        if (strstr(lower_buf, lower_pat)) {
+            if (show_filename)
+                printfnl(SOURCE_NONE, "%s:%d: %s\n", path, lineno, buf);
+            else
+                printfnl(SOURCE_NONE, "%3d: %s\n", lineno, buf);
+        }
+    }
+    f.close();
+}
+
+static void grep_dir(const char *pattern, const char *dirname)
+{
+    File root = LittleFS.open(dirname);
+    if (!root || !root.isDirectory()) return;
+
+    File file = root.openNextFile();
+    while (file) {
+        if (file.isDirectory()) {
+            char subpath[128];
+            snprintf(subpath, sizeof(subpath), "%s%s%s",
+                     dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
+                     file.name());
+            grep_dir(pattern, subpath);
+        } else {
+            char filepath[128];
+            snprintf(filepath, sizeof(filepath), "%s%s%s",
+                     dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
+                     file.name());
+            grep_file(pattern, filepath, true);
+        }
+        file = root.openNextFile();
+    }
+}
+
+int cmd_grep(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: grep <pattern> [file]  (no file = search all)\n"));
+        return 1;
+    }
+
+    if (argc >= 3) {
+        // Search specific file
+        char path[64];
+        normalize_path(path, sizeof(path), argv[2]);
+        grep_file(argv[1], path, false);
+    } else {
+        // Search all files recursively
+        grep_dir(argv[1], "/");
     }
     return 0;
 }
+
 
 int cmd_cp(int argc, char **argv)
 {
@@ -1324,6 +1506,10 @@ int cmd_led(int argc, char **argv)
 
 int cmd_art( int argc, char **argv )
 {
+    if (!getAnsiEnabled()) {
+        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        return 1;
+    }
     getLock();
     Stream *out = getStream();
     out->print(
@@ -1364,6 +1550,10 @@ static void wa_repeat(Stream *out, const char *ch, int n)
 
 int cmd_winamp(int argc, char **argv)
 {
+    if (!getAnsiEnabled()) {
+        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        return 1;
+    }
     setInteractive(true);
     vTaskDelay(pdMS_TO_TICKS(50));
     while (getStream()->available()) getStream()->read();
@@ -1534,6 +1724,10 @@ int cmd_winamp(int argc, char **argv)
 
 int cmd_game(int argc, char **argv)
 {
+    if (!getAnsiEnabled()) {
+        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        return 1;
+    }
     setInteractive(true);
     const int W = 30, H = 20;
     uint8_t grid[H][W], next[H][W], age[H][W];
@@ -1625,8 +1819,32 @@ int cmd_game(int argc, char **argv)
 }
 
 
+int cmd_color(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("ANSI color: %s\n"), getAnsiEnabled() ? "on" : "off");
+        return 0;
+    }
+    if (!strcasecmp(argv[1], "on")) {
+        setAnsiEnabled(true);
+        printfnl(SOURCE_COMMANDS, F("ANSI color enabled\n"));
+    } else if (!strcasecmp(argv[1], "off")) {
+        setAnsiEnabled(false);
+        printfnl(SOURCE_COMMANDS, F("ANSI color disabled\n"));
+    } else {
+        printfnl(SOURCE_COMMANDS, F("Usage: color [on|off]\n"));
+        return 1;
+    }
+    return 0;
+}
+
+
 int cmd_clear( int argc, char **argv )
 {
+    if (!getAnsiEnabled()) {
+        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        return 1;
+    }
     getLock();
     Stream *out = getStream();
     out->print(F("\033[2J\033[H"));  // clear screen + cursor home
@@ -1638,23 +1856,26 @@ int cmd_clear( int argc, char **argv )
 int cmd_help( int argc, char **argv )
 {
     printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  art                                 Is it art?\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  clear                               Clear screen\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  art                                 Is it art? (ANSI)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  cat {filename}                      Show file contents\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  clear                               Clear screen (ANSI)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  color [on|off]                      Show or toggle ANSI color\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]            Show or change settings\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  cp {source} {dest}                  Copy file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]        Cue timeline engine\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]     Show or set debug message types\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  del {filename}                      Delete file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  edit {filename}                     Edit file (nano-like editor)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  game                                Waste time\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  df                                  Show filesystem usage\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  dir [path]                          List files\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  edit {filename}                     Edit file (nano-like editor)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  game                                Waste time (ANSI)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  gpio [set|out|in|read]              Show or configure GPIO pins\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  gps                                 Show GPS status\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  grep {pattern} [file]               Search file contents\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  help                                Show this help\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  history                             Show command history\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  led                                 Show LED configuration\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  list {filename}                     Show file contents\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  load {filename}                     Load program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mem                                 Show heap memory stats\n" ) );
@@ -1778,19 +1999,23 @@ void init_commands(Stream *dev)
     //file Sydstem commands
     shell.addCommand(F("?"), cmd_help);
     shell.addCommand(F("art"), cmd_art);
+    shell.addCommand(F("cat"), listFile);
     shell.addCommand(F("clear"), cmd_clear);
     shell.addCommand(F("cls"), cmd_clear);
+    shell.addCommand(F("color"), cmd_color);
     shell.addCommand(F("config"), cmd_config);
     shell.addCommand(F("cp"), cmd_cp);
     shell.addCommand(F("cue"), cmd_cue);
     shell.addCommand(F("debug"), cmd_debug );
     shell.addCommand(F("del"), delFile);
+    shell.addCommand(F("df"), cmd_df);
     shell.addCommand(F("dir"), listDir);
     shell.addCommand(F("edit"), cmd_edit);
     shell.addCommand(F("mkdir"), cmd_mkdir);
     shell.addCommand(F("game"), cmd_game);
     shell.addCommand(F("gpio"), cmd_gpio);
     shell.addCommand(F("gps"), cmd_gps);
+    shell.addCommand(F("grep"), cmd_grep);
     shell.addCommand(F("help"), cmd_help);
     shell.addCommand(F("hexdump"), cmd_hexdump);
     shell.addCommand(F("led"), cmd_led);

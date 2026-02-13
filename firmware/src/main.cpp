@@ -428,7 +428,6 @@ void setup()
   Serial.println("WASM task active");
 #endif
 
-#ifdef SHELL_USE_ANSI
   // ANSI color test — each letter in a different color
   Serial.print("\nANSI color test: ");
   const char *hello = "Hello World";
@@ -437,7 +436,6 @@ void setup()
     Serial.printf("\033[%dm%c", colors[i], hello[i]);
   }
   Serial.println("\033[0m");
-#endif
 
   //Init command line interpreter (single DualStream for both Serial + Telnet)
   setCLIEcho(true);

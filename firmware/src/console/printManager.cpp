@@ -9,6 +9,7 @@ SemaphoreHandle_t print_mutex;
 uint32_t debug = 0;
 bool ts = false;
 volatile bool interactive_mode = false;
+static bool ansi_enabled = true;   // runtime ANSI toggle (default on)
 
 volatile long threadLoopCount[4] = {0, 0, 0, 0}; // For debugging thread loops
 
@@ -25,16 +26,16 @@ void print_ts(void)
     // Print the timestamp if enabled
     if (ts) {
         unsigned long currentMillis = millis();
-#ifdef SHELL_USE_ANSI
-        OutputStream->print("\033[36m[");     // cyan bracket
-        OutputStream->print("\033[34m");      // blue number
-        OutputStream->print(currentMillis);
-        OutputStream->print("\033[36m] ");    // cyan bracket
-#else
-        OutputStream->print("[");
-        OutputStream->print(currentMillis);
-        OutputStream->print("] ");
-#endif
+        if (ansi_enabled) {
+            OutputStream->print("\033[36m[");     // cyan bracket
+            OutputStream->print("\033[34m");      // blue number
+            OutputStream->print(currentMillis);
+            OutputStream->print("\033[36m] ");    // cyan bracket
+        } else {
+            OutputStream->print("[");
+            OutputStream->print(currentMillis);
+            OutputStream->print("] ");
+        }
     }
 }
 
@@ -88,17 +89,17 @@ void vprintfnl( source_e source, const char *format, va_list args )
         }
         if (tag) {
             print_ts();
-#ifdef SHELL_USE_ANSI
-            OutputStream->print("\033[36m[");   // dark cyan bracket
-            OutputStream->print("\033[32m");    // green tag
-            OutputStream->print(tag);
-            OutputStream->print("\033[36m]");   // dark cyan bracket
-            OutputStream->print("\033[0m ");    // reset + space
-#else
-            OutputStream->print("[");
-            OutputStream->print(tag);
-            OutputStream->print("] ");
-#endif
+            if (ansi_enabled) {
+                OutputStream->print("\033[36m[");   // dark cyan bracket
+                OutputStream->print("\033[32m");    // green tag
+                OutputStream->print(tag);
+                OutputStream->print("\033[36m]");   // dark cyan bracket
+                OutputStream->print("\033[0m ");    // reset + space
+            } else {
+                OutputStream->print("[");
+                OutputStream->print(tag);
+                OutputStream->print("] ");
+            }
         }
     }
     vsnprintf(buf, max_txt, format, args);
@@ -226,6 +227,16 @@ void setInteractive(bool active)
 bool isInteractive(void)
 {
     return interactive_mode;
+}
+
+void setAnsiEnabled(bool enabled)
+{
+    ansi_enabled = enabled;
+}
+
+bool getAnsiEnabled(void)
+{
+    return ansi_enabled;
 }
 
 
