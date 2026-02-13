@@ -10,7 +10,11 @@ public sealed class MediaImportService
 {
     private static readonly FilePickerFileType MediaFileType = new("Media")
     {
-        Patterns = new List<string> { "*.wav", "*.mp3", "*.mp4", "*.mov" }
+        Patterns = new List<string>
+        {
+            "*.wav", "*.mp3", "*.ogg", "*.flac", "*.aac", "*.m4a",
+            "*.mp4", "*.mov", "*.avi", "*.mkv", "*.webm"
+        }
     };
 
     public async Task<string?> PickMediaAsync(Window owner)
