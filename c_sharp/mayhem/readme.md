@@ -18,7 +18,6 @@ Linux (Debian/Ubuntu)
       libswscale-dev libswresample-dev libavutil-dev
 
   cd c_sharp/mayhem
-  export FFMPEG_PATH=/usr/lib/x86_64-linux-gnu
   dotnet run --project Mayhem/Mayhem.csproj
 
 
@@ -28,5 +27,12 @@ macOS (Homebrew)
   brew install dotnet ffmpeg
 
   cd c_sharp/mayhem
-  export FFMPEG_PATH=/opt/homebrew/opt/ffmpeg/lib
   dotnet run --project Mayhem/Mayhem.csproj
+
+
+FFmpeg library paths are auto-detected from standard system locations and from
+the ffmpeg binary on PATH. If auto-detection fails, set FFMPEG_PATH to the
+directory containing libavformat:
+
+  export FFMPEG_PATH=/usr/lib/x86_64-linux-gnu        # Linux example
+  export FFMPEG_PATH=/opt/homebrew/opt/ffmpeg/lib      # macOS example

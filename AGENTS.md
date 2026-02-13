@@ -243,15 +243,15 @@ Avalonia/C# desktop application in `c_sharp/mayhem/` for authoring timeline-base
 sudo apt install dotnet-sdk-10.0 ffmpeg libavcodec-dev libavformat-dev \
     libswscale-dev libswresample-dev libavutil-dev
 cd c_sharp/mayhem
-FFMPEG_PATH=/usr/lib/x86_64-linux-gnu dotnet run --project Mayhem/Mayhem.csproj
+dotnet run --project Mayhem/Mayhem.csproj
 
 # macOS (Homebrew)
 brew install dotnet ffmpeg
 cd c_sharp/mayhem
-FFMPEG_PATH=/opt/homebrew/opt/ffmpeg/lib dotnet run --project Mayhem/Mayhem.csproj
+dotnet run --project Mayhem/Mayhem.csproj
 ```
 
-**Dependencies:** .NET 10.0 SDK, Avalonia 11.3, FFmpeg libraries (audio/video decoding via FFmpeg.AutoGen bindings).
+**Dependencies:** .NET 10.0 SDK, Avalonia 11.3, FFmpeg libraries (audio/video decoding via FFmpeg.AutoGen bindings). FFmpeg library paths are auto-detected from standard system locations and from the `ffmpeg` binary on PATH. Set `FFMPEG_PATH` to override if auto-detection fails.
 
 **Source layout:** `Models/` (Project, Channel, Effect types, Cue), `ViewModels/` (MVVM), `Services/` (FFmpeg decoding, audio playback, project file I/O), `Converters/` (XAML value converters). Sample scripts in `Scripts/`.
 
