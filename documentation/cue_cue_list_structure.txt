@@ -1,0 +1,78 @@
+Cues
+====
+- All Cues are 64 Bytes long
+- Cues ar timestamped event-point that trigger actions/effects or set parameters.
+- If thd timestamp is inthe past (or 0) the cue is executed immidiatly, otherwsie at the time specified.
+- If the duration is 0 the cue will (Depending on the type) run indefentily/until overriden by another cue (Or self-terminates).
+- Channel 0 is special. Any effect/parameter here will be applied to all Channels
+- Parmeter ID 0 is special. It is used for Script control. 
+  - Value 0 -> NOP (So parameter 0, Value 0 does nothing)
+  - Value 1 -> Restart Script
+  - Value 2 -> Pause Script
+  - Value 3 -> Continue Script
+  - Value 4 -> Abort Script
+
+General:
+Times are expressed as Unix Epoch Time (Long Long, 8 Byte, 64 bits)
+Channels 0..65535 (2 bytes, 16 bits)
+Parameter 0..65535v (2 Bytes, 16 Bits)
+Type 0..65535 (2 Bytes, 16 Bits)
+
+Data common to all Cues:
+Timestamp
+Duration
+Type
+Channel
+
+(Total Heeader Size: 8+8+2+2 = 20 Bytes)
+
+Types:
+======
+
+Script Cues: (Set a Script)
+---------------------------
+Script ID 
+
+Color Cues: -> Set The color (And allow it to change over Time)
+---------------------------------------------------------------
+Start Color(RGBA)
+End Color (RGBA)
+Transition Offset
+Transition Window
+
+Piece Cue: -> Set up a cue-list (Piece) to start at a specific time
+-------------------------------------------------------------------
+Cue-List ID
+
+(This cue can be used to chain cues together and jump form one to another...)
+
+Parameter List Cue -> Set a Specific Parameter
+----------------------------------------------
+Parameter ID
+Parameter Value
+....
+(Up to 11 Parameter - 64-20 = 44 Bytes. Pad with 0's (NOP Parameter) if only a subset is used)
+
+Global Cue: -> Set a Global Parameter
+-------------------------------------
+Global Parsmeter ID (Brighness, Volume)
+Parameter Value 
+
+Cue-List
+========
+If a whole list of cues is transmitted its csalled a cue-list. (Duh...)
+- Cue-lists can be stored as files (With the. suffix .clf for cue-list file)
+- Cue lists chan be opened in chunks of 64 bytes and traversed
+- A cue list shall have 1 header (64 bytes) at the beginning followed by 64-byte cues
+- Cues in the cue list shall be sorted by timestamp
+- A cue list header is just a special type of cue.....
+
+
+Cue-List Header
+---------------
+(20 byte cue header, global time to activate cue list as start, media duration a length, Channel 0)
+Cue List ID (32 Bit, 4 bytes) -> Unique Cue List ID
+Cue-Count (32 Bit 4 Bytes) -> Number of cues in list or 0 if undetermined (Read filesize in that case)
+Media Link (20 bytes). -> String 
+Expiration Time (64 Bit, 8 Byte) -> Time when the list can be discarded
+Version (2 Byte) -> Version of Cue List/Cue Protocol
