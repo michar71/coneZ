@@ -232,10 +232,6 @@
                             <Grid Width="{Binding TimelineWidth}" RowDefinitions="*,80">
                                 <Grid Grid.Row="0" Name="TimelineRow" RowDefinitions="18,*">
                                 <Border Grid.RowSpan="2" Background="#151515" IsHitTestVisible="False">
-                                    <TextBlock Text="Timeline Area"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"
-                                               Opacity="0.6" />
                                 </Border>
 
                                 <Border Grid.RowSpan="2"

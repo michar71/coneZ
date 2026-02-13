@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading;
 using Avalonia.Controls;
@@ -52,12 +53,15 @@ public partial class MainWindow : Window
     private double _resizeStartX;
     private double _resizeStartWidth;
     private CancellationTokenSource? _decodeCts;
+    private double _lastZoom;
 
     public MainWindow()
     {
         InitializeComponent();
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
+        _lastZoom = _viewModel.Zoom;
+        _viewModel.PropertyChanged += ViewModelOnPropertyChanged;
 
         _timelineScroll = this.FindControl<ScrollViewer>("TimelineScroll");
         _channelLabelsScroll = this.FindControl<ScrollViewer>("ChannelLabelsScroll");
@@ -79,6 +83,58 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(16)
         };
         _edgeScrollTimer.Tick += EdgeScrollTimerOnTick;
+    }
+
+    private void ViewModelOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MainWindowViewModel.Zoom))
+        {
+            return;
+        }
+
+        PreserveTimelineCenterOnZoom(_lastZoom, _viewModel.Zoom);
+        _lastZoom = _viewModel.Zoom;
+    }
+
+    private void PreserveTimelineCenterOnZoom(double oldZoom, double newZoom)
+    {
+        if (_timelineScroll == null || oldZoom <= 0 || newZoom <= 0)
+        {
+            return;
+        }
+
+        const double zoomDeadzone = 0.002;
+        if (Math.Abs(newZoom - oldZoom) < zoomDeadzone)
+        {
+            return;
+        }
+
+        var viewport = _timelineScroll.Viewport.Width;
+        if (viewport <= 0)
+        {
+            return;
+        }
+
+        var oldCenterX = _timelineScroll.Offset.X + (viewport * 0.5);
+        var newCenterX = oldCenterX * (newZoom / oldZoom);
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_timelineScroll == null)
+            {
+                return;
+            }
+
+            var currentViewport = _timelineScroll.Viewport.Width;
+            if (currentViewport <= 0)
+            {
+                return;
+            }
+
+            var maxOffset = Math.Max(0, _viewModel.TimelineWidth - currentViewport);
+            var newOffset = Math.Clamp(newCenterX - (currentViewport * 0.5), 0, maxOffset);
+            _timelineScroll.Offset = new Vector(newOffset, _timelineScroll.Offset.Y);
+        }, DispatcherPriority.Render);
     }
 
     private async void ImportMedia_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -1484,6 +1540,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);
+        _viewModel.PropertyChanged -= ViewModelOnPropertyChanged;
         _playbackTimer.Stop();
         _edgeScrollTimer.Stop();
         _decodeCts?.Cancel();
