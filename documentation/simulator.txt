@@ -14,13 +14,24 @@ Building
 
 Requirements: Qt6 Widgets, CMake >= 3.16, C++17 compiler.
 
+Linux (Debian/Ubuntu):
+
+  sudo apt install qt6-base-dev cmake g++
   cd simulator/conez
   mkdir build && cd build
   cmake -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/cmake ..
-  make -j$(nproc)
+  cmake --build .
 
-On systems where Qt6 is in the default search path the PREFIX_PATH flag
-can be omitted. The build produces a single binary: conez-simulator.
+macOS (Homebrew):
+
+  brew install qt6 cmake
+  cd simulator/conez
+  mkdir build && cd build
+  cmake -DCMAKE_PREFIX_PATH="$(brew --prefix qt6)" ..
+  cmake --build .
+
+On systems where Qt6 is in CMake's default search path, CMAKE_PREFIX_PATH can
+be omitted. The build produces a single binary: conez-simulator.
 
 
 Running
@@ -52,7 +63,8 @@ Command-Line Options
   --sandbox <path>     Directory for file I/O and script storage
   --bas2wasm <path>    Path to bas2wasm compiler (default: bas2wasm on PATH)
   --c2wasm <path>      Path to c2wasm compiler (default: c2wasm on PATH)
-  --clang <path>       Path to clang compiler (default: clang on PATH)
+  --clang <path>       Path to clang compiler (fallback for .c when c2wasm
+                       is unavailable; default: clang on PATH)
   --api-dir <path>     Directory containing conez_api.h (auto-detected from
                        bas2wasm location if not set)
   <file>               Positional argument: script to run on startup
@@ -83,7 +95,8 @@ Compilation
 The simulator auto-detects file type by extension and compiles as needed:
 
   .bas   Runs bas2wasm to produce a temporary .wasm, then executes it.
-  .c     Runs c2wasm (if available) or clang --target=wasm32 to compile.
+  .c     Runs c2wasm by default.
+         If c2wasm is not found, falls back to clang --target=wasm32.
          c2wasm is preferred as it has no external dependencies.
          clang is used as a fallback with the same flags used for firmware
          modules (see wasm-api.txt). Includes conez_api.h automatically
