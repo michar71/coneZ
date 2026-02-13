@@ -7,6 +7,7 @@
 #include "sim_config.h"
 #include "led_state.h"
 #include "sensor_state.h"
+#include "cue_engine.h"
 
 #include <QToolBar>
 #include <QSplitter>
@@ -81,6 +82,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_compilerWorker, &CompilerWorker::compiled, this, &MainWindow::onCompiled);
     connect(m_compilerWorker, &CompilerWorker::error, [this](const QString &msg) {
         m_console->appendText("ERROR: " + msg + "\n");
+    });
+
+    // Wire cue engine output to console
+    cueEngine().setOutputCallback([this](const QString &msg) {
+        m_console->appendText(msg);
     });
 
     // Initialize sandbox directory
@@ -171,6 +177,8 @@ void MainWindow::onCommand(const QString &cmd)
         cmdVersion();
     } else if (verb == "wasm") {
         cmdWasm(parts);
+    } else if (verb == "cue") {
+        cmdCue(parts);
     } else {
         m_console->appendText("Unknown command: " + verb + ". Type ? for help.\n");
     }
@@ -246,6 +254,7 @@ void MainWindow::cmdHelp()
         "  cat {filename}                      Show file contents\n"
         "  clear                               Clear console\n"
         "  cp {source} {dest}                  Copy file\n"
+        "  cue [load|start|stop|status]        Cue timeline engine\n"
         "  del {filename}                      Delete file\n"
         "  df                                  Show filesystem usage\n"
         "  dir [path]                          List files\n"
@@ -707,5 +716,37 @@ void MainWindow::cmdWasm(const QStringList &args)
             .arg(fi.fileName()).arg(fi.size()));
     } else {
         m_console->appendText("Usage: wasm [status], wasm info <file>\n");
+    }
+}
+
+void MainWindow::cmdCue(const QStringList &args)
+{
+    QString sub = (args.size() >= 2) ? args[1].toLower() : "status";
+
+    if (sub == "status") {
+        auto &eng = cueEngine();
+        m_console->appendText("Cue Engine:\n");
+        m_console->appendText(QString("  Loaded:  %1\n").arg(eng.cueCount() > 0 ? "yes" : "no"));
+        m_console->appendText(QString("  Cues:    %1\n").arg(eng.cueCount()));
+        m_console->appendText(QString("  Playing: %1\n").arg(eng.isPlaying() ? "yes" : "no"));
+        if (eng.isPlaying()) {
+            m_console->appendText(QString("  Elapsed: %1 ms\n").arg(eng.elapsedMs()));
+            m_console->appendText(QString("  Cursor:  %1 / %2\n").arg(eng.cueCursor()).arg(eng.cueCount()));
+        }
+    } else if (sub == "load") {
+        if (args.size() < 3) {
+            m_console->appendText("Usage: cue load <path>\n");
+            return;
+        }
+        cueEngine().load(resolvePath(args[2]));
+    } else if (sub == "start") {
+        qint64 offset = 0;
+        if (args.size() >= 3)
+            offset = args[2].toLongLong();
+        cueEngine().start(offset);
+    } else if (sub == "stop") {
+        cueEngine().stop();
+    } else {
+        m_console->appendText("Usage: cue [load <path> | start [ms] | stop | status]\n");
     }
 }

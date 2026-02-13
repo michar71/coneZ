@@ -49,6 +49,7 @@ private:
     void cmdUptime();
     void cmdVersion();
     void cmdWasm(const QStringList &args);
+    void cmdCue(const QStringList &args);
 
     LedStripWidget *m_leds;
     ConsoleWidget *m_console;

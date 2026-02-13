@@ -40,6 +40,7 @@ set(SIM_SOURCES
     src/state/led_state.cpp
     src/state/sensor_state.cpp
     src/state/sim_config.cpp
+    src/state/cue_engine.cpp
     src/wasm/sim_wasm_runtime.cpp
     src/wasm/sim_wasm_imports_led.cpp
     src/wasm/sim_wasm_imports_sensors.cpp

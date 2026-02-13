@@ -23,6 +23,8 @@ int main(int argc, char *argv[])
     parser.addOption({"c2wasm", "Path to c2wasm compiler", "path", "c2wasm"});
     parser.addOption({"clang", "Path to clang compiler", "path", "clang"});
     parser.addOption({"api-dir", "Path to directory containing conez_api.h", "path"});
+    parser.addOption({"cone-id", "Cone ID for cue targeting", "id", "0"});
+    parser.addOption({"cone-group", "Cone group for cue targeting", "group", "0"});
     parser.addPositionalArgument("file", "Script to run on startup (.bas, .c, .wasm)");
     parser.process(app);
 
@@ -34,6 +36,8 @@ int main(int argc, char *argv[])
     if (parser.isSet("c2wasm"))   cfg.c2wasm_path    = parser.value("c2wasm").toStdString();
     if (parser.isSet("clang"))    cfg.clang_path     = parser.value("clang").toStdString();
     if (parser.isSet("api-dir"))  cfg.api_header_dir = parser.value("api-dir").toStdString();
+    if (parser.isSet("cone-id"))    cfg.cone_id    = parser.value("cone-id").toInt();
+    if (parser.isSet("cone-group")) cfg.cone_group = parser.value("cone-group").toInt();
 
     // Binary location — used for relative path auto-detection
     // Build dir is simulator/conez/build/, project root is ../../../

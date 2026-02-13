@@ -1,5 +1,6 @@
 #include "sim_wasm_imports.h"
 #include "sensor_state.h"
+#include "cue_engine.h"
 #include "m3_env.h"
 
 // Macro: float sensor returning a field
@@ -61,10 +62,18 @@ SENSOR_I(is_daylight, is_daylight)
 SENSOR_F(get_sun_azimuth, sun_azimuth)
 SENSOR_F(get_sun_elevation, sun_elevation)
 
-// Cue
-SENSOR_I(cue_playing, cue_playing)
+// Cue — use engine when playing, fall back to sensor panel sliders
+m3ApiRawFunction(m3_cue_playing) {
+    m3ApiReturnType(int32_t);
+    if (cueEngine().isPlaying())
+        m3ApiReturn(1);
+    m3ApiReturn(sensorState().get(&SensorMock::cue_playing));
+}
+
 m3ApiRawFunction(m3_cue_elapsed) {
     m3ApiReturnType(int64_t);
+    if (cueEngine().isPlaying())
+        m3ApiReturn(cueEngine().elapsedMs());
     m3ApiReturn((int64_t)sensorState().get(&SensorMock::cue_elapsed));
 }
 

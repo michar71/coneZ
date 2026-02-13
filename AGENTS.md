@@ -209,13 +209,13 @@ make -j$(nproc)
 
 **Data directory:** `simulator/conez/data/` ships example scripts copied from `firmware/data/`. Auto-detected at startup relative to the binary; overridable with `--sandbox`. CLI commands (`dir`, `cat`, `del`, `ren`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`) and WASM file I/O operate in this directory. Bare filenames in `run` resolve here.
 
-**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`, `del`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`, `uptime`, `ver`/`version`, `wasm`. These mirror the firmware CLI; hardware-only commands (art, color, config, cue, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, reboot, tc, wifi, winamp) are not available.
+**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`, `del`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`, `uptime`, `ver`/`version`, `wasm`, `cue`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, reboot, tc, wifi, winamp) are not available.
 
 **Source layout:** `src/gui/` (LED strip, console, sensor panel widgets), `src/state/` (LED buffers, sensor mock, config), `src/wasm/` (runtime + 10 import files mirroring firmware), `src/worker/` (QThread for WASM, QProcess for compilation). Vendored wasm3 in `thirdparty/wasm3/source/`. Example data in `data/`.
 
 **Threading:** Main thread runs Qt event loop and all widgets. WasmWorker QThread runs the wasm3 interpreter. Communication via Qt signals/slots with queued connections. Shared state (LedState, SensorState) is mutex-protected.
 
-**Differences from firmware:** Sensors come from GUI sliders (not real hardware). GPIO stubs log to console. No LoRa, WiFi, PSRAM, or cue timeline player. File I/O uses the data directory. DateTime uses host system clock.
+**Differences from firmware:** Sensors come from GUI sliders (not real hardware). GPIO stubs log to console. No LoRa, WiFi, or PSRAM. Cue engine plays back .cue files with full timeline support; when not playing, cue_playing/cue_elapsed fall back to sensor panel sliders. File I/O uses the data directory. DateTime uses host system clock.
 
 See `documentation/simulator.txt` for full reference.
 

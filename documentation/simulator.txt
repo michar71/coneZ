@@ -156,6 +156,10 @@ Console Commands:
   param <id> [value]   Get/set script parameter (0-15)
   ren <old> <new>      Rename file (alias: mv)
   rmdir <dir>          Remove empty directory
+  cue [status]         Show cue engine state
+  cue load <path>      Load a binary .cue file
+  cue start [ms]       Start cue playback (optional offset)
+  cue stop             Stop cue playback
   run <file>           Run script (.bas, .c, .wasm)
   sensors              Show current sensor mock values
   stop                 Stop running program
@@ -166,7 +170,7 @@ Console Commands:
   wasm info <file>     Show WASM file size
 
 These commands mirror the firmware CLI where applicable. Hardware-only
-commands (art, color, config, cue, debug, edit, game, gpio, gps,
+commands (art, color, config, debug, edit, game, gpio, gps,
 history, load, lora, mem, ps, psram, reboot, tc, wifi, winamp) are
 not available in the simulator.
 
@@ -337,7 +341,8 @@ Limitations
   - No LoRa, WiFi, or HTTP. Network-dependent features are stubbed.
   - GPIO operations log to console but do not affect real pins.
   - PSRAM is not emulated (modules use regular wasm3 linear memory).
-  - Cue engine is stub-only: cue_playing and cue_elapsed come from the
-    sensor panel sliders, not an actual timeline player.
+  - Cue engine plays back .cue files with full timeline and spatial
+    support. When the engine is not playing, cue_playing and cue_elapsed
+    fall back to the sensor panel sliders for manual override.
   - No multi-program support. Only one WASM program runs at a time.
   - PPS simulation is approximate (1-second sleep, not a real interrupt).

@@ -16,6 +16,11 @@ struct SimConfig {
     std::string clang_path = "clang";
     std::string api_header_dir;  // path to conez_api.h directory
 
+    int cone_id = 0;
+    int cone_group = 0;
+    float origin_lat = 40.7864f;
+    float origin_lon = -119.2069f;
+
     // Set at startup
     std::chrono::steady_clock::time_point start_time;
 };

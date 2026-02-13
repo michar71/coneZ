@@ -9,7 +9,7 @@ operate in character mode with server-side echo.
 The desktop simulator (see simulator.txt) supports a subset of these
 commands in its console: ?/help, run, stop, open, dir, del, cat/list,
 ren/mv, cp, mkdir, rmdir, grep, hexdump, df, clear/cls, param, led,
-sensors, time, uptime, ver/version, wasm. Hardware-only commands are
+sensors, time, uptime, ver/version, wasm, cue. Hardware-only commands are
 not available in the simulator.
 
 Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
