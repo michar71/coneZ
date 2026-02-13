@@ -8,7 +8,7 @@ namespace Mayhem.Services;
 
 public sealed class ProjectFileService
 {
-    private static readonly FilePickerFileType ProjectFileType = new("Cue List File")
+    private static readonly FilePickerFileType ProjectFileType = new("Cue List File (*.clf)")
     {
         Patterns = new List<string> { "*.clf" }
     };
