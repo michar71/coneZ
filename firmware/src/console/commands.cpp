@@ -24,6 +24,8 @@
 #include "cue.h"
 #include "editor.h"
 #include "psram.h"
+#include "mbedtls/md5.h"
+#include "mbedtls/sha256.h"
 #include <csetjmp>
 /*
  * Forward-declare only the embedded compiler APIs we need.
@@ -1892,6 +1894,87 @@ int cmd_clear( int argc, char **argv )
 }
 
 
+int cmd_md5(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: md5 <filename>\n"));
+        return 1;
+    }
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        return 1;
+    }
+
+    mbedtls_md5_context ctx;
+    mbedtls_md5_init(&ctx);
+    mbedtls_md5_starts_ret(&ctx);
+
+    uint8_t buf[256];
+    while (f.available()) {
+        int n = f.read(buf, sizeof(buf));
+        if (n <= 0) break;
+        mbedtls_md5_update_ret(&ctx, buf, n);
+    }
+    f.close();
+
+    uint8_t digest[16];
+    mbedtls_md5_finish_ret(&ctx, digest);
+    mbedtls_md5_free(&ctx);
+
+    getLock();
+    Stream *out = getStream();
+    for (int i = 0; i < 16; i++)
+        out->printf("%02x", digest[i]);
+    out->printf("  %s\n", path);
+    releaseLock();
+    return 0;
+}
+
+int cmd_sha256(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: sha256 <filename>\n"));
+        return 1;
+    }
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        return 1;
+    }
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts_ret(&ctx, 0);
+
+    uint8_t buf[256];
+    while (f.available()) {
+        int n = f.read(buf, sizeof(buf));
+        if (n <= 0) break;
+        mbedtls_sha256_update_ret(&ctx, buf, n);
+    }
+    f.close();
+
+    uint8_t digest[32];
+    mbedtls_sha256_finish_ret(&ctx, digest);
+    mbedtls_sha256_free(&ctx);
+
+    getLock();
+    Stream *out = getStream();
+    for (int i = 0; i < 32; i++)
+        out->printf("%02x", digest[i]);
+    out->printf("  %s\n", path);
+    releaseLock();
+    return 0;
+}
+
+
 int cmd_help( int argc, char **argv )
 {
     printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
@@ -1917,6 +2000,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  led                                 Show LED configuration\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  load {filename}                     Load program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  md5 {filename}                      Compute MD5 hash\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mem                                 Show heap memory stats\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mkdir {dirname}                     Create directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                 Set program arguments\n" ) );
@@ -1927,6 +2011,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  rmdir {dirname}                     Remove empty directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  run {filename}                      Run program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  sensors                             Show sensor readings\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  sha256 {filename}                   Compute SHA-256 hash\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  stop                                Stop running program\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  tc                                  Show thread count\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  time                                Show current date/time\n" ) );
@@ -2198,6 +2283,8 @@ void init_commands(Stream *dev)
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("load"), loadFile);
     shell.addCommand(F("lora"), cmd_lora);
+    shell.addCommand(F("md5"), cmd_md5);
+    shell.addCommand(F("md5sum"), cmd_md5);
     shell.addCommand(F("free"), cmd_mem);
     shell.addCommand(F("mem"), cmd_mem);
     shell.addCommand(F("mv"), renFile);
@@ -2209,6 +2296,8 @@ void init_commands(Stream *dev)
     shell.addCommand(F("rmdir"), cmd_rmdir);
     shell.addCommand(F("run"), runBasic);
     shell.addCommand(F("sensors"), cmd_sensors);
+    shell.addCommand(F("sha256"), cmd_sha256);
+    shell.addCommand(F("sha256sum"), cmd_sha256);
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);
