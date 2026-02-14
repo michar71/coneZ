@@ -733,6 +733,67 @@ void psram_print_map(void) {
     #undef MAP_WIDTH
 }
 
+void psram_print_cache_map(void) {
+#if PSRAM_CACHE_PAGES > 0
+    char map[PSRAM_CACHE_PAGES + 1];
+    PSRAM_LOCK();
+    for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
+        if (psram_cache[i].tag == CACHE_TAG_EMPTY) map[i] = '-';
+        else if (psram_cache[i].dirty)             map[i] = 'D';
+        else                                       map[i] = 'C';
+    }
+    PSRAM_UNLOCK();
+    map[PSRAM_CACHE_PAGES] = '\0';
+    printfnl(SOURCE_COMMANDS, F("  Cache map: [%s]\n"), map);
+    if (getAnsiEnabled())
+        printfnl(SOURCE_COMMANDS, F("             \033[38;5;240m-\033[0m empty  "
+                   "\033[32mC\033[0m clean  "
+                   "\033[31mD\033[0m dirty\n"));
+    else
+        printfnl(SOURCE_COMMANDS, F("             - empty  C clean  D dirty\n"));
+#endif
+}
+
+void psram_print_cache_detail(void) {
+#if PSRAM_CACHE_PAGES > 0
+    uint32_t hits = psram_cache_hits(), misses = psram_cache_misses();
+    uint32_t total = hits + misses;
+    printfnl(SOURCE_COMMANDS, F("Cache: %d pages x %d bytes (%u KB DRAM)\n"),
+             PSRAM_CACHE_PAGES, PSRAM_CACHE_PAGE_SIZE,
+             (PSRAM_CACHE_PAGES * PSRAM_CACHE_PAGE_SIZE) / 1024);
+    printfnl(SOURCE_COMMANDS, F("Hits:  %u / %u (%u%%)\n"),
+             hits, total, total ? (hits * 100 / total) : 0);
+
+    PSRAM_LOCK();
+    int used = 0, dirty = 0;
+    uint32_t max_used = 0;
+    for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
+        if (psram_cache[i].tag != CACHE_TAG_EMPTY) {
+            used++;
+            if (psram_cache[i].dirty) dirty++;
+            if (psram_cache[i].last_used > max_used) max_used = psram_cache[i].last_used;
+        }
+    }
+    printfnl(SOURCE_COMMANDS, F("Used:  %d / %d  (dirty: %d)\n"), used, PSRAM_CACHE_PAGES, dirty);
+    printfnl(SOURCE_COMMANDS, F("Clock: %u\n\n"), cache_clock);
+
+    if (used > 0) {
+        printfnl(SOURCE_COMMANDS, F("Page  Address     Dirty  Age\n"));
+        printfnl(SOURCE_COMMANDS, F("----  ----------  -----  --------\n"));
+        for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
+            if (psram_cache[i].tag == CACHE_TAG_EMPTY) continue;
+            printfnl(SOURCE_COMMANDS, F("%3d   0x%08X  %-5s  %u\n"),
+                     i, psram_cache[i].tag,
+                     psram_cache[i].dirty ? "yes" : "no",
+                     psram_cache[i].last_used);
+        }
+    }
+    PSRAM_UNLOCK();
+#else
+    printfnl(SOURCE_COMMANDS, F("Cache disabled (PSRAM_CACHE_PAGES=0)\n"));
+#endif
+}
+
 uint32_t psram_size(void) { return BOARD_PSRAM_SIZE; }
 bool psram_available(void) { return psram_ok; }
 
@@ -986,7 +1047,9 @@ void     psram_cache_invalidate(void) {}
 uint32_t psram_cache_hits(void)   { return 0; }
 uint32_t psram_cache_misses(void) { return 0; }
 
-void psram_print_map(void) {}  // No block table for native PSRAM
+void psram_print_map(void) {}           // No block table for native PSRAM
+void psram_print_cache_map(void) {}
+void psram_print_cache_detail(void) {}
 
 uint32_t psram_size(void) { return ESP.getPsramSize(); }
 bool psram_available(void) { return psram_ok; }
@@ -1045,6 +1108,8 @@ void     psram_cache_invalidate(void) {}
 uint32_t psram_cache_hits(void)   { return 0; }
 uint32_t psram_cache_misses(void) { return 0; }
 void     psram_print_map(void) {}
+void     psram_print_cache_map(void) {}
+void     psram_print_cache_detail(void) {}
 uint32_t psram_get_freq(void) { return 0; }
 int psram_change_freq(uint32_t) { return -1; }
 

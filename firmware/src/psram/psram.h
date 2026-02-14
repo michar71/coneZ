@@ -203,6 +203,8 @@ int  psram_memcmp(uint32_t addr1, uint32_t addr2, size_t len);
 // No-op on boards without PSRAM or with native (memory-mapped) PSRAM
 // where the internal block layout is not tracked.
 void psram_print_map(void);
+void psram_print_cache_map(void);
+void psram_print_cache_detail(void);
 
 #ifdef __cplusplus
 }

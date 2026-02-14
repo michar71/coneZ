@@ -112,11 +112,14 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
     File root = fs.open(dirname);
     if (!root || !root.isDirectory()) return;
 
-    // Collect entries
-    DirEntry entries[32];
+    // Collect entries (heap-allocated to avoid stack overflow on recursion)
+    const int MAX_ENTRIES = 32;
+    DirEntry *entries = (DirEntry *)malloc(MAX_ENTRIES * sizeof(DirEntry));
+    if (!entries) { root.close(); return; }
+
     int n = 0;
     File file = root.openNextFile();
-    while (file && n < 32) {
+    while (file && n < MAX_ENTRIES) {
         DirEntry *e = &entries[n];
         strncpy(e->name, file.name(), sizeof(e->name) - 1);
         e->name[sizeof(e->name) - 1] = '\0';
@@ -126,6 +129,7 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
         n++;
         file = root.openNextFile();
     }
+    root.close();
 
     qsort(entries, n, sizeof(DirEntry), dir_entry_cmp);
 
@@ -159,6 +163,7 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
             }
         }
     }
+    free(entries);
 }
 
 // Pre-scan to find longest filename at any level
@@ -397,10 +402,7 @@ int listDir(int argc, char **argv)
     }
     root.close();
 
-    // Find longest filename for column alignment
-    int nameWidth = 8;
-    dir_max_name(LittleFS, path, &nameWidth);
-
+    int nameWidth = 20;
     bool showTime = get_time_valid();
     int fileCount = 0, dirCount = 0;
     uint32_t totalSize = 0;
@@ -2070,6 +2072,10 @@ int cmd_psram(int argc, char **argv)
         shell.historyInit();
         return result;
     }
+    if (argc >= 2 && !strcasecmp(argv[1], "cache")) {
+        psram_print_cache_detail();
+        return 0;
+    }
     if (argc >= 3 && !strcasecmp(argv[1], "freq")) {
         uint32_t mhz = strtol(argv[2], NULL, 10);
         if (mhz < 5 || mhz > 80) {
@@ -2099,6 +2105,7 @@ int cmd_psram(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, F("  Contiguous:  %u bytes\n"), psram_bytes_contiguous());
     printfnl(SOURCE_COMMANDS, F("  Alloc slots: %d / %d\n"), psram_alloc_count(), psram_alloc_entries_max());
     psram_print_map();
+    psram_print_cache_map();
 #if PSRAM_CACHE_PAGES > 0
     uint32_t hits = psram_cache_hits(), misses = psram_cache_misses();
     uint32_t total = hits + misses;
