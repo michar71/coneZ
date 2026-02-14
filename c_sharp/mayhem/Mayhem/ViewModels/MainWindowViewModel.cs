@@ -630,6 +630,12 @@ public sealed class MainWindowViewModel : ObservableObject
             return false;
         }
 
+        if (SelectedEffect.Effect is ColorEffect selectedColor)
+        {
+            SelectedEffect.Effect.SetColor(selectedColor.StartRgb);
+            SelectedEffect.NotifyColorChanged();
+        }
+
         _effectClipboardJson = SelectedEffect.Effect.ToJson();
         _effectClipboardChannel = SelectedEffect.Channel;
         return true;
@@ -672,6 +678,11 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             AddDebug($"Paste failed: {ex.Message}");
             return null;
+        }
+
+        if (effect is ColorEffect pastedColor)
+        {
+            effect.SetColor(pastedColor.StartRgb);
         }
 
         effect.StartMs = (int)Math.Max(0, startMs);
@@ -738,6 +749,8 @@ public sealed class MainWindowViewModel : ObservableObject
             EditDurationMs = SelectedEffect.Effect.DurationMs;
             if (SelectedEffect.Effect is ColorEffect color)
             {
+                SelectedEffect.Effect.SetColor(color.StartRgb);
+                SelectedEffect.NotifyColorChanged();
                 EditStartRgb = color.StartRgb;
                 EditEndRgb = color.EndRgb;
                 EditOffset = color.Offset;

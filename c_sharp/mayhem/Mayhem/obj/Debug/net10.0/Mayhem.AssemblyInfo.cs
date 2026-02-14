@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Mayhem")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b26cd5ac41e8209b29c41552731109282539897e")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9ca7bf1243090039bd4b6d877730a4b50faee7e0")]
 [assembly: System.Reflection.AssemblyProductAttribute("Mayhem")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Mayhem")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
