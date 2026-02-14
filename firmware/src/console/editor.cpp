@@ -34,6 +34,8 @@ struct EditorState {
     char work[ED_LINE_MAX];         // DRAM working buffer for cursor line
     int work_line;                  // line index in work (-1 = none)
     bool work_dirty;                // work needs flushing to PSRAM
+    char search[ED_LINE_MAX];       // last search string
+    bool search_valid;              // true if search[] is populated
 };
 
 // ---------------------------------------------------------------------------
@@ -303,8 +305,8 @@ static void editor_draw(EditorState *ed, Stream *out)
     }
 
     // --- Row 24: help bar (reverse video) ---
-    out->print(F("\033[7m ^W Save  ^X Quit  ^K Cut  ^U Paste  ^G GoTo"));
-    int help_len = 46;
+    out->print(F("\033[7m ^W Save  ^X Quit  ^K Cut  ^U Paste  ^F Find  ^G GoTo"));
+    int help_len = 55;
     for (int i = help_len; i < ED_COLS; i++) out->write(' ');
     out->print(F("\033[0m\033[K"));
 
@@ -466,18 +468,20 @@ static void editor_paste_line(EditorState *ed)
 }
 
 // ---------------------------------------------------------------------------
-// Go-to-line prompt
+// Prompt helper — show prompt on status bar, read input
 // ---------------------------------------------------------------------------
 
-static void editor_goto_line(EditorState *ed, Stream *out)
+// Returns length of input, -1 on cancel (ESC/^X).
+static int editor_prompt_input(EditorState *ed, Stream *out,
+                               const char *prompt, char *buf, int maxlen)
 {
-    char buf[16];
     int pos = 0;
     buf[0] = '\0';
+    int prompt_len = (int)strlen(prompt);
 
     getLock();
-    out->printf("\033[%d;1H\033[7m Go to line: \033[K\033[0m", ED_TOP_ROW);
-    out->printf("\033[%d;14H\033[?25h", ED_TOP_ROW);
+    out->printf("\033[%d;1H\033[7m %s\033[K\033[0m", ED_TOP_ROW, prompt);
+    out->printf("\033[%d;%dH\033[?25h", ED_TOP_ROW, prompt_len + 2);
     releaseLock();
 
     for (;;) {
@@ -486,12 +490,11 @@ static void editor_goto_line(EditorState *ed, Stream *out)
         int c = out->read();
 
         if (c == '\r' || c == '\n') {
-            break;
+            return pos;
         } else if (c == 0x1B || c == 0x18) {
-            // Drain remaining escape sequence bytes (e.g., ESC[A from arrow keys)
             vTaskDelay(pdMS_TO_TICKS(10));
             while (out->available()) out->read();
-            return;
+            return -1;
         } else if (c == 127 || c == '\b') {
             if (pos > 0) {
                 buf[--pos] = '\0';
@@ -499,7 +502,7 @@ static void editor_goto_line(EditorState *ed, Stream *out)
                 out->print(F("\b \b"));
                 releaseLock();
             }
-        } else if (c >= '0' && c <= '9' && pos < 6) {
+        } else if (c >= 32 && c < 127 && pos < maxlen - 1) {
             buf[pos++] = c;
             buf[pos] = '\0';
             getLock();
@@ -507,14 +510,184 @@ static void editor_goto_line(EditorState *ed, Stream *out)
             releaseLock();
         }
     }
+}
 
-    if (pos > 0) {
-        int target = atoi(buf) - 1;
-        if (target < 0) target = 0;
-        if (target >= ed->num_lines) target = ed->num_lines - 1;
-        ed->cy = target;
-        ed->cx = 0;
+// ---------------------------------------------------------------------------
+// Go-to-line prompt
+// ---------------------------------------------------------------------------
+
+static void editor_goto_line(EditorState *ed, Stream *out)
+{
+    char buf[16];
+    int len = editor_prompt_input(ed, out, "Go to line:", buf, sizeof(buf));
+    if (len <= 0) return;
+
+    int target = atoi(buf) - 1;
+    if (target < 0) target = 0;
+    if (target >= ed->num_lines) target = ed->num_lines - 1;
+    ed->cy = target;
+    ed->cx = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Find / Replace
+// ---------------------------------------------------------------------------
+
+// Search forward from (cy, cx+1) wrapping around. Returns true if found.
+static bool editor_find_next(EditorState *ed)
+{
+    if (!ed->search_valid) return false;
+    int slen = (int)strlen(ed->search);
+    if (slen == 0) return false;
+
+    char buf[ED_LINE_MAX];
+    int start_line = ed->cy;
+    int start_col = ed->cx + 1;
+
+    // Search from current line forward
+    for (int i = 0; i < ed->num_lines; i++) {
+        int line = (start_line + i) % ed->num_lines;
+        ed_read_line(ed, line, buf);
+        buf[ED_LINE_MAX - 1] = '\0';
+
+        int col_start = (i == 0) ? start_col : 0;
+        int line_len = (int)strlen(buf);
+        if (col_start > line_len) continue;
+
+        char *found = strstr(buf + col_start, ed->search);
+        if (found) {
+            ed->cy = line;
+            ed->cx = (int)(found - buf);
+            bool wrapped = (line < start_line || (line == start_line && ed->cx < start_col - 1));
+            if (wrapped)
+                snprintf(ed->status_msg, sizeof(ed->status_msg),
+                         "Wrapped — found on line %d", line + 1);
+            else
+                snprintf(ed->status_msg, sizeof(ed->status_msg),
+                         "Found on line %d", line + 1);
+            return true;
+        }
     }
+
+    snprintf(ed->status_msg, sizeof(ed->status_msg), "Not found");
+    return false;
+}
+
+static void editor_find_or_replace(EditorState *ed, Stream *out)
+{
+    char input[ED_LINE_MAX];
+    int len = editor_prompt_input(ed, out, "Find:", input, sizeof(input));
+    if (len < 0) return;   // cancelled
+
+    if (len == 0) {
+        // Empty input — repeat last search
+        if (!ed->search_valid) return;
+        editor_find_next(ed);
+        return;
+    }
+
+    // Store new search
+    strncpy(ed->search, input, ED_LINE_MAX - 1);
+    ed->search[ED_LINE_MAX - 1] = '\0';
+    ed->search_valid = true;
+
+    // Ask find or replace
+    getLock();
+    out->printf("\033[%d;1H\033[7m (F)ind or (R)eplace? \033[K\033[0m", ED_TOP_ROW);
+    out->printf("\033[%d;22H\033[?25h", ED_TOP_ROW);
+    releaseLock();
+
+    int mode = 0;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        if (!out->available()) continue;
+        int c = out->read();
+        if (c == 'f' || c == 'F') { mode = 1; break; }
+        if (c == 'r' || c == 'R') { mode = 2; break; }
+        if (c == 0x1B || c == 0x18) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            while (out->available()) out->read();
+            return;
+        }
+    }
+
+    if (mode == 1) {
+        editor_find_next(ed);
+        return;
+    }
+
+    // Replace mode
+    char replacement[ED_LINE_MAX];
+    int rlen = editor_prompt_input(ed, out, "Replace with:", replacement, sizeof(replacement));
+    if (rlen < 0) return;
+
+    int search_len = (int)strlen(ed->search);
+    int replace_len = (int)strlen(replacement);
+    int count = 0;
+    bool replace_all = false;
+
+    if (!editor_find_next(ed)) return;
+
+    for (;;) {
+        if (!replace_all) {
+            // Redraw to show cursor at match
+            editor_ensure_visible(ed);
+            getLock();
+            editor_draw(ed, out);
+            out->printf("\033[%d;1H\033[7m Replace? (y/n/a/q) \033[K\033[0m\033[?25h", ED_TOP_ROW);
+            releaseLock();
+
+            int choice = 0;
+            for (;;) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+                if (!out->available()) continue;
+                int c = out->read();
+                if (c == 'y' || c == 'Y') { choice = 1; break; }
+                if (c == 'n' || c == 'N') { choice = 2; break; }
+                if (c == 'a' || c == 'A') { choice = 3; break; }
+                if (c == 'q' || c == 'Q' || c == 0x1B) {
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                    while (out->available()) out->read();
+                    choice = 4;
+                    break;
+                }
+            }
+
+            if (choice == 4) break;
+            if (choice == 3) replace_all = true;
+            if (choice == 2) {
+                if (!editor_find_next(ed)) break;
+                continue;
+            }
+            // choice == 1 or 3: fall through to replace
+        }
+
+        // Perform replacement on current line
+        ed_load_work(ed, ed->cy);
+        int line_len = (int)strlen(ed->work);
+        if (line_len - search_len + replace_len >= ED_LINE_MAX) {
+            snprintf(ed->status_msg, sizeof(ed->status_msg), "Line too long, skipped");
+            if (!editor_find_next(ed)) break;
+            continue;
+        }
+
+        memmove(ed->work + ed->cx + replace_len,
+                ed->work + ed->cx + search_len,
+                line_len - ed->cx - search_len + 1);
+        memcpy(ed->work + ed->cx, replacement, replace_len);
+        ed->work_dirty = true;
+        ed->modified = true;
+        count++;
+
+        // Position cursor after replacement for next search
+        ed->cx += replace_len - 1;
+        if (ed->cx < 0) ed->cx = 0;
+
+        if (!editor_find_next(ed)) break;
+    }
+
+    if (count > 0)
+        snprintf(ed->status_msg, sizeof(ed->status_msg), "Replaced %d occurrence%s", count, count == 1 ? "" : "s");
 }
 
 // ---------------------------------------------------------------------------
@@ -732,6 +905,87 @@ static int line_editor(EditorState *ed)
             continue;
         }
 
+        // 'f text' — find next occurrence
+        if (*p == 'f' && p[1] == ' ' && p[2] != '\0') {
+            char *needle = p + 2;
+            strncpy(ed->search, needle, ED_LINE_MAX - 1);
+            ed->search[ED_LINE_MAX - 1] = '\0';
+            ed->search_valid = true;
+
+            int slen = (int)strlen(needle);
+            char buf[ED_LINE_MAX];
+            // Search from current cy+1 wrapping around
+            for (int i = 0; i < ed->num_lines; i++) {
+                int line = (ed->cy + 1 + i) % ed->num_lines;
+                ed_read_line(ed, line, buf);
+                buf[ED_LINE_MAX - 1] = '\0';
+                if (strstr(buf, needle)) {
+                    ed->cy = line;
+                    printfnl(SOURCE_NONE, "%3d: %s\n", line + 1, buf);
+                    goto next_cmd;
+                }
+            }
+            printfnl(SOURCE_NONE, "Not found\n");
+            next_cmd:
+            continue;
+        }
+
+        // 's old new' — replace all occurrences
+        if (*p == 's' && p[1] == ' ' && p[2] != '\0') {
+            // Parse: s old new (space-separated)
+            char *old_str = p + 2;
+            char *space = strchr(old_str, ' ');
+            if (!space || space[1] == '\0') {
+                printfnl(SOURCE_NONE, "Usage: s <old> <new>\n");
+                continue;
+            }
+            *space = '\0';
+            char *new_str = space + 1;
+            int old_len = (int)strlen(old_str);
+            int new_len = (int)strlen(new_str);
+            int count = 0;
+
+            char buf[ED_LINE_MAX];
+            for (int i = 0; i < ed->num_lines; i++) {
+                ed_invalidate_work(ed);
+                ed_read_line(ed, i, buf);
+                buf[ED_LINE_MAX - 1] = '\0';
+
+                char result[ED_LINE_MAX];
+                int rpos = 0;
+                char *src = buf;
+                bool changed = false;
+                while (*src) {
+                    char *found = strstr(src, old_str);
+                    if (found) {
+                        int prefix = (int)(found - src);
+                        if (rpos + prefix + new_len >= ED_LINE_MAX - 1) break;
+                        memcpy(result + rpos, src, prefix);
+                        rpos += prefix;
+                        memcpy(result + rpos, new_str, new_len);
+                        rpos += new_len;
+                        src = found + old_len;
+                        count++;
+                        changed = true;
+                    } else {
+                        int remain = (int)strlen(src);
+                        if (rpos + remain >= ED_LINE_MAX - 1) remain = ED_LINE_MAX - 1 - rpos;
+                        memcpy(result + rpos, src, remain);
+                        rpos += remain;
+                        break;
+                    }
+                }
+                if (changed) {
+                    result[rpos] = '\0';
+                    memset(result + rpos + 1, 0, ED_LINE_MAX - rpos - 1);
+                    ed_write_line(ed, i, result);
+                    modified = true;
+                }
+            }
+            printfnl(SOURCE_NONE, "Replaced %d occurrence%s\n", count, count == 1 ? "" : "s");
+            continue;
+        }
+
         // Bare number — show that line
         if (*p >= '0' && *p <= '9') {
             int n = atoi(p);
@@ -743,7 +997,7 @@ static int line_editor(EditorState *ed)
             continue;
         }
 
-        printfnl(SOURCE_NONE, "Commands: l(ist) | N | i N | a | d N | r N | p N M | w | q\n");
+        printfnl(SOURCE_NONE, "Commands: l | N | i N | a | d N | r N | p N M | f text | s old new | w | q\n");
     }
 
     ed->modified = modified;
@@ -932,6 +1186,10 @@ int cmd_edit(int argc, char **argv)
 
                 case 0x15:  // Ctrl-U — Paste line
                     editor_paste_line(&ed);
+                    break;
+
+                case 0x06:  // Ctrl-F — Find/Replace
+                    editor_find_or_replace(&ed, getStream());
                     break;
 
                 case 0x07:  // Ctrl-G — Go to line
