@@ -48,6 +48,15 @@ public abstract class Effect
                 NormalizeColor(dto.EndRgb, RgbColor.Yellow),
                 dto.Offset ?? 0,
                 dto.Window ?? 100),
+            EffectType.ParamSet => new ParamSetEffect(dto.StartMs, dto.DurationMs,
+                dto.ParamName ?? "param",
+                dto.ParamValue ?? 0f),
+            EffectType.ParamChange => new ParamChangeEffect(dto.StartMs, dto.DurationMs,
+                dto.ParamName ?? "param",
+                dto.ParamStartValue ?? 0f,
+                dto.ParamEndValue ?? 0f,
+                dto.Offset ?? 0,
+                dto.Window ?? 100),
             EffectType.Fx => new FxEffect(dto.StartMs, dto.DurationMs, dto.FxId ?? 0,
                 ParamList.FromList(dto.Params ?? new List<float>())),
             EffectType.Script => new ScriptEffect(dto.StartMs, dto.DurationMs,
@@ -93,5 +102,9 @@ public abstract class Effect
 
         public string? ScriptLink { get; set; }
         public string? MediaLink { get; set; }
+        public string? ParamName { get; set; }
+        public float? ParamValue { get; set; }
+        public float? ParamStartValue { get; set; }
+        public float? ParamEndValue { get; set; }
     }
 }

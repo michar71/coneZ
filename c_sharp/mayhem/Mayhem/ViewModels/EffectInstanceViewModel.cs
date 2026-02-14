@@ -72,6 +72,14 @@ public sealed class EffectInstanceViewModel : ObservableObject
             {
                 return System.IO.Path.GetFileNameWithoutExtension(script.ScriptLink);
             }
+            if (Effect is ParamSetEffect paramSet)
+            {
+                return $"Set {paramSet.ParamName}";
+            }
+            if (Effect is ParamChangeEffect paramChange)
+            {
+                return $"Change {paramChange.ParamName}";
+            }
             return Effect.Type.ToString();
         }
     }
@@ -94,6 +102,11 @@ public sealed class EffectInstanceViewModel : ObservableObject
     {
         _fillCache = null;
         OnPropertyChanged(nameof(Fill));
+    }
+
+    public void NotifyLabelChanged()
+    {
+        OnPropertyChanged(nameof(Label));
     }
 
     public void MoveToChannel(ChannelEntry channel)

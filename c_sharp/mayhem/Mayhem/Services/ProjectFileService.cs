@@ -13,6 +13,11 @@ public sealed class ProjectFileService
         Patterns = new List<string> { "*.clf" }
     };
 
+    private static readonly FilePickerFileType ScriptedProgramCueFileType = new("Scripted Program Cue (*.spc)")
+    {
+        Patterns = new List<string> { "*.spc" }
+    };
+
     public async Task<string?> PickOpenAsync(Window owner)
     {
         var options = new FilePickerOpenOptions
@@ -39,6 +44,25 @@ public sealed class ProjectFileService
             SuggestedFileName = suggestedName,
             FileTypeChoices = new List<FilePickerFileType> { ProjectFileType },
             DefaultExtension = "clf"
+        };
+
+        var file = await owner.StorageProvider.SaveFilePickerAsync(options).ConfigureAwait(true);
+        return file?.Path.LocalPath;
+    }
+
+    public async Task<string?> PickExportSaveAsync(Window owner, string? suggestedName = null)
+    {
+        if (!string.IsNullOrWhiteSpace(suggestedName) &&
+            suggestedName.EndsWith(".spc", System.StringComparison.OrdinalIgnoreCase))
+        {
+            suggestedName = System.IO.Path.GetFileNameWithoutExtension(suggestedName);
+        }
+
+        var options = new FilePickerSaveOptions
+        {
+            SuggestedFileName = suggestedName,
+            FileTypeChoices = new List<FilePickerFileType> { ScriptedProgramCueFileType },
+            DefaultExtension = "spc"
         };
 
         var file = await owner.StorageProvider.SaveFilePickerAsync(options).ConfigureAwait(true);

@@ -46,7 +46,13 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _suppressEffectApply;
     private bool _isColorEffectSelected;
     private bool _isScriptEffectSelected;
+    private bool _isParamSetEffectSelected;
+    private bool _isParamChangeEffectSelected;
     private string _selectedScriptLink = string.Empty;
+    private string _editParamName = string.Empty;
+    private decimal _editParamValue;
+    private decimal _editParamStartValue;
+    private decimal _editParamEndValue;
     private string? _effectClipboardJson;
     private ChannelEntry? _effectClipboardChannel;
 
@@ -155,10 +161,75 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetField(ref _isScriptEffectSelected, value);
     }
 
+    public bool IsParamSetEffectSelected
+    {
+        get => _isParamSetEffectSelected;
+        private set => SetField(ref _isParamSetEffectSelected, value);
+    }
+
+    public bool IsParamChangeEffectSelected
+    {
+        get => _isParamChangeEffectSelected;
+        private set => SetField(ref _isParamChangeEffectSelected, value);
+    }
+
     public string SelectedScriptLink
     {
         get => _selectedScriptLink;
         private set => SetField(ref _selectedScriptLink, value);
+    }
+
+    public string EditParamName
+    {
+        get => _editParamName;
+        set
+        {
+            var trimmed = value ?? string.Empty;
+            if (trimmed.Length > 16)
+            {
+                trimmed = trimmed.Substring(0, 16);
+            }
+            if (SetField(ref _editParamName, trimmed))
+            {
+                ApplyEffectEdits();
+            }
+        }
+    }
+
+    public decimal EditParamValue
+    {
+        get => _editParamValue;
+        set
+        {
+            if (SetField(ref _editParamValue, value))
+            {
+                ApplyEffectEdits();
+            }
+        }
+    }
+
+    public decimal EditParamStartValue
+    {
+        get => _editParamStartValue;
+        set
+        {
+            if (SetField(ref _editParamStartValue, value))
+            {
+                ApplyEffectEdits();
+            }
+        }
+    }
+
+    public decimal EditParamEndValue
+    {
+        get => _editParamEndValue;
+        set
+        {
+            if (SetField(ref _editParamEndValue, value))
+            {
+                ApplyEffectEdits();
+            }
+        }
     }
 
     public int EditStartMs
@@ -526,6 +597,18 @@ public sealed class MainWindowViewModel : ObservableObject
         return AddEffectInstance(channel, effect);
     }
 
+    public EffectInstanceViewModel AddParamSetEffect(ChannelEntry channel, long startMs, int durationMs)
+    {
+        var effect = new ParamSetEffect((int)startMs, durationMs, "param", 0f);
+        return AddEffectInstance(channel, effect);
+    }
+
+    public EffectInstanceViewModel AddParamChangeEffect(ChannelEntry channel, long startMs, int durationMs)
+    {
+        var effect = new ParamChangeEffect((int)startMs, durationMs, "param", 0f, 1f);
+        return AddEffectInstance(channel, effect);
+    }
+
     public void MoveEffect(EffectInstanceViewModel effect, ChannelEntry newChannel, long startMs)
     {
         effect.Effect.StartMs = (int)startMs;
@@ -637,7 +720,13 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             IsColorEffectSelected = false;
             IsScriptEffectSelected = false;
+            IsParamSetEffectSelected = false;
+            IsParamChangeEffectSelected = false;
             SelectedScriptLink = string.Empty;
+            EditParamName = string.Empty;
+            EditParamValue = 0;
+            EditParamStartValue = 0;
+            EditParamEndValue = 0;
             ColorCurveGeometry = null;
             return;
         }
@@ -654,15 +743,43 @@ public sealed class MainWindowViewModel : ObservableObject
                 EditOffset = color.Offset;
                 EditWindow = color.Window;
             }
+            else if (SelectedEffect.Effect is ParamSetEffect paramSet)
+            {
+                EditStartRgb = RgbColor.Yellow;
+                EditEndRgb = RgbColor.Yellow;
+                EditOffset = 0;
+                EditWindow = 100;
+                EditParamName = paramSet.ParamName;
+                EditParamValue = (decimal)paramSet.Value;
+                EditParamStartValue = 0;
+                EditParamEndValue = 0;
+            }
+            else if (SelectedEffect.Effect is ParamChangeEffect paramChange)
+            {
+                EditStartRgb = RgbColor.Yellow;
+                EditEndRgb = RgbColor.Yellow;
+                EditOffset = paramChange.Offset;
+                EditWindow = paramChange.Window;
+                EditParamName = paramChange.ParamName;
+                EditParamValue = 0;
+                EditParamStartValue = (decimal)paramChange.StartValue;
+                EditParamEndValue = (decimal)paramChange.EndValue;
+            }
             else
             {
                 EditStartRgb = RgbColor.Yellow;
                 EditEndRgb = RgbColor.Yellow;
                 EditOffset = 0;
                 EditWindow = 100;
+                EditParamName = string.Empty;
+                EditParamValue = 0;
+                EditParamStartValue = 0;
+                EditParamEndValue = 0;
             }
             IsColorEffectSelected = SelectedEffect.Effect is ColorEffect;
             IsScriptEffectSelected = SelectedEffect.Effect is ScriptEffect;
+            IsParamSetEffectSelected = SelectedEffect.Effect is ParamSetEffect;
+            IsParamChangeEffectSelected = SelectedEffect.Effect is ParamChangeEffect;
             if (SelectedEffect.Effect is ScriptEffect script)
             {
                 SelectedScriptLink = script.ScriptLink;
@@ -717,6 +834,22 @@ public sealed class MainWindowViewModel : ObservableObject
             color.Window = EditWindow;
             SelectedEffect.Effect.SetColor(EditStartRgb);
             SelectedEffect.NotifyColorChanged();
+            SelectedEffect.NotifyLabelChanged();
+        }
+        else if (SelectedEffect.Effect is ParamSetEffect paramSet)
+        {
+            paramSet.ParamName = LimitParamName(EditParamName);
+            paramSet.Value = (float)EditParamValue;
+            SelectedEffect.NotifyLabelChanged();
+        }
+        else if (SelectedEffect.Effect is ParamChangeEffect paramChange)
+        {
+            paramChange.ParamName = LimitParamName(EditParamName);
+            paramChange.StartValue = (float)EditParamStartValue;
+            paramChange.EndValue = (float)EditParamEndValue;
+            paramChange.Offset = EditOffset;
+            paramChange.Window = EditWindow;
+            SelectedEffect.NotifyLabelChanged();
         }
 
         SelectedEffect.UpdateLayout(this);
@@ -725,7 +858,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void RebuildColorCurveGeometry()
     {
-        if (!IsColorEffectSelected)
+        if (!IsColorEffectSelected && !IsParamChangeEffectSelected)
         {
             ColorCurveGeometry = null;
             return;
@@ -761,6 +894,16 @@ public sealed class MainWindowViewModel : ObservableObject
         }
 
         ColorCurveGeometry = geometry;
+    }
+
+    private static string LimitParamName(string value)
+    {
+        var normalized = value ?? string.Empty;
+        if (normalized.Length > 16)
+        {
+            normalized = normalized.Substring(0, 16);
+        }
+        return normalized;
     }
 
     public void UpdateEffectDuration(EffectInstanceViewModel effect, int durationMs)

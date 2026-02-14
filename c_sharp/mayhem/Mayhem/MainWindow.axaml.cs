@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Threading;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -322,6 +324,146 @@ public partial class MainWindow : Window
         _viewModel.AddDebug($"Project saved: {path}");
     }
 
+    private async void ExportTimeline_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var path = await _projectFileService.PickExportSaveAsync(this, "timeline.spc");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        if (!path.EndsWith(".spc", StringComparison.OrdinalIgnoreCase))
+        {
+            path += ".spc";
+        }
+
+        var json = BuildSpcExportJson();
+        await System.IO.File.WriteAllTextAsync(path, json);
+        _viewModel.AddDebug($"Timeline exported: {path}");
+    }
+
+    private string BuildSpcExportJson()
+    {
+        const long mediaStartEpochMs = 0;
+
+        var entries = new List<Dictionary<string, object?>>();
+        entries.Add(BuildHeaderEntry());
+
+        var sortableEntries = new List<(int StartMs, int ChannelId, int Order, Dictionary<string, object?> Entry)>();
+        var channelNode = _viewModel.Project.Channels.Root();
+        var order = 0;
+        while (channelNode != null)
+        {
+            var effectNode = channelNode.Value.Effects.Root();
+            while (effectNode != null)
+            {
+                var effect = effectNode.Value;
+                sortableEntries.Add((
+                    effect.StartMs,
+                    channelNode.Value.ChannelId,
+                    order++,
+                    BuildEffectEntry(effect, channelNode.Value.ChannelId, mediaStartEpochMs)));
+                effectNode = effectNode.Next;
+            }
+            channelNode = channelNode.Next;
+        }
+
+        sortableEntries.Sort((a, b) =>
+        {
+            var byTime = a.StartMs.CompareTo(b.StartMs);
+            if (byTime != 0)
+            {
+                return byTime;
+            }
+
+            var byChannel = a.ChannelId.CompareTo(b.ChannelId);
+            if (byChannel != 0)
+            {
+                return byChannel;
+            }
+
+            return a.Order.CompareTo(b.Order);
+        });
+
+        foreach (var item in sortableEntries)
+        {
+            entries.Add(item.Entry);
+        }
+
+        var payload = new Dictionary<string, object?>
+        {
+            ["PIECE"] = entries
+        };
+
+        return JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+    }
+
+    private Dictionary<string, object?> BuildHeaderEntry()
+    {
+        var mediaPath = _viewModel.MediaPath;
+        var mediaAbsolute = string.IsNullOrWhiteSpace(mediaPath) ? string.Empty : System.IO.Path.GetFullPath(mediaPath);
+
+        return new Dictionary<string, object?>
+        {
+            ["STARTTIME"] = "0",
+            ["DURATION"] = _viewModel.MediaDurationMs.ToString(),
+            ["TYPE"] = "header",
+            ["MEDIA"] = mediaAbsolute
+        };
+    }
+
+    private static Dictionary<string, object?> BuildEffectEntry(Mayhem.Models.Effect effect, int channelId, long mediaStartEpochMs)
+    {
+        var entry = new Dictionary<string, object?>
+        {
+            ["STARTTIME"] = (mediaStartEpochMs + effect.StartMs).ToString(),
+            ["DURATION"] = effect.DurationMs.ToString(),
+            ["TYPE"] = effect.Type.ToString().ToLowerInvariant(),
+            ["CHANNEL"] = channelId
+        };
+
+        switch (effect)
+        {
+            case ColorEffect color:
+                entry["STARTCOLOR"] = PackColor(color.StartRgb);
+                entry["ENDCOLOR"] = PackColor(color.EndRgb);
+                entry["OFFSET"] = color.Offset;
+                entry["WINDOW"] = color.Window;
+                break;
+            case ScriptEffect script:
+                entry["SCRIPTLINK"] = script.ScriptLink;
+                break;
+            case ParamSetEffect paramSet:
+                entry["PARAMNAME"] = paramSet.ParamName;
+                entry["VALUE"] = paramSet.Value;
+                break;
+            case ParamChangeEffect paramChange:
+                entry["PARAMNAME"] = paramChange.ParamName;
+                entry["STARTVALUE"] = paramChange.StartValue;
+                entry["ENDVALUE"] = paramChange.EndValue;
+                entry["OFFSET"] = paramChange.Offset;
+                entry["WINDOW"] = paramChange.Window;
+                break;
+            case FxEffect fx:
+                entry["FXID"] = fx.FxId;
+                entry["PARAMS"] = fx.Params.ToList();
+                break;
+            case MediaEffect media:
+                entry["MEDIALINK"] = media.MediaLink;
+                break;
+        }
+
+        return entry;
+    }
+
+    private static uint PackColor(RgbColor color)
+    {
+        return (uint)((255 << 24) | (color.B << 16) | (color.G << 8) | color.R);
+    }
+
     private LayoutSettings CaptureLayout()
     {
         static double Sanitize(double value, double fallback)
@@ -623,10 +765,16 @@ public partial class MainWindow : Window
 
     private async void EffectTreeItem_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        var payload = "effect:color";
+        if (sender is TreeViewItem item && item.Tag is string tag && !string.IsNullOrWhiteSpace(tag))
+        {
+            payload = tag;
+        }
+
 #pragma warning disable CS0618
         var data = new DataObject();
-        data.Set(DataFormats.Text, "effect:color");
-        _viewModel.AddDebug("Effect drag started.");
+        data.Set(DataFormats.Text, payload);
+        _viewModel.AddDebug($"Effect drag started: {payload}");
         await DragDrop.DoDragDrop(e, data, DragDropEffects.Copy);
 #pragma warning restore CS0618
     }
@@ -680,10 +828,22 @@ public partial class MainWindow : Window
         var x = GetTimelineContentX(e);
         var timeMs = _viewModel.TimeFromX(Math.Max(0, x));
         timeMs = SnapToCue(timeMs);
-        if (text.StartsWith("effect:", StringComparison.OrdinalIgnoreCase))
+        if (text.Equals("effect:color", StringComparison.OrdinalIgnoreCase))
         {
             var effect = _viewModel.AddColorEffect(channel, timeMs, 1000);
             _viewModel.AddDebug($"Effect added at {timeMs} ms on {channel.Name}");
+            _viewModel.AddDebug($"Effect VM: x={effect.X}, width={effect.Width}");
+        }
+        else if (text.Equals("effect:paramset", StringComparison.OrdinalIgnoreCase))
+        {
+            var effect = _viewModel.AddParamSetEffect(channel, timeMs, 1000);
+            _viewModel.AddDebug($"ParamSet effect added at {timeMs} ms on {channel.Name}");
+            _viewModel.AddDebug($"Effect VM: x={effect.X}, width={effect.Width}");
+        }
+        else if (text.Equals("effect:paramchange", StringComparison.OrdinalIgnoreCase))
+        {
+            var effect = _viewModel.AddParamChangeEffect(channel, timeMs, 1000);
+            _viewModel.AddDebug($"ParamChange effect added at {timeMs} ms on {channel.Name}");
             _viewModel.AddDebug($"Effect VM: x={effect.X}, width={effect.Width}");
         }
         else if (text.StartsWith("script:", StringComparison.OrdinalIgnoreCase))
