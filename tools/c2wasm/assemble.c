@@ -16,7 +16,7 @@ static int find_or_add_ftype(int np, const uint8_t *p, int nr, const uint8_t *r)
         for (int j = 0; j < nr && match; j++) if (ftypes[i].r[j] != r[j]) match = 0;
         if (match) return i;
     }
-    if (nftypes >= 128) { fprintf(stderr, "too many function types\n"); exit(1); }
+    if (nftypes >= 128) { cw_fatal("too many function types\n"); }
     ftypes[nftypes].np = np;
     memcpy(ftypes[nftypes].p, p, np);
     ftypes[nftypes].nr = nr;
@@ -32,7 +32,8 @@ static int find_func_by_name(const char *name) {
     return -1;
 }
 
-void assemble(const char *outpath) {
+Buf assemble_to_buf(void) {
+    nftypes = 0;
     Buf out; buf_init(&out);
 
     /* WASM magic + version */
@@ -83,11 +84,10 @@ void assemble(const char *outpath) {
             }
         }
         if (fix != f->ncall_fixups) {
-            fprintf(stderr, "c2wasm: BUG: %d call fixups unconsumed in %s\n",
+            cw_fatal("c2wasm: BUG: %d call fixups unconsumed in %s\n",
                     f->ncall_fixups - fix, f->name ? f->name : "?");
-            exit(1);
         }
-        free(f->code.data);
+        cw_free(f->code.data);
         f->code = nc;
     }
 
@@ -95,7 +95,7 @@ void assemble(const char *outpath) {
     int imp_type_idx[IMP_COUNT];
     for (int i = 0; i < IMP_COUNT; i++) {
         if (!imp_used[i]) continue;
-        ImportDef *d = &imp_defs[i];
+        const ImportDef *d = &imp_defs[i];
         imp_type_idx[i] = find_or_add_ftype(d->np, d->p, d->nr, d->r);
     }
 
@@ -253,7 +253,7 @@ void assemble(const char *outpath) {
                 buf_uleb(&body, 0);
             } else {
                 int ngroups = 0;
-                int counts[256]; uint8_t types[256];
+                int counts[CW_MAX_LOCALS]; uint8_t types[CW_MAX_LOCALS];
                 int j = 0;
                 while (j < f->nlocals) {
                     uint8_t t = f->local_types[j];
@@ -292,18 +292,27 @@ void assemble(const char *outpath) {
         buf_free(&sec);
     }
 
-    /* Write output */
+    return out;
+}
+
+void assemble(const char *outpath) {
+    Buf out = assemble_to_buf();
+
     FILE *fp = fopen(outpath, "wb");
-    if (!fp) { fprintf(stderr, "Cannot open %s for writing\n", outpath); exit(1); }
+    if (!fp) { cw_fatal("Cannot open %s for writing\n", outpath); }
     if ((int)fwrite(out.data, 1, out.len, fp) != out.len) {
-        fprintf(stderr, "Write error on %s\n", outpath);
         fclose(fp);
         buf_free(&out);
-        exit(1);
+        cw_fatal("Write error on %s\n", outpath);
     }
     fclose(fp);
-    printf("Wrote %d bytes to %s\n", out.len, outpath);
-    printf("  %d imports, %d functions, %d globals, %d bytes data\n",
-           num_used_imports, nfuncs, nglobals, data_len);
+    cw_info("Wrote %d bytes to %s\n", out.len, outpath);
+
+    /* Count used imports for info message */
+    int num_imp = 0;
+    for (int i = 0; i < IMP_COUNT; i++)
+        if (imp_used[i]) num_imp++;
+    cw_info("  %d imports, %d functions, %d globals, %d bytes data\n",
+           num_imp, nfuncs, nglobals, data_len);
     buf_free(&out);
 }

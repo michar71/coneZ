@@ -24,6 +24,45 @@
 #include "cue.h"
 #include "editor.h"
 #include "psram.h"
+#include "mbedtls/md5.h"
+#include "mbedtls/sha256.h"
+#include <csetjmp>
+/*
+ * Forward-declare only the embedded compiler APIs we need.
+ * Can't include both bas2wasm.h and c2wasm.h in the same TU because
+ * they share type/macro names (Buf, buf_init, source, etc.).
+ */
+extern "C" {
+
+#ifdef INCLUDE_BASIC_COMPILER
+typedef void (*bw_diag_fn)(const char *msg, void *ctx);
+extern bw_diag_fn bw_on_error;
+extern bw_diag_fn bw_on_info;
+extern void *bw_cb_ctx;
+extern jmp_buf bw_bail;
+
+typedef struct { uint8_t *data; int len, cap; } bw_Buf;
+bw_Buf bas2wasm_compile_buffer(const char *src, int len);
+void bas2wasm_reset(void);
+void bw_buf_init(bw_Buf *b);
+void bw_buf_free(bw_Buf *b);
+#endif
+
+#ifdef INCLUDE_C_COMPILER
+typedef void (*cw_diag_fn)(const char *msg, void *ctx);
+extern cw_diag_fn cw_on_error;
+extern cw_diag_fn cw_on_info;
+extern void *cw_cb_ctx;
+extern jmp_buf cw_bail;
+
+typedef struct { uint8_t *data; int len, cap; } cw_Buf;
+cw_Buf c2wasm_compile_buffer(const char *src, int len, const char *filename);
+void c2wasm_reset(void);
+void cw_buf_init(cw_Buf *b);
+void cw_buf_free(cw_Buf *b);
+#endif
+
+} /* extern "C" */
 
 
 //Serial/Telnet Shell comamnds
@@ -73,11 +112,14 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
     File root = fs.open(dirname);
     if (!root || !root.isDirectory()) return;
 
-    // Collect entries
-    DirEntry entries[32];
+    // Collect entries (heap-allocated to avoid stack overflow on recursion)
+    const int MAX_ENTRIES = 32;
+    DirEntry *entries = (DirEntry *)malloc(MAX_ENTRIES * sizeof(DirEntry));
+    if (!entries) { root.close(); return; }
+
     int n = 0;
     File file = root.openNextFile();
-    while (file && n < 32) {
+    while (file && n < MAX_ENTRIES) {
         DirEntry *e = &entries[n];
         strncpy(e->name, file.name(), sizeof(e->name) - 1);
         e->name[sizeof(e->name) - 1] = '\0';
@@ -87,6 +129,7 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
         n++;
         file = root.openNextFile();
     }
+    root.close();
 
     qsort(entries, n, sizeof(DirEntry), dir_entry_cmp);
 
@@ -120,6 +163,7 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
             }
         }
     }
+    free(entries);
 }
 
 // Pre-scan to find longest filename at any level
@@ -358,10 +402,7 @@ int listDir(int argc, char **argv)
     }
     root.close();
 
-    // Find longest filename for column alignment
-    int nameWidth = 8;
-    dir_max_name(LittleFS, path, &nameWidth);
-
+    int nameWidth = 20;
     bool showTime = get_time_valid();
     int fileCount = 0, dirCount = 0;
     uint32_t totalSize = 0;
@@ -755,7 +796,9 @@ int cmd_ps(int argc, char **argv)
     static const char *taskNames[] = {
         "loopTask",     // Arduino main loop
         "ShellTask",    // Shell / CLI
+#ifdef INCLUDE_BASIC
         "BasicTask",    // BASIC interpreter
+#endif
         "WasmTask",     // WASM runtime
         "led_render",   // LED render task
         "IDLE0",        // Idle task core 0
@@ -1853,6 +1896,87 @@ int cmd_clear( int argc, char **argv )
 }
 
 
+int cmd_md5(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: md5 <filename>\n"));
+        return 1;
+    }
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        return 1;
+    }
+
+    mbedtls_md5_context ctx;
+    mbedtls_md5_init(&ctx);
+    mbedtls_md5_starts_ret(&ctx);
+
+    uint8_t buf[256];
+    while (f.available()) {
+        int n = f.read(buf, sizeof(buf));
+        if (n <= 0) break;
+        mbedtls_md5_update_ret(&ctx, buf, n);
+    }
+    f.close();
+
+    uint8_t digest[16];
+    mbedtls_md5_finish_ret(&ctx, digest);
+    mbedtls_md5_free(&ctx);
+
+    getLock();
+    Stream *out = getStream();
+    for (int i = 0; i < 16; i++)
+        out->printf("%02x", digest[i]);
+    out->printf("  %s\n", path);
+    releaseLock();
+    return 0;
+}
+
+int cmd_sha256(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: sha256 <filename>\n"));
+        return 1;
+    }
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        return 1;
+    }
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts_ret(&ctx, 0);
+
+    uint8_t buf[256];
+    while (f.available()) {
+        int n = f.read(buf, sizeof(buf));
+        if (n <= 0) break;
+        mbedtls_sha256_update_ret(&ctx, buf, n);
+    }
+    f.close();
+
+    uint8_t digest[32];
+    mbedtls_sha256_finish_ret(&ctx, digest);
+    mbedtls_sha256_free(&ctx);
+
+    getLock();
+    Stream *out = getStream();
+    for (int i = 0; i < 32; i++)
+        out->printf("%02x", digest[i]);
+    out->printf("  %s\n", path);
+    releaseLock();
+    return 0;
+}
+
+
 int cmd_help( int argc, char **argv )
 {
     printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
@@ -1878,6 +2002,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  led                                 Show LED configuration\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  load {filename}                     Load program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  md5 {filename}                      Compute MD5 hash\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mem                                 Show heap memory stats\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mkdir {dirname}                     Create directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                 Set program arguments\n" ) );
@@ -1888,6 +2013,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  rmdir {dirname}                     Remove empty directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  run {filename}                      Run program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  sensors                             Show sensor readings\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  sha256 {filename}                   Compute SHA-256 hash\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  stop                                Stop running program\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  tc                                  Show thread count\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  time                                Show current date/time\n" ) );
@@ -1946,6 +2072,10 @@ int cmd_psram(int argc, char **argv)
         shell.historyInit();
         return result;
     }
+    if (argc >= 2 && !strcasecmp(argv[1], "cache")) {
+        psram_print_cache_detail();
+        return 0;
+    }
     if (argc >= 3 && !strcasecmp(argv[1], "freq")) {
         uint32_t mhz = strtol(argv[2], NULL, 10);
         if (mhz < 5 || mhz > 80) {
@@ -1975,6 +2105,7 @@ int cmd_psram(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, F("  Contiguous:  %u bytes\n"), psram_bytes_contiguous());
     printfnl(SOURCE_COMMANDS, F("  Alloc slots: %d / %d\n"), psram_alloc_count(), psram_alloc_entries_max());
     psram_print_map();
+    psram_print_cache_map();
 #if PSRAM_CACHE_PAGES > 0
     uint32_t hits = psram_cache_hits(), misses = psram_cache_misses();
     uint32_t total = hits + misses;
@@ -1987,6 +2118,140 @@ int cmd_psram(int argc, char **argv)
     return 0;
 }
 
+
+#if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
+
+#ifdef INCLUDE_BASIC_COMPILER
+static void bw_diag_cb(const char *msg, void *) {
+    printfnl(SOURCE_COMMANDS, "%s", msg);
+}
+#endif
+
+#ifdef INCLUDE_C_COMPILER
+static void cw_diag_cb(const char *msg, void *) {
+    printfnl(SOURCE_COMMANDS, "%s", msg);
+}
+#endif
+
+int cmd_compile(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: compile <file.bas|file.c> [run]\n"));
+        return 1;
+    }
+
+    char path[64];
+    normalize_path(path, sizeof(path), argv[1]);
+
+    // Check extension
+    const char *dot = strrchr(path, '.');
+    int is_bas = 0, is_c = 0;
+#ifdef INCLUDE_BASIC_COMPILER
+    if (dot && strcmp(dot, ".bas") == 0) is_bas = 1;
+#endif
+#ifdef INCLUDE_C_COMPILER
+    if (dot && strcmp(dot, ".c") == 0) is_c = 1;
+#endif
+    if (!is_bas && !is_c) {
+        printfnl(SOURCE_COMMANDS, F("Unsupported file type (use .bas or .c)\n"));
+        return 1;
+    }
+
+    // Read source file
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        return 1;
+    }
+    int slen = f.size();
+    char *src = (char *)malloc(slen + 1);
+    if (!src) {
+        f.close();
+        printfnl(SOURCE_COMMANDS, F("Out of memory\n"));
+        return 1;
+    }
+    f.readBytes(src, slen);
+    src[slen] = 0;
+    f.close();
+
+    // Compile
+    // Use bw_ or cw_ prefixed Buf type depending on compiler
+    // Both are identical structs: { uint8_t *data; int len, cap; }
+    uint8_t *wasm_data = NULL;
+    int wasm_len = 0;
+
+#ifdef INCLUDE_BASIC_COMPILER
+    if (is_bas) {
+        bw_on_error = bw_diag_cb;
+        bw_on_info = bw_diag_cb;
+        bw_cb_ctx = NULL;
+
+        bw_Buf result;
+        bw_buf_init(&result);
+        if (setjmp(bw_bail) == 0) {
+            result = bas2wasm_compile_buffer(src, slen);
+        }
+        free(src);
+
+        if (result.len == 0) {
+            printfnl(SOURCE_COMMANDS, F("Compilation failed\n"));
+            bas2wasm_reset();
+            return 1;
+        }
+        wasm_data = result.data;
+        wasm_len = result.len;
+        // Don't free result yet — data pointer used below
+        bas2wasm_reset();
+    }
+#endif
+
+#ifdef INCLUDE_C_COMPILER
+    if (is_c) {
+        cw_on_error = cw_diag_cb;
+        cw_on_info = cw_diag_cb;
+        cw_cb_ctx = NULL;
+
+        cw_Buf result;
+        cw_buf_init(&result);
+        if (setjmp(cw_bail) == 0) {
+            result = c2wasm_compile_buffer(src, slen, path);
+        }
+        free(src);
+
+        if (result.len == 0) {
+            printfnl(SOURCE_COMMANDS, F("Compilation failed\n"));
+            c2wasm_reset();
+            return 1;
+        }
+        wasm_data = result.data;
+        wasm_len = result.len;
+        c2wasm_reset();
+    }
+#endif
+
+    // Write .wasm output
+    char out_path[64];
+    snprintf(out_path, sizeof(out_path), "%.*s.wasm", (int)(dot - path), path);
+
+    File out = LittleFS.open(out_path, FILE_WRITE);
+    if (!out) {
+        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), out_path);
+        free(wasm_data);
+        return 1;
+    }
+    out.write(wasm_data, wasm_len);
+    out.close();
+    printfnl(SOURCE_COMMANDS, F("Wrote %d bytes to %s\n"), wasm_len, out_path);
+    free(wasm_data);
+
+    // Optionally auto-run
+    if (argc >= 3 && strcmp(argv[2], "run") == 0) {
+        set_script_program(out_path);
+    }
+
+    return 0;
+}
+#endif /* INCLUDE_BASIC_COMPILER || INCLUDE_C_COMPILER */
 
 void init_commands(Stream *dev)
 {
@@ -2003,6 +2268,9 @@ void init_commands(Stream *dev)
     shell.addCommand(F("clear"), cmd_clear);
     shell.addCommand(F("cls"), cmd_clear);
     shell.addCommand(F("color"), cmd_color);
+#if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
+    shell.addCommand(F("compile"), cmd_compile);
+#endif
     shell.addCommand(F("config"), cmd_config);
     shell.addCommand(F("cp"), cmd_cp);
     shell.addCommand(F("cue"), cmd_cue);
@@ -2022,6 +2290,8 @@ void init_commands(Stream *dev)
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("load"), loadFile);
     shell.addCommand(F("lora"), cmd_lora);
+    shell.addCommand(F("md5"), cmd_md5);
+    shell.addCommand(F("md5sum"), cmd_md5);
     shell.addCommand(F("free"), cmd_mem);
     shell.addCommand(F("mem"), cmd_mem);
     shell.addCommand(F("mv"), renFile);
@@ -2033,6 +2303,8 @@ void init_commands(Stream *dev)
     shell.addCommand(F("rmdir"), cmd_rmdir);
     shell.addCommand(F("run"), runBasic);
     shell.addCommand(F("sensors"), cmd_sensors);
+    shell.addCommand(F("sha256"), cmd_sha256);
+    shell.addCommand(F("sha256sum"), cmd_sha256);
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);

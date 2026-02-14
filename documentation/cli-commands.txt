@@ -26,6 +26,7 @@ Quick Reference
   cat {filename}                     Show file contents
   clear / cls                        Clear screen (requires ANSI)
   color [on|off]                     Show or toggle ANSI color output
+  compile {file.bas} [run]           Compile BASIC to WASM on-device
   config [set|unset|reset]           Show or change settings
   cp {src} {dst}                     Copy file
   cue [load|start|stop|status]       Cue timeline engine control
@@ -50,7 +51,7 @@ Quick Reference
   mv {oldname} {newname}             Rename/move file (alias for ren)
   param {id} {value}                 Set script parameter
   ps                                 Show task list and stack watermarks
-  psram [test|freq]                  Show PSRAM status or run diagnostics
+  psram [cache|test|freq]             Show PSRAM status or run diagnostics
   reboot                             Reboot the device
   ren {oldname} {newname}            Rename file
   rmdir {path}                       Remove empty directory
@@ -98,6 +99,18 @@ color [on|off]
       Disable all ANSI escape codes. Output is plain text only.
       Commands that require ANSI (art, clear, game, winamp) will
       print an error. The editor falls back to a line-based mode.
+
+compile {file.bas|file.c} [run]
+  Compile a BASIC or C source file to a WASM binary on-device.
+  Uses the embedded bas2wasm compiler for .bas files and the
+  embedded c2wasm compiler for .c files. The output file has the
+  same name with a .wasm extension (e.g. /test.c → /test.wasm).
+  Optionally pass "run" to auto-run the compiled WASM immediately.
+  Requires INCLUDE_BASIC_COMPILER (.bas) or INCLUDE_C_COMPILER (.c).
+  Examples: compile /test.bas
+            compile /test.bas run
+            compile /demo.c
+            compile /demo.c run
 
 cp {src} {dst}
   Copy a file on LittleFS.
@@ -172,11 +185,18 @@ dir [path]
 edit {filename}
   Open the text editor for on-device script editing. Creates the file
   if it doesn't exist. In ANSI mode, opens a full-screen nano-like
-  editor with arrow key navigation, goto line (Ctrl-G), cut/paste
-  (Ctrl-K/U), save (Ctrl-W), and quit (Ctrl-X). When ANSI is off
-  (color off), falls back to a line editor with numbered lines and
-  commands: l(ist), i(nsert) N, a(ppend), d(elete) N, r(eplace) N,
-  p(rint) N M, w(rite), q(uit).
+  editor with arrow key navigation, find/replace (Ctrl-F), goto line
+  (Ctrl-G), cut/paste (Ctrl-K/U), save (Ctrl-W), and quit (Ctrl-X).
+
+  Ctrl-F prompts for search text, then asks (F)ind or (R)eplace.
+  Find jumps to the next match (wraps around). Replace walks matches
+  with y/n/a/q confirmation (yes, no, all, quit). Pressing Ctrl-F
+  again with empty input repeats the last search (find-next).
+
+  When ANSI is off (color off), falls back to a line editor with
+  numbered lines and commands: l(ist), N (show line), i(nsert) N,
+  a(ppend), d(elete) N, r(eplace) N, p(rint) N M, f(ind) text,
+  s(ubstitute) old new, w(rite), q(uit).
   Example: edit /startup.bas
 
 gpio
@@ -308,7 +328,12 @@ psram
 
   The default output includes a 64-character allocation map where each
   character represents 128KB of PSRAM: - (free), + (partially used),
-  * (fully allocated). ANSI colored when available.
+  * (fully allocated). Also shows a cache page map: - (empty), C
+  (clean), D (dirty). Both maps are ANSI colored when available.
+
+  psram cache
+      Show detailed cache page metadata: per-page PSRAM address, dirty
+      status, LRU age, plus overall hit/miss stats and occupancy.
 
   psram test
       Run a full PSRAM memory test with read/write verification and

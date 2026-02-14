@@ -61,7 +61,7 @@ static int cexpr_primary(void) {
     if (tok == TOK_CHAR_LIT) { int v = (int)tok_i64; next_token(); return v; }
     if (tok == TOK_NAME) {
         Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
-        if (mac && mac->macro_val[0]) {
+        if (mac && HAS_MACRO_VAL(mac)) {
             int v = (int)strtol(mac->macro_val, NULL, 0);
             next_token();
             return v;
@@ -196,7 +196,7 @@ static int parse_const_for_type(CType base_type,
 
     if (tok == TOK_NAME) {
         Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
-        if (mac && mac->macro_val[0]) {
+        if (mac && HAS_MACRO_VAL(mac)) {
             if (base_type == CT_DOUBLE) {
                 *out_f64 = strtod(mac->macro_val, NULL);
                 if (negate) *out_f64 = -(*out_f64);
@@ -1035,7 +1035,9 @@ void parse_top_level(void) {
                     write_global_scalar_init(s);
                 } else {
                     Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
-                    snprintf(s->macro_val, sizeof(s->macro_val), "%d", (int)val32);
+                    char tmp[32];
+                    snprintf(tmp, sizeof(tmp), "%d", (int)val32);
+                    set_macro_val(s, tmp);
                     s->scope = 0;
                 }
                 next_token();
@@ -1159,7 +1161,7 @@ void parse_top_level(void) {
             } else if (!negate && tok == TOK_NAME) {
                 /* Unexpanded macro (depth exceeded) — use stored value directly */
                 Symbol *mac = find_sym_kind(tok_sval, SYM_DEFINE);
-                if (mac && mac->macro_val[0]) {
+                if (mac && HAS_MACRO_VAL(mac)) {
                     if (base_type == CT_DOUBLE) s->init_dval = strtod(mac->macro_val, NULL);
                     else if (base_type == CT_FLOAT) s->init_fval = strtof(mac->macro_val, NULL);
                     else if (base_type == CT_ULONG_LONG) s->init_llval = (int64_t)strtoull(mac->macro_val, NULL, 0);
@@ -1321,8 +1323,9 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
     fc->ncall_fixups = 0;
 
     fc->return_type = ret_type;
-    free(fc->name);
-    fc->name = strdup(name);
+    cw_free(fc->name);
+    fc->name = cw_malloc(strlen(name) + 1);
+    strcpy(fc->name, name);
 
     /* Parse parameter list */
     expect(TOK_LPAREN);
@@ -1404,13 +1407,14 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
         func_idx = fs->idx;
         /* Free the temp slot we allocated at nfuncs */
         buf_free(&func_bufs[nfuncs].code);
-        free(func_bufs[nfuncs].name);
+        cw_free(func_bufs[nfuncs].name);
         func_bufs[nfuncs].name = NULL;
         /* Update the function context to the right slot */
         fc = &func_bufs[func_idx - IMP_COUNT];
         fc->return_type = ret_type;
-        if (fc->name) free(fc->name);
-        fc->name = strdup(name);
+        if (fc->name) cw_free(fc->name);
+        fc->name = cw_malloc(strlen(name) + 1);
+        strcpy(fc->name, name);
         fc->nparams = 0;
         fc->nlocals = 0;
         fc->ncall_fixups = 0;

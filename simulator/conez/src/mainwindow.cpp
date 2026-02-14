@@ -18,6 +18,7 @@
 #include <QDirIterator>
 #include <QAction>
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <chrono>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -159,6 +160,10 @@ void MainWindow::onCommand(const QString &cmd)
         cmdGrep(parts);
     } else if (verb == "hexdump") {
         cmdHexdump(parts);
+    } else if (verb == "md5" || verb == "md5sum") {
+        cmdMd5(parts);
+    } else if (verb == "sha256" || verb == "sha256sum") {
+        cmdSha256(parts);
     } else if (verb == "df") {
         cmdDf();
     } else if (verb == "clear" || verb == "cls") {
@@ -262,6 +267,7 @@ void MainWindow::cmdHelp()
         "  help                                Show this help\n"
         "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n"
         "  led                                 Show LED configuration\n"
+        "  md5 {filename}                      Compute MD5 hash\n"
         "  mkdir {dirname}                     Create directory\n"
         "  open                                Open file dialog\n"
         "  param {id} [value]                  Get/set script parameter (0-15)\n"
@@ -269,6 +275,7 @@ void MainWindow::cmdHelp()
         "  rmdir {dirname}                     Remove empty directory\n"
         "  run {filename}                      Run program (.bas, .c, .wasm)\n"
         "  sensors                             Show sensor readings\n"
+        "  sha256 {filename}                   Compute SHA-256 hash\n"
         "  stop                                Stop running program\n"
         "  time                                Show current date/time\n"
         "  uptime                              Show time since start\n"
@@ -562,6 +569,38 @@ void MainWindow::cmdHexdump(const QStringList &args)
     }
     if (fsize > limit)
         m_console->appendText(QString("... (%1 more bytes)\n").arg(fsize - limit));
+}
+
+void MainWindow::cmdMd5(const QStringList &args)
+{
+    if (args.size() < 2) {
+        m_console->appendText("Usage: md5 <filename>\n");
+        return;
+    }
+    QString path = resolvePath(args[1]);
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        m_console->appendText("Cannot open " + args[1] + "\n");
+        return;
+    }
+    QByteArray hash = QCryptographicHash::hash(f.readAll(), QCryptographicHash::Md5);
+    m_console->appendText(hash.toHex() + "  " + args[1] + "\n");
+}
+
+void MainWindow::cmdSha256(const QStringList &args)
+{
+    if (args.size() < 2) {
+        m_console->appendText("Usage: sha256 <filename>\n");
+        return;
+    }
+    QString path = resolvePath(args[1]);
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        m_console->appendText("Cannot open " + args[1] + "\n");
+        return;
+    }
+    QByteArray hash = QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha256);
+    m_console->appendText(hash.toHex() + "  " + args[1] + "\n");
 }
 
 void MainWindow::cmdDf()

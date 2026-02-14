@@ -4,8 +4,6 @@
 #include <QObject>
 #include <QString>
 
-class QProcess;
-
 class CompilerWorker : public QObject {
     Q_OBJECT
 public:
@@ -20,6 +18,9 @@ signals:
     void error(const QString &msg);
 
 private:
+    bool compileBasEmbedded(const QString &inputPath, const QString &outPath);
+    bool compileCEmbedded(const QString &inputPath, const QString &outPath);
+
     QString m_tempWasm;
 };
 

@@ -3,6 +3,12 @@
  */
 #include "bas2wasm.h"
 
+static int prints_fmt_off = -1;
+
+void stmt_reset(void) {
+    prints_fmt_off = -1;
+}
+
 static void compile_format(void) {
     need(TOK_STRING);
     int raw_off = tokv;
@@ -58,7 +64,6 @@ static void compile_prints(void) {
     emit_local_get(tmp2);
     emit_i32_store(0);
 
-    static int prints_fmt_off = -1;
     if (prints_fmt_off < 0) prints_fmt_off = add_string("%s\n", 3);
     emit_i32_const(prints_fmt_off);
     emit_i32_const(fmt_buf);
@@ -960,29 +965,35 @@ static void compile_swap(void) {
 static void compile_data(void) {
     do {
         if (ndata_items >= MAX_DATA_ITEMS) { error_at("too many DATA items"); return; }
+        DataItem item;
+        memset(&item, 0, sizeof(item));
         int neg = 0;
         if (want(TOK_SUB)) neg = 1;
         if (want(TOK_NUMBER)) {
-            data_items[ndata_items].type = T_I32;
+            item.type = T_I32;
             if (tok_num_is_i64) {
                 int64_t v = neg ? -tokq : tokq;
-                data_items[ndata_items].ival = (int32_t)v;
+                item.ival = (int32_t)v;
             } else {
-                data_items[ndata_items].ival = neg ? -tokv : tokv;
+                item.ival = neg ? -tokv : tokv;
             }
-            ndata_items++;
         } else if (want(TOK_FLOAT)) {
-            data_items[ndata_items].type = T_F32;
-            data_items[ndata_items].fval = neg ? -tokf : tokf;
-            ndata_items++;
+            item.type = T_F32;
+            item.fval = neg ? -tokf : tokf;
         } else if (!neg && want(TOK_STRING)) {
-            data_items[ndata_items].type = T_STR;
-            data_items[ndata_items].str_off = tokv;
-            ndata_items++;
+            item.type = T_STR;
+            item.str_off = tokv;
         } else {
             error_at("expected number or string in DATA");
             return;
         }
+#ifdef BAS2WASM_USE_PSRAM
+        bw_psram_write(data_items + ndata_items * sizeof(DataItem),
+                        &item, sizeof(DataItem));
+#else
+        data_items[ndata_items] = item;
+#endif
+        ndata_items++;
     } while (want(TOK_COMMA));
 }
 

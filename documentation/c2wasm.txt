@@ -15,6 +15,9 @@ Building the Compiler
 
 Produces the c2wasm binary. Requires only a C compiler (cc/gcc/clang).
 
+The compiler also works as an embedded library in the simulator (no
+external c2wasm binary needed). See the Embedded Mode section below.
+
 
 Usage
 -----
@@ -596,6 +599,71 @@ empty #if expressions.
 
 Adding a test: create a .c file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.c must fail compilation.
+
+
+Embedded Mode
+-------------
+
+c2wasm can be compiled as a library for embedding in the Qt simulator.
+This is controlled by the C2WASM_EMBEDDED preprocessor define.
+
+Platform abstraction (c2wasm_platform.h):
+
+  In standalone mode (default), cw_malloc/cw_error/cw_fatal are
+  #defined to malloc/fprintf/exit — zero overhead.
+
+  In embedded mode, they become real functions that redirect to
+  host-provided callbacks. Fatal errors use longjmp(cw_bail) instead
+  of exit(1). Diagnostic messages are routed through cw_on_error
+  and cw_on_info function pointer callbacks.
+
+Library API:
+
+  Buf c2wasm_compile_buffer(const char *src, int len, const char *filename);
+      Compile C source to WASM. filename is used in error messages.
+      Returns a Buf with the .wasm binary (len == 0 on error). Caller
+      must call buf_free() on the result and c2wasm_reset() after
+      each compilation.
+
+  void c2wasm_reset(void);
+      Reset all compiler state for reuse. Must be called between
+      compilations.
+
+Single-TU embedding:
+
+  The simulator includes all c2wasm .c files into a single compilation
+  unit (c2wasm_embed.c) via #include. This keeps static variables and
+  functions internal. The wrapper defines C2WASM_EMBEDDED before
+  including the sources.
+
+Symbol prefixing:
+
+  In embedded mode, shared global names (source, had_error, func_bufs,
+  expr, assemble_to_buf, etc.) are macro-prefixed to cw_source,
+  cw_had_error, etc. This avoids link-time collisions when both
+  c2wasm and bas2wasm are linked into the same binary.
+
+Simulator usage:
+
+  The simulator links c2wasm as a static library (c2wasm-embed in
+  CMakeLists.txt). CompilerWorker calls c2wasm_compile_buffer()
+  directly — no subprocess spawning.
+
+Firmware embedding:
+
+  c2wasm is embedded in firmware via firmware/src/wasm/c2wasm_embed.c
+  (single-TU pattern, same as bas2wasm). Guarded by INCLUDE_C_COMPILER
+  build flag in platformio.ini (enabled by default).
+
+  To fit in DRAM, embedded mode shrinks the Symbol struct (name[32]
+  instead of name[64], heap-allocated macro_val instead of char[128])
+  and dynamically allocates large arrays (syms, func_bufs, ctrl_stk,
+  data_buf) only during compilation. Transient heap cost: ~63KB.
+
+  The compile CLI command compiles .c files on-device:
+
+    compile /demo.c               compile to /demo.wasm
+    compile /demo.c run           compile and auto-run
 
 
 Comparison with clang

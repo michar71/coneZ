@@ -3,6 +3,16 @@
  */
 #include "bas2wasm.h"
 
+/* data_buf byte access — PSRAM path goes through page cache */
+#ifdef BAS2WASM_USE_PSRAM
+static void dbuf_put(int pos, char c) {
+    uint8_t b = (uint8_t)c;
+    bw_psram_write(data_buf + pos, &b, 1);
+}
+#else
+#define dbuf_put(pos, c) (data_buf[pos] = (c))
+#endif
+
 static const char *kwd[] = {
     "AND","OR","FORMAT","SUB","END","RETURN","LOCAL",
     "WHILE","FOR","TO","IF","ELSE","THEN","DIM","UBOUND",
@@ -114,7 +124,7 @@ int read_tok(void) {
             if (*lp == '"') {
                 if (lp[1] == '"') {
                     /* Doubled quote = embedded quote (BASIC standard) */
-                    if (data_len < MAX_STRINGS - 1) data_buf[data_len++] = '"';
+                    if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '"');
                     lp += 2;
                     continue;
                 }
@@ -122,17 +132,17 @@ int read_tok(void) {
             }
             if (*lp == '\\' && lp[1]) {
                 char esc = lp[1];
-                if (esc == 'n') { if (data_len < MAX_STRINGS - 1) data_buf[data_len++] = '\n'; lp += 2; }
-                else if (esc == 't') { if (data_len < MAX_STRINGS - 1) data_buf[data_len++] = '\t'; lp += 2; }
-                else if (esc == '\\') { if (data_len < MAX_STRINGS - 1) data_buf[data_len++] = '\\'; lp += 2; }
-                else if (esc == '"') { if (data_len < MAX_STRINGS - 1) data_buf[data_len++] = '"'; lp += 2; }
-                else { if (data_len < MAX_STRINGS - 1) data_buf[data_len++] = *lp; lp++; }
+                if (esc == 'n') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '\n'); lp += 2; }
+                else if (esc == 't') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '\t'); lp += 2; }
+                else if (esc == '\\') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '\\'); lp += 2; }
+                else if (esc == '"') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '"'); lp += 2; }
+                else { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, *lp); lp++; }
                 continue;
             }
-            if (data_len < MAX_STRINGS - 1) data_buf[data_len++] = *lp;
+            if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, *lp);
             lp++;
         }
-        if (data_len < MAX_STRINGS) data_buf[data_len++] = 0;
+        if (data_len < MAX_STRINGS) dbuf_put(data_len++, 0);
         if (*lp == '"') lp++;
         tokv = off;
         return tok = TOK_STRING;

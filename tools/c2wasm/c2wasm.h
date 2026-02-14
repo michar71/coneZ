@@ -21,6 +21,8 @@
 #include <stdarg.h>
 #include <time.h>
 
+#include "c2wasm_platform.h"
+
 /* ================================================================
  *  Byte Buffer
  * ================================================================ */
@@ -257,7 +259,7 @@ enum {
     IMP_COUNT
 };
 
-extern ImportDef imp_defs[IMP_COUNT];
+extern const ImportDef imp_defs[IMP_COUNT];
 extern uint8_t imp_used[IMP_COUNT];
 
 /* ================================================================
@@ -310,10 +312,21 @@ int type_sizeof(TypeInfo t);        /* Total size of type */
  *  Symbol Table
  * ================================================================ */
 
+#ifdef C2WASM_EMBEDDED
+#define MAX_SYMS     256
+#define MAX_FUNCS    16
+#define MAX_CTRL     32
+#define MAX_STRINGS  4096
+#define CW_MAX_LOCALS  64
+#define CW_MAX_FIXUPS  128
+#else
 #define MAX_SYMS     512
 #define MAX_FUNCS    64
 #define MAX_CTRL     64
 #define MAX_STRINGS  16384
+#define CW_MAX_LOCALS  256
+#define CW_MAX_FIXUPS  1024
+#endif
 #define FMT_BUF_ADDR 0xF000
 
 typedef enum {
@@ -325,7 +338,15 @@ typedef enum {
 } SymKind;
 
 typedef struct {
+#ifdef C2WASM_EMBEDDED
+    char name[32];
+    /* macro value — heap-allocated in embedded mode */
+    char *macro_val;
+#else
     char name[64];
+    /* macro value */
+    char macro_val[128];
+#endif
     SymKind kind;
     CType ctype;        /* return type for functions, var type for vars */
     TypeInfo type_info; /* extended type info for pointers/arrays */
@@ -338,8 +359,6 @@ typedef struct {
     int is_static;
     int is_const;       /* 1 if variable is const-qualified */
     int is_defined;     /* 1 if function body has been compiled */
-    /* macro value */
-    char macro_val[128];
     int is_float_macro; /* 1 if macro value is a float */
     /* global init value (for SYM_GLOBAL) */
     int32_t init_ival;
@@ -353,6 +372,24 @@ typedef struct {
     int mem_off;        /* linear memory offset for spilled local */
 } Symbol;
 
+/* Null-safe macro_val check (pointer in embedded, char[] in standalone) */
+#ifdef C2WASM_EMBEDDED
+#define HAS_MACRO_VAL(s) ((s)->macro_val && (s)->macro_val[0])
+#else
+#define HAS_MACRO_VAL(s) ((s)->macro_val[0])
+#endif
+
+static inline void set_macro_val(Symbol *s, const char *value) {
+#ifdef C2WASM_EMBEDDED
+    cw_free(s->macro_val);
+    int len = (int)strlen(value);
+    s->macro_val = (char *)cw_malloc(len + 1);
+    if (s->macro_val) memcpy(s->macro_val, value, len + 1);
+#else
+    snprintf(s->macro_val, sizeof(s->macro_val), "%s", value);
+#endif
+}
+
 /* ================================================================
  *  Function Context (code generation)
  * ================================================================ */
@@ -363,10 +400,10 @@ typedef struct {
     uint8_t param_wasm_types[8];
     CType param_ctypes[8];
     int nlocals;
-    uint8_t local_types[256];
+    uint8_t local_types[CW_MAX_LOCALS];
     char *name;          /* function name for export */
     CType return_type;
-    int call_fixups[1024];
+    int call_fixups[CW_MAX_FIXUPS];
     int ncall_fixups;
 } FuncCtx;
 
@@ -421,19 +458,23 @@ enum {
  *  Global Compiler State
  * ================================================================ */
 
+#ifdef C2WASM_EMBEDDED
+extern Symbol *syms;
+extern FuncCtx *func_bufs;
+extern CtrlEntry *ctrl_stk;
+extern char *data_buf;
+#else
 extern Symbol syms[MAX_SYMS];
+extern FuncCtx func_bufs[MAX_FUNCS];
+extern CtrlEntry ctrl_stk[MAX_CTRL];
+extern char data_buf[MAX_STRINGS];
+#endif
 extern int nsym;
 extern int cur_scope;
-
-extern FuncCtx func_bufs[MAX_FUNCS];
 extern int nfuncs;
 extern int cur_func;
-
-extern CtrlEntry ctrl_stk[MAX_CTRL];
 extern int ctrl_sp;
 extern int block_depth;
-
-extern char data_buf[MAX_STRINGS];
 extern int data_len;
 
 extern char *source;
@@ -471,7 +512,7 @@ extern int type_had_unsigned;
 #define CODE (&func_bufs[cur_func].code)
 
 static inline void error_at(const char *msg) {
-    fprintf(stderr, "%s:%d: error: %s\n", src_file ? src_file : "<input>", line_num, msg);
+    cw_error("%s:%d: error: %s\n", src_file ? src_file : "<input>", line_num, msg);
     had_error = 1;
 }
 
@@ -500,7 +541,7 @@ static inline Symbol *find_sym_kind(const char *name, SymKind kind) {
 }
 
 static inline Symbol *add_sym(const char *name, SymKind kind, CType ct) {
-    if (nsym >= MAX_SYMS) { error_at("too many symbols"); exit(1); }
+    if (nsym >= MAX_SYMS) { cw_fatal("%s:%d: error: too many symbols\n", src_file ? src_file : "<input>", line_num); }
     Symbol *s = &syms[nsym++];
     memset(s, 0, sizeof(*s));
     snprintf(s->name, sizeof(s->name), "%s", name);
@@ -546,7 +587,7 @@ static inline uint8_t ctype_to_wasm(CType ct) {
 
 static inline int alloc_local(uint8_t wtype) {
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= 256) { error_at("too many locals"); exit(1); }
+    if (f->nlocals >= CW_MAX_LOCALS) { cw_fatal("%s:%d: error: too many locals\n", src_file ? src_file : "<input>", line_num); }
     int idx = f->nparams + f->nlocals;
     f->local_types[f->nlocals++] = wtype;
     return idx;
@@ -573,7 +614,7 @@ static inline void emit_i64_const(int64_t v) {
 static inline void emit_call(int func_idx) {
     buf_byte(CODE, OP_CALL);
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->ncall_fixups >= 1024) { error_at("too many call sites"); return; }
+    if (f->ncall_fixups >= CW_MAX_FIXUPS) { error_at("too many call sites"); return; }
     else f->call_fixups[f->ncall_fixups++] = f->code.len;
     buf_uleb(CODE, func_idx);
     if (func_idx < IMP_COUNT) imp_used[func_idx] = 1;
@@ -757,9 +798,12 @@ void parse_block(void);
 void parse_stmt(void);
 
 /* assemble.c */
+Buf assemble_to_buf(void);
 void assemble(const char *outpath);
 
 /* main.c */
-void compile(void);
+void cw_compile(void);
+Buf c2wasm_compile_buffer(const char *src, int len, const char *filename);
+void c2wasm_reset(void);
 
 #endif /* C2WASM_H */

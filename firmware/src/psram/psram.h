@@ -35,6 +35,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // ---- Allocation table size ----
 //
 // The allocator uses a fixed-size table in internal SRAM (no dynamic memory).
@@ -43,7 +47,7 @@
 // system heap. A separate fallback tracking table (same size) tracks those
 // heap allocations so psram_free_all() can release them.
 #ifndef PSRAM_ALLOC_ENTRIES
-#define PSRAM_ALLOC_ENTRIES  64
+#define PSRAM_ALLOC_ENTRIES  128
 #endif
 
 // ---- Address classification ----
@@ -163,13 +167,13 @@ int      psram_alloc_entries_max(void); // Max allocation slots (PSRAM_ALLOC_ENT
 // written back on eviction or explicit flush.
 //
 // Total DRAM cost: PSRAM_CACHE_PAGES * (PSRAM_CACHE_PAGE_SIZE + 12) bytes.
-// Default: 16 * 524 = ~8 KB.
+// Default: 64 * 524 = ~33 KB.
 //
 // No-op on native PSRAM (already memory-mapped) and stub builds.
 // Set PSRAM_CACHE_PAGES to 0 at compile time to disable.
 
 #ifndef PSRAM_CACHE_PAGES
-#define PSRAM_CACHE_PAGES      16   // Number of cached pages (0 = disabled)
+#define PSRAM_CACHE_PAGES      64   // Number of cached pages (0 = disabled)
 #endif
 #ifndef PSRAM_CACHE_PAGE_SIZE
 #define PSRAM_CACHE_PAGE_SIZE  512  // Bytes per page (must be power of 2)
@@ -199,5 +203,11 @@ int  psram_memcmp(uint32_t addr1, uint32_t addr2, size_t len);
 // No-op on boards without PSRAM or with native (memory-mapped) PSRAM
 // where the internal block layout is not tracked.
 void psram_print_map(void);
+void psram_print_cache_map(void);
+void psram_print_cache_detail(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

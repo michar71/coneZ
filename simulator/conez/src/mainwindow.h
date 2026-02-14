@@ -40,6 +40,8 @@ private:
     void cmdRmdir(const QStringList &args);
     void cmdGrep(const QStringList &args);
     void cmdHexdump(const QStringList &args);
+    void cmdMd5(const QStringList &args);
+    void cmdSha256(const QStringList &args);
     void cmdDf();
     void cmdClear();
     void cmdParam(const QStringList &args);

@@ -8,8 +8,11 @@
  */
 #include "c2wasm.h"
 
+/* In single-TU embedded builds these are already defined in lexer.c */
+#ifndef C2WASM_EMBEDDED
 static int is_ident_char(int c) { return isalnum(c) || c == '_'; }
 static int is_ident_start(int c) { return isalpha(c) || c == '_'; }
+#endif
 
 #define MAX_IFDEF_DEPTH 32
 static int ifdef_skip[MAX_IFDEF_DEPTH];
@@ -46,7 +49,7 @@ typedef struct {
     CType params[8];
 } ApiFunc;
 
-static ApiFunc api_funcs[] = {
+static const ApiFunc api_funcs[] = {
     {"delay_ms",        IMP_DELAY_MS,       CT_VOID,  1, {CT_INT}},
     {"millis",          IMP_MILLIS,          CT_INT,   0, {}},
     {"get_param",       IMP_GET_PARAM,       CT_INT,   1, {CT_INT}},
@@ -183,7 +186,7 @@ void register_api_imports(void) {
     if (api_registered) return;
     api_registered = 1;
 
-    for (ApiFunc *a = api_funcs; a->c_name; a++) {
+    for (const ApiFunc *a = api_funcs; a->c_name; a++) {
         Symbol *s = add_sym(a->c_name, SYM_IMPORT, a->ret_type);
         s->imp_id = a->imp_id;
         s->param_count = a->nparam;
@@ -537,7 +540,7 @@ static PPVal pp_primary(void) {
 
         /* Macro expansion */
         Symbol *mac = find_sym_kind(name, SYM_DEFINE);
-        if (mac && mac->macro_val[0])
+        if (mac && HAS_MACRO_VAL(mac))
             return pp_parse_macro_value(mac->macro_val);
         return pp_make_u(0, 0);  /* undefined identifiers → 0 per C standard */
     }
@@ -820,10 +823,10 @@ int preproc_line(void) {
         /* Check if already defined */
         Symbol *existing = find_sym_kind(name, SYM_DEFINE);
         if (existing) {
-            snprintf(existing->macro_val, sizeof(existing->macro_val), "%s", value);
+            set_macro_val(existing, value);
         } else {
             Symbol *s = add_sym(name, SYM_DEFINE, CT_INT);
-            snprintf(s->macro_val, sizeof(s->macro_val), "%s", value);
+            set_macro_val(s, value);
             s->scope = 0;
         }
         skip_to_eol();
@@ -943,7 +946,7 @@ int preproc_line(void) {
     if (strcmp(directive, "warning") == 0) {
         char msg[256];
         read_pp_value(msg, sizeof(msg));
-        fprintf(stderr, "%s:%d: warning: #warning %s\n",
+        cw_warn("%s:%d: warning: #warning %s\n",
                 src_file ? src_file : "<input>", line_num, msg);
         return 1;
     }
