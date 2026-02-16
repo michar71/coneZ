@@ -65,6 +65,10 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("led",    "count2",       CFG_INT,   led_count2),
     CFG_ENTRY("led",    "count3",       CFG_INT,   led_count3),
     CFG_ENTRY("led",    "count4",       CFG_INT,   led_count4),
+    CFG_ENTRY("led",    "color1",       CFG_HEX,   led_color1),
+    CFG_ENTRY("led",    "color2",       CFG_HEX,   led_color2),
+    CFG_ENTRY("led",    "color3",       CFG_HEX,   led_color3),
+    CFG_ENTRY("led",    "color4",       CFG_HEX,   led_color4),
     // [debug]
     CFG_ENTRY("debug",  "system",       CFG_BOOL,  dbg_system),
     CFG_ENTRY("debug",  "basic",        CFG_BOOL,  dbg_basic),
@@ -128,6 +132,10 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->led_count2       = DEFAULT_LED_COUNT;
     cfg->led_count3       = DEFAULT_LED_COUNT;
     cfg->led_count4       = DEFAULT_LED_COUNT;
+    cfg->led_color1       = DEFAULT_LED_COLOR;
+    cfg->led_color2       = DEFAULT_LED_COLOR;
+    cfg->led_color3       = DEFAULT_LED_COLOR;
+    cfg->led_color4       = DEFAULT_LED_COLOR;
 
     cfg->dbg_system       = DEFAULT_DBG_SYSTEM;
     cfg->dbg_basic        = DEFAULT_DBG_BASIC;

@@ -114,9 +114,18 @@ Sections and Keys
   count2            LEDs on channel 2              (default: 50)
   count3            LEDs on channel 3              (default: 50)
   count4            LEDs on channel 4              (default: 50)
+  color1            Default color for channel 1    (default: 0x000000)
+  color2            Default color for channel 2    (default: 0x000000)
+  color3            Default color for channel 3    (default: 0x000000)
+  color4            Default color for channel 4    (default: 0x000000)
 
-  LED buffers are dynamically allocated at boot based on these values.
+  LED buffers are dynamically allocated at boot based on count values.
   config set requires reboot; "led count" hot-applies.
+
+  Color values are hex RGB (0xRRGGBB). When non-zero, all LEDs on that
+  channel are filled with the specified color at boot (after the RGB
+  test pattern). This provides a static default appearance without a
+  startup script. 0x000000 (default) means LEDs stay off.
 
 [debug]
   system            System messages                (default: on)
@@ -170,10 +179,10 @@ The config system loads early in setup(), after LittleFS is mounted but
 before any hardware that depends on config values is initialized:
 
   init_LittleFS()          LittleFS available
-  list_dir()
   config_init()            Load defaults, overlay from /config.ini
+  time_seed_compile()      Seed time from compile timestamp (fallback)
   cue_setup()              Initialize cue engine (no file loaded yet)
-  led_setup()              Allocates LED buffers from config.led_count*
+  led_setup()              Allocates LED buffers, applies default colors
   Wire.begin()
   lora_setup()             Reads config.lora_*
   gps_setup()              Reads config.origin_*

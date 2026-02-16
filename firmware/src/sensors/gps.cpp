@@ -13,6 +13,51 @@ static volatile uint32_t millis_at_pps = 0;     // millis() at that same moment
 static volatile bool     epoch_valid = false;
 static volatile uint8_t  time_source = 0;        // 0=none, 1=NTP, 2=GPS+PPS
 
+// --- Compile-time seed ---
+// Parse __DATE__ ("Feb 16 2026") and __TIME__ ("13:45:02") into epoch ms.
+// Called early in setup() so get_epoch_ms() returns a reasonable value even
+// before NTP or GPS are available. NTP (source 1) and GPS+PPS (source 2)
+// override this automatically when they connect.
+static uint64_t parse_compile_time(void)
+{
+    const char *date = __DATE__;  // "Mmm dd yyyy"
+    const char *time = __TIME__;  // "hh:mm:ss"
+
+    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    int mon = 0;
+    for (int i = 0; i < 12; i++) {
+        if (date[0] == months[i*3] && date[1] == months[i*3+1] && date[2] == months[i*3+2]) {
+            mon = i;
+            break;
+        }
+    }
+
+    struct tm tm = {};
+    tm.tm_year = atoi(date + 7) - 1900;
+    tm.tm_mon  = mon;
+    tm.tm_mday = atoi(date + 4);
+    tm.tm_hour = atoi(time);
+    tm.tm_min  = atoi(time + 3);
+    tm.tm_sec  = atoi(time + 6);
+
+    time_t t = mktime(&tm);  // assumes UTC (ESP32 default, no TZ set at boot)
+    if (t < 0) return 0;
+    return (uint64_t)t * 1000ULL;
+}
+
+void time_seed_compile(void)
+{
+    uint64_t ep = parse_compile_time();
+    if (ep == 0) return;
+
+    portENTER_CRITICAL(&time_mux);
+    epoch_at_pps = ep;
+    millis_at_pps = millis();
+    epoch_valid = true;
+    // time_source stays 0 — NTP (1) and GPS (2) will override
+    portEXIT_CRITICAL(&time_mux);
+}
+
 #ifdef BOARD_HAS_GPS
 
 #include <HardwareSerial.h>

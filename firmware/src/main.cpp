@@ -334,10 +334,13 @@ void setup()
   //dump_nvs();
   print_nvs_stats();
   init_LittleFS();
-  list_dir( LittleFS, "/" );
+  //list_dir( LittleFS, "/" );
 
   // Load config from /config.ini (or use compiled defaults)
   config_init();
+
+  // Seed time from compile timestamp (fallback until GPS or NTP locks)
+  time_seed_compile();
 
   // Initialize LUT mutex (before any scripting tasks start)
   lutMutexInit();
@@ -363,6 +366,19 @@ void setup()
     delay(500);
     led_set_channel(1, 4, CRGB::Black);
     led_show_now();
+
+  // Apply default colors from config (if any channel has a non-black color)
+  {
+    int colors[] = { config.led_color1, config.led_color2, config.led_color3, config.led_color4 };
+    int counts[] = { config.led_count1, config.led_count2, config.led_count3, config.led_count4 };
+    for (int ch = 0; ch < 4; ch++) {
+      if (colors[ch] != 0) {
+        CRGB c((colors[ch] >> 16) & 0xFF, (colors[ch] >> 8) & 0xFF, colors[ch] & 0xFF);
+        led_set_channel(ch + 1, counts[ch], c);
+      }
+    }
+    led_show_now();
+  }
 
   //NOTE: After led_start_task(), only the LED render task calls FastLED.show().
   //All other code writes to the LED buffers and calls led_show() to mark dirty.

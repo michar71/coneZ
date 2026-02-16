@@ -59,6 +59,7 @@
 
 // LED counts per channel
 #define DEFAULT_LED_COUNT       50
+#define DEFAULT_LED_COLOR       0x000000
 
 // Debug (true = on at boot)
 #define DEFAULT_DBG_SYSTEM      true
@@ -123,6 +124,10 @@ typedef struct {
     int     led_count2;
     int     led_count3;
     int     led_count4;
+    int     led_color1;
+    int     led_color2;
+    int     led_color3;
+    int     led_color4;
 
     // [debug]
     bool    dbg_system;

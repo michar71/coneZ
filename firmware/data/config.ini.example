@@ -48,6 +48,10 @@ count1=50
 count2=50
 count3=50
 count4=50
+;color1=0xFF0000
+;color2=0x00FF00
+;color3=0x0000FF
+;color4=0x000000
 
 [debug]
 system=on

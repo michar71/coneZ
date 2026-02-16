@@ -288,7 +288,7 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 
 - **LoRa:** RadioLib, SX1262/SX1268 via SPI, two modes selectable via `lora.rf_mode` config key. **LoRa mode** (default): configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW). **FSK mode**: configurable bit rate, frequency deviation, RX bandwidth, data shaping, whitening, sync word (hex string), CRC. Shared params (frequency, TX power, preamble) work in both modes. CLI `lora` subcommands (`freq`, `power`, `bw`, `sf`, `cr`, `mode`) hot-apply changes without saving to config; `config set lora.*` persists but requires reboot.
 - **GPS:** ATGM336H (AT6558 chipset) via UART (9600 baud), parsed by TinyGPSPlus, with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`).
-- **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is spinlock-protected against the render task. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
+- **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. Default boot color per channel configurable via `led.color1`–`color4` (hex 0xRRGGBB, default 0x000000/off). CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is mutex-protected against the render task. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
 - **Temp:** TMP102 on I2C 0x48
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
@@ -303,11 +303,11 @@ Unified time API in `sensors/gps.h`/`gps.cpp` provides millisecond-precision epo
 **Tiered sources (higher priority wins):**
 - **GPS + PPS** (time_source=2, ~1us accuracy) — ConeZ PCB only. PPS rising edge triggers `IRAM_ATTR` ISR that captures `millis()`. NMEA sentence (arriving ~100-200ms later) provides absolute time for the preceding edge. Epoch stored under `portMUX_TYPE` spinlock (64-bit not atomic on 32-bit Xtensa).
 - **NTP** (time_source=1, ~10-50ms accuracy) — Any board with WiFi. Uses ESP32 SNTP via `configTime()`. NTP server configurable via `[system] ntp_server` config key.
-- **None** (time_source=0) — `get_epoch_ms()` returns 0, consumers no-op.
+- **Compile-time** (time_source=0) — Fallback seeded from `__DATE__`/`__TIME__` at boot via `time_seed_compile()`. Provides approximate time (~seconds drift per day) when no GPS or NTP is available. `get_time_valid()` returns true, `get_epoch_ms()` returns a reasonable value. Automatically overridden when NTP or GPS connects.
 
-**GPS staleness fallback:** If PPS stops arriving for >10 seconds (GPS loss), `ntp_loop()` downgrades `time_source` to 0, allowing NTP to take over if WiFi is available.
+**GPS staleness fallback:** If PPS stops arriving for >10 seconds (GPS loss), `ntp_loop()` downgrades `time_source` to 0, allowing NTP to take over if WiFi is available. Compile-time seed remains valid as a last resort.
 
-**API:** `get_epoch_ms()` (ms since Unix epoch), `get_time_valid()` (any source active), `get_time_source()` (0/1/2), `get_pps_flag()` (ISR edge flag, clear-on-read), `ntp_setup()`, `ntp_loop()`.
+**API:** `get_epoch_ms()` (ms since Unix epoch), `get_time_valid()` (any source active), `get_time_source()` (0/1/2), `get_pps_flag()` (ISR edge flag, clear-on-read), `time_seed_compile()`, `ntp_setup()`, `ntp_loop()`.
 
 **Thread safety:** `epoch_at_pps` + `millis_at_pps` protected by `portMUX_TYPE` spinlock. `pps_edge_flag` also uses spinlock for atomic read-then-clear. 32-bit `pps_millis`/`pps_count` use `volatile` only (aligned 32-bit atomic on Xtensa).
 
@@ -360,7 +360,7 @@ Baseline measured with single-task architecture (shell in loopTask). Current num
 
 ### Configuration
 
-INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-table-driven: `cfg_table[]` in `config.cpp` maps `{section, key, type, offset}` to `conez_config_t` struct fields. Covers WiFi, GPS origin, LoRa radio params (both LoRa and FSK modes), MQTT broker, NTP server, timezone, debug defaults, callsign, and startup script. CLI commands: `config`, `config set`, `config unset`, `config reset`. See `documentation/config.txt` for full reference.
+INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-table-driven: `cfg_table[]` in `config.cpp` maps `{section, key, type, offset}` to `conez_config_t` struct fields. Covers WiFi, GPS origin, LoRa radio params (both LoRa and FSK modes), MQTT broker, NTP server, timezone, LED counts and default colors, debug defaults, callsign, and startup script. CLI commands: `config`, `config set`, `config unset`, `config reset`. See `documentation/config.txt` for full reference.
 
 ### Filesystem
 

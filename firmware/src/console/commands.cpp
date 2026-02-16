@@ -7,6 +7,7 @@
 #include "esp_heap_caps.h"
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_reg.h"
+#include "esp_partition.h"
 #include "esp_ota_ops.h"
 #include <esp_app_format.h>
 #include "basic_wrapper.h"
@@ -22,6 +23,7 @@
 #include "led.h"
 #include "config.h"
 #include "cue.h"
+#include "sun.h"
 #include "editor.h"
 #include "psram.h"
 #include "mqtt_client.h"
@@ -277,6 +279,7 @@ int cmd_debug( int argc, char **argv )
         printfnl(SOURCE_COMMANDS, F(" - FSYNC: \t%s\n"), getDebug(SOURCE_FSYNC) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, F(" - WIFI: \t%s\n"), getDebug(SOURCE_WIFI) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, F(" - SENSORS: \t%s\n"), getDebug(SOURCE_SENSORS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, F(" - MQTT: \t%s\n"), getDebug(SOURCE_MQTT) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, F(" - OTHER: \t%s\n"), getDebug(SOURCE_OTHER) ? "on" : "off" );
 
         return 0;
@@ -922,6 +925,34 @@ int cmd_version(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, F("%s\n"), c2wasm_version_string());
 #endif
 
+    // List all app partitions with firmware versions
+    const esp_partition_t* boot = esp_ota_get_boot_partition();
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP,
+                                                     ESP_PARTITION_SUBTYPE_ANY, NULL);
+    if (it) {
+        printfnl(SOURCE_COMMANDS, F("\nPartitions:\n"));
+        while (it != NULL) {
+            const esp_partition_t* part = esp_partition_get(it);
+            bool hasInfo = esp_ota_get_partition_description(part, &desc) == ESP_OK;
+
+            const char *tag = "";
+            if (part == running) tag = " [RUNNING]";
+            else if (part == boot) tag = " [BOOT]";
+
+            printfnl(SOURCE_COMMANDS, F("  %s @ 0x%06x  %4uKB%s\n"), part->label,
+                     (unsigned)part->address, (unsigned)(part->size / 1024), tag);
+
+            if (hasInfo)
+                printfnl(SOURCE_COMMANDS, F("    %s %s  built %s %s\n"),
+                         desc.project_name, desc.version, desc.date, desc.time);
+            else
+                printfnl(SOURCE_COMMANDS, F("    (empty)\n"));
+
+            it = esp_partition_next(it);
+        }
+        esp_partition_iterator_release(it);
+    }
+
     return 0;
 }
 
@@ -1312,6 +1343,26 @@ int cmd_gpio(int argc, char **argv)
 }
 
 
+// Compute effective timezone offset in hours (standard + DST if applicable)
+static int effective_tz_offset(int year, int month, int day)
+{
+    int tz = config.timezone;
+    if (config.auto_dst && is_us_dst(year, month, day))
+        tz += 1;
+    return tz;
+}
+
+// Format a timezone label like "UTC-7" or "UTC+0"
+static const char *tz_label(int tz_hours)
+{
+    static char buf[12];
+    if (tz_hours >= 0)
+        snprintf(buf, sizeof(buf), "UTC+%d", tz_hours);
+    else
+        snprintf(buf, sizeof(buf), "UTC%d", tz_hours);
+    return buf;
+}
+
 static void gps_show_status(void)
 {
 #ifdef BOARD_HAS_GPS
@@ -1330,9 +1381,19 @@ static void gps_show_status(void)
     float spd_mps = get_speed();
     printfnl(SOURCE_COMMANDS, F("  Speed:      %.1f m/s (%.1f mph)\n"), spd_mps, spd_mps * 2.23694f);
     printfnl(SOURCE_COMMANDS, F("  Direction:  %.1f deg\n"), get_dir());
-    printfnl(SOURCE_COMMANDS, F("  Time:       %02d:%02d:%02d  %04d-%02d-%02d\n"),
-        get_hour(), get_minute(), get_second(),
-        get_year(), get_month(), get_day());
+    // Show local time (UTC + timezone + DST)
+    {
+        int utc_y = get_year(), utc_m = get_month(), utc_d = get_day();
+        int tz = effective_tz_offset(utc_y, utc_m, utc_d);
+        uint64_t epoch = get_epoch_ms();
+        time_t local_t = (time_t)(epoch / 1000) + tz * 3600;
+        struct tm ltm;
+        gmtime_r(&local_t, &ltm);
+        printfnl(SOURCE_COMMANDS, F("  Time:       %02d:%02d:%02d  %04d-%02d-%02d (%s)\n"),
+            ltm.tm_hour, ltm.tm_min, ltm.tm_sec,
+            ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday,
+            tz_label(tz));
+    }
     static const char *src_names[] = { "None", "NTP", "GPS+PPS" };
     uint8_t ts = get_time_source();
     printfnl(SOURCE_COMMANDS, F("  Time src:   %s\n"), src_names[ts < 3 ? ts : 0]);
@@ -1761,15 +1822,22 @@ int cmd_time(int argc, char **argv)
     static const char *dayNames[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
     if (get_time_valid()) {
-        int dow = get_day_of_week();
+        uint64_t epoch = get_epoch_ms();
+
+        // Compute local time from epoch + timezone + DST
+        int utc_y = get_year(), utc_m = get_month(), utc_d = get_day();
+        int tz = effective_tz_offset(utc_y, utc_m, utc_d);
+        time_t local_t = (time_t)(epoch / 1000) + tz * 3600;
+        struct tm ltm;
+        gmtime_r(&local_t, &ltm);
+        int dow = ltm.tm_wday;
         if (dow < 0 || dow > 6) dow = 0;
 
-        printfnl(SOURCE_COMMANDS, F("Time:   %04d-%02d-%02d %02d:%02d:%02d UTC (%s)\n"),
-            get_year(), get_month(), get_day(),
-            get_hour(), get_minute(), get_second(),
-            dayNames[dow]);
+        printfnl(SOURCE_COMMANDS, F("Time:   %04d-%02d-%02d %02d:%02d:%02d %s (%s)\n"),
+            ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday,
+            ltm.tm_hour, ltm.tm_min, ltm.tm_sec,
+            tz_label(tz), dayNames[dow]);
 
-        uint64_t epoch = get_epoch_ms();
         printfnl(SOURCE_COMMANDS, F("Epoch:  %lu%03lu ms\n"),
             (unsigned long)(epoch / 1000), (unsigned long)(epoch % 1000));
     } else {
@@ -2343,6 +2411,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  cat {filename}                      Show file contents\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  clear                               Clear screen (ANSI)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  color [on|off]                      Show or toggle ANSI color\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  compile {file} [run]                Compile .bas or .c to .wasm\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]            Show or change settings\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  cp {source} {dest}                  Copy file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]        Cue timeline engine\n" ) );
@@ -2363,6 +2432,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  md5 {filename}                      Compute MD5 hash\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mem                                 Show heap memory stats\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mqtt [enable|disable|connect|...]   MQTT status or control\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mkdir {dirname}                     Create directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                 Set program arguments\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  ps                                  Show task list and stack watermarks\n" ) );

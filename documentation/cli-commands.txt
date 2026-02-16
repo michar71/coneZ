@@ -229,8 +229,8 @@ grep {pattern} [file]
 
 gps
   With no arguments, shows GPS status: fix type, satellites, HDOP/VDOP/
-  PDOP, position, altitude, speed, direction, time, PPS info.
-  Only available on boards with GPS hardware.
+  PDOP, position, altitude, speed, direction, local time with timezone,
+  PPS info. Only available on boards with GPS hardware.
 
   gps info
       Query GPS module firmware version and hardware model.
@@ -468,10 +468,12 @@ tc
   that tasks are running.
 
 time / date
-  Show current date, time, day of week, time source (GPS+PPS, NTP, or
-  none), and epoch milliseconds. Available on all boards — GPS boards
-  use PPS-disciplined time, others fall back to NTP when WiFi is
-  connected.
+  Show current local date, time, day of week, timezone, time source
+  (GPS+PPS, NTP, or compile-time), and epoch milliseconds. Time is
+  displayed in the local timezone (config system.timezone + auto DST).
+  Available on all boards — GPS boards use PPS-disciplined time,
+  others fall back to NTP when WiFi is connected. If neither GPS nor
+  NTP is available, time starts from the firmware's compile timestamp.
 
 uptime
   Show time since boot in days, hours, minutes, seconds.
@@ -480,7 +482,9 @@ ver
   Alias for version.
 
 version
-  Show firmware project name, version, build date/time, and board type.
+  Show firmware project name, version, build date/time, board type,
+  embedded compiler versions (bas2wasm, c2wasm), and firmware versions
+  in all OTA partitions (label, address, size, running/boot status).
 
 wasm
   Show WASM runtime status and module information.

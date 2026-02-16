@@ -36,6 +36,7 @@ uint32_t get_pps_age_ms(void);  // ms since last PPS edge (UINT32_MAX if never)
 uint32_t get_pps_count(void);  // total PPS edges since boot
 
 // --- Unified time API ---
+void     time_seed_compile(void); // seed time from __DATE__/__TIME__ (fallback)
 void     pps_isr_init(void);     // attach PPS interrupt (called from gps_setup)
 bool     get_time_valid(void);   // true if any time source (GPS+PPS or NTP) is active
 uint64_t get_epoch_ms(void);     // ms since Unix epoch, interpolated between updates
