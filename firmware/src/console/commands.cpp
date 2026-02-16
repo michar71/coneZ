@@ -1532,14 +1532,95 @@ int cmd_time(int argc, char **argv)
 }
 
 
+static bool parse_color(const char *s, CRGB *out)
+{
+    if (*s == '#') s++;
+    if (strlen(s) != 6) return false;
+    char *end;
+    unsigned long v = strtoul(s, &end, 16);
+    if (*end) return false;
+    *out = CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+    return true;
+}
+
 int cmd_led(int argc, char **argv)
 {
 #ifdef BOARD_HAS_RGB_LEDS
-    printfnl(SOURCE_COMMANDS, F("LED Config:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Strip 1: %d LEDs\n"), config.led_count1);
-    printfnl(SOURCE_COMMANDS, F("  Strip 2: %d LEDs\n"), config.led_count2);
-    printfnl(SOURCE_COMMANDS, F("  Strip 3: %d LEDs\n"), config.led_count3);
-    printfnl(SOURCE_COMMANDS, F("  Strip 4: %d LEDs\n"), config.led_count4);
+    CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
+    int   counts[] = { config.led_count1, config.led_count2,
+                       config.led_count3, config.led_count4 };
+
+    // led clear — all channels to black
+    if (argc >= 2 && !strcasecmp(argv[1], "clear")) {
+        for (int ch = 0; ch < 4; ch++)
+            if (bufs[ch]) memset(bufs[ch], 0, counts[ch] * sizeof(CRGB));
+        led_show();
+        printfnl(SOURCE_COMMANDS, F("All LEDs cleared\n"));
+        return 0;
+    }
+
+    // led set <ch> <index|start-end|all> <#RRGGBB>
+    if (argc >= 2 && !strcasecmp(argv[1], "set")) {
+        if (argc < 5) {
+            printfnl(SOURCE_COMMANDS, F("Usage: led set <ch> <index|start-end|all> <#RRGGBB>\n"));
+            return 1;
+        }
+        int ch = atoi(argv[2]);
+        if (ch < 1 || ch > 4 || !bufs[ch - 1]) {
+            printfnl(SOURCE_COMMANDS, F("Invalid channel %d\n"), ch);
+            return 1;
+        }
+        CRGB color;
+        if (!parse_color(argv[4], &color)) {
+            printfnl(SOURCE_COMMANDS, F("Invalid color: %s (use #RRGGBB)\n"), argv[4]);
+            return 1;
+        }
+        int n = counts[ch - 1];
+        int start, end;
+        if (!strcasecmp(argv[3], "all")) {
+            start = 0; end = n - 1;
+        } else {
+            char *dash = strchr(argv[3], '-');
+            if (dash) {
+                *dash = '\0';
+                start = atoi(argv[3]);
+                end   = atoi(dash + 1);
+            } else {
+                start = end = atoi(argv[3]);
+            }
+        }
+        if (start < 0 || end >= n || start > end) {
+            printfnl(SOURCE_COMMANDS, F("Index out of range (0-%d)\n"), n - 1);
+            return 1;
+        }
+        for (int i = start; i <= end; i++)
+            bufs[ch - 1][i] = color;
+        led_show();
+        printfnl(SOURCE_COMMANDS, F("Ch%d [%d-%d] = #%02X%02X%02X\n"),
+                 ch, start, end, color.r, color.g, color.b);
+        return 0;
+    }
+
+    // led (no args) — show config + RGB values
+    getLock();
+    Stream *out = getStream();
+    out->println("LED Config:");
+    for (int ch = 0; ch < 4; ch++) {
+        out->printf("  Strip %d: %d LEDs\n", ch + 1, counts[ch]);
+    }
+    for (int ch = 0; ch < 4; ch++) {
+        if (!bufs[ch] || counts[ch] == 0) continue;
+        out->printf("\nCh%d:\n", ch + 1);
+        for (int i = 0; i < counts[ch]; i++) {
+            if (i % 8 == 0)
+                out->printf("  %3d:", i);
+            CRGB c = bufs[ch][i];
+            out->printf(" #%02X%02X%02X", c.r, c.g, c.b);
+            if (i % 8 == 7 || i == counts[ch] - 1)
+                out->println();
+        }
+    }
+    releaseLock();
 #else
     printfnl(SOURCE_COMMANDS, F("RGB LEDs not available on this board\n"));
 #endif

@@ -143,7 +143,9 @@ Console Commands:
   dir/ls [path]        List files in data directory (optional subdirectory)
   grep <pat> [file]    Search file contents (case-insensitive, recursive)
   hexdump <file> [n]   Hex+ASCII dump (default 256 bytes)
-  led                  Show LED channel configuration
+  led                  Show LED config + RGB values
+  led set <ch> <idx|s-e|all> <#RRGGBB>  Set LED color(s)
+  led clear            Clear all LEDs to black
   mkdir <dir>          Create directory
   mv <old> <new>       Rename/move file (alias: ren)
   open                 Open file dialog

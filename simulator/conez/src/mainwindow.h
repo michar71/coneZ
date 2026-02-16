@@ -45,7 +45,7 @@ private:
     void cmdDf();
     void cmdClear();
     void cmdParam(const QStringList &args);
-    void cmdLed();
+    void cmdLed(const QStringList &args);
     void cmdSensors();
     void cmdTime();
     void cmdUptime();

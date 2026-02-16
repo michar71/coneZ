@@ -43,7 +43,7 @@ Quick Reference
   help                               Show help (same as ?)
   hexdump {filename} [count]         Hex+ASCII dump of file (default 256 bytes)
   history                            Show command history
-  led                                Show LED configuration
+  led [set|clear]                    Show/set LED configuration and colors
   load {filename}                    Receive file via serial (CTRL+Z to end)
   lora                               Show LoRa radio status
   free                               Show heap memory (alias for mem)
@@ -283,8 +283,19 @@ history
   command. Up/Down arrows navigate history.
 
 led
-  Show LED strip configuration (number of LEDs per strip).
+  Show LED strip configuration and current RGB values per LED.
+  Values displayed as #RRGGBB, 8 per line with starting index.
   Only available on boards with RGB LEDs.
+
+  led set <ch> <index|start-end|all> <#RRGGBB>
+      Set one or more LEDs on a channel to the given color.
+      Examples:
+        led set 1 0 #FF0000        Set channel 1 LED 0 to red
+        led set 2 0-9 #00FF00      Set channel 2 LEDs 0-9 to green
+        led set 3 all #0000FF      Set all channel 3 LEDs to blue
+
+  led clear
+      Set all LEDs on all channels to black (#000000).
 
 list {filename}
   Alias for cat. Print the contents of a file to the console.

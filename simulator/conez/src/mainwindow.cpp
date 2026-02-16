@@ -171,7 +171,7 @@ void MainWindow::onCommand(const QString &cmd)
     } else if (verb == "param") {
         cmdParam(parts);
     } else if (verb == "led") {
-        cmdLed();
+        cmdLed(parts);
     } else if (verb == "sensors") {
         cmdSensors();
     } else if (verb == "time") {
@@ -266,7 +266,9 @@ void MainWindow::cmdHelp()
         "  grep {pattern} [file]               Search file contents\n"
         "  help                                Show this help\n"
         "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n"
-        "  led                                 Show LED configuration\n"
+        "  led                                 Show LED config + RGB values\n"
+        "  led set <ch> <idx|s-e|all> <#RRGGBB> Set LED color(s)\n"
+        "  led clear                           Clear all LEDs to black\n"
         "  md5 {filename}                      Compute MD5 hash\n"
         "  mkdir {dirname}                     Create directory\n"
         "  open                                Open file dialog\n"
@@ -658,17 +660,84 @@ void MainWindow::cmdParam(const QStringList &args)
     }
 }
 
-void MainWindow::cmdLed()
+void MainWindow::cmdLed(const QStringList &args)
 {
     auto &cfg = simConfig();
-    m_console->appendText(QString(
-        "LED Configuration:\n"
-        "  Channel 1: %1 LEDs\n"
-        "  Channel 2: %2 LEDs\n"
-        "  Channel 3: %3 LEDs\n"
-        "  Channel 4: %4 LEDs\n"
-    ).arg(cfg.led_count1).arg(cfg.led_count2)
-     .arg(cfg.led_count3).arg(cfg.led_count4));
+    int counts[] = { cfg.led_count1, cfg.led_count2, cfg.led_count3, cfg.led_count4 };
+
+    // led clear
+    if (args.size() >= 2 && args[1].compare("clear", Qt::CaseInsensitive) == 0) {
+        for (int ch = 0; ch < 4; ch++)
+            ledState().fill(ch, 0, 0, 0);
+        ledState().show();
+        m_console->appendText("All LEDs cleared\n");
+        return;
+    }
+
+    // led set <ch> <index|start-end|all> <#RRGGBB>
+    if (args.size() >= 2 && args[1].compare("set", Qt::CaseInsensitive) == 0) {
+        if (args.size() < 5) {
+            m_console->appendText("Usage: led set <ch> <index|start-end|all> <#RRGGBB>\n");
+            return;
+        }
+        int ch = args[2].toInt();
+        if (ch < 1 || ch > 4) {
+            m_console->appendText(QString("Invalid channel %1\n").arg(ch));
+            return;
+        }
+        QString cstr = args[4];
+        if (cstr.startsWith('#')) cstr = cstr.mid(1);
+        bool ok;
+        unsigned int cv = cstr.toUInt(&ok, 16);
+        if (!ok || cstr.length() != 6) {
+            m_console->appendText("Invalid color (use #RRGGBB)\n");
+            return;
+        }
+        uint8_t r = (cv >> 16) & 0xFF, g = (cv >> 8) & 0xFF, b = cv & 0xFF;
+        int n = counts[ch - 1];
+        int start, end;
+        if (args[3].compare("all", Qt::CaseInsensitive) == 0) {
+            start = 0; end = n - 1;
+        } else if (args[3].contains('-')) {
+            auto parts = args[3].split('-');
+            start = parts[0].toInt();
+            end = parts[1].toInt();
+        } else {
+            start = end = args[3].toInt();
+        }
+        if (start < 0 || end >= n || start > end) {
+            m_console->appendText(QString("Index out of range (0-%1)\n").arg(n - 1));
+            return;
+        }
+        for (int i = start; i <= end; i++)
+            ledState().setPixel(ch - 1, i, r, g, b);
+        ledState().show();
+        QString hex = QString("%1%2%3").arg(r,2,16,QChar('0')).arg(g,2,16,QChar('0')).arg(b,2,16,QChar('0'));
+        m_console->appendText(QString("Ch%1 [%2-%3] = #%4\n").arg(ch).arg(start).arg(end).arg(hex.toUpper()));
+        return;
+    }
+
+    // led (no args) — show config + RGB values
+    QString out = "LED Config:\n";
+    for (int ch = 0; ch < 4; ch++)
+        out += QString("  Strip %1: %2 LEDs\n").arg(ch + 1).arg(counts[ch]);
+
+    auto snap = ledState().snapshot();
+    for (int ch = 0; ch < 4; ch++) {
+        if (ch >= snap.size() || snap[ch].empty()) continue;
+        out += QString("\nCh%1:\n").arg(ch + 1);
+        int n = snap[ch].size();
+        for (int i = 0; i < n; i++) {
+            if (i % 8 == 0)
+                out += QString("  %1:").arg(i, 3);
+            const RGB &c = snap[ch][i];
+            out += QString(" #%1").arg(
+                QString("%1%2%3").arg(c.r,2,16,QChar('0')).arg(c.g,2,16,QChar('0')).arg(c.b,2,16,QChar('0')).toUpper());
+            if (i % 8 == 7 || i == n - 1)
+                out += "\n";
+        }
+    }
+    m_console->appendText(out);
 }
 
 void MainWindow::cmdSensors()
