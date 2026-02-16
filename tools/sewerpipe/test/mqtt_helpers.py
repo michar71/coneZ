@@ -3,14 +3,27 @@ import socket
 import struct
 import time
 
-def mqtt_connect(client_id, keep_alive=60):
+def mqtt_connect(client_id, keep_alive=60, will_topic=None, will_msg=None,
+                 will_qos=0, will_retain=False):
     proto = b'\x00\x04MQTT'
     level = bytes([4])
-    flags = bytes([0x02])  # clean session
+    f = 0x02  # clean session
+    if will_topic is not None:
+        f |= 0x04  # will flag
+        f |= (will_qos & 3) << 3
+        if will_retain:
+            f |= 0x20
+    flags = bytes([f])
     ka = struct.pack('>H', keep_alive)
     cid = client_id.encode()
     cid_field = struct.pack('>H', len(cid)) + cid
-    var_payload = proto + level + flags + ka + cid_field
+    payload = cid_field
+    if will_topic is not None:
+        wt = will_topic.encode() if isinstance(will_topic, str) else will_topic
+        payload += struct.pack('>H', len(wt)) + wt
+        wm = will_msg.encode() if isinstance(will_msg, str) else (will_msg or b'')
+        payload += struct.pack('>H', len(wm)) + wm
+    var_payload = proto + level + flags + ka + payload
     return bytes([0x10]) + encode_remaining(len(var_payload)) + var_payload
 
 def mqtt_publish(topic, message, qos=0, retain=False, msg_id=1):

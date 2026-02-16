@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <signal.h>
 #include <time.h>
 
 /* ---------- Constants ---------- */
@@ -72,6 +73,13 @@ typedef struct {
     sub_t             subs[MAX_SUBS_PER_CLIENT];
     inflight_t        inflight[MAX_INFLIGHT];
     uint16_t          next_msg_id;
+    /* Will message (MQTT-3.1.2-8) */
+    bool              has_will;
+    char              will_topic[MAX_TOPIC_LEN];
+    uint8_t          *will_payload;
+    uint32_t          will_payload_len;
+    uint8_t           will_qos;
+    bool              will_retain;
 } client_t;
 
 typedef struct {
@@ -82,11 +90,12 @@ typedef struct {
 } retained_t;
 
 typedef struct {
-    int         listen_fd;
-    client_t    clients[MAX_CLIENTS];
-    retained_t  retained[MAX_RETAINED];
-    bool        verbose;
-    bool        running;
+    int                  listen_fd;
+    client_t             clients[MAX_CLIENTS];
+    retained_t           retained[MAX_RETAINED];
+    uint8_t             *scratch;   /* heap send buffer, RX_BUF_SIZE bytes */
+    bool                 verbose;
+    volatile sig_atomic_t running;
 } broker_t;
 
 /* ---------- mqtt.c — Packet parsing/serialization ---------- */

@@ -47,6 +47,7 @@ run_test "retained"           python3 "$SCRIPT_DIR/test_retained.py" "$PORT"
 run_test "wildcards"          python3 "$SCRIPT_DIR/test_wildcards.py" "$PORT"
 run_test "qos1"               python3 "$SCRIPT_DIR/test_qos1.py" "$PORT"
 run_test "client_takeover"    python3 "$SCRIPT_DIR/test_takeover.py" "$PORT"
+run_test "will"               python3 "$SCRIPT_DIR/test_will.py" "$PORT"
 
 echo ""
 echo "$PASS passed, $FAIL failed"

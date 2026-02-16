@@ -26,11 +26,19 @@ static void set_nonblocking(int fd)
 static void send_buf(client_t *c, const uint8_t *buf, int len)
 {
     if (c->fd < 0 || len <= 0) return;
-    /* Best-effort write; nonblocking socket may short-write but for small
-       control packets this is fine. Large publishes could theoretically
-       be partial — acceptable for this broker's scope. */
-    ssize_t n = write(c->fd, buf, len);
-    (void)n;
+    int sent = 0;
+    while (sent < len) {
+        ssize_t n = write(c->fd, buf + sent, len - sent);
+        if (n > 0) {
+            sent += n;
+        } else if (n < 0 && errno == EAGAIN) {
+            /* Nonblocking socket full — drop remainder rather than
+               spin-waiting.  Acceptable for this broker's scope. */
+            break;
+        } else {
+            break;  /* error or EOF */
+        }
+    }
 }
 
 static time_t now_mono(void)
@@ -38,6 +46,28 @@ static time_t now_mono(void)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec;
+}
+
+/* ---------- Topic filter validation ---------- */
+
+/* Check that a subscription filter is well-formed per MQTT 3.1.1:
+   - '#' must be the last character and must be preceded by '/' (or be the
+     entire filter)
+   - '+' must occupy an entire level (preceded by '/' or start, followed by
+     '/' or end) */
+static bool filter_valid(const char *f)
+{
+    for (int i = 0; f[i]; i++) {
+        if (f[i] == '#') {
+            if (f[i + 1] != '\0') return false;            /* not at end */
+            if (i > 0 && f[i - 1] != '/') return false;    /* not after / */
+        }
+        if (f[i] == '+') {
+            if (i > 0 && f[i - 1] != '/') return false;    /* not at level start */
+            if (f[i + 1] != '\0' && f[i + 1] != '/') return false; /* not at level end */
+        }
+    }
+    return true;
 }
 
 /* ---------- Topic matching ---------- */
@@ -90,6 +120,9 @@ void broker_init(broker_t *b, int port)
 {
     memset(b, 0, sizeof(*b));
     b->running = true;
+
+    b->scratch = malloc(RX_BUF_SIZE);
+    if (!b->scratch) { perror("malloc"); exit(1); }
 
     for (int i = 0; i < MAX_CLIENTS; i++)
         b->clients[i].fd = -1;
@@ -193,6 +226,44 @@ void broker_disconnect(broker_t *b, client_t *c)
 {
     if (c->fd < 0) return;
 
+    /* Publish will message on unexpected disconnect (MQTT-3.1.2-8) */
+    if (c->has_will && c->state == CS_CONNECTED) {
+        if (b->verbose)
+            printf("sewerpipe: publishing will for '%s': %s\n",
+                   c->client_id, c->will_topic);
+
+        if (c->will_retain)
+            retained_store(b, c->will_topic, c->will_payload,
+                           c->will_payload_len, c->will_qos);
+
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            client_t *sub = &b->clients[i];
+            if (sub->fd < 0 || sub->state != CS_CONNECTED) continue;
+            if (sub == c) continue;
+
+            for (int j = 0; j < MAX_SUBS_PER_CLIENT; j++) {
+                if (sub->subs[j].topic[0] == '\0') continue;
+                if (!topic_matches(sub->subs[j].topic, c->will_topic)) continue;
+
+                uint8_t eff_qos = (c->will_qos < sub->subs[j].qos)
+                                  ? c->will_qos : sub->subs[j].qos;
+
+                if (eff_qos == 0) {
+                    int n = mqtt_write_publish(b->scratch, RX_BUF_SIZE,
+                                               c->will_topic, c->will_payload,
+                                               c->will_payload_len, 0, 0,
+                                               false, false);
+                    if (n > 0) send_buf(sub, b->scratch, n);
+                } else {
+                    inflight_send(b, sub, c->will_topic, c->will_payload,
+                                  c->will_payload_len);
+                }
+
+                break;  /* one delivery per client */
+            }
+        }
+    }
+
     if (b->verbose || c->state == CS_CONNECTED)
         printf("sewerpipe: client '%s' disconnected (fd %d)\n",
                c->client_id[0] ? c->client_id : "?", c->fd);
@@ -207,10 +278,15 @@ void broker_disconnect(broker_t *b, client_t *c)
         }
     }
 
+    free(c->will_payload);
+
     c->fd = -1;
     c->state = CS_NEW;
     c->client_id[0] = '\0';
     c->rx_len = 0;
+    c->has_will = false;
+    c->will_payload = NULL;
+    c->will_payload_len = 0;
 }
 
 /* ---------- Retained message store ---------- */
@@ -251,11 +327,15 @@ void retained_store(broker_t *b, const char *topic,
 
     snprintf(slot->topic, MAX_TOPIC_LEN, "%s", topic);
     slot->qos = qos;
-    slot->payload = realloc(slot->payload, plen);
-    if (slot->payload) {
+    uint8_t *new_payload = realloc(slot->payload, plen);
+    if (new_payload) {
+        slot->payload = new_payload;
         memcpy(slot->payload, payload, plen);
         slot->payload_len = plen;
     } else {
+        /* realloc failed — keep old payload if any, mark slot empty */
+        free(slot->payload);
+        slot->payload = NULL;
         slot->topic[0] = '\0';
         slot->payload_len = 0;
     }
@@ -264,7 +344,7 @@ void retained_store(broker_t *b, const char *topic,
 void retained_deliver(broker_t *b, client_t *c,
                       const char *filter, uint8_t sub_qos)
 {
-    uint8_t pkt[RX_BUF_SIZE];
+    uint8_t *pkt = b->scratch;
     for (int i = 0; i < MAX_RETAINED; i++) {
         retained_t *r = &b->retained[i];
         if (r->topic[0] == '\0') continue;
@@ -273,7 +353,7 @@ void retained_deliver(broker_t *b, client_t *c,
         uint8_t eff_qos = (r->qos < sub_qos) ? r->qos : sub_qos;
 
         if (eff_qos == 0) {
-            int n = mqtt_write_publish(pkt, sizeof(pkt), r->topic,
+            int n = mqtt_write_publish(pkt, RX_BUF_SIZE, r->topic,
                                        r->payload, r->payload_len,
                                        0, 0, false, true);
             if (n > 0) send_buf(c, pkt, n);
@@ -281,7 +361,7 @@ void retained_deliver(broker_t *b, client_t *c,
             /* QoS 1 retained: send with retain flag, track in inflight */
             uint16_t mid = c->next_msg_id++;
             if (c->next_msg_id == 0) c->next_msg_id = 1;
-            int n = mqtt_write_publish(pkt, sizeof(pkt), r->topic,
+            int n = mqtt_write_publish(pkt, RX_BUF_SIZE, r->topic,
                                        r->payload, r->payload_len,
                                        1, mid, false, true);
             if (n > 0) send_buf(c, pkt, n);
@@ -307,7 +387,6 @@ void retained_deliver(broker_t *b, client_t *c,
 void inflight_send(broker_t *b, client_t *c, const char *topic,
                    const uint8_t *payload, uint32_t plen)
 {
-    (void)b;
     /* Find free inflight slot */
     inflight_t *slot = NULL;
     for (int i = 0; i < MAX_INFLIGHT; i++) {
@@ -333,10 +412,9 @@ void inflight_send(broker_t *b, client_t *c, const char *topic,
     slot->payload_len = plen;
     slot->sent_at = now_mono();
 
-    uint8_t pkt[RX_BUF_SIZE];
-    int n = mqtt_write_publish(pkt, sizeof(pkt), topic, payload, plen,
+    int n = mqtt_write_publish(b->scratch, RX_BUF_SIZE, topic, payload, plen,
                                1, mid, false, false);
-    if (n > 0) send_buf(c, pkt, n);
+    if (n > 0) send_buf(c, b->scratch, n);
 }
 
 void inflight_ack(client_t *c, uint16_t msg_id)
@@ -354,17 +432,16 @@ void inflight_ack(client_t *c, uint16_t msg_id)
 void inflight_retry(broker_t *b, client_t *c)
 {
     time_t now = now_mono();
-    uint8_t pkt[RX_BUF_SIZE];
 
     for (int i = 0; i < MAX_INFLIGHT; i++) {
         inflight_t *inf = &c->inflight[i];
         if (!inf->active) continue;
         if (now - inf->sent_at < RETRY_INTERVAL_SEC) continue;
 
-        int n = mqtt_write_publish(pkt, sizeof(pkt), inf->topic,
+        int n = mqtt_write_publish(b->scratch, RX_BUF_SIZE, inf->topic,
                                    inf->payload, inf->payload_len,
                                    1, inf->msg_id, true, false);
-        if (n > 0) send_buf(c, pkt, n);
+        if (n > 0) send_buf(c, b->scratch, n);
         inf->sent_at = now;
 
         if (b->verbose)
@@ -426,8 +503,6 @@ static void handle_connect(broker_t *b, client_t *c,
     /* uint8_t will_qos = (conn_flags >> 3) & 3; */
     bool will_flag     = (conn_flags >> 2) & 1;
     bool clean_session = (conn_flags >> 1) & 1;
-    (void)will_retain;
-
     if (!clean_session) {
         /* We don't support persistent sessions */
         send_buf(c, pkt, mqtt_write_connack(pkt, 0, CONNACK_IDENTIFIER_REJECTED));
@@ -464,14 +539,35 @@ static void handle_connect(broker_t *b, client_t *c,
         c->client_id[copy_len] = '\0';
     }
 
-    /* Skip will topic/message if present */
+    /* Parse will topic/message if present (MQTT-3.1.2-9) */
     if (will_flag) {
-        const char *s;
-        uint16_t slen;
-        consumed = mqtt_read_utf8(data + pos, data_len - pos, &s, &slen);
-        if (consumed > 0) pos += consumed;
-        consumed = mqtt_read_utf8(data + pos, data_len - pos, &s, &slen);
-        if (consumed > 0) pos += consumed;
+        const char *wt;
+        uint16_t wt_len;
+        consumed = mqtt_read_utf8(data + pos, data_len - pos, &wt, &wt_len);
+        if (consumed < 0) { broker_disconnect(b, c); return; }
+        pos += consumed;
+
+        int copy = wt_len < MAX_TOPIC_LEN - 1 ? wt_len : MAX_TOPIC_LEN - 1;
+        memcpy(c->will_topic, wt, copy);
+        c->will_topic[copy] = '\0';
+
+        const char *wm;
+        uint16_t wm_len;
+        consumed = mqtt_read_utf8(data + pos, data_len - pos, &wm, &wm_len);
+        if (consumed < 0) { broker_disconnect(b, c); return; }
+        pos += consumed;
+
+        free(c->will_payload);
+        c->will_payload = NULL;
+        if (wm_len > 0) {
+            c->will_payload = malloc(wm_len);
+            if (c->will_payload)
+                memcpy(c->will_payload, wm, wm_len);
+        }
+        c->will_payload_len = wm_len;
+        c->will_qos = (conn_flags >> 3) & 3;
+        c->will_retain = will_retain;
+        c->has_will = true;
     }
 
     /* Skip username/password — we don't use them */
@@ -524,6 +620,12 @@ static void handle_publish(broker_t *b, client_t *c, uint8_t flags,
     memcpy(topic, topic_ptr, topic_len);
     topic[topic_len] = '\0';
 
+    /* MQTT-3.3.2-2: topic must not contain wildcard characters */
+    if (memchr(topic, '+', topic_len) || memchr(topic, '#', topic_len)) {
+        broker_disconnect(b, c);
+        return;
+    }
+
     uint32_t pos = consumed;
 
     /* Message ID for QoS > 0 */
@@ -566,10 +668,9 @@ static void handle_publish(broker_t *b, client_t *c, uint8_t flags,
             uint8_t eff_qos = (qos < sub->subs[j].qos) ? qos : sub->subs[j].qos;
 
             if (eff_qos == 0) {
-                uint8_t pkt[RX_BUF_SIZE];
-                int n = mqtt_write_publish(pkt, sizeof(pkt), topic, payload,
-                                           plen, 0, 0, false, false);
-                if (n > 0) send_buf(sub, pkt, n);
+                int n = mqtt_write_publish(b->scratch, RX_BUF_SIZE, topic,
+                                           payload, plen, 0, 0, false, false);
+                if (n > 0) send_buf(sub, b->scratch, n);
             } else {
                 inflight_send(b, sub, topic, payload, plen);
             }
@@ -590,11 +691,14 @@ static void handle_subscribe(broker_t *b, client_t *c,
     uint16_t msg_id = (data[0] << 8) | data[1];
     uint32_t pos = 2;
 
-    uint8_t rcs[MAX_SUBS_PER_CLIENT];
-    char filters[MAX_SUBS_PER_CLIENT][MAX_TOPIC_LEN];
+    /* MQTT-3.9.3-1: SUBACK must have one return code per filter.
+       We support MAX_SUBS_PER_CLIENT subscriptions; excess get 0x80. */
+    #define MAX_SUB_FILTERS 64
+    uint8_t rcs[MAX_SUB_FILTERS];
+    char filters[MAX_SUB_FILTERS][MAX_TOPIC_LEN];
     int count = 0;
 
-    while (pos < data_len && count < MAX_SUBS_PER_CLIENT) {
+    while (pos < data_len && count < MAX_SUB_FILTERS) {
         const char *filter;
         uint16_t filter_len;
         int consumed = mqtt_read_utf8(data + pos, data_len - pos,
@@ -606,10 +710,16 @@ static void handle_subscribe(broker_t *b, client_t *c,
         uint8_t req_qos = data[pos++] & 0x03;
         uint8_t granted = (req_qos <= 1) ? req_qos : 1;
 
-        /* Store subscription */
+        /* Copy filter string */
         int copy = filter_len < MAX_TOPIC_LEN - 1 ? filter_len : MAX_TOPIC_LEN - 1;
         memcpy(filters[count], filter, copy);
         filters[count][copy] = '\0';
+
+        /* Validate filter (reject malformed wildcards) */
+        if (!filter_valid(filters[count])) {
+            rcs[count++] = 0x80;  /* failure */
+            continue;
+        }
 
         /* Find existing or empty slot */
         sub_t *slot = NULL;
@@ -628,7 +738,7 @@ static void handle_subscribe(broker_t *b, client_t *c,
             }
         }
         if (slot) {
-            snprintf(slot->topic, MAX_TOPIC_LEN, "%s", filters[count]);
+            memcpy(slot->topic, filters[count], MAX_TOPIC_LEN);
             slot->qos = granted;
         } else {
             granted = 0x80;  /* failure */
@@ -706,6 +816,28 @@ void broker_handle_packet(broker_t *b, client_t *c,
         return;
     }
 
+    /* Validate reserved flag bits per MQTT 3.1.1 spec */
+    switch (pkt_type) {
+    case MQTT_SUBSCRIBE:
+    case MQTT_UNSUBSCRIBE:
+        if (flags != 0x02) {
+            broker_disconnect(b, c);
+            return;
+        }
+        break;
+    case MQTT_CONNECT:
+    case MQTT_PINGREQ:
+    case MQTT_DISCONNECT:
+    case MQTT_PUBACK:
+        if (flags != 0x00) {
+            broker_disconnect(b, c);
+            return;
+        }
+        break;
+    default:
+        break;
+    }
+
     switch (pkt_type) {
     case MQTT_CONNECT:
         handle_connect(b, c, data, data_len);
@@ -745,6 +877,7 @@ void broker_handle_packet(broker_t *b, client_t *c,
     case MQTT_DISCONNECT:
         if (b->verbose)
             printf("sewerpipe: DISCONNECT from '%s'\n", c->client_id);
+        c->has_will = false;  /* clean disconnect suppresses will */
         broker_disconnect(b, c);
         break;
 

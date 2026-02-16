@@ -6,8 +6,9 @@
  * to per-cone command topics.
  *
  * All state is file-static. Runs entirely on loopTask (core 1).
- * ShellTask (also core 1, time-sliced) can safely call mqtt_publish()
- * and the force_connect/disconnect setters.
+ * ShellTask (also core 1, time-sliced) can call mqtt_publish() and
+ * the force_connect/disconnect setters — mqtt_publish() uses its own
+ * local buffer to avoid racing on tx_buf.
  */
 
 #include <Arduino.h>
@@ -31,14 +32,14 @@
 #define MQTT_KEEPALIVE_SEC   60
 #define MQTT_HEARTBEAT_MS    30000
 #define MQTT_CONNACK_TIMEOUT 5000
+#define MQTT_PINGRESP_TIMEOUT (MQTT_KEEPALIVE_SEC * 1500)  // 1.5x keepalive in ms
 #define MQTT_BACKOFF_INIT    1000
 #define MQTT_BACKOFF_MAX     30000
-#define MQTT_BUF_SIZE        256
+#define MQTT_BUF_SIZE        512
 
 // ---------- State ----------
 typedef enum {
     ST_DISCONNECTED,
-    ST_CONNECTING,
     ST_WAIT_CONNACK,
     ST_CONNECTED
 } mqtt_state_e;
@@ -51,6 +52,7 @@ static uint32_t reconnect_delay_ms = MQTT_BACKOFF_INIT;
 static uint32_t connected_at_ms;
 static uint32_t last_heartbeat_ms;
 static uint32_t last_pingreq_ms;
+static uint32_t last_pingresp_ms;
 
 static uint32_t s_tx_count;
 static uint32_t s_rx_count;
@@ -66,7 +68,7 @@ static char client_id[32];
 
 static bool force_connect_flag;
 static bool force_disconnect_flag;
-static bool enabled;
+static bool user_disconnected;  // true when user manually disconnects (suppresses auto-reconnect)
 
 // ---------- Wire format helpers ----------
 
@@ -111,51 +113,42 @@ static int write_utf8(uint8_t *buf, const char *str)
 
 // ---------- Packet builders ----------
 
-static int build_connect(void)
+static int build_connect(uint8_t *buf, int bufsize)
 {
-    int off = 0;
-
-    // Fixed header — filled in after we know remaining length
-    off = 1;  // skip type byte
-
-    // Variable header
-    int var_start = off + 4;  // leave room for remaining length (max 4)
-    int p = var_start;
+    // Variable header + payload into temp area
+    uint8_t body[128];
+    int p = 0;
 
     // Protocol name "MQTT"
-    p += write_utf8(tx_buf + p, "MQTT");
+    p += write_utf8(body + p, "MQTT");
     // Protocol level 4 (MQTT 3.1.1)
-    tx_buf[p++] = 0x04;
+    body[p++] = 0x04;
     // Connect flags: clean session (0x02)
-    tx_buf[p++] = 0x02;
+    body[p++] = 0x02;
     // Keep alive
-    tx_buf[p++] = (MQTT_KEEPALIVE_SEC >> 8) & 0xFF;
-    tx_buf[p++] = MQTT_KEEPALIVE_SEC & 0xFF;
-
+    body[p++] = (MQTT_KEEPALIVE_SEC >> 8) & 0xFF;
+    body[p++] = MQTT_KEEPALIVE_SEC & 0xFF;
     // Payload: client ID
-    p += write_utf8(tx_buf + p, client_id);
+    p += write_utf8(body + p, client_id);
 
-    // Now write the fixed header
-    uint32_t rem_len = p - var_start;
+    // Fixed header
     uint8_t rem_buf[4];
-    int rem_bytes = write_remaining_length(rem_buf, rem_len);
+    int rem_bytes = write_remaining_length(rem_buf, p);
+    int total = 1 + rem_bytes + p;
+    if (total > bufsize) return -1;
 
-    // Shift variable header + payload to make room for exact rem_bytes
-    int hdr_size = 1 + rem_bytes;
-    memmove(tx_buf + hdr_size, tx_buf + var_start, p - var_start);
+    int off = 0;
+    buf[off++] = (MQTT_CONNECT << 4);
+    memcpy(buf + off, rem_buf, rem_bytes);
+    off += rem_bytes;
+    memcpy(buf + off, body, p);
 
-    tx_buf[0] = (MQTT_CONNECT << 4);
-    memcpy(tx_buf + 1, rem_buf, rem_bytes);
-
-    return hdr_size + (p - var_start);
+    return off + p;
 }
 
-static int build_subscribe(const char *filter, uint8_t qos)
+static int build_subscribe(uint8_t *buf, int bufsize, const char *filter, uint8_t qos)
 {
-    int off = 0;
-
-    // We'll build variable header + payload first, then prepend fixed header
-    uint8_t body[MQTT_BUF_SIZE];
+    uint8_t body[128];
     int p = 0;
 
     // Message ID
@@ -170,64 +163,85 @@ static int build_subscribe(const char *filter, uint8_t qos)
     body[p++] = qos;
 
     // Fixed header
-    tx_buf[off++] = (MQTT_SUBSCRIBE << 4) | 0x02;  // bit 1 must be set per spec
-    off += write_remaining_length(tx_buf + off, p);
-    memcpy(tx_buf + off, body, p);
+    uint8_t rem_buf[4];
+    int rem_bytes = write_remaining_length(rem_buf, p);
+    int total = 1 + rem_bytes + p;
+    if (total > bufsize) return -1;
+
+    int off = 0;
+    buf[off++] = (MQTT_SUBSCRIBE << 4) | 0x02;  // bit 1 must be set per spec
+    memcpy(buf + off, rem_buf, rem_bytes);
+    off += rem_bytes;
+    memcpy(buf + off, body, p);
 
     return off + p;
 }
 
-static int build_publish(const char *topic, const char *payload, bool retain)
+// Build a PUBLISH packet into the given buffer. Returns total bytes, or -1 on overflow.
+static int build_publish_buf(uint8_t *buf, int bufsize,
+                             const char *topic, const char *payload, bool retain)
 {
     uint16_t tlen = (uint16_t)strlen(topic);
     uint32_t plen = (uint32_t)strlen(payload);
     uint32_t rem_len = 2 + tlen + plen;  // QoS 0, no msg_id
 
+    // Calculate total size before writing anything
+    uint8_t rem_buf[4];
+    int rem_bytes = write_remaining_length(rem_buf, rem_len);
+    int total = 1 + rem_bytes + rem_len;
+    if (total > bufsize) return -1;
+
     int off = 0;
     uint8_t flags = 0;
     if (retain) flags |= 0x01;
-    tx_buf[off++] = (MQTT_PUBLISH << 4) | flags;
-    off += write_remaining_length(tx_buf + off, rem_len);
+    buf[off++] = (MQTT_PUBLISH << 4) | flags;
+    memcpy(buf + off, rem_buf, rem_bytes);
+    off += rem_bytes;
 
     // Topic
-    tx_buf[off++] = (tlen >> 8) & 0xFF;
-    tx_buf[off++] = tlen & 0xFF;
-    memcpy(tx_buf + off, topic, tlen);
+    buf[off++] = (tlen >> 8) & 0xFF;
+    buf[off++] = tlen & 0xFF;
+    memcpy(buf + off, topic, tlen);
     off += tlen;
 
     // Payload
     if (plen > 0) {
-        memcpy(tx_buf + off, payload, plen);
+        memcpy(buf + off, payload, plen);
         off += plen;
     }
 
     return off;
 }
 
-static int build_pingreq(void)
+static int build_pingreq(uint8_t *buf)
 {
-    tx_buf[0] = (MQTT_PINGREQ << 4);
-    tx_buf[1] = 0x00;
+    buf[0] = (MQTT_PINGREQ << 4);
+    buf[1] = 0x00;
     return 2;
 }
 
-static int build_disconnect(void)
+static int build_disconnect(uint8_t *buf)
 {
-    tx_buf[0] = (MQTT_DISCONNECT << 4);
-    tx_buf[1] = 0x00;
+    buf[0] = (MQTT_DISCONNECT << 4);
+    buf[1] = 0x00;
     return 2;
 }
 
 // ---------- Send helper ----------
 
-static bool mqtt_send(int len)
+static bool mqtt_send(const uint8_t *buf, int len)
 {
     if (len <= 0) return false;
-    int written = tcp.write(tx_buf, len);
+    int written = tcp.write(buf, len);
     if (written == len) {
         s_tx_count++;
         return true;
     }
+    // Partial write — disconnect to avoid corrupt MQTT stream
+    printfnl(SOURCE_MQTT, "Partial write (%d/%d), disconnecting\n", written, len);
+    tcp.stop();
+    state = ST_DISCONNECTED;
+    rx_len = 0;
     return false;
 }
 
@@ -252,18 +266,22 @@ static void handle_connack(const uint8_t *payload, uint32_t plen)
     connected_at_ms = millis();
     last_heartbeat_ms = 0;
     last_pingreq_ms = millis();
+    last_pingresp_ms = millis();
     reconnect_delay_ms = MQTT_BACKOFF_INIT;
+    user_disconnected = false;
 
     printfnl(SOURCE_MQTT, "Connected to %s\n", config.mqtt_broker);
 
     // Subscribe to command topic
-    int len = build_subscribe(topic_cmd, 0);
-    mqtt_send(len);
+    int len = build_subscribe(tx_buf, MQTT_BUF_SIZE, topic_cmd, 0);
+    if (len > 0) mqtt_send(tx_buf, len);
 }
 
-static void handle_publish(const uint8_t *data, uint32_t dlen)
+static void handle_publish(uint8_t flags, const uint8_t *data, uint32_t dlen)
 {
     if (dlen < 2) return;
+
+    uint8_t qos = (flags >> 1) & 3;
 
     uint16_t tlen = (data[0] << 8) | data[1];
     if (2 + tlen > dlen) return;
@@ -274,17 +292,27 @@ static void handle_publish(const uint8_t *data, uint32_t dlen)
     memcpy(topic, data + 2, copy_len);
     topic[copy_len] = '\0';
 
-    // Payload starts after topic (QoS 0 — no msg_id)
-    const uint8_t *pdata = data + 2 + tlen;
-    uint32_t plen = dlen - 2 - tlen;
+    uint32_t pos = 2 + tlen;
 
-    char payload[192];
-    int plen_copy = plen < sizeof(payload) - 1 ? plen : sizeof(payload) - 1;
-    memcpy(payload, pdata, plen_copy);
-    payload[plen_copy] = '\0';
+    // Skip message ID for QoS 1/2
+    if (qos > 0) {
+        if (pos + 2 > dlen) return;
+        // We don't send PUBACK (we subscribed at QoS 0, so broker
+        // should not send QoS 1, but handle it defensively)
+        pos += 2;
+    }
+
+    // Payload
+    const uint8_t *pdata = data + pos;
+    uint32_t plen = dlen - pos;
+
+    char payload_str[256];
+    int plen_copy = plen < sizeof(payload_str) - 1 ? plen : sizeof(payload_str) - 1;
+    memcpy(payload_str, pdata, plen_copy);
+    payload_str[plen_copy] = '\0';
 
     s_rx_count++;
-    printfnl(SOURCE_MQTT, "RX [%s] %s\n", topic, payload);
+    printfnl(SOURCE_MQTT, "RX [%s] %s\n", topic, payload_str);
 }
 
 static void handle_suback(const uint8_t *data, uint32_t dlen)
@@ -306,7 +334,7 @@ static int parse_and_dispatch(void)
     if (rx_len < 2) return 0;
 
     uint8_t pkt_type = (rx_buf[0] >> 4) & 0x0F;
-    // uint8_t flags = rx_buf[0] & 0x0F;
+    uint8_t flags = rx_buf[0] & 0x0F;
 
     uint32_t rem_len;
     int len_bytes;
@@ -324,13 +352,13 @@ static int parse_and_dispatch(void)
         handle_connack(payload, rem_len);
         break;
     case MQTT_PUBLISH:
-        handle_publish(payload, rem_len);
+        handle_publish(flags, payload, rem_len);
         break;
     case MQTT_SUBACK:
         handle_suback(payload, rem_len);
         break;
     case MQTT_PINGRESP:
-        // keepalive acknowledged — nothing to do
+        last_pingresp_ms = millis();
         break;
     default:
         printfnl(SOURCE_MQTT, "Unknown packet type %d\n", pkt_type);
@@ -352,8 +380,8 @@ static void send_heartbeat(void)
              getTemp(),
              WiFi.RSSI());
 
-    int len = build_publish(topic_status, payload, false);
-    mqtt_send(len);
+    int len = build_publish_buf(tx_buf, MQTT_BUF_SIZE, topic_status, payload, false);
+    if (len > 0) mqtt_send(tx_buf, len);
     last_heartbeat_ms = millis();
 }
 
@@ -400,8 +428,8 @@ static void mqtt_read(void)
 static void do_disconnect(void)
 {
     if (tcp.connected()) {
-        int len = build_disconnect();
-        mqtt_send(len);
+        int len = build_disconnect(tx_buf);
+        mqtt_send(tx_buf, len);
         tcp.stop();
     }
     state = ST_DISCONNECTED;
@@ -412,8 +440,6 @@ static void do_disconnect(void)
 
 void mqtt_setup(void)
 {
-    enabled = config.mqtt_enabled;
-
     // Build per-cone topic strings
     snprintf(client_id,    sizeof(client_id),    "conez-%d", config.cone_id);
     snprintf(topic_status, sizeof(topic_status), "conez/%d/status", config.cone_id);
@@ -424,6 +450,7 @@ void mqtt_setup(void)
     s_tx_count = 0;
     s_rx_count = 0;
     reconnect_delay_ms = MQTT_BACKOFF_INIT;
+    user_disconnected = false;
 
     printfnl(SOURCE_MQTT, "Client ID: %s, broker: %s\n", client_id, config.mqtt_broker);
 }
@@ -435,6 +462,7 @@ void mqtt_loop(void)
     // Handle force flags from ShellTask
     if (force_disconnect_flag) {
         force_disconnect_flag = false;
+        user_disconnected = true;
         if (state != ST_DISCONNECTED) {
             do_disconnect();
             printfnl(SOURCE_MQTT, "Disconnected (forced)\n");
@@ -444,6 +472,7 @@ void mqtt_loop(void)
 
     if (force_connect_flag) {
         force_connect_flag = false;
+        user_disconnected = false;
         if (state == ST_DISCONNECTED) {
             last_attempt_ms = 0;  // skip backoff
             reconnect_delay_ms = 0;
@@ -453,7 +482,8 @@ void mqtt_loop(void)
     switch (state) {
 
     case ST_DISCONNECTED: {
-        if (!enabled) return;
+        if (!config.mqtt_enabled) return;
+        if (user_disconnected) return;
         if (WiFi.status() != WL_CONNECTED) return;
         if (config.mqtt_broker[0] == '\0') return;
 
@@ -478,13 +508,13 @@ void mqtt_loop(void)
         }
 
         // TCP connected — send CONNECT packet
-        int len = build_connect();
-        if (!mqtt_send(len)) {
+        int len = build_connect(tx_buf, MQTT_BUF_SIZE);
+        if (len <= 0 || !mqtt_send(tx_buf, len)) {
             tcp.stop();
             return;
         }
         state = ST_WAIT_CONNACK;
-        last_attempt_ms = now;
+        last_attempt_ms = millis();
         break;
     }
 
@@ -493,6 +523,7 @@ void mqtt_loop(void)
             printfnl(SOURCE_MQTT, "CONNACK timeout, disconnecting\n");
             tcp.stop();
             state = ST_DISCONNECTED;
+            last_attempt_ms = millis();
             // Apply backoff
             if (reconnect_delay_ms < MQTT_BACKOFF_INIT)
                 reconnect_delay_ms = MQTT_BACKOFF_INIT;
@@ -515,10 +546,20 @@ void mqtt_loop(void)
             return;
         }
 
+        // PINGRESP timeout — broker stopped responding
+        if ((now - last_pingresp_ms) > MQTT_PINGRESP_TIMEOUT) {
+            printfnl(SOURCE_MQTT, "PINGRESP timeout, disconnecting\n");
+            tcp.stop();
+            state = ST_DISCONNECTED;
+            rx_len = 0;
+            reconnect_delay_ms = MQTT_BACKOFF_INIT;
+            return;
+        }
+
         // PINGREQ at keepalive/2
         if ((now - last_pingreq_ms) >= (MQTT_KEEPALIVE_SEC * 500)) {
-            int len = build_pingreq();
-            mqtt_send(len);
+            int len = build_pingreq(tx_buf);
+            mqtt_send(tx_buf, len);
             last_pingreq_ms = now;
         }
 
@@ -547,7 +588,6 @@ const char *mqtt_state_str(void)
 {
     switch (state) {
     case ST_DISCONNECTED:  return "Disconnected";
-    case ST_CONNECTING:    return "Connecting";
     case ST_WAIT_CONNACK:  return "Waiting for CONNACK";
     case ST_CONNECTED:     return "Connected";
     default:               return "Unknown";
@@ -576,7 +616,15 @@ void mqtt_force_disconnect(void)
 int mqtt_publish(const char *topic, const char *payload)
 {
     if (state != ST_CONNECTED) return -1;
-    int len = build_publish(topic, payload, false);
-    if (len <= 0 || len > MQTT_BUF_SIZE) return -1;
-    return mqtt_send(len) ? 0 : -1;
+    // Use a local buffer to avoid racing with loopTask on tx_buf
+    uint8_t pub_buf[MQTT_BUF_SIZE];
+    int len = build_publish_buf(pub_buf, MQTT_BUF_SIZE, topic, payload, false);
+    if (len <= 0) return -1;
+    // tcp.write is safe from ShellTask (same core as loopTask, time-sliced)
+    int written = tcp.write(pub_buf, len);
+    if (written == len) {
+        s_tx_count++;
+        return 0;
+    }
+    return -1;
 }

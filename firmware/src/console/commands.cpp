@@ -974,9 +974,9 @@ int cmd_mqtt(int argc, char **argv)
         return 0;
     }
 
-    // mqtt pub <topic> <payload...>
-    if (argc >= 4 && !strcasecmp(argv[1], "pub")) {
-        // Reassemble payload from argv[3..]
+    // mqtt pub <topic> [payload...]
+    if (argc >= 3 && !strcasecmp(argv[1], "pub")) {
+        // Reassemble payload from argv[3..] (empty if no args after topic)
         char payload[192] = "";
         for (int i = 3; i < argc; i++) {
             if (i > 3) strlcat(payload, " ", sizeof(payload));
