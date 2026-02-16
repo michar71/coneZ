@@ -103,6 +103,11 @@ Sections and Keys
   broker            MQTT broker hostname           (default: sewerpipe.local)
                       The hostname or IP of the MQTT broker.
                       CLI "mqtt broker <host>" hot-applies without saving.
+  enabled           Enable MQTT client             (default: on)
+                      When off, the client will not connect to the broker.
+                      CLI "mqtt enable"/"mqtt disable" hot-applies.
+  port              MQTT broker port               (default: 1883)
+                      CLI "mqtt port <num>" hot-applies without saving.
 
 [led]
   count1            LEDs on channel 1              (default: 50)

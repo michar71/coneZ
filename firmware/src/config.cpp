@@ -58,6 +58,8 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("system", "ntp_server", CFG_STR,   ntp_server),
     // [mqtt]
     CFG_ENTRY("mqtt",   "broker",       CFG_STR,   mqtt_broker),
+    CFG_ENTRY("mqtt",   "enabled",      CFG_BOOL,  mqtt_enabled),
+    CFG_ENTRY("mqtt",   "port",         CFG_INT,   mqtt_port),
     // [led]
     CFG_ENTRY("led",    "count1",       CFG_INT,   led_count1),
     CFG_ENTRY("led",    "count2",       CFG_INT,   led_count2),
@@ -119,6 +121,8 @@ static void config_fill_defaults(conez_config_t *cfg)
     strlcpy(cfg->ntp_server,      DEFAULT_NTP_SERVER,     sizeof(cfg->ntp_server));
 
     strlcpy(cfg->mqtt_broker,     DEFAULT_MQTT_BROKER,    sizeof(cfg->mqtt_broker));
+    cfg->mqtt_enabled     = DEFAULT_MQTT_ENABLED;
+    cfg->mqtt_port        = DEFAULT_MQTT_PORT;
 
     cfg->led_count1       = DEFAULT_LED_COUNT;
     cfg->led_count2       = DEFAULT_LED_COUNT;

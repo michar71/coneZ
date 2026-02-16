@@ -40,6 +40,8 @@ cone_group=0
 
 [mqtt]
 ; broker=sewerpipe.local
+; port=1883
+enabled=on
 
 [led]
 count1=50

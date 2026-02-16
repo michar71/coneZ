@@ -33,6 +33,7 @@
 #include "cue.h"
 #include "lut.h"
 #include "psram.h"
+#include "mqtt_client.h"
 
 #define WAIT_FOR_USB_SERIAL
 #define WAIT_FOR_USB_SERIAL_TIMEOUT 15    // Seconds
@@ -432,6 +433,8 @@ void setup()
     Serial.println("WiFi timed out");
   }
 
+  mqtt_setup();
+
   http_setup();
 
   //Start telnet server and dual-stream CLI
@@ -519,6 +522,9 @@ void loop()
 
   // NTP time sync (runs on all boards when WiFi is connected)
   ntp_loop();
+
+  // MQTT client
+  mqtt_loop();
 
   //Proicess Sensors.. Maybe we shoudl run this slower?
   sensors_loop();

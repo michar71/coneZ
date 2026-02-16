@@ -54,6 +54,8 @@
 
 // MQTT
 #define DEFAULT_MQTT_BROKER     "sewerpipe.local"
+#define DEFAULT_MQTT_ENABLED    true
+#define DEFAULT_MQTT_PORT       1883
 
 // LED counts per channel
 #define DEFAULT_LED_COUNT       50
@@ -113,6 +115,8 @@ typedef struct {
 
     // [mqtt]
     char    mqtt_broker[CONFIG_MAX_MQTT_BROKER];
+    bool    mqtt_enabled;
+    int     mqtt_port;
 
     // [led]
     int     led_count1;

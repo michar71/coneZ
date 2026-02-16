@@ -1,0 +1,128 @@
+MQTT Topics — ConeZ Protocol
+=============================
+
+ConeZ devices communicate via MQTT through the sewerpipe broker. Each
+cone identifies itself by its cone_id (config: system.cone_id). All
+topics live under the "conez/" prefix.
+
+Broker: sewerpipe (tools/sewerpipe/), default at sewerpipe.local:1883.
+Client ID format: "conez-{cone_id}" (e.g. "conez-0", "conez-42").
+
+Topic Hierarchy
+---------------
+
+    conez/{id}/status       Heartbeat (published by cone)
+    conez/{id}/cmd/#        Commands (subscribed by cone)
+
+Per-Cone Status: conez/{id}/status
+-----------------------------------
+
+Published every 30 seconds by each cone. QoS 0, not retained.
+
+Payload: JSON object with device telemetry.
+
+    {
+        "uptime": 3600,       // seconds since boot
+        "heap": 180000,       // free heap bytes
+        "temp": 28.5,         // board temperature (C), TMP102 sensor
+        "rssi": -62           // WiFi signal strength (dBm)
+    }
+
+Use cases:
+  - Show controller monitors which cones are alive
+  - Dashboard displays fleet health
+  - Detect offline cones (no heartbeat for >60s)
+
+Per-Cone Commands: conez/{id}/cmd/#
+------------------------------------
+
+Each cone subscribes to its own command topic with a wildcard suffix,
+so "conez/5/cmd/#" matches:
+
+    conez/5/cmd/run           Run a script
+    conez/5/cmd/stop          Stop running script
+    conez/5/cmd/cue           Cue engine control
+    conez/5/cmd/led           Direct LED control
+    conez/5/cmd/reboot        Reboot the device
+    conez/5/cmd/config        Configuration updates
+    conez/5/cmd/anything      Future extensibility
+
+The subtopic after "cmd/" identifies the command type. The payload
+carries the command arguments (plain text or JSON).
+
+Currently, incoming messages on cmd/# are logged via SOURCE_MQTT
+debug output. Command dispatch will be added as specific commands
+are defined.
+
+Broadcast Commands
+------------------
+
+To send a command to all cones, publish to each cone's topic or use
+a shared group topic convention:
+
+    conez/all/cmd/stop        Broadcast (cones can optionally subscribe)
+    conez/group/{g}/cmd/...   Group-level commands
+
+These are not yet subscribed by the firmware but are reserved for
+future use. The sewerpipe broker supports standard MQTT wildcards,
+so a monitoring tool can subscribe to "conez/+/status" to see all
+cone heartbeats.
+
+Useful Wildcard Subscriptions
+-----------------------------
+
+For monitoring tools (mosquitto_sub, MQTT Explorer, etc.):
+
+    conez/#                   Everything — all cones, all topics
+    conez/+/status            All cone heartbeats
+    conez/+/cmd/#             All commands to all cones
+    conez/5/cmd/#             All commands to cone 5
+
+CLI Testing
+-----------
+
+On any cone's serial/telnet shell:
+
+    mqtt                      Show connection status
+    mqtt pub test/foo bar     Publish "bar" to topic "test/foo"
+    mqtt connect              Force immediate connection
+    mqtt disconnect           Disconnect from broker
+
+From a laptop with mosquitto-clients:
+
+    mosquitto_sub -h sewerpipe.local -t "conez/#" -v
+    mosquitto_pub -h sewerpipe.local -t "conez/5/cmd/stop" -m ""
+
+Configuration
+-------------
+
+Config file (/config.ini):
+
+    [mqtt]
+    broker=sewerpipe.local
+    port=1883
+    enabled=on
+
+CLI hot-apply (no reboot needed):
+
+    mqtt broker 192.168.1.100
+    mqtt port 1884
+    mqtt enable
+    mqtt disable
+
+Persistent (requires reboot):
+
+    config set mqtt.broker 192.168.1.100
+    config set mqtt.port 1884
+    config set mqtt.enabled off
+
+Connection Behavior
+-------------------
+
+  - Auto-connects when WiFi is available and mqtt.enabled is on
+  - Reconnects with exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s cap
+  - Backoff resets on successful CONNACK
+  - PINGREQ sent every 30s (keepalive/2) to maintain connection
+  - Heartbeat published every 30s to conez/{id}/status
+  - Clean session (no persistent subscriptions on broker)
+  - QoS 0 for all publishes (fire-and-forget)

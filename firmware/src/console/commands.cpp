@@ -24,6 +24,7 @@
 #include "cue.h"
 #include "editor.h"
 #include "psram.h"
+#include "mqtt_client.h"
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
 #include <csetjmp>
@@ -931,13 +932,74 @@ int cmd_mqtt(int argc, char **argv)
     if (argc >= 3 && !strcasecmp(argv[1], "broker")) {
         strlcpy(config.mqtt_broker, argv[2], CONFIG_MAX_MQTT_BROKER);
         printfnl(SOURCE_COMMANDS, F("MQTT broker set to \"%s\"\n"), config.mqtt_broker);
+        mqtt_force_disconnect();  // triggers reconnect to new broker
         return 0;
+    }
+
+    // mqtt port <number>
+    if (argc >= 3 && !strcasecmp(argv[1], "port")) {
+        config.mqtt_port = atoi(argv[2]);
+        printfnl(SOURCE_COMMANDS, F("MQTT port set to %d\n"), config.mqtt_port);
+        mqtt_force_disconnect();  // triggers reconnect on new port
+        return 0;
+    }
+
+    // mqtt enable
+    if (argc >= 2 && !strcasecmp(argv[1], "enable")) {
+        config.mqtt_enabled = true;
+        printfnl(SOURCE_COMMANDS, F("MQTT enabled\n"));
+        return 0;
+    }
+
+    // mqtt disable
+    if (argc >= 2 && !strcasecmp(argv[1], "disable")) {
+        config.mqtt_enabled = false;
+        mqtt_force_disconnect();
+        printfnl(SOURCE_COMMANDS, F("MQTT disabled\n"));
+        return 0;
+    }
+
+    // mqtt connect
+    if (argc >= 2 && !strcasecmp(argv[1], "connect")) {
+        config.mqtt_enabled = true;
+        mqtt_force_connect();
+        printfnl(SOURCE_COMMANDS, F("MQTT connect requested\n"));
+        return 0;
+    }
+
+    // mqtt disconnect
+    if (argc >= 2 && !strcasecmp(argv[1], "disconnect")) {
+        mqtt_force_disconnect();
+        printfnl(SOURCE_COMMANDS, F("MQTT disconnect requested\n"));
+        return 0;
+    }
+
+    // mqtt pub <topic> <payload...>
+    if (argc >= 4 && !strcasecmp(argv[1], "pub")) {
+        // Reassemble payload from argv[3..]
+        char payload[192] = "";
+        for (int i = 3; i < argc; i++) {
+            if (i > 3) strlcat(payload, " ", sizeof(payload));
+            strlcat(payload, argv[i], sizeof(payload));
+        }
+        int rc = mqtt_publish(argv[2], payload);
+        if (rc == 0)
+            printfnl(SOURCE_COMMANDS, F("Published to %s\n"), argv[2]);
+        else
+            printfnl(SOURCE_COMMANDS, F("Publish failed (not connected?)\n"));
+        return rc;
     }
 
     // mqtt (no args) — show status
     printfnl(SOURCE_COMMANDS, F("MQTT Status:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Broker:     %s\n"), config.mqtt_broker);
-    printfnl(SOURCE_COMMANDS, F("  Connected:  No\n"));
+    printfnl(SOURCE_COMMANDS, F("  Enabled:    %s\n"), config.mqtt_enabled ? "yes" : "no");
+    printfnl(SOURCE_COMMANDS, F("  Broker:     %s:%d\n"), config.mqtt_broker, config.mqtt_port);
+    printfnl(SOURCE_COMMANDS, F("  State:      %s\n"), mqtt_state_str());
+    if (mqtt_connected()) {
+        printfnl(SOURCE_COMMANDS, F("  Uptime:     %lus\n"), (unsigned long)mqtt_uptime_sec());
+        printfnl(SOURCE_COMMANDS, F("  TX packets: %lu\n"), (unsigned long)mqtt_tx_count());
+        printfnl(SOURCE_COMMANDS, F("  RX packets: %lu\n"), (unsigned long)mqtt_rx_count());
+    }
 
     return 0;
 }

@@ -48,7 +48,7 @@ Quick Reference
   lora [freq|power|bw|sf|cr|mode]     Show LoRa status or set radio params
   free                               Show heap memory (alias for mem)
   mem                                Show heap memory stats
-  mqtt [broker]                      Show MQTT status / set broker (hot-apply)
+  mqtt [enable|disable|connect|...]  Show MQTT status or manage connection
   mkdir {path}                       Create directory
   mv {oldname} {newname}             Rename/move file (alias for ren)
   param {id} {value}                 Set script parameter
@@ -356,13 +356,35 @@ mem
   block. Also shows PSRAM summary if available.
 
 mqtt
-  Show MQTT client status: configured broker and connection state.
+  Show MQTT client status: enabled, broker, state, uptime, TX/RX counts.
+
+  mqtt enable
+      Enable the MQTT client (starts auto-connect).
+
+  mqtt disable
+      Disable the MQTT client and disconnect.
+
+  mqtt connect
+      Force an immediate connection attempt (also enables).
+
+  mqtt disconnect
+      Disconnect from the broker (will auto-reconnect unless disabled).
 
   mqtt broker <hostname>
-      Set the MQTT broker hostname or IP. Hot-applied immediately.
+      Set the MQTT broker hostname or IP. Hot-applied immediately
+      (disconnects and reconnects to the new broker).
       Example: mqtt broker 192.168.1.100
 
-  Use "config set mqtt.broker <host>" to persist across reboots.
+  mqtt port <number>
+      Set the MQTT broker port. Hot-applied (disconnects and reconnects).
+      Example: mqtt port 1884
+
+  mqtt pub <topic> <payload>
+      Publish a message to a topic (for testing).
+      Example: mqtt pub test/hello world
+
+  Use "config set mqtt.broker <host>", "config set mqtt.port <num>",
+  or "config set mqtt.enabled on" to persist across reboots.
 
 mkdir {path}
   Create a directory on LittleFS.
