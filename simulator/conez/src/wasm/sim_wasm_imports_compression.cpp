@@ -32,6 +32,13 @@ static bool get_path(IM3Runtime runtime, int32_t ptr, int32_t len, char *out, in
     return true;
 }
 
+// Streaming write callback for FILE*
+static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
+{
+    FILE *f = (FILE *)ctx;
+    return fwrite(data, 1, len, f) == len ? 0 : -1;
+}
+
 // i32 inflate_file(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_len) -> size or -1
 m3ApiRawFunction(m3_inflate_file)
 {
@@ -59,24 +66,16 @@ m3ApiRawFunction(m3_inflate_file)
     fread(in_buf, 1, in_size, f);
     fclose(f);
 
-    size_t out_max = (size_t)in_size * 10;
-    if (out_max > 256 * 1024) out_max = 256 * 1024;
-    if (out_max < 4096) out_max = 4096;
-    uint8_t *out_buf = (uint8_t *)malloc(out_max);
-    if (!out_buf) { free(in_buf); m3ApiReturn(-1); }
-
-    int result = inflate_buf(in_buf, in_size, out_buf, out_max);
-    free(in_buf);
-
-    if (result < 0) { free(out_buf); m3ApiReturn(-1); }
-
+    // Stream decompressed chunks directly to output file
     std::string dst_full = sandbox(dst_path);
     FILE *out = fopen(dst_full.c_str(), "wb");
-    if (!out) { free(out_buf); m3ApiReturn(-1); }
-    fwrite(out_buf, 1, result, out);
-    fclose(out);
-    free(out_buf);
+    if (!out) { free(in_buf); m3ApiReturn(-1); }
 
+    int result = inflate_stream(in_buf, in_size, file_write_cb, out);
+    fclose(out);
+    free(in_buf);
+
+    if (result < 0) remove(dst_full.c_str());
     m3ApiReturn(result);
 }
 

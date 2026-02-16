@@ -557,7 +557,14 @@ int cmd_cp(int argc, char **argv)
     return 0;
 }
 
-// Decompress a gzip, zlib, or raw deflate file using shared inflate helper
+// Streaming write callback for LittleFS File
+static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
+{
+    File *f = (File *)ctx;
+    return f->write(data, len) == len ? 0 : -1;
+}
+
+// Decompress a gzip, zlib, or raw deflate file using streaming inflate
 int cmd_inflate(int argc, char **argv)
 {
     if (argc < 2 || argc > 3) {
@@ -605,36 +612,23 @@ int cmd_inflate(int argc, char **argv)
     in.read(in_buf, in_size);
     in.close();
 
-    // Estimate output buffer: 10x compressed size, capped at 256KB
-    size_t out_max = in_size * 10;
-    if (out_max > 256 * 1024) out_max = 256 * 1024;
-    if (out_max < 4096) out_max = 4096;
-    uint8_t *out_buf = (uint8_t *)malloc(out_max);
-    if (!out_buf) {
-        free(in_buf);
-        printfnl(SOURCE_COMMANDS, F("Out of memory (%u bytes)\n"), (unsigned)out_max);
-        return 1;
-    }
-
-    int result = inflate_buf(in_buf, in_size, out_buf, out_max);
-    free(in_buf);
-
-    if (result < 0) {
-        free(out_buf);
-        printfnl(SOURCE_COMMANDS, F("Decompression error\n"));
-        return 1;
-    }
-
-    // Write output file
+    // Stream decompressed chunks directly to output file
     File out = LittleFS.open(dst, FILE_WRITE);
     if (!out) {
-        free(out_buf);
+        free(in_buf);
         printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), dst);
         return 1;
     }
-    out.write(out_buf, result);
+
+    int result = inflate_stream(in_buf, in_size, file_write_cb, &out);
     out.close();
-    free(out_buf);
+    free(in_buf);
+
+    if (result < 0) {
+        LittleFS.remove(dst);
+        printfnl(SOURCE_COMMANDS, F("Decompression error\n"));
+        return 1;
+    }
 
     printfnl(SOURCE_COMMANDS, F("Inflated: %s (%u -> %u bytes)\n"),
         dst, (unsigned)in_size, (unsigned)result);

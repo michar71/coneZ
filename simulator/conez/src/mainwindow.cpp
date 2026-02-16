@@ -1032,28 +1032,27 @@ void MainWindow::cmdInflate(const QStringList &args)
         return;
     }
 
-    // Allocate output buffer: 10x compressed, capped at 256KB
-    size_t outMax = (size_t)inData.size() * 10;
-    if (outMax > 256 * 1024) outMax = 256 * 1024;
-    if (outMax < 4096) outMax = 4096;
-    QByteArray outData(outMax, '\0');
-
-    int result = inflate_buf((const uint8_t *)inData.constData(), inData.size(),
-                             (uint8_t *)outData.data(), outMax);
-    if (result < 0) {
-        m_console->appendText("Decompression error\n");
-        return;
-    }
-    outData.truncate(result);
-
-    // Write output file
+    // Stream decompressed chunks directly to output file
     QFile outFile(dstPath);
     if (!outFile.open(QIODevice::WriteOnly)) {
         m_console->appendText("Cannot create " + dstName + "\n");
         return;
     }
-    outFile.write(outData);
+
+    auto qfile_write = [](const uint8_t *data, size_t len, void *ctx) -> int {
+        QFile *f = (QFile *)ctx;
+        return f->write((const char *)data, len) == (qint64)len ? 0 : -1;
+    };
+
+    int result = inflate_stream((const uint8_t *)inData.constData(), inData.size(),
+                                qfile_write, &outFile);
     outFile.close();
+
+    if (result < 0) {
+        QFile::remove(dstPath);
+        m_console->appendText("Decompression error\n");
+        return;
+    }
 
     m_console->appendText(QString("Inflated: %1 (%2 -> %3 bytes)\n")
         .arg(dstName).arg(inData.size()).arg(result));

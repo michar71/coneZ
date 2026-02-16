@@ -9,8 +9,8 @@ operate in character mode with server-side echo.
 The desktop simulator (see simulator.txt) supports a subset of these
 commands in its console: ?/help, run, stop, open, dir/ls, del, cat/list,
 ren/mv, cp, mkdir, rmdir, grep, hexdump, df, clear/cls, param, led,
-sensors, time/date, uptime, ver/version, wasm, cue, mqtt. Hardware-only
-commands are not available in the simulator.
+sensors, time/date, uptime, ver/version, wasm, cue, mqtt, inflate/gunzip.
+Hardware-only commands are not available in the simulator.
 
 Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
 Up/Down arrows navigate command history (32 entries on PSRAM boards,
@@ -43,6 +43,8 @@ Quick Reference
   help                               Show help (same as ?)
   hexdump {filename} [count]         Hex+ASCII dump of file (default 256 bytes)
   history                            Show command history
+  inflate {input} [output]           Decompress gzip/zlib/deflate file
+  gunzip {input} [output]            Alias for inflate
   led [set|clear|count]              Show/set LED configuration and colors
   load {filename}                    Receive file via serial (CTRL+Z to end)
   lora [freq|power|bw|sf|cr|mode]     Show LoRa status or set radio params
@@ -283,6 +285,16 @@ history
   Show command history. On PSRAM boards, stores up to 32 commands in a
   ring buffer. On boards without PSRAM, stores only the most recent
   command. Up/Down arrows navigate history.
+
+inflate {input} [output]
+  Decompress a gzip, zlib, or raw deflate file. Auto-detects format from
+  file header. Output defaults to the input filename with .gz/.z stripped,
+  or input.out if no recognized extension. Alias: gunzip.
+  Streaming decompression — peak RAM is the compressed file size plus
+  ~43KB (32KB dictionary + ~11KB decompressor state).
+  Examples: inflate /data.gz
+            inflate /archive.gz /output.bin
+            gunzip /data.gz
 
 led
   Show LED strip configuration and current RGB values per LED.

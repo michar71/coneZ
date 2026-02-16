@@ -143,8 +143,10 @@ Console Commands:
   dir/ls [path]        List files in data directory (optional subdirectory)
   grep <pat> [file]    Search file contents (case-insensitive, recursive)
   hexdump <file> [n]   Hex+ASCII dump (default 256 bytes)
+  inflate <in> [out]   Decompress gzip/zlib/deflate file (alias: gunzip)
   led                  Show LED config + RGB values
   led set <ch> <idx|s-e|all> <#RRGGBB>  Set LED color(s)
+  led count <ch> <n>   Resize channel to n LEDs
   led clear            Clear all LEDs to black
   mkdir <dir>          Create directory
   mv <old> <new>       Rename/move file (alias: ren)

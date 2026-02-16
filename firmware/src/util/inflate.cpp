@@ -52,9 +52,10 @@ static const uint8_t *detect_format(const uint8_t *in, size_t in_len,
     return in;
 }
 
-int inflate_buf(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_max)
+int inflate_stream(const uint8_t *in, size_t in_len,
+                   inflate_write_fn write_fn, void *ctx)
 {
-    if (!in || in_len == 0 || !out || out_max == 0) return -1;
+    if (!in || in_len == 0 || !write_fn) return -1;
 
     size_t data_len;
     uint32_t tinfl_flags;
@@ -87,8 +88,7 @@ int inflate_buf(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_max)
         in_remaining -= in_bytes;
 
         if (out_bytes > 0) {
-            if (total_out + out_bytes > out_max) break; // overflow
-            memcpy(out + total_out, dict + dict_ofs, out_bytes);
+            if (write_fn(dict + dict_ofs, out_bytes, ctx) != 0) break;
             total_out += out_bytes;
             dict_ofs = (dict_ofs + out_bytes) & (TINFL_LZ_DICT_SIZE - 1);
         }
@@ -99,4 +99,28 @@ int inflate_buf(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_max)
 
     free(dict);
     return result;
+}
+
+// --- inflate_buf: convenience wrapper ---
+
+struct buf_ctx {
+    uint8_t *out;
+    size_t max;
+    size_t pos;
+};
+
+static int buf_write(const uint8_t *data, size_t len, void *ctx)
+{
+    struct buf_ctx *b = (struct buf_ctx *)ctx;
+    if (b->pos + len > b->max) return -1;
+    memcpy(b->out + b->pos, data, len);
+    b->pos += len;
+    return 0;
+}
+
+int inflate_buf(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_max)
+{
+    if (!out || out_max == 0) return -1;
+    struct buf_ctx ctx = { out, out_max, 0 };
+    return inflate_stream(in, in_len, buf_write, &ctx);
 }

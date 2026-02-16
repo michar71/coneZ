@@ -33,17 +33,6 @@ static bool extract_path(IM3Runtime runtime, int32_t ptr, int32_t len, char *out
     return path_ok(out, len);
 }
 
-// Copy from DRAM src buffer into WASM memory at (mem_base + offset).
-// Routes through psram_write() if WASM memory is in unmapped PSRAM.
-static void copy_to_wasm(uint8_t *mem_base, uint32_t offset, const uint8_t *src, size_t len)
-{
-    uint8_t *dst = mem_base + offset;
-    if (IS_ADDRESS_MAPPED(dst))
-        memcpy(dst, src, len);
-    else
-        psram_write((uint32_t)(uintptr_t)dst, src, len);
-}
-
 // Copy from WASM memory at (mem_base + offset) into DRAM dst buffer.
 // Routes through psram_read() if WASM memory is in unmapped PSRAM.
 static void copy_from_wasm(const uint8_t *mem_base, uint32_t offset, uint8_t *dst, size_t len)
@@ -53,6 +42,34 @@ static void copy_from_wasm(const uint8_t *mem_base, uint32_t offset, uint8_t *ds
         memcpy(dst, src, len);
     else
         psram_read((uint32_t)(uintptr_t)src, dst, len);
+}
+
+// Streaming write callback for LittleFS File
+static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
+{
+    File *f = (File *)ctx;
+    return f->write(data, len) == len ? 0 : -1;
+}
+
+// Streaming write callback for WASM memory (PSRAM-safe)
+struct wasm_mem_ctx {
+    uint8_t *mem_base;
+    uint32_t offset;
+    size_t max;
+    size_t written;
+};
+
+static int wasm_mem_write(const uint8_t *data, size_t len, void *ctx)
+{
+    struct wasm_mem_ctx *c = (struct wasm_mem_ctx *)ctx;
+    if (c->written + len > c->max) return -1;
+    uint8_t *dst = c->mem_base + c->offset + c->written;
+    if (IS_ADDRESS_MAPPED(dst))
+        memcpy(dst, data, len);
+    else
+        psram_write((uint32_t)(uintptr_t)dst, data, len);
+    c->written += len;
+    return 0;
 }
 
 // i32 inflate_file(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_len) -> decompressed size or -1
@@ -78,25 +95,15 @@ m3ApiRawFunction(m3_inflate_file)
     f.read(in_buf, in_size);
     f.close();
 
-    // Allocate output buffer
-    size_t out_max = in_size * 10;
-    if (out_max > 256 * 1024) out_max = 256 * 1024;
-    if (out_max < 4096) out_max = 4096;
-    uint8_t *out_buf = (uint8_t *)malloc(out_max);
-    if (!out_buf) { free(in_buf); m3ApiReturn(-1); }
+    // Stream decompressed chunks directly to output file
+    File out = LittleFS.open(dst_path, FILE_WRITE);
+    if (!out) { free(in_buf); m3ApiReturn(-1); }
 
-    int result = inflate_buf(in_buf, in_size, out_buf, out_max);
+    int result = inflate_stream(in_buf, in_size, file_write_cb, &out);
+    out.close();
     free(in_buf);
 
-    if (result < 0) { free(out_buf); m3ApiReturn(-1); }
-
-    // Write output file
-    File out = LittleFS.open(dst_path, FILE_WRITE);
-    if (!out) { free(out_buf); m3ApiReturn(-1); }
-    out.write(out_buf, result);
-    out.close();
-    free(out_buf);
-
+    if (result < 0) LittleFS.remove(dst_path);
     m3ApiReturn(result);
 }
 
@@ -128,17 +135,11 @@ m3ApiRawFunction(m3_inflate_file_to_mem)
     f.read(in_buf, in_size);
     f.close();
 
-    // Decompress to temp DRAM buffer, then copy to WASM memory
-    uint8_t *tmp = (uint8_t *)malloc(dst_max);
-    if (!tmp) { free(in_buf); m3ApiReturn(-1); }
-
-    int result = inflate_buf(in_buf, in_size, tmp, dst_max);
+    // Stream decompressed chunks directly to WASM memory (PSRAM-safe)
+    struct wasm_mem_ctx ctx = { mem_base, (uint32_t)dst_ptr, (size_t)dst_max, 0 };
+    int result = inflate_stream(in_buf, in_size, wasm_mem_write, &ctx);
     free(in_buf);
 
-    if (result > 0)
-        copy_to_wasm(mem_base, (uint32_t)dst_ptr, tmp, result);
-
-    free(tmp);
     m3ApiReturn(result);
 }
 
@@ -159,22 +160,16 @@ m3ApiRawFunction(m3_inflate_mem)
     if ((uint32_t)src_ptr + src_len > mem_size) m3ApiReturn(-1);
     if ((uint32_t)dst_ptr + dst_max > mem_size) m3ApiReturn(-1);
 
-    // Copy compressed data from WASM memory to DRAM
+    // Copy compressed data from WASM memory to DRAM (small — compressed size)
     uint8_t *in_buf = (uint8_t *)malloc(src_len);
     if (!in_buf) m3ApiReturn(-1);
     copy_from_wasm(mem_base, (uint32_t)src_ptr, in_buf, src_len);
 
-    // Decompress to temp DRAM buffer
-    uint8_t *tmp = (uint8_t *)malloc(dst_max);
-    if (!tmp) { free(in_buf); m3ApiReturn(-1); }
-
-    int result = inflate_buf(in_buf, src_len, tmp, dst_max);
+    // Stream decompressed chunks directly to WASM memory (PSRAM-safe)
+    struct wasm_mem_ctx ctx = { mem_base, (uint32_t)dst_ptr, (size_t)dst_max, 0 };
+    int result = inflate_stream(in_buf, src_len, wasm_mem_write, &ctx);
     free(in_buf);
 
-    if (result > 0)
-        copy_to_wasm(mem_base, (uint32_t)dst_ptr, tmp, result);
-
-    free(tmp);
     m3ApiReturn(result);
 }
 
