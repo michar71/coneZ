@@ -85,6 +85,7 @@ void vprintfnl( source_e source, const char *format, va_list args )
             case SOURCE_WIFI:      tag = "WIFI";      break;
             case SOURCE_FSYNC:     tag = "FSYNC";     break;
             case SOURCE_SENSORS:   tag = "SENSORS";   break;
+            case SOURCE_MQTT:      tag = "MQTT";      break;
             case SOURCE_NONE:      break;
         }
         if (tag) {

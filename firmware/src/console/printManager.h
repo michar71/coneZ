@@ -35,9 +35,9 @@ typedef enum {
                                         // Available: 0x00400000
                                         // Available: 0x00800000
     SOURCE_SENSORS      = 0x01000000,
-                                        // Available: 0x02000000
                                         // Available: 0x04000000
                                         // Available: 0x08000000
+    SOURCE_MQTT         = 0x02000000,
     SOURCE_WIFI         = 0x10000000,
                                         // Available: 0x20000000
     SOURCE_OTHER        = 0x40000000,

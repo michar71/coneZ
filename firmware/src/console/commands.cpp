@@ -327,6 +327,9 @@ int cmd_debug( int argc, char **argv )
     else       
     if( !strcasecmp( argv[1], "SENSORS" ) )
         mask_to_set = SOURCE_SENSORS;
+    else
+    if( !strcasecmp( argv[1], "MQTT" ) )
+        mask_to_set = SOURCE_MQTT;
     else            
     {
         printfnl(SOURCE_COMMANDS, F("Debug name \"%s\"not recognized.\n"), argv[1] );
@@ -917,6 +920,24 @@ int cmd_version(int argc, char **argv)
 #ifdef INCLUDE_C_COMPILER
     printfnl(SOURCE_COMMANDS, F("%s\n"), c2wasm_version_string());
 #endif
+
+    return 0;
+}
+
+
+int cmd_mqtt(int argc, char **argv)
+{
+    // mqtt broker <hostname>
+    if (argc >= 3 && !strcasecmp(argv[1], "broker")) {
+        strlcpy(config.mqtt_broker, argv[2], CONFIG_MAX_MQTT_BROKER);
+        printfnl(SOURCE_COMMANDS, F("MQTT broker set to \"%s\"\n"), config.mqtt_broker);
+        return 0;
+    }
+
+    // mqtt (no args) — show status
+    printfnl(SOURCE_COMMANDS, F("MQTT Status:\n"));
+    printfnl(SOURCE_COMMANDS, F("  Broker:     %s\n"), config.mqtt_broker);
+    printfnl(SOURCE_COMMANDS, F("  Connected:  No\n"));
 
     return 0;
 }
@@ -2571,6 +2592,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("md5sum"), cmd_md5);
     shell.addCommand(F("free"), cmd_mem);
     shell.addCommand(F("mem"), cmd_mem);
+    shell.addCommand(F("mqtt"), cmd_mqtt);
     shell.addCommand(F("mv"), renFile);
     shell.addCommand(F("param"), paramBasic);
     shell.addCommand(F("ps"), cmd_ps);

@@ -99,6 +99,11 @@ Sections and Keys
                       server address for minimal network latency at
                       installations (e.g. 192.168.1.100).
 
+[mqtt]
+  broker            MQTT broker hostname           (default: sewerpipe.local)
+                      The hostname or IP of the MQTT broker.
+                      CLI "mqtt broker <host>" hot-applies without saving.
+
 [led]
   count1            LEDs on channel 1              (default: 50)
   count2            LEDs on channel 2              (default: 50)
@@ -120,6 +125,7 @@ Sections and Keys
   fsync             Frame sync messages            (default: off)
   wifi              WiFi events                    (default: off)
   sensors           Sensor readings                (default: off)
+  mqtt              MQTT client messages           (default: on)
   other             Uncategorized messages          (default: off)
 
 Boolean values accept: on/off, true/false, 1/0

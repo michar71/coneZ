@@ -56,6 +56,8 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("system", "cone_id",    CFG_INT,   cone_id),
     CFG_ENTRY("system", "cone_group", CFG_INT,   cone_group),
     CFG_ENTRY("system", "ntp_server", CFG_STR,   ntp_server),
+    // [mqtt]
+    CFG_ENTRY("mqtt",   "broker",       CFG_STR,   mqtt_broker),
     // [led]
     CFG_ENTRY("led",    "count1",       CFG_INT,   led_count1),
     CFG_ENTRY("led",    "count2",       CFG_INT,   led_count2),
@@ -73,6 +75,7 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("debug",  "fsync",        CFG_BOOL,  dbg_fsync),
     CFG_ENTRY("debug",  "wifi",         CFG_BOOL,  dbg_wifi),
     CFG_ENTRY("debug",  "sensors",      CFG_BOOL,  dbg_sensors),
+    CFG_ENTRY("debug",  "mqtt",         CFG_BOOL,  dbg_mqtt),
     CFG_ENTRY("debug",  "other",        CFG_BOOL,  dbg_other),
 };
 
@@ -115,6 +118,8 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->cone_group       = DEFAULT_CONE_GROUP;
     strlcpy(cfg->ntp_server,      DEFAULT_NTP_SERVER,     sizeof(cfg->ntp_server));
 
+    strlcpy(cfg->mqtt_broker,     DEFAULT_MQTT_BROKER,    sizeof(cfg->mqtt_broker));
+
     cfg->led_count1       = DEFAULT_LED_COUNT;
     cfg->led_count2       = DEFAULT_LED_COUNT;
     cfg->led_count3       = DEFAULT_LED_COUNT;
@@ -131,6 +136,7 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->dbg_fsync        = DEFAULT_DBG_FSYNC;
     cfg->dbg_wifi         = DEFAULT_DBG_WIFI;
     cfg->dbg_sensors      = DEFAULT_DBG_SENSORS;
+    cfg->dbg_mqtt         = DEFAULT_DBG_MQTT;
     cfg->dbg_other        = DEFAULT_DBG_OTHER;
 }
 
@@ -348,6 +354,7 @@ void config_apply_debug(void)
     setDebugLevel(SOURCE_FSYNC,     config.dbg_fsync);
     setDebugLevel(SOURCE_WIFI,      config.dbg_wifi);
     setDebugLevel(SOURCE_SENSORS,   config.dbg_sensors);
+    setDebugLevel(SOURCE_MQTT,      config.dbg_mqtt);
     setDebugLevel(SOURCE_OTHER,     config.dbg_other);
 }
 

@@ -48,6 +48,7 @@ Quick Reference
   lora [freq|power|bw|sf|cr|mode]     Show LoRa status or set radio params
   free                               Show heap memory (alias for mem)
   mem                                Show heap memory stats
+  mqtt [broker]                      Show MQTT status / set broker (hot-apply)
   mkdir {path}                       Create directory
   mv {oldname} {newname}             Rename/move file (alias for ren)
   param {id} {value}                 Set script parameter
@@ -353,6 +354,15 @@ lora
 mem
   Show heap memory: free bytes, minimum since boot, largest allocatable
   block. Also shows PSRAM summary if available.
+
+mqtt
+  Show MQTT client status: configured broker and connection state.
+
+  mqtt broker <hostname>
+      Set the MQTT broker hostname or IP. Hot-applied immediately.
+      Example: mqtt broker 192.168.1.100
+
+  Use "config set mqtt.broker <host>" to persist across reboots.
 
 mkdir {path}
   Create a directory on LittleFS.

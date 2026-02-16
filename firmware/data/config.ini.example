@@ -38,6 +38,9 @@ cone_id=0
 cone_group=0
 ; ntp_server=192.168.1.100   ; local NTP server (blank = pool.ntp.org)
 
+[mqtt]
+; broker=sewerpipe.local
+
 [led]
 count1=50
 count2=50
@@ -56,4 +59,5 @@ lora_raw=off
 fsync=off
 wifi=off
 sensors=off
+mqtt=on
 other=off

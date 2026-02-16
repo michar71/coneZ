@@ -13,6 +13,7 @@
 #define CONFIG_MAX_CALLSIGN     11
 #define CONFIG_MAX_LORA_MODE    8
 #define CONFIG_MAX_FSK_SYNCWORD 17      // 16 hex chars + NUL
+#define CONFIG_MAX_MQTT_BROKER  65
 
 // ---------- Compiled defaults ----------
 // WiFi
@@ -51,6 +52,9 @@
 #define DEFAULT_CONE_GROUP      0
 #define DEFAULT_NTP_SERVER      ""              // empty = use pool.ntp.org + time.nist.gov
 
+// MQTT
+#define DEFAULT_MQTT_BROKER     "sewerpipe.local"
+
 // LED counts per channel
 #define DEFAULT_LED_COUNT       50
 
@@ -66,6 +70,7 @@
 #define DEFAULT_DBG_WIFI        false
 #define DEFAULT_DBG_SENSORS     false
 #define DEFAULT_DBG_WASM        true
+#define DEFAULT_DBG_MQTT        true
 #define DEFAULT_DBG_OTHER       false
 
 // ---------- Config struct ----------
@@ -106,6 +111,9 @@ typedef struct {
     int     cone_group;
     char    ntp_server[CONFIG_MAX_NTP_SERVER];
 
+    // [mqtt]
+    char    mqtt_broker[CONFIG_MAX_MQTT_BROKER];
+
     // [led]
     int     led_count1;
     int     led_count2;
@@ -124,6 +132,7 @@ typedef struct {
     bool    dbg_fsync;
     bool    dbg_wifi;
     bool    dbg_sensors;
+    bool    dbg_mqtt;
     bool    dbg_other;
 } conez_config_t;
 
