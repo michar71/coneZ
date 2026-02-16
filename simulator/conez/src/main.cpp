@@ -11,7 +11,7 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setApplicationName("ConeZ Simulator");
     char vbuf[32];
-    snprintf(vbuf, sizeof(vbuf), "%d.%d.%04d", VERSION_MAJOR, VERSION_MINOR, BUILD_NUMBER);
+    snprintf(vbuf, sizeof(vbuf), "%d.%02d.%04d", VERSION_MAJOR, VERSION_MINOR, BUILD_NUMBER);
     app.setApplicationVersion(vbuf);
 
     QCommandLineParser parser;

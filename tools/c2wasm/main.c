@@ -210,7 +210,7 @@ int main(int argc, char **argv) {
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
-            printf("c2wasm %d.%d.%04d\n", C2WASM_VERSION_MAJOR, C2WASM_VERSION_MINOR, BUILD_NUMBER);
+            printf("c2wasm %d.%02d.%04d\n", C2WASM_VERSION_MAJOR, C2WASM_VERSION_MINOR, BUILD_NUMBER);
             return 0;
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             outfile = argv[++i];

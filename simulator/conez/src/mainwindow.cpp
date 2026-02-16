@@ -25,7 +25,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     char title[64];
-    snprintf(title, sizeof(title), "ConeZ Simulator v%d.%d.%04d", VERSION_MAJOR, VERSION_MINOR, BUILD_NUMBER);
+    snprintf(title, sizeof(title), "ConeZ Simulator v%d.%02d.%04d", VERSION_MAJOR, VERSION_MINOR, BUILD_NUMBER);
     setWindowTitle(title);
     resize(1100, 700);
 
@@ -791,7 +791,7 @@ void MainWindow::cmdVersion()
 {
     char vbuf[128];
     snprintf(vbuf, sizeof(vbuf),
-        "ConeZ Desktop Simulator v%d.%d.%04d\n",
+        "ConeZ Desktop Simulator v%d.%02d.%04d\n",
         VERSION_MAJOR, VERSION_MINOR, BUILD_NUMBER);
     m_console->appendText(QString(vbuf));
     m_console->appendText(

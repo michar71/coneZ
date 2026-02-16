@@ -29,7 +29,8 @@ static void signal_handler(int sig)
 
 static void usage(const char *prog)
 {
-    printf("sewerpipe — bare-bones MQTT 3.1.1 broker (build %d)\n\n", BUILD_NUMBER);
+    printf("sewerpipe %d.%02d.%04d — bare-bones MQTT 3.1.1 broker\n\n",
+           SEWERPIPE_VERSION_MAJOR, SEWERPIPE_VERSION_MINOR, BUILD_NUMBER);
     printf("Usage: %s [-p port] [-d] [-v] [-h]\n\n", prog);
     printf("  -p port    Listen port (default: %d)\n", DEFAULT_PORT);
     printf("  -d         Daemon mode (fork to background)\n");

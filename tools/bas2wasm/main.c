@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-o") == 0 && i+1 < argc) {
             outpath = argv[++i];
         } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
-            printf("bas2wasm %d.%d.%04d\n", BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER);
+            printf("bas2wasm %d.%02d.%04d\n", BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER);
             return 0;
         } else if (argv[i][0] != '-') {
             inpath = argv[i];
@@ -229,7 +229,7 @@ int main(int argc, char **argv) {
     source[src_len] = 0;
     fclose(fp);
 
-    printf("bas2wasm %d.%d.%04d compiling %s...\n",
+    printf("bas2wasm %d.%02d.%04d compiling %s...\n",
            BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER, inpath);
     bw_compile();
 

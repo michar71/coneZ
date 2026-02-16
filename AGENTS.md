@@ -189,7 +189,7 @@ Both use `cdylib` crate type, `opt-level = "z"`, LTO, strip, `panic = "abort"`. 
 
 See `tools/wasm/examples/` for sample modules (C and Rust). Use `make -C tools/wasm` to build all examples and `make -C tools/wasm install` to copy them to `firmware/data/` for LittleFS upload.
 
-**Offline compiler tools:** `tools/bas2wasm/` (BASIC→WASM) and `tools/c2wasm/` (C→WASM) are self-contained compilers with no external dependencies beyond libc. Both share `tools/buildnum.txt` for version tracking. Build each with `make` from its directory. Both compilers also work as embedded libraries — the simulator and firmware link them directly (no subprocess spawning) via platform abstraction headers (`bas2wasm_platform.h`, `c2wasm_platform.h`). In embedded mode, `malloc`/`fprintf`/`exit` redirect to host-provided callbacks, and symbol names are prefixed (`bw_`/`cw_`) to avoid link-time collisions when both compilers coexist in the same binary. See `documentation/bas2wasm.txt` and `documentation/c2wasm.txt` for full references.
+**Offline compiler tools:** `tools/bas2wasm/` (BASIC→WASM) and `tools/c2wasm/` (C→WASM) are self-contained compilers with no external dependencies beyond libc. Each has its own `buildnum.txt` for independent version tracking. Build each with `make` from its directory, or `make` from `tools/` to build all. Both compilers also work as embedded libraries — the simulator and firmware link them directly (no subprocess spawning) via platform abstraction headers (`bas2wasm_platform.h`, `c2wasm_platform.h`). In embedded mode, `malloc`/`fprintf`/`exit` redirect to host-provided callbacks, and symbol names are prefixed (`bw_`/`cw_`) to avoid link-time collisions when both compilers coexist in the same binary. See `documentation/bas2wasm.txt` and `documentation/c2wasm.txt` for full references.
 
 ### Desktop Simulator
 
@@ -363,9 +363,19 @@ INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-ta
 
 LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), WASM modules (`.wasm`), C source (`.c`), LUT data files (`LUT_N.csv`), binary cue files (`.cue`), and optionally `/config.ini`. At boot, `script_autoexec()` searches for `/startup.bas`, `/startup.c`, `/startup.wasm` in order (only candidates whose runtime/compiler is compiled in). A `.c` file is compiled to `.wasm` then run. Setting `system.startup_script` in config overrides auto-detection.
 
-### Firmware Versioning
+### Versioning
 
-`patch_firmware_ver.py` runs post-build to embed version/timestamp into the firmware binary. Configured via `custom_prog_*` fields in `platformio.ini`.
+All components use the format **`MAJOR.MINOR.BUILD`** with 2-digit minor and 4-digit build number: `0.01.0866`. The format string is `"%d.%02d.%04d"`. Each component has its own `buildnum.txt` that auto-increments on build:
+
+| Component | Version defines | buildnum.txt location |
+|---|---|---|
+| Firmware | `custom_prog_version` in `platformio.ini` | `firmware/buildnum.txt` |
+| Simulator | `VERSION_MAJOR`/`VERSION_MINOR` in `CMakeLists.txt` | `simulator/conez/buildnum.txt` |
+| bas2wasm | `BAS2WASM_VERSION_MAJOR`/`_MINOR` in `bas2wasm.h` | `tools/bas2wasm/buildnum.txt` |
+| c2wasm | `C2WASM_VERSION_MAJOR`/`_MINOR` in `c2wasm.h` | `tools/c2wasm/buildnum.txt` |
+| sewerpipe | `SEWERPIPE_VERSION_MAJOR`/`_MINOR` in `sewerpipe.h` | `tools/sewerpipe/buildnum.txt` |
+
+Firmware versioning uses `patch_firmware_ver.py` post-build to embed version/timestamp into the firmware binary. Configured via `custom_prog_*` fields in `platformio.ini`.
 
 ### Cue System
 

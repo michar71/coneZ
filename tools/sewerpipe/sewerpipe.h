@@ -4,6 +4,9 @@
 #ifndef SEWERPIPE_H
 #define SEWERPIPE_H
 
+#define SEWERPIPE_VERSION_MAJOR 0
+#define SEWERPIPE_VERSION_MINOR 1
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>

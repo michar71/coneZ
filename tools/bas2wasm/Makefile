@@ -4,7 +4,7 @@ TARGET   = bas2wasm
 SRCS     = main.c buf.c imports.c lexer.c expr.c stmt.c assemble.c
 OBJS     = $(SRCS:.c=.o)
 
-BUILDNUM_FILE = ../buildnum.txt
+BUILDNUM_FILE = buildnum.txt
 BUILDNUM = $(shell cat $(BUILDNUM_FILE) 2>/dev/null || echo 0)
 NEXT_BUILDNUM = $(shell echo $$(($(BUILDNUM) + 1)))
 

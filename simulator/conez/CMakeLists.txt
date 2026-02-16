@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 # ---- Version / build number ----
 set(VERSION_MAJOR 0)
 set(VERSION_MINOR 1)
-set(BUILDNUM_FILE "${CMAKE_SOURCE_DIR}/../../tools/buildnum.txt")
+set(BUILDNUM_FILE "${CMAKE_SOURCE_DIR}/buildnum.txt")
 if(EXISTS "${BUILDNUM_FILE}")
     file(READ "${BUILDNUM_FILE}" _BUILDNUM)
     string(STRIP "${_BUILDNUM}" _BUILDNUM)
