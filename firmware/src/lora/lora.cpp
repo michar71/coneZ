@@ -22,6 +22,10 @@ SPISettings spiLoRaSettings( LORA_SPI_FREQ, MSBFIRST, SPI_MODE0 );
 // Mode flag — set during setup, read-only thereafter
 static bool fsk_mode = false;
 
+// Packet counters
+static uint32_t rx_count = 0;
+static uint32_t tx_count = 0;
+
 // IRQ handler for LoRa RX
 volatile bool lora_rxdone_flag = false;
 
@@ -181,6 +185,7 @@ void lora_rx( void )
     
     if( state == RADIOLIB_ERR_NONE )
     {
+            rx_count++;
             printfnl(SOURCE_LORA, "Packet: %s\n",str.c_str() );
             //hexdump( (uint8_t*)str.c_str(), str.length() );
     }
@@ -238,6 +243,30 @@ float lora_get_freqdev(void)
 float lora_get_rxbw(void)
 {
     return config.fsk_rxbw;
+}
+
+uint32_t lora_get_rx_count(void)
+{
+    return rx_count;
+}
+
+uint32_t lora_get_tx_count(void)
+{
+    return tx_count;
+}
+
+float lora_get_datarate(void)
+{
+    if (fsk_mode)
+        return config.fsk_bitrate * 1000.0f;  // kbps -> bps
+
+    // LoRa bit rate: SF * BW * 4 / (2^SF * CR)
+    // BW is in kHz, result in bps
+    float bw = config.lora_bandwidth * 1000.0f;  // kHz -> Hz
+    int sf = config.lora_sf;
+    int cr = config.lora_cr;  // denominator of 4/cr
+    float chips_per_symbol = (float)(1 << sf);
+    return (sf * 4.0f * bw) / (chips_per_symbol * cr);
 }
 
 

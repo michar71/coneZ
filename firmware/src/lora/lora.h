@@ -14,6 +14,9 @@ bool lora_is_fsk(void);
 float lora_get_bitrate(void);
 float lora_get_freqdev(void);
 float lora_get_rxbw(void);
+uint32_t lora_get_rx_count(void);
+uint32_t lora_get_tx_count(void);
+float lora_get_datarate(void);
 
 int lora_set_frequency(float freq);
 int lora_set_tx_power(int power);

@@ -1609,6 +1609,13 @@ int cmd_lora(int argc, char **argv)
         printfnl(SOURCE_COMMANDS, F("  Sync Word: 0x%02X\n"), config.lora_sync_word);
     }
 
+    float dr = lora_get_datarate();
+    if (dr >= 1000.0f)
+        printfnl(SOURCE_COMMANDS, F("  Data Rate: %.2f kbps\n"), dr / 1000.0f);
+    else
+        printfnl(SOURCE_COMMANDS, F("  Data Rate: %.0f bps\n"), dr);
+    printfnl(SOURCE_COMMANDS, F("  TX Pkts:   %lu\n"), (unsigned long)lora_get_tx_count());
+    printfnl(SOURCE_COMMANDS, F("  RX Pkts:   %lu\n"), (unsigned long)lora_get_rx_count());
     printfnl(SOURCE_COMMANDS, F("  Last RSSI: %.1f dBm\n"), lora_get_rssi());
     printfnl(SOURCE_COMMANDS, F("  Last SNR:  %.1f dB\n"), lora_get_snr());
 #else
