@@ -12,9 +12,19 @@ void stmt_reset(void) {
 static void compile_format(void) {
     need(TOK_STRING);
     int raw_off = tokv;
+    char raw[512];
+    int raw_len = data_len - raw_off;
+    if (raw_len < 0) raw_len = 0;
+    if (raw_len >= (int)sizeof(raw)) raw_len = (int)sizeof(raw) - 1;
+#ifdef BAS2WASM_USE_PSRAM
+    bw_psram_read(data_buf + raw_off, raw, raw_len);
+#else
+    memcpy(raw, data_buf + raw_off, raw_len);
+#endif
+    raw[raw_len] = 0;
     char cfmt[512];
     int ci = 0;
-    for (const char *p = data_buf + raw_off; *p; p++) {
+    for (const char *p = raw; *p; p++) {
         if (ci >= (int)sizeof(cfmt) - 3) { error_at("FORMAT string too long"); return; }
         if (*p == '%') { cfmt[ci++] = '%'; cfmt[ci++] = 'd'; }
         else if (*p == '$') { cfmt[ci++] = '%'; cfmt[ci++] = 's'; }
