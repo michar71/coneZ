@@ -915,19 +915,58 @@ int cmd_version(int argc, char **argv)
 
 int cmd_wifi(int argc, char **argv)
 {
-    printfnl(SOURCE_COMMANDS, F("WiFi Status:\n"));
+    // wifi ssid <name>
+    if (argc >= 3 && !strcasecmp(argv[1], "ssid")) {
+        strlcpy(config.wifi_ssid, argv[2], CONFIG_MAX_SSID);
+        config_save();
+        printfnl(SOURCE_COMMANDS, F("SSID set to \"%s\" (reboot to apply)\n"), config.wifi_ssid);
+        return 0;
+    }
 
-    if (WiFi.status() == WL_CONNECTED)
-    {
-        printfnl(SOURCE_COMMANDS, F("  SSID:   %s\n"), WiFi.SSID().c_str());
-        printfnl(SOURCE_COMMANDS, F("  Status: Connected\n"));
-        printfnl(SOURCE_COMMANDS, F("  IP:     %s\n"), WiFi.localIP().toString().c_str());
-        printfnl(SOURCE_COMMANDS, F("  RSSI:   %d dBm\n"), WiFi.RSSI());
+    // wifi password <psk>  /  wifi psk <psk>
+    if (argc >= 3 && (!strcasecmp(argv[1], "password") || !strcasecmp(argv[1], "pass") || !strcasecmp(argv[1], "psk"))) {
+        strlcpy(config.wifi_password, argv[2], CONFIG_MAX_PASSWORD);
+        config_save();
+        printfnl(SOURCE_COMMANDS, F("Password updated (reboot to apply)\n"));
+        return 0;
     }
-    else
-    {
-        printfnl(SOURCE_COMMANDS, F("  Status: Disconnected\n"));
+
+    // wifi (no args) — show status
+    wl_status_t st = WiFi.status();
+    const char *status;
+    switch (st) {
+        case WL_CONNECTED:      status = "Connected";      break;
+        case WL_NO_SSID_AVAIL:  status = "SSID not found"; break;
+        case WL_CONNECT_FAILED: status = "Connect failed"; break;
+        case WL_IDLE_STATUS:    status = "Idle";            break;
+        case WL_DISCONNECTED:   status = "Disconnected";    break;
+        default:                status = "Unknown";         break;
     }
+
+    getLock();
+    Stream *out = getStream();
+    out->println("WiFi Status:");
+    out->printf("  Config SSID: %s\n", config.wifi_ssid);
+    out->printf("  Status:      %s\n", status);
+
+    if (st == WL_CONNECTED) {
+        out->printf("  SSID:        %s\n", WiFi.SSID().c_str());
+        out->printf("  BSSID:       %s\n", WiFi.BSSIDstr().c_str());
+        out->printf("  Channel:     %d\n", WiFi.channel());
+        out->printf("  RSSI:        %d dBm\n", WiFi.RSSI());
+        out->printf("  IP:          %s\n", WiFi.localIP().toString().c_str());
+        out->printf("  Gateway:     %s\n", WiFi.gatewayIP().toString().c_str());
+        out->printf("  Subnet:      %s\n", WiFi.subnetMask().toString().c_str());
+        out->printf("  DNS:         %s\n", WiFi.dnsIP().toString().c_str());
+        out->printf("  Hostname:    %s\n", WiFi.getHostname());
+    }
+
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    out->printf("  MAC:         %02X:%02X:%02X:%02X:%02X:%02X\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    out->printf("  TX power:    %.1f dBm\n", WiFi.getTxPower() / 4.0f);
+    releaseLock();
 
     return 0;
 }

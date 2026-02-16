@@ -65,7 +65,7 @@ Quick Reference
   ver                                Show firmware version (alias for version)
   version                            Show firmware version and board info
   wasm [status|info <file>]          WASM runtime status/info
-  wifi                               Show WiFi status
+  wifi [ssid|password|pass|psk]      Show WiFi status / set credentials
   winamp                             Audio visualizer (requires ANSI)
 
 
@@ -420,7 +420,16 @@ wasm
       Example: wasm info /rgb_cycle.wasm
 
 wifi
-  Show WiFi status: SSID, connection state, IP address, RSSI.
+  Show WiFi status: configured SSID, connection state, connected SSID,
+  BSSID, channel, RSSI, IP/gateway/subnet/DNS, hostname, MAC, TX power.
+
+  wifi ssid <name>
+      Set the WiFi SSID. Saved to config; reboot to apply.
+
+  wifi password <psk>
+  wifi pass <psk>
+  wifi psk <psk>
+      Set the WiFi password. Saved to config; reboot to apply.
 
 winamp
   Audio visualizer LED effect. Displays a retro-style equalizer on
