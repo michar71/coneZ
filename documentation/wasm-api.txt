@@ -536,6 +536,26 @@ File I/O
       Remove an empty directory. Returns 1 on success, 0 on failure.
 
 
+Compression
+~~~~~~~~~~~
+
+  All three functions auto-detect gzip, zlib, or raw deflate format from
+  the input data header. Paths use the same (pointer, length) convention
+  and validation rules as file I/O.
+
+  int  inflate_file(char *src, int src_len, char *dst, int dst_len)
+      Decompress a file to another file.
+      Returns decompressed size on success, -1 on error.
+
+  int  inflate_file_to_mem(char *src, int src_len, void *dst, int dst_max)
+      Decompress a file into a WASM memory buffer.
+      Returns decompressed size on success, -1 on error.
+
+  int  inflate_mem(void *src, int src_len, void *dst, int dst_max)
+      Decompress memory to memory.
+      Returns decompressed size on success, -1 on error.
+
+
 Inline Functions (compiled into module, not host imports)
 ---------------------------------------------------------
 
@@ -676,6 +696,12 @@ File I/O Helpers
 
   int file_rmdir_str(const char *path)
       Convenience wrapper for file_rmdir().
+
+  int inflate_file_str(const char *src, const char *dst)
+      Convenience wrapper for inflate_file().
+
+  int inflate_file_to_mem_str(const char *src, void *dst, int dst_max)
+      Convenience wrapper for inflate_file_to_mem().
 
 
 C Standard Library Helpers

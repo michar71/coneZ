@@ -27,6 +27,7 @@
 #include "editor.h"
 #include "psram.h"
 #include "mqtt_client.h"
+#include "inflate.h"
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
 #include <csetjmp>
@@ -555,6 +556,91 @@ int cmd_cp(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, F("Copied %u bytes: %s -> %s\n"), (unsigned)total, src, dst);
     return 0;
 }
+
+// Decompress a gzip, zlib, or raw deflate file using shared inflate helper
+int cmd_inflate(int argc, char **argv)
+{
+    if (argc < 2 || argc > 3) {
+        printfnl(SOURCE_COMMANDS, F("Usage: inflate <input> [output]\n"));
+        printfnl(SOURCE_COMMANDS, F("  Decompresses gzip (.gz), zlib, or raw deflate files.\n"));
+        printfnl(SOURCE_COMMANDS, F("  Output defaults to input with .gz stripped, or input.out\n"));
+        return 1;
+    }
+
+    char src[64], dst[64];
+    normalize_path(src, sizeof(src), argv[1]);
+
+    if (argc == 3) {
+        normalize_path(dst, sizeof(dst), argv[2]);
+    } else {
+        // Strip .gz extension, or append .out
+        strlcpy(dst, src, sizeof(dst));
+        int len = strlen(dst);
+        if (len > 3 && strcmp(dst + len - 3, ".gz") == 0)
+            dst[len - 3] = '\0';
+        else if (len > 2 && strcmp(dst + len - 2, ".z") == 0)
+            dst[len - 2] = '\0';
+        else
+            strlcat(dst, ".out", sizeof(dst));
+    }
+
+    // Read entire compressed file into heap
+    File in = LittleFS.open(src, "r");
+    if (!in) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), src);
+        return 1;
+    }
+    size_t in_size = in.size();
+    if (in_size == 0) {
+        in.close();
+        printfnl(SOURCE_COMMANDS, F("File is empty\n"));
+        return 1;
+    }
+    uint8_t *in_buf = (uint8_t *)malloc(in_size);
+    if (!in_buf) {
+        in.close();
+        printfnl(SOURCE_COMMANDS, F("Out of memory (%u bytes)\n"), (unsigned)in_size);
+        return 1;
+    }
+    in.read(in_buf, in_size);
+    in.close();
+
+    // Estimate output buffer: 10x compressed size, capped at 256KB
+    size_t out_max = in_size * 10;
+    if (out_max > 256 * 1024) out_max = 256 * 1024;
+    if (out_max < 4096) out_max = 4096;
+    uint8_t *out_buf = (uint8_t *)malloc(out_max);
+    if (!out_buf) {
+        free(in_buf);
+        printfnl(SOURCE_COMMANDS, F("Out of memory (%u bytes)\n"), (unsigned)out_max);
+        return 1;
+    }
+
+    int result = inflate_buf(in_buf, in_size, out_buf, out_max);
+    free(in_buf);
+
+    if (result < 0) {
+        free(out_buf);
+        printfnl(SOURCE_COMMANDS, F("Decompression error\n"));
+        return 1;
+    }
+
+    // Write output file
+    File out = LittleFS.open(dst, FILE_WRITE);
+    if (!out) {
+        free(out_buf);
+        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), dst);
+        return 1;
+    }
+    out.write(out_buf, result);
+    out.close();
+    free(out_buf);
+
+    printfnl(SOURCE_COMMANDS, F("Inflated: %s (%u -> %u bytes)\n"),
+        dst, (unsigned)in_size, (unsigned)result);
+    return 0;
+}
+
 
 int cmd_hexdump(int argc, char **argv)
 {
@@ -2427,6 +2513,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  help                                Show this help\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  history                             Show command history\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  inflate {file} [output]             Decompress gzip/zlib/deflate file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  led                                 Show LED configuration\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  load {filename}                     Load program (.bas or .wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
@@ -2716,6 +2803,8 @@ void init_commands(Stream *dev)
     shell.addCommand(F("grep"), cmd_grep);
     shell.addCommand(F("help"), cmd_help);
     shell.addCommand(F("hexdump"), cmd_hexdump);
+    shell.addCommand(F("inflate"), cmd_inflate);
+    shell.addCommand(F("gunzip"), cmd_inflate);
     shell.addCommand(F("led"), cmd_led);
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("load"), loadFile);

@@ -183,6 +183,15 @@ extern "C" {
     pub fn file_rename(old_path: *const u8, old_len: i32, new_path: *const u8, new_len: i32)
         -> i32;
 
+    // ---- Compression ----
+    /// Decompress a file to another file. Auto-detects gzip/zlib/raw deflate.
+    /// Returns decompressed size on success, -1 on error.
+    pub fn inflate_file(src: *const u8, src_len: i32, dst: *const u8, dst_len: i32) -> i32;
+    /// Decompress a file into a memory buffer. Returns decompressed size or -1.
+    pub fn inflate_file_to_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
+    /// Decompress memory to memory. Returns decompressed size or -1.
+    pub fn inflate_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
+
     // ---- Curve / Interpolation ----
     /// Linear interpolation: returns a + t * (b - a).
     pub fn lerp(a: f32, b: f32, t: f32) -> f32;
@@ -290,6 +299,18 @@ pub fn file_exists_str(path: &str) -> bool {
 #[inline]
 pub fn file_delete_str(path: &str) -> bool {
     unsafe { file_delete(path.as_ptr(), path.len() as i32) != 0 }
+}
+
+/// Decompress a file to another file by path strings.
+#[inline]
+pub fn inflate_file_str(src: &str, dst: &str) -> i32 {
+    unsafe { inflate_file(src.as_ptr(), src.len() as i32, dst.as_ptr(), dst.len() as i32) }
+}
+
+/// Decompress a file into a memory buffer by path string.
+#[inline]
+pub fn inflate_file_to_mem_str(src: &str, dst: &mut [u8]) -> i32 {
+    unsafe { inflate_file_to_mem(src.as_ptr(), src.len() as i32, dst.as_mut_ptr(), dst.len() as i32) }
 }
 
 /// Optional allocator adapter for no_std + alloc crates.

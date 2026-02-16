@@ -144,6 +144,9 @@ const ImportDef imp_defs[IMP_COUNT] = {
     [IMP_FREE]           = {"free",                 1,{_I},            0,{}},
     [IMP_CALLOC]         = {"calloc",               2,{_I,_I},         1,{_I}},
     [IMP_REALLOC]        = {"realloc",              2,{_I,_I},         1,{_I}},
+    [IMP_INFLATE_FILE]   = {"inflate_file",         4,{_I,_I,_I,_I},   1,{_I}},
+    [IMP_INFLATE_FILE_TO_MEM]={"inflate_file_to_mem",4,{_I,_I,_I,_I},  1,{_I}},
+    [IMP_INFLATE_MEM]    = {"inflate_mem",           4,{_I,_I,_I,_I},   1,{_I}},
 };
 #undef _I
 #undef _L

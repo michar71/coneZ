@@ -66,7 +66,8 @@ static M3Result link_imports(IM3Module module)
     if ((r = link_io_imports(module)))       return r;
     if ((r = link_math_imports(module)))     return r;
     if ((r = link_format_imports(module)))   return r;
-    if ((r = link_string_imports(module)))  return r;
+    if ((r = link_string_imports(module)))       return r;
+    if ((r = link_compression_imports(module))) return r;
     return m3Err_none;
 }
 

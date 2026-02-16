@@ -211,7 +211,7 @@ WASM runtime:
 Host Imports
 ------------
 
-All 148 firmware host imports are implemented. Behavior differences from
+All 151 firmware host imports are implemented. Behavior differences from
 hardware are noted below.
 
   LED (14 functions)
@@ -259,6 +259,11 @@ hardware are noted below.
     with width, precision, flags, and length modifiers. wasm_vsscanf
     handles %d %u %x %f %s %c %n.
 
+  Compression (3 functions)
+    inflate_file, inflate_file_to_mem, inflate_mem. Uses zlib
+    inflateInit2()/inflate() with auto-detection of gzip/zlib/raw deflate.
+    File paths resolve through the sandbox directory.
+
   GPIO (4 functions)
     Stubs that log to the console: "[GPIO] pin_set(N)".
 
@@ -285,7 +290,7 @@ Source Layout
       ├── wasm/
       │   ├── sim_wasm_runtime     wasm3 lifecycle, m3_Yield
       │   ├── sim_wasm_imports.h   link function declarations
-      │   └── sim_wasm_imports_*   10 import category files
+      │   └── sim_wasm_imports_*   11 import category files
       ├── compiler/
       │   ├── bas2wasm_embed.c     single-TU embedded bas2wasm
       │   └── c2wasm_embed.c       single-TU embedded c2wasm

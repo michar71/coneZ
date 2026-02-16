@@ -18,6 +18,7 @@ endif()
 math(EXPR BUILD_NUMBER "${_BUILDNUM} + 1")
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(ZLIB REQUIRED)
 
 # ---- wasm3 static library (pure C) ----
 file(GLOB WASM3_SOURCES thirdparty/wasm3/source/*.c)
@@ -71,6 +72,8 @@ set(SIM_SOURCES
     src/wasm/sim_wasm_imports_string.cpp
     src/wasm/sim_wasm_imports_format.cpp
     src/wasm/sim_wasm_imports_gpio.cpp
+    src/wasm/sim_wasm_imports_compression.cpp
+    src/state/inflate_util.cpp
     src/worker/wasm_worker.cpp
     src/worker/compiler_worker.cpp
 )
@@ -92,7 +95,7 @@ target_compile_definitions(conez-simulator PRIVATE
     BUILD_NUMBER=${BUILD_NUMBER}
 )
 
-target_link_libraries(conez-simulator PRIVATE Qt6::Widgets Qt6::Network m3 bas2wasm-embed c2wasm-embed m)
+target_link_libraries(conez-simulator PRIVATE Qt6::Widgets Qt6::Network m3 bas2wasm-embed c2wasm-embed ZLIB::ZLIB m)
 
 # Increment build number after successful build
 add_custom_command(TARGET conez-simulator POST_BUILD

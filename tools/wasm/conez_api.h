@@ -481,6 +481,31 @@ int file_mkdir(const char *path, int path_len);
 __attribute__((import_module("env"), import_name("file_rmdir")))
 int file_rmdir(const char *path, int path_len);
 
+/* ---- Compression ---- */
+
+/*
+ * Decompress a file to another file. Auto-detects gzip/zlib/raw deflate.
+ * src/dst are (pointer, length) pairs for the file path strings.
+ * Returns decompressed size on success, -1 on error.
+ */
+__attribute__((import_module("env"), import_name("inflate_file")))
+int inflate_file(const char *src, int src_len, const char *dst, int dst_len);
+
+/*
+ * Decompress a file into a memory buffer. Auto-detects format.
+ * src is (pointer, length) for the file path; dst/dst_max point to WASM memory.
+ * Returns decompressed size on success, -1 on error.
+ */
+__attribute__((import_module("env"), import_name("inflate_file_to_mem")))
+int inflate_file_to_mem(const char *src, int src_len, void *dst, int dst_max);
+
+/*
+ * Decompress memory to memory. Auto-detects gzip/zlib/raw deflate.
+ * Returns decompressed size on success, -1 on error.
+ */
+__attribute__((import_module("env"), import_name("inflate_mem")))
+int inflate_mem(const void *src, int src_len, void *dst, int dst_max);
+
 /* ---- Math (transcendentals — host-imported, backed by platform libm) ---- */
 
 __attribute__((import_module("env"), import_name("sinf")))
@@ -989,6 +1014,14 @@ static inline int file_mkdir_str(const char *path) {
 }
 static inline int file_rmdir_str(const char *path) {
     return file_rmdir(path, (int)strlen(path));
+}
+
+/* Inflate convenience wrappers (C string path versions). */
+static inline int inflate_file_str(const char *src, const char *dst) {
+    return inflate_file(src, (int)strlen(src), dst, (int)strlen(dst));
+}
+static inline int inflate_file_to_mem_str(const char *src, void *dst, int dst_max) {
+    return inflate_file_to_mem(src, (int)strlen(src), dst, dst_max);
 }
 
 /* ---- Math / Utility Helpers ---- */

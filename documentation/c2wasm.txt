@@ -394,6 +394,8 @@ All functions declared in tools/wasm/conez_api.h are available after
               file_exists, file_delete, file_rename,
               file_mkdir, file_rmdir
 
+  Compress:   inflate_file, inflate_file_to_mem, inflate_mem
+
   LUT:        lut_load, lut_save, lut_check, lut_get, lut_set, lut_size
 
   Format:     host_snprintf (low-level snprintf to WASM memory)

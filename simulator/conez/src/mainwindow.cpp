@@ -9,6 +9,7 @@
 #include "sensor_state.h"
 #include "cue_engine.h"
 #include "mqtt_client.h"
+#include "inflate_util.h"
 
 #include <QToolBar>
 #include <QSplitter>
@@ -201,6 +202,8 @@ void MainWindow::onCommand(const QString &cmd)
         cmdCue(parts);
     } else if (verb == "mqtt") {
         cmdMqtt(parts);
+    } else if (verb == "inflate" || verb == "gunzip") {
+        cmdInflate(parts);
     } else {
         m_console->appendText("Unknown command: " + verb + ". Type ? for help.\n");
     }
@@ -283,6 +286,7 @@ void MainWindow::cmdHelp()
         "  grep {pattern} [file]               Search file contents\n"
         "  help                                Show this help\n"
         "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n"
+        "  inflate {file} [output]             Decompress gzip/zlib/deflate file\n"
         "  led                                 Show LED config + RGB values\n"
         "  led set <ch> <idx|s-e|all> <#RRGGBB> Set LED color(s)\n"
         "  led clear                           Clear all LEDs to black\n"
@@ -953,4 +957,79 @@ void MainWindow::cmdMqtt(const QStringList &args)
         m_console->appendText(QString("  TX packets: %1\n").arg(mqtt.txCount()));
         m_console->appendText(QString("  RX packets: %1\n").arg(mqtt.rxCount()));
     }
+}
+
+void MainWindow::cmdInflate(const QStringList &args)
+{
+    if (args.size() < 2 || args.size() > 3) {
+        m_console->appendText("Usage: inflate <input> [output]\n"
+            "  Decompresses gzip (.gz), zlib, or raw deflate files.\n"
+            "  Output defaults to input with .gz stripped, or input.out\n");
+        return;
+    }
+
+    QString srcPath = resolvePath(args[1]);
+    if (!QFileInfo::exists(srcPath)) {
+        m_console->appendText("Cannot open " + args[1] + "\n");
+        return;
+    }
+
+    // Determine output path
+    QString dstName;
+    if (args.size() == 3) {
+        dstName = args[2];
+    } else {
+        dstName = args[1];
+        if (dstName.endsWith(".gz"))
+            dstName.chop(3);
+        else if (dstName.endsWith(".z"))
+            dstName.chop(2);
+        else
+            dstName += ".out";
+    }
+    QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+    QString dstPath;
+    if (dstName.startsWith('/'))
+        dstPath = sandbox + dstName;
+    else
+        dstPath = sandbox + "/" + dstName;
+
+    // Read compressed file
+    QFile inFile(srcPath);
+    if (!inFile.open(QIODevice::ReadOnly)) {
+        m_console->appendText("Cannot open " + args[1] + "\n");
+        return;
+    }
+    QByteArray inData = inFile.readAll();
+    inFile.close();
+    if (inData.isEmpty()) {
+        m_console->appendText("File is empty\n");
+        return;
+    }
+
+    // Allocate output buffer: 10x compressed, capped at 256KB
+    size_t outMax = (size_t)inData.size() * 10;
+    if (outMax > 256 * 1024) outMax = 256 * 1024;
+    if (outMax < 4096) outMax = 4096;
+    QByteArray outData(outMax, '\0');
+
+    int result = inflate_buf((const uint8_t *)inData.constData(), inData.size(),
+                             (uint8_t *)outData.data(), outMax);
+    if (result < 0) {
+        m_console->appendText("Decompression error\n");
+        return;
+    }
+    outData.truncate(result);
+
+    // Write output file
+    QFile outFile(dstPath);
+    if (!outFile.open(QIODevice::WriteOnly)) {
+        m_console->appendText("Cannot create " + dstName + "\n");
+        return;
+    }
+    outFile.write(outData);
+    outFile.close();
+
+    m_console->appendText(QString("Inflated: %1 (%2 -> %3 bytes)\n")
+        .arg(dstName).arg(inData.size()).arg(result));
 }
