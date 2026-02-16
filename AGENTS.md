@@ -383,3 +383,26 @@ Epoch-time-synced LED cueing engine for music-synchronized light shows across ge
 python3 tools/cuetool.py build tools/example_show.yaml -o firmware/data/show.cue
 python3 tools/cuetool.py dump firmware/data/show.cue
 ```
+
+### Sewerpipe (MQTT Broker)
+
+Lightweight MQTT 3.1.1 broker in `tools/sewerpipe/` for coordinating cues and commands across cones over local WiFi. Runs on a laptop or Pi as the show coordinator — cones connect as MQTT clients. Single-threaded `poll()` event loop, POSIX only (Linux/macOS).
+
+**Capabilities:** QoS 0 + QoS 1, retained messages, topic wildcards (`+` single-level, `#` multi-level), `$`-prefix topic filtering, duplicate client ID takeover, keep-alive timeout enforcement. **Not supported:** TLS, auth, will messages, persistent sessions, QoS 2, `$SYS` topics.
+
+```bash
+# Build
+cd tools/sewerpipe && make
+
+# Run
+./sewerpipe -v -p 1883
+
+# Run tests (requires Python 3)
+make test
+```
+
+**CLI:** `sewerpipe [-p port] [-d] [-v] [-h]`. Default port 1883. `-d` forks to background (binds first so errors are visible). `-v` enables verbose per-packet logging.
+
+**Source files:** `sewerpipe.h` (types, constants), `mqtt.c` (packet parsing/serialization), `broker.c` (client lifecycle, subscriptions, routing, retained store, QoS 1 inflight), `main.c` (event loop, CLI, signal handling). Tests in `test/` — 5 integration tests using raw MQTT packets via Python.
+
+**Limits:** 128 clients, 32 subscriptions/client, 256 retained messages, 16 inflight QoS 1 messages/client, 64KB receive buffer/client. See `documentation/sewerpipe.txt` for protocol details.

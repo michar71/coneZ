@@ -1,0 +1,174 @@
+sewerpipe — Bare-Bones MQTT 3.1.1 Broker
+=========================================
+
+Lightweight MQTT broker for coordinating cues and commands across ConeZ
+devices over local WiFi. Designed to run on a laptop or Raspberry Pi as
+the show coordinator. Cones connect as standard MQTT clients.
+
+Build & Run
+-----------
+
+    cd tools/sewerpipe && make
+    ./sewerpipe -p 1883 -v
+
+    Usage: sewerpipe [-p port] [-d] [-v] [-h]
+
+      -p port    Listen port (default: 1883)
+      -d         Daemon mode (fork to background)
+      -v         Verbose logging (every packet)
+      -h         Show help
+
+Normal mode logs connections and disconnections only. Verbose mode (-v)
+logs every packet type, topic, and payload size. Daemon mode (-d) binds
+the listen socket first (so bind errors are visible), then forks to
+background, prints the child PID, and redirects stdin/stdout/stderr to
+/dev/null. Stop with `kill <pid>` (SIGTERM).
+
+MQTT 3.1.1 Compliance
+---------------------
+
+Supported:
+  - CONNECT / CONNACK (protocol level 4, clean session only)
+  - PUBLISH / PUBACK (QoS 0 and QoS 1)
+  - SUBSCRIBE / SUBACK (multiple filters per packet)
+  - UNSUBSCRIBE / UNSUBACK
+  - PINGREQ / PINGRESP
+  - DISCONNECT
+  - Retained messages (store, deliver on subscribe, delete via empty payload)
+  - Topic wildcards: + (single level), # (multi-level)
+  - $ topic filtering (# and + at first level don't match $-prefixed topics)
+  - Duplicate client ID takeover (old connection closed)
+  - Keep-alive timeout (1.5x configured interval)
+  - QoS 1 retry with DUP flag (every 5 seconds)
+  - Generated client IDs for empty CONNECT client_id
+
+Not supported:
+  - QoS 2 (PUBREC/PUBREL/PUBCOMP)
+  - Will messages
+  - Persistent sessions (clean_session must be 1)
+  - Authentication (username/password ignored)
+  - TLS/SSL
+  - $SYS topics
+  - MQTT 5.0
+
+Source Layout
+-------------
+
+    tools/sewerpipe/
+      Makefile          Build rules (shared buildnum.txt with other tools)
+      sewerpipe.h       Types, constants, function declarations
+      mqtt.c            Packet parsing and serialization
+      broker.c          Client state, subscriptions, routing, retained, QoS 1
+      main.c            Entry point, CLI, signal handling, poll() event loop
+      test/
+        run_tests.sh    Test runner (invoked by `make test`)
+        mqtt_helpers.py Reusable MQTT packet builders + MQTTClient class
+        test_basic.py       Connect, subscribe, publish, ping
+        test_retained.py    Retained store and delete-by-empty-payload
+        test_wildcards.py   # multi-level, + single-level, $ filtering
+        test_qos1.py        QoS 1 publish, PUBACK, delivery
+        test_takeover.py    Duplicate client ID disconnects old session
+
+Constants
+---------
+
+    MAX_CLIENTS           128     Max simultaneous connections
+    MAX_SUBS_PER_CLIENT    32     Subscriptions per client
+    MAX_RETAINED          256     Retained message slots
+    MAX_INFLIGHT           16     QoS 1 pending ACKs per client
+    RX_BUF_SIZE         65536     Per-client receive buffer
+    MAX_TOPIC_LEN         256     Max topic string length
+    MAX_PAYLOAD_SIZE    65536     Max payload size
+    RETRY_INTERVAL_SEC      5     QoS 1 resend timer
+    DEFAULT_PORT         1883     Default listen port
+
+Event Loop
+----------
+
+Single-threaded poll() loop with 1-second timeout. The timeout drives
+keep-alive checks and QoS 1 retries without needing separate timers.
+
+Each iteration:
+  1. Build pollfd array: listen socket + all active client sockets
+  2. poll() with 1-second timeout
+  3. Accept new connections on listen socket
+  4. For each readable client: read into rx_buf, parse complete packets,
+     dispatch to broker logic, shift remaining bytes forward
+  5. Check keep-alive timeouts (1.5x interval), connect timeouts (10s)
+  6. Retry unacknowledged QoS 1 messages
+
+Packet Format
+-------------
+
+MQTT fixed header: 1 byte (type + flags) + 1-4 byte remaining length.
+Variable-length encoding: 7 bits per byte, MSB = continuation flag.
+
+mqtt_parse_packet() extracts the fixed header and points into the
+variable header + payload. Each packet type is then parsed by the
+broker dispatch logic.
+
+Topic Matching
+--------------
+
+topic_matches(filter, topic) implements MQTT wildcard rules:
+
+    +           Matches exactly one topic level
+    #           Must be last level, matches zero or more levels
+    /#          At end of filter, matches parent and all children
+    $-prefix    + and # at first level don't match $ topics
+
+Examples:
+    "a/+/c"    matches "a/b/c" but not "a/b/c/d" or "a/b/d"
+    "a/#"      matches "a", "a/b", "a/b/c/d"
+    "#"        matches all except $-prefixed topics
+    "$SYS/#"   matches "$SYS/info" (explicit $ at first level)
+
+Retained Messages
+-----------------
+
+Publishing with retain flag stores the message. Subsequent subscribers
+to a matching topic receive the retained message immediately after
+SUBACK. Publishing with retain flag and empty payload deletes the
+retained message.
+
+Retained messages are stored in a fixed-size table (MAX_RETAINED slots).
+Payloads are heap-allocated and realloc'd on update.
+
+QoS 1 Flow
+-----------
+
+Publisher sends PUBLISH with QoS 1 → broker sends PUBACK to publisher.
+Broker forwards to matching subscribers at min(pub_qos, sub_qos).
+For QoS 1 subscribers: broker assigns a message ID, stores payload copy
+in the inflight table, sends PUBLISH. Subscriber sends PUBACK → broker
+frees the inflight slot. If no PUBACK within RETRY_INTERVAL_SEC (5s),
+broker resends with DUP flag.
+
+Testing
+-------
+
+    make test
+
+Runs 5 integration tests using Python 3 raw TCP sockets to send/receive
+MQTT packets. Tests cover: basic pub/sub, retained messages, topic
+wildcards (+ and # and $ filtering), QoS 1, and client ID takeover.
+
+The test suite starts its own broker instance on an unused port and
+tears it down afterward.
+
+Example Usage
+-------------
+
+Terminal 1 — start broker:
+
+    ./sewerpipe -v
+
+Terminal 2 — subscribe:
+
+    mosquitto_sub -t "conez/#" -v
+
+Terminal 3 — publish:
+
+    mosquitto_pub -t "conez/cue/start" -m '{"epoch_ms": 1707000000000}'
+    mosquitto_pub -t "conez/status" -m "hello" -r      # retained
+    mosquitto_pub -t "conez/cmd" -m "stop" -q 1         # QoS 1
