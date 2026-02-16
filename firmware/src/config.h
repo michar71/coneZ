@@ -34,7 +34,7 @@
 
 // System
 #define DEFAULT_DEVICE_NAME     ""
-#define DEFAULT_STARTUP_SCRIPT  "/startup.bas"
+#define DEFAULT_STARTUP_SCRIPT  ""              // empty = auto-detect (/startup.bas, .c, .wasm)
 #define DEFAULT_TIMEZONE        -8              // Standard (winter) offset; DST adds +1 automatically
 #define DEFAULT_AUTO_DST        true
 #define DEFAULT_CONE_ID         0

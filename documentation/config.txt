@@ -60,7 +60,11 @@ Sections and Keys
   device_name       DHCP hostname (blank = auto)   (default: empty)
                       When empty, hostname is auto-generated as
                       ConeZ-XXYY from the last 2 bytes of the MAC address.
-  startup_script    Script to auto-run (.bas/.wasm) (default: /startup.bas)
+  startup_script    Script to auto-run at boot       (default: auto-detect)
+                      When empty (default), searches for /startup.bas,
+                      /startup.c, /startup.wasm in order (only candidates
+                      whose runtime is compiled in). Set explicitly to
+                      override auto-detection.
   timezone          Standard (winter) UTC offset   (default: -8)
                       Set to the non-DST offset for your zone (e.g. -8 for PST).
                       When auto_dst is on, +1 is added automatically during DST.
@@ -152,7 +156,7 @@ before any hardware that depends on config values is initialized:
   sunSetTZOffset()         Reads config.timezone
   setup_basic()            Starts BASIC task on Core 0 (if INCLUDE_BASIC)
   setup_wasm()             Starts WASM task on Core 0 (if INCLUDE_WASM)
-  script_autoexec()        Runs startup_script via set_script_program()
+  script_autoexec()        Runs startup script (configured or auto-detected)
 
 
 Adding a New Config Key

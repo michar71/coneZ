@@ -2278,6 +2278,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("del"), delFile);
     shell.addCommand(F("df"), cmd_df);
     shell.addCommand(F("dir"), listDir);
+    shell.addCommand(F("ls"), listDir);
     shell.addCommand(F("edit"), cmd_edit);
     shell.addCommand(F("mkdir"), cmd_mkdir);
     shell.addCommand(F("game"), cmd_game);

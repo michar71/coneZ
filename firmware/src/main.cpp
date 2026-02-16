@@ -172,23 +172,53 @@ static void shell_task_fun(void *param)
 }
 
 
+extern int cmd_compile(int argc, char **argv);
+
 void script_autoexec(void)
 {
   static bool startup = true;
-  if (startup)
-  {
-    startup = false;
+  if (!startup) return;
+  startup = false;
 
-    if (littlefs_mounted && file_exists(config.startup_script))
-    {
-        printfnl(SOURCE_SYSTEM,"%s found. Executing...\n", config.startup_script);
-        set_script_program(config.startup_script);
-    }
-    else
-    {
-      printfnl(SOURCE_SYSTEM,"No %s\n", config.startup_script);
-    }
+  if (!littlefs_mounted) return;
+
+  // If user configured a specific startup script, use it
+  if (config.startup_script[0] != '\0') {
+      if (file_exists(config.startup_script)) {
+          printfnl(SOURCE_SYSTEM, "%s found. Executing...\n", config.startup_script);
+          set_script_program(config.startup_script);
+      } else {
+          printfnl(SOURCE_SYSTEM, "No %s\n", config.startup_script);
+      }
+      return;
   }
+
+  // Auto-detect: try candidates in priority order based on compiled features
+  static const struct { const char *path; int need; } candidates[] = {
+#ifdef INCLUDE_BASIC
+      { "/startup.bas",  0 },
+#endif
+#ifdef INCLUDE_C_COMPILER
+      { "/startup.c",    1 },  // needs compile-then-run
+#endif
+#ifdef INCLUDE_WASM
+      { "/startup.wasm", 0 },
+#endif
+  };
+
+  for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
+      if (!file_exists(candidates[i].path)) continue;
+      printfnl(SOURCE_SYSTEM, "%s found. Executing...\n", candidates[i].path);
+      if (candidates[i].need) {
+          char *argv[] = { (char *)"compile", (char *)candidates[i].path, (char *)"run" };
+          cmd_compile(3, argv);
+      } else {
+          set_script_program((char *)candidates[i].path);
+      }
+      return;
+  }
+
+  printfnl(SOURCE_SYSTEM, "No startup script found\n");
 }
 
 

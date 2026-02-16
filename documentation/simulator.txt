@@ -78,7 +78,7 @@ that path is used instead. If neither is found, /tmp/conez_sandbox is
 used as a fallback.
 
 The data directory is used by:
-  - CLI commands (dir, cat, del, ren, cp, mkdir, rmdir, grep, hexdump, df)
+  - CLI commands (dir/ls, cat, del, ren, cp, mkdir, rmdir, grep, hexdump, df)
   - WASM file I/O imports for runtime read/write
   - The run command for path resolution of bare filenames
 
@@ -140,7 +140,7 @@ Console Commands:
   cp <src> <dst>       Copy file
   del <file>           Delete file from data directory
   df                   Show filesystem usage (file count and total size)
-  dir [path]           List files in data directory (optional subdirectory)
+  dir/ls [path]        List files in data directory (optional subdirectory)
   grep <pat> [file]    Search file contents (case-insensitive, recursive)
   hexdump <file> [n]   Hex+ASCII dump (default 256 bytes)
   led                  Show LED channel configuration

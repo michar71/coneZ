@@ -7,7 +7,7 @@ The Telnet server negotiates IAC WILL ECHO + WILL SGA so clients
 operate in character mode with server-side echo.
 
 The desktop simulator (see simulator.txt) supports a subset of these
-commands in its console: ?/help, run, stop, open, dir, del, cat/list,
+commands in its console: ?/help, run, stop, open, dir/ls, del, cat/list,
 ren/mv, cp, mkdir, rmdir, grep, hexdump, df, clear/cls, param, led,
 sensors, time, uptime, ver/version, wasm, cue. Hardware-only commands are
 not available in the simulator.
@@ -34,6 +34,7 @@ Quick Reference
   del {filename}                     Delete file
   df                                 Show filesystem usage
   dir [path]                         List files (optionally in subdirectory)
+  ls [path]                          Alias for dir
   edit {filename}                    Text editor (line editor if ANSI off)
   game                               Conway's Game of Life (requires ANSI)
   gpio [set|out|in|read]             Show or control GPIO pins
@@ -178,7 +179,7 @@ df
 
 dir [path]
   List all files and directories on LittleFS with sizes. Optionally
-  specify a subdirectory to list only its contents.
+  specify a subdirectory to list only its contents. Alias: ls.
   Examples: dir
             dir /scripts
 

@@ -142,7 +142,7 @@ void MainWindow::onCommand(const QString &cmd)
         onStop();
     } else if (verb == "open") {
         onOpen();
-    } else if (verb == "dir") {
+    } else if (verb == "dir" || verb == "ls") {
         cmdDir(parts);
     } else if (verb == "del") {
         cmdDel(parts);
@@ -262,7 +262,7 @@ void MainWindow::cmdHelp()
         "  cue [load|start|stop|status]        Cue timeline engine\n"
         "  del {filename}                      Delete file\n"
         "  df                                  Show filesystem usage\n"
-        "  dir [path]                          List files\n"
+        "  dir/ls [path]                       List files\n"
         "  grep {pattern} [file]               Search file contents\n"
         "  help                                Show this help\n"
         "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n"

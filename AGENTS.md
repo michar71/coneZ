@@ -209,7 +209,7 @@ make -j$(nproc)
 
 **Data directory:** `simulator/conez/data/` ships example scripts copied from `firmware/data/`. Auto-detected at startup relative to the binary; overridable with `--sandbox`. CLI commands (`dir`, `cat`, `del`, `ren`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`) and WASM file I/O operate in this directory. Bare filenames in `run` resolve here.
 
-**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`, `del`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`, `uptime`, `ver`/`version`, `wasm`, `cue`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, reboot, tc, wifi, winamp) are not available.
+**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`/`ls`, `del`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`, `uptime`, `ver`/`version`, `wasm`, `cue`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, reboot, tc, wifi, winamp) are not available.
 
 **Source layout:** `src/gui/` (LED strip, console, sensor panel widgets), `src/state/` (LED buffers, sensor mock, config, cue engine), `src/wasm/` (runtime + 10 import files mirroring firmware), `src/worker/` (QThread for WASM, embedded compilation), `src/compiler/` (single-TU wrappers for embedded bas2wasm and c2wasm). Vendored wasm3 in `thirdparty/wasm3/source/`. Example data in `data/`.
 
@@ -340,7 +340,7 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 
 **Throughput benchmarks (ConeZ PCB v0.1, 8MB, `psram test`):**
 
-Baseline measured with single-task architecture (shell in loopTask). Current numbers are ~17% lower due to ShellTask overhead (extra `vTaskDelay` yields on busier core 1, `printfnl` suspend/resume during progress output). Frequency scaling ratios are consistent between both.
+Baseline measured with single-task architecture (shell in loopTask). Current numbers are ~15% lower due to ShellTask context-switching overhead and `printfnl` suspend/resume during progress output. Frequency scaling ratios are consistent between both.
 
 | Actual SPI Clock | Read KB/s | Write KB/s | Current Read | Current Write | Notes |
 |---|---|---|---|---|---|
@@ -352,8 +352,8 @@ Baseline measured with single-task architecture (shell in loopTask). Current num
 | 16.00 MHz | 917 | 1,030 | | | |
 | 20.00 MHz | 1,233 | 1,414 | | | |
 | 26.67 MHz | 1,603 | 1,893 | | | Max documented for GPIO matrix routing |
-| 40.00 MHz | 2,216 | 2,800 | 1,855 | 2,321 | Default boot clock (APB/2) |
-| 80.00 MHz | 3,327 | 4,534 | 2,736 | 3,687 | APB/1 — requires IOMUX pins for reliability |
+| 40.00 MHz | 2,216 | 2,800 | | | Default boot clock (APB/2) |
+| 80.00 MHz | 3,327 | 4,534 | 2,830 | 3,855 | APB/1 — requires IOMUX pins for reliability |
 
 ### Configuration
 
@@ -361,7 +361,7 @@ INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-ta
 
 ### Filesystem
 
-LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), WASM modules (`.wasm`), LUT data files (`LUT_N.csv`), binary cue files (`.cue`), and optionally `/config.ini`. The configured startup script (default `/startup.bas`) auto-executes on boot if present; the extension determines which runtime handles it.
+LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), WASM modules (`.wasm`), C source (`.c`), LUT data files (`LUT_N.csv`), binary cue files (`.cue`), and optionally `/config.ini`. At boot, `script_autoexec()` searches for `/startup.bas`, `/startup.c`, `/startup.wasm` in order (only candidates whose runtime/compiler is compiled in). A `.c` file is compiled to `.wasm` then run. Setting `system.startup_script` in config overrides auto-detection.
 
 ### Firmware Versioning
 

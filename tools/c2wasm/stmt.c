@@ -575,8 +575,9 @@ void parse_stmt(void) {
         int all_cases_resolved = 1;
         {
             int saved_error = had_error;
-            LexerSave lsave;
-            lexer_save(&lsave);
+            LexerSave *lsave = (LexerSave *)malloc(sizeof(LexerSave));
+            if (!lsave) { error_at("out of memory"); return; }
+            lexer_save(lsave);
             int depth = 1; /* already consumed opening brace */
             while (depth > 0 && tok != TOK_EOF) {
                 if (tok == TOK_LBRACE) depth++;
@@ -593,7 +594,8 @@ void parse_stmt(void) {
                 }
                 next_token();
             }
-            lexer_restore(&lsave);
+            lexer_restore(lsave);
+            free(lsave);
             had_error = saved_error;
         }
 

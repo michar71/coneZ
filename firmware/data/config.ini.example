@@ -23,7 +23,7 @@ callsign=
 
 [system]
 device_name=
-startup_script=/startup.bas
+; startup_script=          ; empty = auto-detect (.bas, .c, .wasm)
 timezone=-8
 auto_dst=on
 cone_id=0
