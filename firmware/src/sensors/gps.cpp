@@ -48,16 +48,18 @@ static volatile bool     pps_edge_flag = false; // rising-edge flag, clear-on-re
 
 TinyGPSPlus gps;
 
-// Custom GSA fields (fix type, PDOP, VDOP)
+// Custom GSA fields (fix type, DOP values)
+// GSA: $G?GSA,mode,fixtype,sv1..sv12,PDOP,HDOP,VDOP*cs
+//       field: 1    2      3..14     15   16   17
 // Register for both GPGSA and GNGSA prefixes
-static TinyGPSCustom gsaFixType_GP(gps, "GPGSA", 1);   // 1=no fix, 2=2D, 3=3D
-static TinyGPSCustom gsaPDOP_GP(gps, "GPGSA", 14);
-static TinyGPSCustom gsaHDOP_GP(gps, "GPGSA", 15);
-static TinyGPSCustom gsaVDOP_GP(gps, "GPGSA", 16);
-static TinyGPSCustom gsaFixType_GN(gps, "GNGSA", 1);
-static TinyGPSCustom gsaPDOP_GN(gps, "GNGSA", 14);
-static TinyGPSCustom gsaHDOP_GN(gps, "GNGSA", 15);
-static TinyGPSCustom gsaVDOP_GN(gps, "GNGSA", 16);
+static TinyGPSCustom gsaFixType_GP(gps, "GPGSA", 2);   // 1=no fix, 2=2D, 3=3D
+static TinyGPSCustom gsaPDOP_GP(gps, "GPGSA", 15);
+static TinyGPSCustom gsaHDOP_GP(gps, "GPGSA", 16);
+static TinyGPSCustom gsaVDOP_GP(gps, "GPGSA", 17);
+static TinyGPSCustom gsaFixType_GN(gps, "GNGSA", 2);
+static TinyGPSCustom gsaPDOP_GN(gps, "GNGSA", 15);
+static TinyGPSCustom gsaHDOP_GN(gps, "GNGSA", 16);
+static TinyGPSCustom gsaVDOP_GN(gps, "GNGSA", 17);
 
 volatile int gps_fix_type = 0;      // 0=unknown, 1=no fix, 2=2D, 3=3D
 volatile float gps_pdop = 0;
@@ -175,7 +177,7 @@ int gps_loop()
         {
             gps_lat = gps.location.lat();
             gps_lon = gps.location.lng();
-            gps_pos_valid = gps.location.isValid();
+            gps_pos_valid = gps.location.isValid() && gps.location.age() < 10000;
 
             gps_alt = gps.altitude.meters();
             gps_alt_valid = gps.altitude.isValid();
@@ -211,6 +213,12 @@ int gps_loop()
                 gps.time.isValid() ? gps.time.value() : -1 );
         }
     }
+
+    // Clear fix validity when GPS data goes stale (>10s without update)
+    if (gps_pos_valid && gps.location.age() > 10000) {
+        gps_pos_valid = false;
+    }
+
     return 0;
 }
 
@@ -474,7 +482,22 @@ void ntp_loop(void)
     gettimeofday(&tv, NULL);
 
     // ESP32 SNTP sets the system clock; check if it's been set (> year 2024)
-    if (tv.tv_sec < 1704067200L) return;  // 2024-01-01 00:00:00 UTC
+    if (tv.tv_sec < 1704067200L) {
+        // NTP not available — keep time fields advancing from free-running epoch
+        if (epoch_valid) {
+            uint64_t ep = get_epoch_ms();
+            time_t t = (time_t)(ep / 1000);
+            struct tm tm;
+            gmtime_r(&t, &tm);
+            gps_year   = tm.tm_year + 1900;
+            gps_month  = tm.tm_mon + 1;
+            gps_day    = tm.tm_mday;
+            gps_hour   = tm.tm_hour;
+            gps_minute = tm.tm_min;
+            gps_second = tm.tm_sec;
+        }
+        return;
+    }
 
     uint64_t ep = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
     uint32_t now_m = millis();
