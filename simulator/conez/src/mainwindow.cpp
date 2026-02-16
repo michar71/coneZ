@@ -290,6 +290,7 @@ void MainWindow::cmdHelp()
         "  led                                 Show LED config + RGB values\n"
         "  led set <ch> <idx|s-e|all> <#RRGGBB> Set LED color(s)\n"
         "  led clear                           Clear all LEDs to black\n"
+        "  led count <ch> <n>                  Resize LED channel\n"
         "  md5 {filename}                      Compute MD5 hash\n"
         "  mkdir {dirname}                     Create directory\n"
         "  mqtt                                MQTT status/control\n"
@@ -686,6 +687,30 @@ void MainWindow::cmdLed(const QStringList &args)
 {
     auto &cfg = simConfig();
     int counts[] = { cfg.led_count1, cfg.led_count2, cfg.led_count3, cfg.led_count4 };
+
+    // led count <ch> <n>
+    if (args.size() >= 4 && args[1].compare("count", Qt::CaseInsensitive) == 0) {
+        int ch = args[2].toInt();
+        int n  = args[3].toInt();
+        if (ch < 1 || ch > 4) {
+            m_console->appendText(QString("Invalid channel %1 (1-4)\n").arg(ch));
+            return;
+        }
+        if (n < 0) {
+            m_console->appendText("Count must be >= 0\n");
+            return;
+        }
+        auto &c = cfg;
+        switch (ch) {
+            case 1: c.led_count1 = n; break;
+            case 2: c.led_count2 = n; break;
+            case 3: c.led_count3 = n; break;
+            case 4: c.led_count4 = n; break;
+        }
+        ledState().resize(c.led_count1, c.led_count2, c.led_count3, c.led_count4);
+        m_console->appendText(QString("Channel %1 set to %2 LEDs\n").arg(ch).arg(n));
+        return;
+    }
 
     // led clear
     if (args.size() >= 2 && args[1].compare("clear", Qt::CaseInsensitive) == 0) {
