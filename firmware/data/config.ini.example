@@ -20,6 +20,14 @@ preamble=8
 tx_power=10
 sync_word=0x12
 callsign=
+; rf_mode=lora             ; "lora" (default) or "fsk"
+; fsk_bitrate=4.8          ; kbps (0.6-300)
+; fsk_freqdev=5.0          ; kHz (0.6-200)
+; fsk_rxbw=156.2           ; kHz (discrete set: 4.8-467)
+; fsk_shaping=0            ; 0=none, 1=BT0.3, 2=BT0.5, 3=BT0.7, 4=BT1.0
+; fsk_whitening=off        ; data whitening
+; fsk_syncword=12AD        ; hex string, 2-16 hex chars (1-8 bytes)
+; fsk_crc=2                ; 0=off, 1=1-byte, 2=2-byte
 
 [system]
 device_name=

@@ -284,13 +284,13 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 
 ### Key Hardware Interfaces
 
-- **LoRa:** RadioLib, SX1262/SX1268 via SPI, configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW)
+- **LoRa:** RadioLib, SX1262/SX1268 via SPI, two modes selectable via `lora.rf_mode` config key. **LoRa mode** (default): configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW). **FSK mode**: configurable bit rate, frequency deviation, RX bandwidth, data shaping, whitening, sync word (hex string), CRC. Shared params (frequency, TX power, preamble) work in both modes. CLI `lora` subcommands (`freq`, `power`, `bw`, `sf`, `cr`, `mode`) hot-apply changes without saving to config; `config set lora.*` persists but requires reboot.
 - **GPS:** ATGM336H (AT6558 chipset) via UART (9600 baud), parsed by TinyGPSPlus, with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`).
-- **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
+- **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is spinlock-protected against the render task. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
 - **Temp:** TMP102 on I2C 0x48
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
-- **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`
+- **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`. CLI `wifi ssid`/`wifi psk` hot-apply (disconnect + reconnect) without saving to config; `config set wifi.*` persists but requires reboot.
 - **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) handles IAC WILL ECHO + WILL SGA negotiation. Arrow keys, Home/End/Delete, Ctrl-A/E/U, 32-entry command history (PSRAM-backed ring buffer on ConeZ PCB, single-entry DRAM fallback on Heltec). ANSI color output on by default, toggleable at runtime via `color on`/`color off` CLI command (`setAnsiEnabled()`/`getAnsiEnabled()` in `printManager.h`). Commands requiring ANSI (art, clear, game, winamp) error out when color is off; editor falls back to a line-based mode. `CORE_DEBUG_LEVEL=0` in `platformio.ini` suppresses Arduino library log macros (`log_e`/`log_w`/etc.) at compile time — these bypass `esp_log_level_set()` and would corrupt HWCDC output. File commands auto-normalize paths (prepend `/` if missing) via `normalize_path()` in `main.h`. Full-screen text editor (`console/editor.cpp/h`) for on-device script editing, with line-editor fallback when ANSI is disabled. See `documentation/cli-commands.txt` for the full command reference.
 
 ### Time System
@@ -357,7 +357,7 @@ Baseline measured with single-task architecture (shell in loopTask). Current num
 
 ### Configuration
 
-INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-table-driven: `cfg_table[]` in `config.cpp` maps `{section, key, type, offset}` to `conez_config_t` struct fields. Covers WiFi, GPS origin, LoRa radio params, NTP server, timezone, debug defaults, callsign, and startup script. CLI commands: `config`, `config set`, `config unset`, `config reset`. See `documentation/config.txt` for full reference.
+INI-style config file (`/config.ini`) on LittleFS, loaded at boot. Descriptor-table-driven: `cfg_table[]` in `config.cpp` maps `{section, key, type, offset}` to `conez_config_t` struct fields. Covers WiFi, GPS origin, LoRa radio params (both LoRa and FSK modes), NTP server, timezone, debug defaults, callsign, and startup script. CLI commands: `config`, `config set`, `config unset`, `config reset`. See `documentation/config.txt` for full reference.
 
 ### Filesystem
 

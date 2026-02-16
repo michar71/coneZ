@@ -12,6 +12,11 @@ CRGB *leds4 = nullptr;
 // volatile is sufficient: single writer (render task clears), multiple setters (any task sets).
 static volatile bool led_dirty = false;
 
+// Spinlock protects buffer pointer/count swaps in led_resize_channel() against
+// the led_render task (priority 2, same core) preempting mid-swap. Also guards
+// FastLED.show() in the render task so it never reads a half-updated controller.
+static portMUX_TYPE led_mux = portMUX_INITIALIZER_UNLOCKED;
+
 
 void led_setup( void )
 {
@@ -67,6 +72,59 @@ void led_set_channel( int ch, int cnt, CRGB col )
 }
 
 
+int led_resize_channel( int ch, int count )
+{
+#ifdef BOARD_HAS_RGB_LEDS
+    if (ch < 1 || ch > 4 || count < 0)
+        return -1;
+
+    CRGB **buf_ptr;
+    int *count_ptr;
+
+    switch (ch) {
+        case 1: buf_ptr = &leds1; count_ptr = &config.led_count1; break;
+        case 2: buf_ptr = &leds2; count_ptr = &config.led_count2; break;
+        case 3: buf_ptr = &leds3; count_ptr = &config.led_count3; break;
+        case 4: buf_ptr = &leds4; count_ptr = &config.led_count4; break;
+        default: return -1;
+    }
+
+    int old_count = *count_ptr;
+    if (count == old_count)
+        return 0;
+
+    CRGB *old_buf = *buf_ptr;
+    CRGB *new_buf = nullptr;
+
+    if (count > 0) {
+        new_buf = new(std::nothrow) CRGB[count]();
+        if (!new_buf)
+            return -1;
+
+        // Copy existing LED data
+        int copy_count = (count < old_count) ? count : old_count;
+        if (old_buf && copy_count > 0)
+            memcpy(new_buf, old_buf, copy_count * sizeof(CRGB));
+    }
+
+    // Atomically swap controller, pointer, and count under spinlock.
+    // Prevents led_render (priority 2) from calling FastLED.show()
+    // while the controller references a freed or mismatched buffer.
+    taskENTER_CRITICAL(&led_mux);
+    FastLED[ch - 1].setLeds(new_buf, count);
+    *buf_ptr = new_buf;
+    *count_ptr = count;
+    taskEXIT_CRITICAL(&led_mux);
+
+    delete[] old_buf;
+    led_show();
+    return 0;
+#else
+    return -1;
+#endif
+}
+
+
 #ifdef BOARD_HAS_RGB_LEDS
 static void led_task_fun( void *param )
 {
@@ -78,7 +136,9 @@ static void led_task_fun( void *param )
         if (led_dirty || millis() - last_show >= 1000)
         {
             led_dirty = false;
+            taskENTER_CRITICAL(&led_mux);
             FastLED.show();
+            taskEXIT_CRITICAL(&led_mux);
             last_show = millis();
         }
     }

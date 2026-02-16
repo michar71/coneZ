@@ -43,9 +43,9 @@ Quick Reference
   help                               Show help (same as ?)
   hexdump {filename} [count]         Hex+ASCII dump of file (default 256 bytes)
   history                            Show command history
-  led [set|clear]                    Show/set LED configuration and colors
+  led [set|clear|count]              Show/set LED configuration and colors
   load {filename}                    Receive file via serial (CTRL+Z to end)
-  lora                               Show LoRa radio status
+  lora [freq|power|bw|sf|cr|mode]     Show LoRa status or set radio params
   free                               Show heap memory (alias for mem)
   mem                                Show heap memory stats
   mkdir {path}                       Create directory
@@ -65,7 +65,7 @@ Quick Reference
   ver                                Show firmware version (alias for version)
   version                            Show firmware version and board info
   wasm [status|info <file>]          WASM runtime status/info
-  wifi [ssid|password|pass|psk]      Show WiFi status / set credentials
+  wifi [ssid|password|pass|psk]      Show WiFi status / set credentials (hot-apply)
   winamp                             Audio visualizer (requires ANSI)
 
 
@@ -294,6 +294,14 @@ led
         led set 2 0-9 #00FF00      Set channel 2 LEDs 0-9 to green
         led set 3 all #0000FF      Set all channel 3 LEDs to blue
 
+  led count <ch> <n>
+      Resize channel ch to n LEDs (0 to disable). Existing colors
+      are preserved; any new LEDs are set to black. Hot-applied
+      immediately. Not saved to flash; use "config set led.countN
+      <n>" to persist.
+      Examples: led count 1 100
+                led count 2 0
+
   led clear
       Set all LEDs on all channels to black (#000000).
 
@@ -307,8 +315,40 @@ load {filename}
   Example: load /new_script.bas
 
 lora
-  Show LoRa radio status: frequency, bandwidth, spreading factor,
-  last RSSI and SNR.
+  Show LoRa radio status. Display is mode-aware: in LoRa mode shows
+  frequency, bandwidth, spreading factor, coding rate, preamble, sync
+  word. In FSK mode shows frequency, bit rate, frequency deviation,
+  RX bandwidth, preamble, shaping, whitening, sync word, CRC. Both
+  modes show TX power, last RSSI and SNR.
+
+  lora freq <MHz>
+      Set the radio frequency in MHz. Hot-applied immediately.
+      Example: lora freq 433.0
+
+  lora power <dBm>
+      Set TX output power in dBm. Hot-applied immediately.
+      Example: lora power 10
+
+  lora bw <kHz>
+      Set bandwidth in kHz. LoRa mode only. Hot-applied immediately.
+      Example: lora bw 250
+
+  lora sf <7-12>
+      Set spreading factor. LoRa mode only. Hot-applied immediately.
+      Example: lora sf 12
+
+  lora cr <5-8>
+      Set coding rate (denominator of 4/N). LoRa mode only.
+      Hot-applied immediately.
+      Example: lora cr 8
+
+  lora mode <lora|fsk>
+      Switch between LoRa and FSK modes. Performs a full radio
+      re-initialization using current config values.
+      Example: lora mode fsk
+
+  All subcommands update the in-memory config but do NOT save to flash.
+  Use "config set lora.*" to persist changes across reboots.
 
 mem
   Show heap memory: free bytes, minimum since boot, largest allocatable
@@ -424,12 +464,14 @@ wifi
   BSSID, channel, RSSI, IP/gateway/subnet/DNS, hostname, MAC, TX power.
 
   wifi ssid <name>
-      Set the WiFi SSID. Saved to config; reboot to apply.
+      Set the WiFi SSID and reconnect immediately. Not saved to flash;
+      use "config set wifi.ssid <name>" to persist across reboots.
 
   wifi password <psk>
   wifi pass <psk>
   wifi psk <psk>
-      Set the WiFi password. Saved to config; reboot to apply.
+      Set the WiFi password and reconnect immediately. Not saved to
+      flash; use "config set wifi.password <psk>" to persist.
 
 winamp
   Audio visualizer LED effect. Displays a retro-style equalizer on

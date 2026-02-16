@@ -918,16 +918,18 @@ int cmd_wifi(int argc, char **argv)
     // wifi ssid <name>
     if (argc >= 3 && !strcasecmp(argv[1], "ssid")) {
         strlcpy(config.wifi_ssid, argv[2], CONFIG_MAX_SSID);
-        config_save();
-        printfnl(SOURCE_COMMANDS, F("SSID set to \"%s\" (reboot to apply)\n"), config.wifi_ssid);
+        WiFi.disconnect();
+        WiFi.begin(config.wifi_ssid, config.wifi_password);
+        printfnl(SOURCE_COMMANDS, F("SSID set to \"%s\" — reconnecting\n"), config.wifi_ssid);
         return 0;
     }
 
     // wifi password <psk>  /  wifi psk <psk>
     if (argc >= 3 && (!strcasecmp(argv[1], "password") || !strcasecmp(argv[1], "pass") || !strcasecmp(argv[1], "psk"))) {
         strlcpy(config.wifi_password, argv[2], CONFIG_MAX_PASSWORD);
-        config_save();
-        printfnl(SOURCE_COMMANDS, F("Password updated (reboot to apply)\n"));
+        WiFi.disconnect();
+        WiFi.begin(config.wifi_ssid, config.wifi_password);
+        printfnl(SOURCE_COMMANDS, F("Password updated — reconnecting\n"));
         return 0;
     }
 
@@ -1485,10 +1487,128 @@ int cmd_gps(int argc, char **argv)
 int cmd_lora(int argc, char **argv)
 {
 #ifdef BOARD_HAS_LORA
+    if (argc >= 3)
+    {
+        const char *sub = argv[1];
+        const char *val = argv[2];
+
+        if (strcasecmp(sub, "freq") == 0)
+        {
+            float freq = atof(val);
+            config.lora_frequency = freq;
+            int rc = lora_set_frequency(freq);
+            if (rc != 0)
+                printfnl(SOURCE_COMMANDS, F("Error setting frequency (code %d)\n"), rc);
+            else
+                printfnl(SOURCE_COMMANDS, F("Frequency set to %.3f MHz\n"), freq);
+            return 0;
+        }
+        else if (strcasecmp(sub, "power") == 0)
+        {
+            int power = atoi(val);
+            config.lora_tx_power = power;
+            int rc = lora_set_tx_power(power);
+            if (rc != 0)
+                printfnl(SOURCE_COMMANDS, F("Error setting TX power (code %d)\n"), rc);
+            else
+                printfnl(SOURCE_COMMANDS, F("TX power set to %d dBm\n"), power);
+            return 0;
+        }
+        else if (strcasecmp(sub, "bw") == 0)
+        {
+            if (lora_is_fsk()) {
+                printfnl(SOURCE_COMMANDS, F("Bandwidth not available in FSK mode\n"));
+                return 0;
+            }
+            float bw = atof(val);
+            config.lora_bandwidth = bw;
+            int rc = lora_set_bandwidth(bw);
+            if (rc != 0)
+                printfnl(SOURCE_COMMANDS, F("Error setting bandwidth (code %d)\n"), rc);
+            else
+                printfnl(SOURCE_COMMANDS, F("Bandwidth set to %.1f kHz\n"), bw);
+            return 0;
+        }
+        else if (strcasecmp(sub, "sf") == 0)
+        {
+            if (lora_is_fsk()) {
+                printfnl(SOURCE_COMMANDS, F("SF not available in FSK mode\n"));
+                return 0;
+            }
+            int sf = atoi(val);
+            config.lora_sf = sf;
+            int rc = lora_set_sf(sf);
+            if (rc != 0)
+                printfnl(SOURCE_COMMANDS, F("Error setting SF (code %d)\n"), rc);
+            else
+                printfnl(SOURCE_COMMANDS, F("SF set to %d\n"), sf);
+            return 0;
+        }
+        else if (strcasecmp(sub, "cr") == 0)
+        {
+            if (lora_is_fsk()) {
+                printfnl(SOURCE_COMMANDS, F("CR not available in FSK mode\n"));
+                return 0;
+            }
+            int cr = atoi(val);
+            config.lora_cr = cr;
+            int rc = lora_set_cr(cr);
+            if (rc != 0)
+                printfnl(SOURCE_COMMANDS, F("Error setting CR (code %d)\n"), rc);
+            else
+                printfnl(SOURCE_COMMANDS, F("CR set to 4/%d\n"), cr);
+            return 0;
+        }
+        else if (strcasecmp(sub, "mode") == 0)
+        {
+            if (strcasecmp(val, "lora") != 0 && strcasecmp(val, "fsk") != 0) {
+                printfnl(SOURCE_COMMANDS, F("Invalid mode '%s' (use lora or fsk)\n"), val);
+                return 0;
+            }
+            strncpy(config.lora_rf_mode, val, sizeof(config.lora_rf_mode) - 1);
+            config.lora_rf_mode[sizeof(config.lora_rf_mode) - 1] = '\0';
+            int rc = lora_reinit();
+            if (rc != 0)
+                printfnl(SOURCE_COMMANDS, F("Error switching mode (code %d)\n"), rc);
+            else
+                printfnl(SOURCE_COMMANDS, F("Mode set to %s\n"), lora_get_mode());
+            return 0;
+        }
+    }
+
     printfnl(SOURCE_COMMANDS, F("LoRa Radio:\n"));
+    printfnl(SOURCE_COMMANDS, F("  Mode:      %s\n"), lora_get_mode());
     printfnl(SOURCE_COMMANDS, F("  Frequency: %.3f MHz\n"), lora_get_frequency());
-    printfnl(SOURCE_COMMANDS, F("  Bandwidth: %.1f kHz\n"), lora_get_bandwidth());
-    printfnl(SOURCE_COMMANDS, F("  SF:        %d\n"), lora_get_sf());
+    printfnl(SOURCE_COMMANDS, F("  TX Power:  %d dBm\n"), config.lora_tx_power);
+
+    if (lora_is_fsk())
+    {
+        printfnl(SOURCE_COMMANDS, F("  Bit Rate:  %.1f kbps\n"), lora_get_bitrate());
+        printfnl(SOURCE_COMMANDS, F("  Freq Dev:  %.1f kHz\n"), lora_get_freqdev());
+        printfnl(SOURCE_COMMANDS, F("  RX BW:     %.1f kHz\n"), lora_get_rxbw());
+        printfnl(SOURCE_COMMANDS, F("  Preamble:  %d\n"), config.lora_preamble);
+
+        static const char *shaping_names[] = { "None", "BT0.3", "BT0.5", "BT0.7", "BT1.0" };
+        int si = config.fsk_shaping;
+        if (si < 0 || si > 4) si = 0;
+        printfnl(SOURCE_COMMANDS, F("  Shaping:   %s\n"), shaping_names[si]);
+        printfnl(SOURCE_COMMANDS, F("  Whitening: %s\n"), config.fsk_whitening ? "on" : "off");
+        printfnl(SOURCE_COMMANDS, F("  Sync Word: %s\n"), config.fsk_syncword);
+
+        const char *crc_names[] = { "off", "1-byte", "2-byte" };
+        int ci = config.fsk_crc;
+        if (ci < 0 || ci > 2) ci = 0;
+        printfnl(SOURCE_COMMANDS, F("  CRC:       %s\n"), crc_names[ci]);
+    }
+    else
+    {
+        printfnl(SOURCE_COMMANDS, F("  Bandwidth: %.1f kHz\n"), lora_get_bandwidth());
+        printfnl(SOURCE_COMMANDS, F("  SF:        %d\n"), lora_get_sf());
+        printfnl(SOURCE_COMMANDS, F("  CR:        4/%d\n"), config.lora_cr);
+        printfnl(SOURCE_COMMANDS, F("  Preamble:  %d\n"), config.lora_preamble);
+        printfnl(SOURCE_COMMANDS, F("  Sync Word: 0x%02X\n"), config.lora_sync_word);
+    }
+
     printfnl(SOURCE_COMMANDS, F("  Last RSSI: %.1f dBm\n"), lora_get_rssi());
     printfnl(SOURCE_COMMANDS, F("  Last SNR:  %.1f dB\n"), lora_get_snr());
 #else
@@ -1588,6 +1708,26 @@ int cmd_led(int argc, char **argv)
     CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
     int   counts[] = { config.led_count1, config.led_count2,
                        config.led_count3, config.led_count4 };
+
+    // led count <ch> <n> — resize a channel
+    if (argc >= 4 && !strcasecmp(argv[1], "count")) {
+        int ch = atoi(argv[2]);
+        int n  = atoi(argv[3]);
+        if (ch < 1 || ch > 4) {
+            printfnl(SOURCE_COMMANDS, F("Invalid channel %d (1-4)\n"), ch);
+            return 1;
+        }
+        if (n < 0) {
+            printfnl(SOURCE_COMMANDS, F("Count must be >= 0\n"));
+            return 1;
+        }
+        int rc = led_resize_channel(ch, n);
+        if (rc != 0)
+            printfnl(SOURCE_COMMANDS, F("Failed to resize channel %d\n"), ch);
+        else
+            printfnl(SOURCE_COMMANDS, F("Channel %d set to %d LEDs\n"), ch, n);
+        return 0;
+    }
 
     // led clear — all channels to black
     if (argc >= 2 && !strcasecmp(argv[1], "clear")) {

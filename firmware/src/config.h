@@ -11,6 +11,8 @@
 #define CONFIG_MAX_LORA_SSID    17
 #define CONFIG_MAX_NTP_SERVER   65
 #define CONFIG_MAX_CALLSIGN     11
+#define CONFIG_MAX_LORA_MODE    8
+#define CONFIG_MAX_FSK_SYNCWORD 17      // 16 hex chars + NUL
 
 // ---------- Compiled defaults ----------
 // WiFi
@@ -31,6 +33,14 @@
 #define DEFAULT_LORA_SYNC_WORD  0x12            // 0x12 = default, 0x1424 = private
 #define DEFAULT_LORA_SSID       "ConeZ"
 #define DEFAULT_LORA_CALLSIGN   ""
+#define DEFAULT_LORA_MODE       "lora"
+#define DEFAULT_FSK_BITRATE     4.8f
+#define DEFAULT_FSK_FREQDEV     5.0f
+#define DEFAULT_FSK_RXBW        156.2f
+#define DEFAULT_FSK_SHAPING     0
+#define DEFAULT_FSK_WHITENING   false
+#define DEFAULT_FSK_SYNCWORD    "12AD"
+#define DEFAULT_FSK_CRC         2
 
 // System
 #define DEFAULT_DEVICE_NAME     ""
@@ -78,6 +88,14 @@ typedef struct {
     int     lora_sync_word;
     char    lora_ssid[CONFIG_MAX_LORA_SSID];
     char    lora_callsign[CONFIG_MAX_CALLSIGN];
+    char    lora_rf_mode[CONFIG_MAX_LORA_MODE];
+    float   fsk_bitrate;
+    float   fsk_freqdev;
+    float   fsk_rxbw;
+    int     fsk_shaping;
+    bool    fsk_whitening;
+    char    fsk_syncword[CONFIG_MAX_FSK_SYNCWORD];
+    int     fsk_crc;
 
     // [system]
     char    device_name[CONFIG_MAX_DEVICE_NAME];

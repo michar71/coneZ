@@ -27,4 +27,8 @@ void led_show_now( void );
 // Set `cnt` LEDs on channel `ch` (1-4) to `col`. Does NOT trigger show.
 void led_set_channel( int ch, int cnt, CRGB col );
 
+// Resize channel `ch` (1-4) to `count` LEDs. Copies existing data,
+// new LEDs are black. Returns 0 on success, -1 on error.
+int led_resize_channel( int ch, int count );
+
 #endif

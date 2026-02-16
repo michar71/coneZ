@@ -40,6 +40,14 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("lora",   "tx_power",     CFG_INT,   lora_tx_power),
     CFG_ENTRY("lora",   "sync_word",    CFG_HEX,   lora_sync_word),
     CFG_ENTRY("lora",   "callsign",     CFG_STR,   lora_callsign),
+    CFG_ENTRY("lora",   "rf_mode",      CFG_STR,   lora_rf_mode),
+    CFG_ENTRY("lora",   "fsk_bitrate",  CFG_FLOAT, fsk_bitrate),
+    CFG_ENTRY("lora",   "fsk_freqdev",  CFG_FLOAT, fsk_freqdev),
+    CFG_ENTRY("lora",   "fsk_rxbw",     CFG_FLOAT, fsk_rxbw),
+    CFG_ENTRY("lora",   "fsk_shaping",  CFG_INT,   fsk_shaping),
+    CFG_ENTRY("lora",   "fsk_whitening",CFG_BOOL,  fsk_whitening),
+    CFG_ENTRY("lora",   "fsk_syncword", CFG_STR,   fsk_syncword),
+    CFG_ENTRY("lora",   "fsk_crc",      CFG_INT,   fsk_crc),
     // [system]
     CFG_ENTRY("system", "device_name",  CFG_STR,   device_name),
     CFG_ENTRY("system", "startup_script", CFG_STR, startup_script),
@@ -90,6 +98,14 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->lora_sync_word   = DEFAULT_LORA_SYNC_WORD;
     strlcpy(cfg->lora_ssid,       DEFAULT_LORA_SSID,      sizeof(cfg->lora_ssid));
     strlcpy(cfg->lora_callsign,   DEFAULT_LORA_CALLSIGN,  sizeof(cfg->lora_callsign));
+    strlcpy(cfg->lora_rf_mode,    DEFAULT_LORA_MODE,      sizeof(cfg->lora_rf_mode));
+    cfg->fsk_bitrate      = DEFAULT_FSK_BITRATE;
+    cfg->fsk_freqdev      = DEFAULT_FSK_FREQDEV;
+    cfg->fsk_rxbw         = DEFAULT_FSK_RXBW;
+    cfg->fsk_shaping      = DEFAULT_FSK_SHAPING;
+    cfg->fsk_whitening    = DEFAULT_FSK_WHITENING;
+    strlcpy(cfg->fsk_syncword,    DEFAULT_FSK_SYNCWORD,   sizeof(cfg->fsk_syncword));
+    cfg->fsk_crc          = DEFAULT_FSK_CRC;
 
     strlcpy(cfg->device_name,     DEFAULT_DEVICE_NAME,    sizeof(cfg->device_name));
     strlcpy(cfg->startup_script,  DEFAULT_STARTUP_SCRIPT, sizeof(cfg->startup_script));
