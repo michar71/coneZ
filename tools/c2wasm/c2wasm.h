@@ -6,6 +6,7 @@
 
 #define C2WASM_VERSION_MAJOR 0
 #define C2WASM_VERSION_MINOR 1
+#define CONEZ_API_VERSION    0
 
 #ifndef BUILD_NUMBER
 #define BUILD_NUMBER 0

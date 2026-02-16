@@ -174,6 +174,14 @@ void bas2wasm_reset(void) {
     line_num = 0;
 }
 
+const char *bas2wasm_version_string(void) {
+    static char buf[64];
+    snprintf(buf, sizeof(buf), "bas2wasm %d.%02d.%04d (API %d, %d imports)",
+             BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER,
+             CONEZ_API_VERSION, IMP_COUNT);
+    return buf;
+}
+
 /* ================================================================
  *  Standalone main()
  * ================================================================ */
@@ -188,7 +196,9 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-o") == 0 && i+1 < argc) {
             outpath = argv[++i];
         } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
-            printf("bas2wasm %d.%02d.%04d\n", BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER);
+            printf("bas2wasm %d.%02d.%04d (API %d, %d imports)\n",
+                   BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER,
+                   CONEZ_API_VERSION, IMP_COUNT);
             return 0;
         } else if (argv[i][0] != '-') {
             inpath = argv[i];

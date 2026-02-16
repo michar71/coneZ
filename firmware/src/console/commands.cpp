@@ -46,6 +46,7 @@ bw_Buf bas2wasm_compile_buffer(const char *src, int len);
 void bas2wasm_reset(void);
 void bw_buf_init(bw_Buf *b);
 void bw_buf_free(bw_Buf *b);
+const char *bas2wasm_version_string(void);
 #endif
 
 #ifdef INCLUDE_C_COMPILER
@@ -60,6 +61,7 @@ cw_Buf c2wasm_compile_buffer(const char *src, int len, const char *filename);
 void c2wasm_reset(void);
 void cw_buf_init(cw_Buf *b);
 void cw_buf_free(cw_Buf *b);
+const char *c2wasm_version_string(void);
 #endif
 
 } /* extern "C" */
@@ -907,6 +909,13 @@ int cmd_version(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, F("Board:   heltec-lora32-v3\n"));
 #else
     printfnl(SOURCE_COMMANDS, F("Board:   unknown\n"));
+#endif
+
+#ifdef INCLUDE_BASIC_COMPILER
+    printfnl(SOURCE_COMMANDS, F("%s\n"), bas2wasm_version_string());
+#endif
+#ifdef INCLUDE_C_COMPILER
+    printfnl(SOURCE_COMMANDS, F("%s\n"), c2wasm_version_string());
 #endif
 
     return 0;

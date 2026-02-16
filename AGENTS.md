@@ -234,6 +234,8 @@ See `documentation/simulator.txt` for full reference.
 
 The general rule: if a WASM program's behavior would differ between firmware and simulator after a change, both must be updated together.
 
+**WASM API versioning:** When adding or changing host imports, bump `CONEZ_API_VERSION` in three places: `tools/wasm/conez_api.h`, `tools/bas2wasm/bas2wasm.h`, and `tools/c2wasm/c2wasm.h`. The compilers and runtimes display this version via `*_version_string()` functions (shown by the `ver` command in firmware and simulator). This lets users verify their compiler matches the firmware's API.
+
 ### Mayhem (Cue-List Editor)
 
 Avalonia/C# desktop application in `c_sharp/mayhem/` for authoring timeline-based lighting choreography. Users arrange effects (color gradients, FX presets, BASIC/WASM scripts, audio/video media) on a multi-channel timeline, set timing cues, and export bundled cue-lists for deployment to hardware. Projects save as `.clf` (JSON).

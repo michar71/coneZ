@@ -21,6 +21,11 @@
 #include <QCryptographicHash>
 #include <chrono>
 
+extern "C" {
+const char *bas2wasm_version_string(void);
+const char *c2wasm_version_string(void);
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -798,6 +803,9 @@ void MainWindow::cmdVersion()
         "Platform: Qt " QT_VERSION_STR "\n"
         "Build: " __DATE__ " " __TIME__ "\n"
     );
+
+    m_console->appendText(QString(bas2wasm_version_string()) + "\n");
+    m_console->appendText(QString(c2wasm_version_string()) + "\n");
 }
 
 void MainWindow::cmdWasm(const QStringList &args)
