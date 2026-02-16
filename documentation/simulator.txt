@@ -156,10 +156,11 @@ Console Commands:
   cue load <path>      Load a binary .cue file
   cue start [ms]       Start cue playback (optional offset)
   cue stop             Stop cue playback
+  mqtt                 MQTT status/control (see cli-commands.txt)
   run <file>           Run script (.bas, .c, .wasm)
   sensors              Show current sensor mock values
   stop                 Stop running program
-  time                 Show current date/time and epoch
+  time/date            Show current date/time and epoch
   uptime               Show time since simulator start
   ver/version          Show simulator version and build info
   wasm [status]        Show WASM runtime status
@@ -167,8 +168,8 @@ Console Commands:
 
 These commands mirror the firmware CLI where applicable. Hardware-only
 commands (art, color, config, debug, edit, game, gpio, gps,
-history, load, lora, mem, ps, psram, reboot, tc, wifi, winamp) are
-not available in the simulator.
+history, load, lora, mem, ps, psram, radio, reboot, tc, wifi, winamp)
+are not available in the simulator.
 
 
 Architecture

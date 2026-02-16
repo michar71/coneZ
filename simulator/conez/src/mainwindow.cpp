@@ -189,7 +189,7 @@ void MainWindow::onCommand(const QString &cmd)
         cmdLed(parts);
     } else if (verb == "sensors") {
         cmdSensors();
-    } else if (verb == "time") {
+    } else if (verb == "time" || verb == "date") {
         cmdTime();
     } else if (verb == "uptime") {
         cmdUptime();

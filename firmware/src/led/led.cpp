@@ -12,15 +12,18 @@ CRGB *leds4 = nullptr;
 // volatile is sufficient: single writer (render task clears), multiple setters (any task sets).
 static volatile bool led_dirty = false;
 
-// Spinlock protects buffer pointer/count swaps in led_resize_channel() against
-// the led_render task (priority 2, same core) preempting mid-swap. Also guards
-// FastLED.show() in the render task so it never reads a half-updated controller.
-static portMUX_TYPE led_mux = portMUX_INITIALIZER_UNLOCKED;
+// Mutex protects buffer pointer/count swaps in led_resize_channel() against
+// the led_render task calling FastLED.show() on a half-updated controller.
+// Must be a FreeRTOS mutex (not a portMUX spinlock) because FastLED.show()
+// uses the RMT peripheral which needs its ISR to fire to complete the transfer.
+// A spinlock disables interrupts → RMT ISR can't fire → deadlock.
+static SemaphoreHandle_t led_mutex = nullptr;
 
 
 void led_setup( void )
 {
 #ifdef BOARD_HAS_RGB_LEDS
+    led_mutex = xSemaphoreCreateMutex();
     leds1 = new CRGB[config.led_count1]();
     leds2 = new CRGB[config.led_count2]();
     leds3 = new CRGB[config.led_count3]();
@@ -107,14 +110,14 @@ int led_resize_channel( int ch, int count )
             memcpy(new_buf, old_buf, copy_count * sizeof(CRGB));
     }
 
-    // Atomically swap controller, pointer, and count under spinlock.
+    // Swap controller, pointer, and count under mutex.
     // Prevents led_render (priority 2) from calling FastLED.show()
     // while the controller references a freed or mismatched buffer.
-    taskENTER_CRITICAL(&led_mux);
+    xSemaphoreTake(led_mutex, portMAX_DELAY);
     FastLED[ch - 1].setLeds(new_buf, count);
     *buf_ptr = new_buf;
     *count_ptr = count;
-    taskEXIT_CRITICAL(&led_mux);
+    xSemaphoreGive(led_mutex);
 
     delete[] old_buf;
     led_show();
@@ -136,9 +139,9 @@ static void led_task_fun( void *param )
         if (led_dirty || millis() - last_show >= 1000)
         {
             led_dirty = false;
-            taskENTER_CRITICAL(&led_mux);
+            xSemaphoreTake(led_mutex, portMAX_DELAY);
             FastLED.show();
-            taskEXIT_CRITICAL(&led_mux);
+            xSemaphoreGive(led_mutex);
             last_show = millis();
         }
     }

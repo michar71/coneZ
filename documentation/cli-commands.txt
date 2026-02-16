@@ -9,8 +9,8 @@ operate in character mode with server-side echo.
 The desktop simulator (see simulator.txt) supports a subset of these
 commands in its console: ?/help, run, stop, open, dir/ls, del, cat/list,
 ren/mv, cp, mkdir, rmdir, grep, hexdump, df, clear/cls, param, led,
-sensors, time, uptime, ver/version, wasm, cue. Hardware-only commands are
-not available in the simulator.
+sensors, time/date, uptime, ver/version, wasm, cue, mqtt. Hardware-only
+commands are not available in the simulator.
 
 Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
 Up/Down arrows navigate command history (32 entries on PSRAM boards,
@@ -46,6 +46,7 @@ Quick Reference
   led [set|clear|count]              Show/set LED configuration and colors
   load {filename}                    Receive file via serial (CTRL+Z to end)
   lora [freq|power|bw|sf|cr|mode]     Show LoRa status or set radio params
+  radio                                Alias for lora
   free                               Show heap memory (alias for mem)
   mem                                Show heap memory stats
   mqtt [enable|disable|connect|...]  Show MQTT status or manage connection
@@ -61,7 +62,7 @@ Quick Reference
   sensors                            Show sensor readings
   stop                               Stop running script
   tc                                 Show thread count per core
-  time                               Show current date/time and source
+  time / date                        Show current date/time and source
   uptime                             Show system uptime
   ver                                Show firmware version (alias for version)
   version                            Show firmware version and board info
@@ -315,7 +316,7 @@ load {filename}
   Send CTRL+Z (0x1A) to end transmission and save the file.
   Example: load /new_script.bas
 
-lora
+lora (alias: radio)
   Show LoRa radio status. Display is mode-aware: in LoRa mode shows
   frequency, bandwidth, spreading factor, coding rate, preamble, sync
   word. In FSK mode shows frequency, bit rate, frequency deviation,
@@ -466,7 +467,7 @@ tc
   Show the thread loop counter for each CPU core. Useful for checking
   that tasks are running.
 
-time
+time / date
   Show current date, time, day of week, time source (GPS+PPS, NTP, or
   none), and epoch milliseconds. Available on all boards — GPS boards
   use PPS-disciplined time, others fall back to NTP when WiFi is

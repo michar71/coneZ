@@ -433,8 +433,6 @@ void setup()
     Serial.println("WiFi timed out");
   }
 
-  mqtt_setup();
-
   http_setup();
 
   //Start telnet server and dual-stream CLI
@@ -445,6 +443,9 @@ void setup()
   printManagerInit(&dualStream);
   config_apply_debug();
   showTimestamps(true);
+
+  // MQTT uses printfnl() — must come after printManagerInit()
+  mqtt_setup();
 
   sunSetTZOffset(config.timezone);
 

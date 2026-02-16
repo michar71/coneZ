@@ -2650,6 +2650,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("list"), listFile);
     shell.addCommand(F("load"), loadFile);
     shell.addCommand(F("lora"), cmd_lora);
+    shell.addCommand(F("radio"), cmd_lora);
     shell.addCommand(F("md5"), cmd_md5);
     shell.addCommand(F("md5sum"), cmd_md5);
     shell.addCommand(F("free"), cmd_mem);
@@ -2669,6 +2670,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);
+    shell.addCommand(F("date"), cmd_time);
     shell.addCommand(F("uptime"), cmd_uptime);
     shell.addCommand(F("ver"), cmd_version);
     shell.addCommand(F("version"), cmd_version);
