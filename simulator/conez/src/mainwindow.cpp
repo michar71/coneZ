@@ -8,6 +8,7 @@
 #include "led_state.h"
 #include "sensor_state.h"
 #include "cue_engine.h"
+#include "mqtt_client.h"
 
 #include <QToolBar>
 #include <QSplitter>
@@ -94,6 +95,15 @@ MainWindow::MainWindow(QWidget *parent)
     cueEngine().setOutputCallback([this](const QString &msg) {
         m_console->appendText(msg);
     });
+
+    // Wire MQTT client output to console and initialize from config
+    auto &mqtt = mqttClient();
+    mqtt.setOutputCallback([this](const QString &msg) {
+        m_console->appendText(msg);
+    });
+    mqtt.setBroker(QString::fromStdString(simConfig().mqtt_broker), simConfig().mqtt_port);
+    if (simConfig().mqtt_enabled)
+        mqtt.setEnabled(true);
 
     // Initialize sandbox directory
     QDir().mkpath(QString::fromStdString(simConfig().sandbox_path));
@@ -189,6 +199,8 @@ void MainWindow::onCommand(const QString &cmd)
         cmdWasm(parts);
     } else if (verb == "cue") {
         cmdCue(parts);
+    } else if (verb == "mqtt") {
+        cmdMqtt(parts);
     } else {
         m_console->appendText("Unknown command: " + verb + ". Type ? for help.\n");
     }
@@ -276,6 +288,7 @@ void MainWindow::cmdHelp()
         "  led clear                           Clear all LEDs to black\n"
         "  md5 {filename}                      Compute MD5 hash\n"
         "  mkdir {dirname}                     Create directory\n"
+        "  mqtt                                MQTT status/control\n"
         "  open                                Open file dialog\n"
         "  param {id} [value]                  Get/set script parameter (0-15)\n"
         "  ren {oldname} {newname}             Rename file\n"
@@ -864,5 +877,80 @@ void MainWindow::cmdCue(const QStringList &args)
         cueEngine().stop();
     } else {
         m_console->appendText("Usage: cue [load <path> | start [ms] | stop | status]\n");
+    }
+}
+
+void MainWindow::cmdMqtt(const QStringList &args)
+{
+    auto &mqtt = mqttClient();
+
+    if (args.size() >= 3 && args[1].compare("broker", Qt::CaseInsensitive) == 0) {
+        mqtt.setBroker(args[2], mqtt.port());
+        m_console->appendText(QString("MQTT broker set to \"%1\"\n").arg(args[2]));
+        if (mqtt.connected()) {
+            mqtt.disconnectFromBroker();
+            mqtt.connectToBroker();
+        }
+        return;
+    }
+
+    if (args.size() >= 3 && args[1].compare("port", Qt::CaseInsensitive) == 0) {
+        mqtt.setBroker(mqtt.broker(), args[2].toInt());
+        m_console->appendText(QString("MQTT port set to %1\n").arg(args[2].toInt()));
+        if (mqtt.connected()) {
+            mqtt.disconnectFromBroker();
+            mqtt.connectToBroker();
+        }
+        return;
+    }
+
+    if (args.size() >= 2 && args[1].compare("enable", Qt::CaseInsensitive) == 0) {
+        mqtt.setEnabled(true);
+        m_console->appendText("MQTT enabled\n");
+        return;
+    }
+
+    if (args.size() >= 2 && args[1].compare("disable", Qt::CaseInsensitive) == 0) {
+        mqtt.setEnabled(false);
+        m_console->appendText("MQTT disabled\n");
+        return;
+    }
+
+    if (args.size() >= 2 && args[1].compare("connect", Qt::CaseInsensitive) == 0) {
+        mqtt.connectToBroker();
+        m_console->appendText("MQTT connect requested\n");
+        return;
+    }
+
+    if (args.size() >= 2 && args[1].compare("disconnect", Qt::CaseInsensitive) == 0) {
+        mqtt.disconnectFromBroker();
+        m_console->appendText("MQTT disconnect requested\n");
+        return;
+    }
+
+    if (args.size() >= 3 && args[1].compare("pub", Qt::CaseInsensitive) == 0) {
+        QString topic = args[2];
+        QString payload;
+        for (int i = 3; i < args.size(); i++) {
+            if (i > 3) payload += ' ';
+            payload += args[i];
+        }
+        int rc = mqtt.publish(topic, payload.toUtf8());
+        if (rc == 0)
+            m_console->appendText(QString("Published to %1\n").arg(topic));
+        else
+            m_console->appendText("Publish failed (not connected?)\n");
+        return;
+    }
+
+    // mqtt (no args) — show status
+    m_console->appendText("MQTT Status:\n");
+    m_console->appendText(QString("  Enabled:    %1\n").arg(mqtt.enabled() ? "yes" : "no"));
+    m_console->appendText(QString("  Broker:     %1:%2\n").arg(mqtt.broker()).arg(mqtt.port()));
+    m_console->appendText(QString("  State:      %1\n").arg(mqtt.stateStr()));
+    if (mqtt.connected()) {
+        m_console->appendText(QString("  Uptime:     %1s\n").arg(mqtt.uptimeSec()));
+        m_console->appendText(QString("  TX packets: %1\n").arg(mqtt.txCount()));
+        m_console->appendText(QString("  RX packets: %1\n").arg(mqtt.rxCount()));
     }
 }

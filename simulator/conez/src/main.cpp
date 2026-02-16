@@ -25,6 +25,8 @@ int main(int argc, char *argv[])
     parser.addOption({"api-dir", "Path to directory containing conez_api.h", "path"});
     parser.addOption({"cone-id", "Cone ID for cue targeting", "id", "0"});
     parser.addOption({"cone-group", "Cone group for cue targeting", "group", "0"});
+    parser.addOption({"mqtt-broker", "MQTT broker hostname", "host", "localhost"});
+    parser.addOption({"mqtt-port", "MQTT broker port", "port", "1883"});
     parser.addPositionalArgument("file", "Script to run on startup (.bas, .c, .wasm)");
     parser.process(app);
 
@@ -38,6 +40,8 @@ int main(int argc, char *argv[])
     if (parser.isSet("api-dir"))  cfg.api_header_dir = parser.value("api-dir").toStdString();
     if (parser.isSet("cone-id"))    cfg.cone_id    = parser.value("cone-id").toInt();
     if (parser.isSet("cone-group")) cfg.cone_group = parser.value("cone-group").toInt();
+    if (parser.isSet("mqtt-broker")) cfg.mqtt_broker = parser.value("mqtt-broker").toStdString();
+    if (parser.isSet("mqtt-port"))   cfg.mqtt_port   = parser.value("mqtt-port").toInt();
 
     // Binary location — used for relative path auto-detection
     // Build dir is simulator/conez/build/, project root is ../../../

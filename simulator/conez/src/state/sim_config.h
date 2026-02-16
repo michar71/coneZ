@@ -21,6 +21,10 @@ struct SimConfig {
     float origin_lat = 40.7864f;
     float origin_lon = -119.2069f;
 
+    std::string mqtt_broker = "localhost";
+    int mqtt_port = 1883;
+    bool mqtt_enabled = false;
+
     // Set at startup
     std::chrono::steady_clock::time_point start_time;
 };
