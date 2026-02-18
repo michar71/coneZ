@@ -73,7 +73,9 @@ set(SIM_SOURCES
     src/wasm/sim_wasm_imports_format.cpp
     src/wasm/sim_wasm_imports_gpio.cpp
     src/wasm/sim_wasm_imports_compression.cpp
+    src/wasm/sim_wasm_imports_deflate.cpp
     src/state/inflate_util.cpp
+    src/state/deflate_util.cpp
     src/worker/wasm_worker.cpp
     src/worker/compiler_worker.cpp
 )

@@ -10,6 +10,7 @@
 #include "cue_engine.h"
 #include "mqtt_client.h"
 #include "inflate_util.h"
+#include "deflate_util.h"
 
 #include <QToolBar>
 #include <QSplitter>
@@ -204,6 +205,8 @@ void MainWindow::onCommand(const QString &cmd)
         cmdMqtt(parts);
     } else if (verb == "inflate" || verb == "gunzip") {
         cmdInflate(parts);
+    } else if (verb == "deflate" || verb == "gzip") {
+        cmdDeflate(parts);
     } else {
         m_console->appendText("Unknown command: " + verb + ". Type ? for help.\n");
     }
@@ -280,6 +283,7 @@ void MainWindow::cmdHelp()
         "  clear                               Clear console\n"
         "  cp {source} {dest}                  Copy file\n"
         "  cue [load|start|stop|status]        Cue timeline engine\n"
+        "  deflate {file} [output] [level]     Compress file to gzip format\n"
         "  del {filename}                      Delete file\n"
         "  df                                  Show filesystem usage\n"
         "  dir/ls [path]                       List files\n"
@@ -1055,5 +1059,70 @@ void MainWindow::cmdInflate(const QStringList &args)
     }
 
     m_console->appendText(QString("Inflated: %1 (%2 -> %3 bytes)\n")
+        .arg(dstName).arg(inData.size()).arg(result));
+}
+
+void MainWindow::cmdDeflate(const QStringList &args)
+{
+    if (args.size() < 2 || args.size() > 3) {
+        m_console->appendText("Usage: deflate <input> [output] [level]\n"
+            "  Compresses file to gzip format.\n"
+            "  Output defaults to input.gz; level 1-9 (default 6)\n");
+        return;
+    }
+
+    QString sandbox = QString::fromStdString(simConfig().sandbox_path);
+    QString srcPath = resolvePath(args[1]);
+    QString srcName = args[1];
+
+    // Determine output name
+    QString dstName;
+    if (args.size() >= 3)
+        dstName = args[2];
+    else
+        dstName = srcName + ".gz";
+
+    QString dstPath;
+    if (dstName.startsWith('/'))
+        dstPath = sandbox + dstName;
+    else
+        dstPath = sandbox + "/" + dstName;
+
+    // Read input file
+    QFile inFile(srcPath);
+    if (!inFile.open(QIODevice::ReadOnly)) {
+        m_console->appendText("Cannot open " + args[1] + "\n");
+        return;
+    }
+    QByteArray inData = inFile.readAll();
+    inFile.close();
+    if (inData.isEmpty()) {
+        m_console->appendText("File is empty\n");
+        return;
+    }
+
+    // Stream compressed chunks directly to output file
+    QFile outFile(dstPath);
+    if (!outFile.open(QIODevice::WriteOnly)) {
+        m_console->appendText("Cannot create " + dstName + "\n");
+        return;
+    }
+
+    auto qfile_write = [](const uint8_t *data, size_t len, void *ctx) -> int {
+        QFile *f = (QFile *)ctx;
+        return f->write((const char *)data, len) == (qint64)len ? 0 : -1;
+    };
+
+    int result = gzip_stream((const uint8_t *)inData.constData(), inData.size(),
+                              qfile_write, &outFile);
+    outFile.close();
+
+    if (result < 0) {
+        QFile::remove(dstPath);
+        m_console->appendText("Compression error\n");
+        return;
+    }
+
+    m_console->appendText(QString("Deflated: %1 (%2 -> %3 bytes)\n")
         .arg(dstName).arg(inData.size()).arg(result));
 }

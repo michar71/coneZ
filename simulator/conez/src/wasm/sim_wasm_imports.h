@@ -15,6 +15,7 @@ M3Result link_math_imports(IM3Module module);
 M3Result link_format_imports(IM3Module module);
 M3Result link_string_imports(IM3Module module);
 M3Result link_compression_imports(IM3Module module);
+M3Result link_deflate_imports(IM3Module module);
 
 // Cleanup (called on program exit)
 void wasm_close_all_files();

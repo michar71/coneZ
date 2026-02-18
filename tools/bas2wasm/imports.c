@@ -147,6 +147,9 @@ const ImportDef imp_defs[IMP_COUNT] = {
     [IMP_INFLATE_FILE]   = {"inflate_file",         4,{_I,_I,_I,_I},   1,{_I}},
     [IMP_INFLATE_FILE_TO_MEM]={"inflate_file_to_mem",4,{_I,_I,_I,_I},  1,{_I}},
     [IMP_INFLATE_MEM]    = {"inflate_mem",           4,{_I,_I,_I,_I},   1,{_I}},
+    [IMP_DEFLATE_FILE]   = {"deflate_file",         4,{_I,_I,_I,_I},   1,{_I}},
+    [IMP_DEFLATE_MEM_TO_FILE]={"deflate_mem_to_file",4,{_I,_I,_I,_I},  1,{_I}},
+    [IMP_DEFLATE_MEM]    = {"deflate_mem",           4,{_I,_I,_I,_I},   1,{_I}},
 };
 #undef _I
 #undef _L

@@ -296,6 +296,14 @@ inflate {input} [output]
             inflate /archive.gz /output.bin
             gunzip /data.gz
 
+deflate {input} [output] [level]
+  Compress a file to gzip format. Output defaults to input.gz.
+  Level 1-9 (1=fastest, 9=best, default 6). Alias: gzip.
+  Uses PSRAM for dictionary and hash tables when available.
+  Examples: deflate /data.txt
+            deflate /data.txt /data.gz 9
+            gzip /data.txt
+
 led
   Show LED strip configuration and current RGB values per LED.
   Values displayed as #RRGGBB, 8 per line with starting index.

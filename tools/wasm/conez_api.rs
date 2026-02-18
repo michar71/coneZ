@@ -191,6 +191,12 @@ extern "C" {
     pub fn inflate_file_to_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
     /// Decompress memory to memory. Returns decompressed size or -1.
     pub fn inflate_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
+    /// Compress a file to another file (gzip). Returns compressed size or -1.
+    pub fn deflate_file(src: *const u8, src_len: i32, dst: *const u8, dst_len: i32) -> i32;
+    /// Compress memory to a file (gzip). Returns compressed size or -1.
+    pub fn deflate_mem_to_file(src: *const u8, src_len: i32, dst: *const u8, dst_len: i32) -> i32;
+    /// Compress memory to memory (gzip). Returns compressed size or -1.
+    pub fn deflate_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
 
     // ---- Curve / Interpolation ----
     /// Linear interpolation: returns a + t * (b - a).

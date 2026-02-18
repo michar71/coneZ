@@ -28,6 +28,7 @@
 #include "psram.h"
 #include "mqtt_client.h"
 #include "inflate.h"
+#include "deflate.h"
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
 #include <csetjmp>
@@ -631,6 +632,74 @@ int cmd_inflate(int argc, char **argv)
     }
 
     printfnl(SOURCE_COMMANDS, F("Inflated: %s (%u -> %u bytes)\n"),
+        dst, (unsigned)in_size, (unsigned)result);
+    return 0;
+}
+
+// Compress a file to gzip format using streaming deflate
+int cmd_deflate(int argc, char **argv)
+{
+    if (argc < 2 || argc > 4) {
+        printfnl(SOURCE_COMMANDS, F("Usage: deflate <input> [output] [level]\n"));
+        printfnl(SOURCE_COMMANDS, F("  Compresses a file to gzip format.\n"));
+        printfnl(SOURCE_COMMANDS, F("  Output defaults to input.gz; level 0-10 (default 6)\n"));
+        return 1;
+    }
+
+    char src[64], dst[64];
+    normalize_path(src, sizeof(src), argv[1]);
+
+    if (argc >= 3 && argv[2][0] != '\0' && (argv[2][0] < '0' || argv[2][0] > '9')) {
+        normalize_path(dst, sizeof(dst), argv[2]);
+    } else {
+        strlcpy(dst, src, sizeof(dst));
+        strlcat(dst, ".gz", sizeof(dst));
+    }
+
+    int level = 6;
+    if (argc == 4) level = atoi(argv[3]);
+    else if (argc == 3 && argv[2][0] >= '0' && argv[2][0] <= '9') level = atoi(argv[2]);
+    if (level < 0) level = 0;
+    if (level > 10) level = 10;
+
+    File in = LittleFS.open(src, "r");
+    if (!in) {
+        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), src);
+        return 1;
+    }
+    size_t in_size = in.size();
+    if (in_size == 0) {
+        in.close();
+        printfnl(SOURCE_COMMANDS, F("File is empty\n"));
+        return 1;
+    }
+    uint8_t *in_buf = (uint8_t *)malloc(in_size);
+    if (!in_buf) {
+        in.close();
+        printfnl(SOURCE_COMMANDS, F("Out of memory (%u bytes)\n"), (unsigned)in_size);
+        return 1;
+    }
+    in.read(in_buf, in_size);
+    in.close();
+
+    File out = LittleFS.open(dst, FILE_WRITE);
+    if (!out) {
+        free(in_buf);
+        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), dst);
+        return 1;
+    }
+
+    int result = gzip_stream(in_buf, in_size, file_write_cb, &out, 15, 8, level);
+    out.close();
+    free(in_buf);
+
+    if (result < 0) {
+        LittleFS.remove(dst);
+        printfnl(SOURCE_COMMANDS, F("Compression error\n"));
+        return 1;
+    }
+
+    printfnl(SOURCE_COMMANDS, F("Deflated: %s (%u -> %u bytes)\n"),
         dst, (unsigned)in_size, (unsigned)result);
     return 0;
 }
@@ -2496,6 +2565,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  cp {source} {dest}                  Copy file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]        Cue timeline engine\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]     Show or set debug message types\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  deflate {file} [output] [level]     Compress file to gzip format\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  del {filename}                      Delete file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  df                                  Show filesystem usage\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  dir [path]                          List files\n" ) );
@@ -2797,6 +2867,8 @@ void init_commands(Stream *dev)
     shell.addCommand(F("grep"), cmd_grep);
     shell.addCommand(F("help"), cmd_help);
     shell.addCommand(F("hexdump"), cmd_hexdump);
+    shell.addCommand(F("deflate"), cmd_deflate);
+    shell.addCommand(F("gzip"), cmd_deflate);
     shell.addCommand(F("inflate"), cmd_inflate);
     shell.addCommand(F("gunzip"), cmd_inflate);
     shell.addCommand(F("led"), cmd_led);

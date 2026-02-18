@@ -506,6 +506,29 @@ int inflate_file_to_mem(const char *src, int src_len, void *dst, int dst_max);
 __attribute__((import_module("env"), import_name("inflate_mem")))
 int inflate_mem(const void *src, int src_len, void *dst, int dst_max);
 
+/*
+ * Compress a file to another file (gzip format).
+ * src/dst are (pointer, length) pairs for the file path strings.
+ * Returns compressed size on success, -1 on error.
+ */
+__attribute__((import_module("env"), import_name("deflate_file")))
+int deflate_file(const char *src, int src_len, const char *dst, int dst_len);
+
+/*
+ * Compress a memory buffer to a file (gzip format).
+ * src/src_len point to data in WASM memory; dst is (pointer, length) for the file path.
+ * Returns compressed size on success, -1 on error.
+ */
+__attribute__((import_module("env"), import_name("deflate_mem_to_file")))
+int deflate_mem_to_file(const void *src, int src_len, const char *dst, int dst_len);
+
+/*
+ * Compress memory to memory (gzip format).
+ * Returns compressed size on success, -1 on error.
+ */
+__attribute__((import_module("env"), import_name("deflate_mem")))
+int deflate_mem(const void *src, int src_len, void *dst, int dst_max);
+
 /* ---- Math (transcendentals — host-imported, backed by platform libm) ---- */
 
 __attribute__((import_module("env"), import_name("sinf")))

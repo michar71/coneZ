@@ -144,6 +144,7 @@ Console Commands:
   grep <pat> [file]    Search file contents (case-insensitive, recursive)
   hexdump <file> [n]   Hex+ASCII dump (default 256 bytes)
   inflate <in> [out]   Decompress gzip/zlib/deflate file (alias: gunzip)
+  deflate <in> [out] [level]  Compress file to gzip format (alias: gzip)
   led                  Show LED config + RGB values
   led set <ch> <idx|s-e|all> <#RRGGBB>  Set LED color(s)
   led count <ch> <n>   Resize channel to n LEDs
@@ -213,7 +214,7 @@ WASM runtime:
 Host Imports
 ------------
 
-All 151 firmware host imports are implemented. Behavior differences from
+All 157 firmware host imports are implemented. Behavior differences from
 hardware are noted below.
 
   LED (14 functions)
@@ -261,9 +262,11 @@ hardware are noted below.
     with width, precision, flags, and length modifiers. wasm_vsscanf
     handles %d %u %x %f %s %c %n.
 
-  Compression (3 functions)
+  Compression (6 functions)
     inflate_file, inflate_file_to_mem, inflate_mem. Uses zlib
     inflateInit2()/inflate() with auto-detection of gzip/zlib/raw deflate.
+    deflate_file, deflate_mem_to_file, deflate_mem. Uses zlib
+    deflateInit2()/deflate() for gzip compression.
     File paths resolve through the sandbox directory.
 
   GPIO (4 functions)

@@ -555,6 +555,18 @@ Compression
       Decompress memory to memory.
       Returns decompressed size on success, -1 on error.
 
+  int  deflate_file(char *src, int src_len, char *dst, int dst_len)
+      Compress a file to another file (gzip format).
+      Returns compressed size on success, -1 on error.
+
+  int  deflate_mem_to_file(void *src, int src_len, char *dst, int dst_len)
+      Compress a memory buffer to a file (gzip format).
+      Returns compressed size on success, -1 on error.
+
+  int  deflate_mem(void *src, int src_len, void *dst, int dst_max)
+      Compress memory to memory (gzip format).
+      Returns compressed size on success, -1 on error.
+
 
 Inline Functions (compiled into module, not host imports)
 ---------------------------------------------------------
