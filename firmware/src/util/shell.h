@@ -6,6 +6,23 @@
 #define SHELL_BUFSIZE 88
 #endif
 
+// Sentinel return value from TabCompleteFunc meaning "complete filenames"
+#define TAB_COMPLETE_FILES ((const char * const *)1)
+
+// Sentinel return values from TabCompleteFunc for typed value indicators
+#define TAB_COMPLETE_VALUE       ((const char * const *)2)  // <val>
+#define TAB_COMPLETE_VALUE_STR   ((const char * const *)3)  // <string>
+#define TAB_COMPLETE_VALUE_INT   ((const char * const *)4)  // <int>
+#define TAB_COMPLETE_VALUE_FLOAT ((const char * const *)5)  // <float>
+#define TAB_COMPLETE_VALUE_HEX   ((const char * const *)6)  // <hex>
+
+// Callback for multi-level tab completion.
+// wordIndex: word being completed (1 = first arg, 2 = second, ...)
+// words[0..nWords-1]: complete words typed before cursor (words[0] = command)
+// Returns: NULL-terminated string array, NULL (no completion),
+//          TAB_COMPLETE_FILES, or TAB_COMPLETE_VALUE
+typedef const char * const * (*TabCompleteFunc)(int wordIndex, const char **words, int nWords);
+
 ////////////////////////////////////////////////////////////////////////////////
 // Serial command shell — based on ConezShell by Phil Jansen,
 // heavily modified for ConeZ (cursor editing, history, suspend/resume).
@@ -33,8 +50,10 @@ class ConezShell : public Stream {
          *   is entered into the shell.
          */
         void addCommand(const __FlashStringHelper * name, CommandFunction f,
-                        bool fileArgs = false,
-                        const char * const *subcommands = NULL);
+                        const char *fileSpec = NULL,
+                        const char * const *subcommands = NULL,
+                        TabCompleteFunc tabCompleteFunc = NULL,
+                        bool valArgs = false);
 
         void attach(Stream & shellSource);
 
@@ -111,8 +130,6 @@ class ConezShell : public Stream {
         bool historyGet(int offset, char *buf);  // offset: 0=most recent, 1=previous...
 
         bool inputActive;   // true when prompt is visible and user may be typing
-        bool lastWasTab;    // true when previous keypress was tab (for double-tab)
-
         void redrawLine(int prevLen);  // redraw line after mid-line edit
         void tabComplete(void);        // tab completion for commands and filenames
 

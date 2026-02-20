@@ -90,6 +90,75 @@ static const int CFG_TABLE_SIZE = sizeof(cfg_table) / sizeof(cfg_table[0]);
 
 static const char *CONFIG_PATH = "/config.ini";
 
+// ---------- Tab completion key list ----------
+// Returns NULL-terminated array of "section.key" strings for tab completion.
+// Uses a static buffer — valid until the next call.
+#define CFG_KEY_NAME_MAX 32
+static char         cfg_key_buf[64][CFG_KEY_NAME_MAX];
+static const char  *cfg_key_ptrs[65];   // +1 for NULL terminator
+static bool         cfg_keys_built = false;
+
+const char * const * config_get_key_list(void)
+{
+    if (!cfg_keys_built) {
+        int n = CFG_TABLE_SIZE < 64 ? CFG_TABLE_SIZE : 64;
+        for (int i = 0; i < n; i++) {
+            snprintf(cfg_key_buf[i], CFG_KEY_NAME_MAX, "%s.%s",
+                     cfg_table[i].section, cfg_table[i].key);
+            cfg_key_ptrs[i] = cfg_key_buf[i];
+        }
+        cfg_key_ptrs[n] = NULL;
+        cfg_keys_built = true;
+    }
+    return cfg_key_ptrs;
+}
+
+// ---------- Tab completion section list ----------
+// Returns NULL-terminated array of unique "section." strings (with trailing dot).
+static char         cfg_sec_buf[16][CFG_KEY_NAME_MAX];
+static const char  *cfg_sec_ptrs[17];
+static bool         cfg_secs_built = false;
+
+const char * const * config_get_section_list(void)
+{
+    if (!cfg_secs_built) {
+        int n = 0;
+        for (int i = 0; i < CFG_TABLE_SIZE && n < 16; i++) {
+            // Check if section already added
+            bool dup = false;
+            for (int j = 0; j < n; j++) {
+                // Compare without trailing dot
+                int slen = strlen(cfg_table[i].section);
+                if (strncmp(cfg_sec_buf[j], cfg_table[i].section, slen) == 0
+                    && cfg_sec_buf[j][slen] == '.')
+                    { dup = true; break; }
+            }
+            if (!dup) {
+                snprintf(cfg_sec_buf[n], CFG_KEY_NAME_MAX, "%s.", cfg_table[i].section);
+                cfg_sec_ptrs[n] = cfg_sec_buf[n];
+                n++;
+            }
+        }
+        cfg_sec_ptrs[n] = NULL;
+        cfg_secs_built = true;
+    }
+    return cfg_sec_ptrs;
+}
+
+// ---------- Key type lookup ----------
+// Returns cfg_type_t for a "section.key" string, or -1 if not found.
+int config_get_key_type(const char *dotkey)
+{
+    for (int i = 0; i < CFG_TABLE_SIZE; i++) {
+        int slen = strlen(cfg_table[i].section);
+        if (strncmp(dotkey, cfg_table[i].section, slen) == 0 &&
+            dotkey[slen] == '.' &&
+            strcasecmp(dotkey + slen + 1, cfg_table[i].key) == 0)
+            return (int)cfg_table[i].type;
+    }
+    return -1;
+}
+
 // ---------- Helpers ----------
 static void config_fill_defaults(conez_config_t *cfg)
 {
@@ -651,7 +720,8 @@ int cmd_config(int argc, char **argv)
     }
 
     // "config set section.key value"
-    if (argc >= 4 && strcasecmp(argv[1], "set") == 0)
+    // Values with spaces must be quoted: config set wifi.ssid "My Network"
+    if (argc == 4 && strcasecmp(argv[1], "set") == 0)
     {
         // Split section.key
         char buf[48];
@@ -674,16 +744,7 @@ int cmd_config(int argc, char **argv)
             return 1;
         }
 
-        // Reassemble value from argv[3..] to allow spaces
-        // (SimpleSerialShell splits on spaces, so "config set wifi.ssid My Net" gives argc=5)
-        char value[128] = "";
-        for (int i = 3; i < argc; i++)
-        {
-            if (i > 3) strlcat(value, " ", sizeof(value));
-            strlcat(value, argv[i], sizeof(value));
-        }
-
-        config_set_field(d, value);
+        config_set_field(d, argv[3]);
         config_save();
 
         // Debug settings hot-apply immediately

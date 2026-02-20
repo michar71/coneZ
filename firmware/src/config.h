@@ -156,6 +156,9 @@ void config_save(void);
 void config_reset(void);
 void config_apply_debug(void);
 int  cmd_config(int argc, char **argv);
+const char * const * config_get_key_list(void);     // "section.key" strings for tab completion
+const char * const * config_get_section_list(void); // unique "section." strings for tab completion
+int config_get_key_type(const char *dotkey);        // returns cfg type (0=str,1=float,2=int,3=hex,4=bool), -1 if not found
 
 // ---------- Web interface ----------
 class WebServer;   // forward-declare

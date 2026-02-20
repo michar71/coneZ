@@ -114,9 +114,189 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 ### Thread Communication
 
 - **printManager** (`console/printManager.cpp/h`): Mutex-protected logging. All text output outside of `setup()` must go through `printfnl()`. Each message has a `source_e` tag (SOURCE_BASIC, SOURCE_WASM, SOURCE_GPS, SOURCE_LORA, etc.) for filtering. The mutex also protects shell suspend/resume (erasing and redrawing the input line around background output).
-- **Shell** (`util/shell.cpp/h`): Command-line processor with cursor editing, history, and tab completion. Commands are registered via `addCommand(name, func, fileArgs, subcommands)`. The `fileArgs` flag enables filename completion from LittleFS; `subcommands` is a NULL-terminated `const char*[]` for subcommand completion. Adding a new command with subcommands: define a static array and pass it at registration. See `commands.cpp` for examples.
+- **Shell** (`util/shell.cpp/h`): Command-line processor with cursor editing, history, and tab completion. Quote-aware tokenizer handles `"..."` grouping and `\"` / `\\` escapes. Commands are registered via `addCommand(name, func, fileSpec, subcommands, tabCompleteFunc, valArgs)`. See "Adding CLI Commands" section below for the complete guide.
 - **Params** (`set_basic_param` / `get_basic_param`): 16-slot integer array for passing values between main loop and scripting runtimes. Accessed via `GETPARAM(id)` in BASIC or `get_param(id)`/`set_param(id,val)` in WASM.
 - **Script loading** (`set_script_program`): Auto-detects `.bas` vs `.wasm` by extension, routes to the appropriate runtime's mutex-protected queue. Creates the interpreter task on first use (lazy initialization).
+
+### Adding CLI Commands
+
+All CLI commands live in `firmware/src/console/commands.cpp`. The shell is in `firmware/src/util/shell.h` / `shell.cpp`.
+
+#### Step 1: Write the command function
+
+```cpp
+// Signature: int func(int argc, char **argv)
+// Return 0 for success, non-zero for error.
+// argv[0] is the command name, argv[1..] are arguments.
+// Use printfnl(SOURCE_COMMANDS, F("..."), ...) for output.
+int cmd_example(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: example <arg>\n"));
+        return 1;
+    }
+    printfnl(SOURCE_COMMANDS, F("Got: %s\n"), argv[1]);
+    return 0;
+}
+```
+
+#### Step 2: Register with addCommand()
+
+In `init_commands()` at the bottom of `commands.cpp`, call `shell.addCommand()`. Commands are inserted in alphabetical order automatically.
+
+```cpp
+void addCommand(const __FlashStringHelper *name, CommandFunction f,
+                const char *fileSpec = NULL,
+                const char * const *subcommands = NULL,
+                TabCompleteFunc tabCompleteFunc = NULL,
+                bool valArgs = false);
+```
+
+**Parameters:**
+
+| # | Parameter | Type | Purpose | Default |
+|---|---|---|---|---|
+| 1 | `name` | `F("...")` | Command name + optional help text after a space. The part before the first space is the command name. | required |
+| 2 | `f` | function ptr | `int func(int argc, char **argv)` | required |
+| 3 | `fileSpec` | `const char *` | Filename completion pattern. `NULL` = no files, `"*"` = all files, `"*.bas;*.c"` = extension filter (semicolon-separated), `"/"` = directories only. A leading `/` is auto-inserted for the user. | `NULL` |
+| 4 | `subcommands` | `const char * const *` | NULL-terminated static array for first-argument completion. Ignored when `tabCompleteFunc` is set. | `NULL` |
+| 5 | `tabCompleteFunc` | `TabCompleteFunc` | Callback for multi-level completion (see below). When set, handles all argument positions (subcommands param is ignored). | `NULL` |
+| 6 | `valArgs` | `bool` | If true, show `<val>` indicator at word positions 2+ for commands where subcommands universally take typed values. Only used when there's no callback. | `false` |
+
+**Registration examples:**
+
+```cpp
+// No completion — just shows <cr> after the command
+shell.addCommand(F("reboot"), cmd_reboot);
+
+// File completion — all files
+shell.addCommand(F("cat"), listFile, "*");
+
+// File completion — filtered by extension
+shell.addCommand(F("compile"), cmd_compile, "*.bas;*.c");
+
+// File completion — directories only
+shell.addCommand(F("dir"), listDir, "/");
+
+// Static subcommands — completes first arg from list
+shell.addCommand(F("color"), cmd_color, NULL, subs_color);
+
+// Callback — multi-level typed completion
+shell.addCommand(F("config"), cmd_config, NULL, NULL, tc_config);
+
+// Alias — same function, same completion
+shell.addCommand(F("radio"), cmd_lora, NULL, NULL, tc_lora);
+```
+
+#### Step 3: Add tab completion (if needed)
+
+**Option A: No completion needed.** Commands with no arguments (e.g. `reboot`, `ps`, `sensors`) just register with the function pointer. TAB shows `<cr>`.
+
+**Option B: File completion.** Set `fileSpec` (3rd arg). Use `"*"` for all files, `"*.ext1;*.ext2"` for filtered, `"/"` for directories only.
+
+**Option C: Static subcommands.** Define a NULL-terminated `const char * const[]` array and pass as 4th arg. This only completes the first argument position.
+
+```cpp
+static const char * const subs_color[] = { "on", "off", NULL };
+shell.addCommand(F("color"), cmd_color, NULL, subs_color);
+```
+
+**Option D: TabCompleteFunc callback.** For multi-level completion with type-specific hints. This is the most powerful option and should be used for any command with subcommands that take typed arguments.
+
+```cpp
+// Callback signature:
+typedef const char * const * (*TabCompleteFunc)(
+    int wordIndex,        // word being completed (1 = first arg, 2 = second, ...)
+    const char **words,   // words[0..nWords-1], words[0] = command name
+    int nWords            // number of complete words before cursor
+);
+
+// Return values:
+//   Static array (NULL-terminated) — complete from this list
+//   TAB_COMPLETE_FILES             — complete filenames from LittleFS
+//   TAB_COMPLETE_VALUE             — show <val> (generic value expected)
+//   TAB_COMPLETE_VALUE_STR         — show <string>
+//   TAB_COMPLETE_VALUE_INT         — show <int>
+//   TAB_COMPLETE_VALUE_FLOAT       — show <float>
+//   TAB_COMPLETE_VALUE_HEX         — show <hex>
+//   NULL                           — no completion (shows <cr>)
+```
+
+**Callback pattern** — dispatch on `wordIndex` and previously typed words:
+
+```cpp
+static const char * const * tc_example(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_example;           // first arg: subcommand list
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "name") == 0) return TAB_COMPLETE_VALUE_STR;
+        if (strcasecmp(words[1], "count") == 0) return TAB_COMPLETE_VALUE_INT;
+        if (strcasecmp(words[1], "freq") == 0) return TAB_COMPLETE_VALUE_FLOAT;
+        if (strcasecmp(words[1], "color") == 0) return TAB_COMPLETE_VALUE_HEX;
+        if (strcasecmp(words[1], "mode") == 0) return subs_modes;  // enum-like
+        if (strcasecmp(words[1], "load") == 0) return TAB_COMPLETE_FILES;
+        // "status" takes no further args → return NULL → shows <cr>
+    }
+    return NULL;
+}
+```
+
+**Existing callbacks** (in `commands.cpp`, use as reference):
+
+| Callback | Command | Levels |
+|---|---|---|
+| `tc_debug` | `debug` | word 1: sources, word 2: on/off |
+| `tc_config` | `config` | word 1: set/unset/reset, word 2: sections then keys, word 3: type-specific value hint (or on/off for bools) |
+| `tc_cue` | `cue` | word 1: load/start/stop/status, word 2: files (load) or `<int>` (start) |
+| `tc_wifi` | `wifi` | word 1: enable/disable/ssid/password, word 2: `<string>` for ssid/password |
+| `tc_gpio` | `gpio` | word 1: set/out/in/read, word 2: `<int>` (pin), word 3: `<int>` (value) or up/down/none (pull) |
+| `tc_lora` | `lora`/`radio` | word 1: freq/power/bw/sf/cr/mode/save/restart/send, word 2: typed hint or lora/fsk enum |
+| `tc_mqtt` | `mqtt` | word 1: broker/port/enable/.../pub, word 2-3: typed hints |
+| `tc_gps` | `gps` | word 1: info/set/save/restart/send, word 2: set→baud/rate/mode/nmea, restart→hot/warm/cold/factory, word 3: typed hints or constellation enum |
+| `tc_led` | `led` | word 1: set/clear/count, word 2-4: typed hints per subcommand |
+| `tc_psram` | `psram` | word 1: test/freq/cache, word 2: forever (test) or `<int>` (freq) |
+| `tc_param` | `param` | word 1: `<int>` (index), word 2: `<int>` (value) |
+
+#### Step 4: Add subcommand arrays
+
+Subcommand arrays are static `const char * const[]` in `commands.cpp`, stored in `.rodata`. Define them near other `subs_*` arrays (around line 2862). They must be NULL-terminated.
+
+```cpp
+static const char * const subs_example[] = { "start", "stop", "status", NULL };
+```
+
+**Ordering rule:** Callback functions must be defined after the subcommand arrays they reference. The existing code groups all `subs_*` arrays first, then all `tc_*` callbacks, then `init_commands()`.
+
+#### Step 5: Add help text
+
+The `F("name ...")` string in `addCommand` doubles as help text. Everything after the first space is shown by the `help` command. Keep it concise — the help display is a single-column list.
+
+#### Step 6: Add documentation
+
+1. **`documentation/cli-commands.txt`** — add a quick reference line and a detailed description section
+2. **`AGENTS.md`** — if the command interacts with a subsystem already documented, update that section
+
+#### Step 7: Add aliases (optional)
+
+Aliases are just additional `addCommand` calls pointing to the same function with the same completion:
+
+```cpp
+shell.addCommand(F("lora"), cmd_lora, NULL, NULL, tc_lora);
+shell.addCommand(F("radio"), cmd_lora, NULL, NULL, tc_lora);
+```
+
+#### Conventions and rules
+
+- **Output:** Use `printfnl(SOURCE_COMMANDS, F("...\n"), ...)` for all output. The `F()` macro keeps strings in flash. Always end format strings with `\n`.
+- **Paths:** Call `normalize_path(buf, sizeof(buf), argv[1])` for any filename argument — prepends `/` if missing.
+- **Subcommand dispatch:** Use `strcasecmp()` for case-insensitive matching. Check `argc` before accessing `argv[N]`.
+- **Integer arguments:** Use `parse_int(str)` (alias for `strtol(s, NULL, 0)`) instead of `atoi()`. This handles `0x` hex, `0` octal, and plain decimal. Defined at the top of `commands.cpp`.
+- **String arguments with spaces:** The shell tokenizer handles `"..."` quoting and `\"` / `\\` escapes automatically. Commands receive clean, unquoted strings in `argv[]` — no manual reassembly needed. Don't rejoin `argv[3..]` with spaces; instead, require users to quote strings with spaces (e.g. `wifi ssid "My Network"`).
+- **Config values:** Commands that change settings usually hot-apply but don't save to config. Tell users to use `config set` to persist. Exception: `config set` itself saves immediately.
+- **Board guards:** Wrap hardware-specific code in `#ifdef BOARD_HAS_*` with a fallback message.
+- **Stack budget:** ShellTask is 8KB. Avoid large stack arrays (>1KB). Heap-allocate instead.
+- **Error return:** Return 0 for success, non-zero for errors. The shell stores the last return code.
+- **Print mutex:** `printfnl()` handles locking. For direct stream writes, use `getLock()`/`releaseLock()` around the output block.
+- **Help consistency:** Format subcommands in the help string to match existing commands.
 
 ### BASIC Interpreter Extensions
 

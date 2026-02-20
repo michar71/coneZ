@@ -72,6 +72,9 @@ const char *c2wasm_version_string(void);
 } /* extern "C" */
 
 
+// Parse an integer from a string, supporting decimal and 0x hex prefix.
+static inline int parse_int(const char *s) { return (int)strtol(s, NULL, 0); }
+
 //Serial/Telnet Shell comamnds
 
 void renameFile(fs::FS &fs, const char *path1, const char *path2) 
@@ -111,6 +114,8 @@ static int dir_entry_cmp(const void *a, const void *b)
     if (ea->isDir != eb->isDir) return ea->isDir ? -1 : 1;
     return strcasecmp(ea->name, eb->name);
 }
+
+static int effective_tz_offset(int year, int month, int day);
 
 static void dir_list(fs::FS &fs, const char *dirname, int indent,
                      Stream *out, bool showTime, int nameWidth,
@@ -158,7 +163,9 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
             (*fileCount)++;
             if (showTime && e->mtime > 0) {
                 struct tm tm;
-                localtime_r(&e->mtime, &tm);
+                int utc_y = get_year(), utc_m = get_month(), utc_d = get_day();
+                time_t local_t = e->mtime + effective_tz_offset(utc_y, utc_m, utc_d) * 3600;
+                gmtime_r(&local_t, &tm);
                 out->printf("%*s%-*s  %6u  %s %02d %02d:%02d\n",
                     indent, "", nameWidth, e->name, e->size,
                     (const char *[]){"Jan","Feb","Mar","Apr","May","Jun",
@@ -657,8 +664,8 @@ int cmd_deflate(int argc, char **argv)
     }
 
     int level = 6;
-    if (argc == 4) level = atoi(argv[3]);
-    else if (argc == 3 && argv[2][0] >= '0' && argv[2][0] <= '9') level = atoi(argv[2]);
+    if (argc == 4) level = parse_int(argv[3]);
+    else if (argc == 3 && argv[2][0] >= '0' && argv[2][0] <= '9') level = parse_int(argv[2]);
     if (level < 0) level = 0;
     if (level > 10) level = 10;
 
@@ -720,7 +727,7 @@ int cmd_hexdump(int argc, char **argv)
         return 1;
     }
 
-    int limit = (argc >= 3) ? atoi(argv[2]) : 256;
+    int limit = (argc >= 3) ? parse_int(argv[2]) : 256;
     if (limit <= 0) limit = 256;
 
     size_t fsize = f.size();
@@ -921,7 +928,7 @@ int paramBasic(int argc, char **argv)
     }
     else
     {
-        set_basic_param(atoi(argv[1]),atoi(argv[2]));      
+        set_basic_param(parse_int(argv[1]),parse_int(argv[2]));      
         return 0;
     }
 }
@@ -1118,7 +1125,7 @@ int cmd_mqtt(int argc, char **argv)
 
     // mqtt port <number>
     if (argc >= 3 && !strcasecmp(argv[1], "port")) {
-        config.mqtt_port = atoi(argv[2]);
+        config.mqtt_port = parse_int(argv[2]);
         printfnl(SOURCE_COMMANDS, F("MQTT port set to %d\n"), config.mqtt_port);
         mqtt_force_disconnect();  // triggers reconnect on new port
         return 0;
@@ -1154,14 +1161,10 @@ int cmd_mqtt(int argc, char **argv)
         return 0;
     }
 
-    // mqtt pub <topic> [payload...]
+    // mqtt pub <topic> <payload>
+    // Payload with spaces must be quoted: mqtt pub test/hello "Hello World"
     if (argc >= 3 && !strcasecmp(argv[1], "pub")) {
-        // Reassemble payload from argv[3..] (empty if no args after topic)
-        char payload[192] = "";
-        for (int i = 3; i < argc; i++) {
-            if (i > 3) strlcat(payload, " ", sizeof(payload));
-            strlcat(payload, argv[i], sizeof(payload));
-        }
+        const char *payload = (argc >= 4) ? argv[3] : "";
         int rc = mqtt_publish(argv[2], payload);
         if (rc == 0)
             printfnl(SOURCE_COMMANDS, F("Published to %s\n"), argv[2]);
@@ -1415,8 +1418,8 @@ int cmd_gpio(int argc, char **argv)
 
     // "gpio set <pin> <0|1>" — set output level
     if (argc == 4 && strcasecmp(argv[1], "set") == 0) {
-        int pin = atoi(argv[2]);
-        int val = atoi(argv[3]);
+        int pin = parse_int(argv[2]);
+        int val = parse_int(argv[3]);
         if (!gpio_valid_pin(pin)) {
             printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
             return -1;
@@ -1436,8 +1439,8 @@ int cmd_gpio(int argc, char **argv)
 
     // "gpio out <pin> <0|1>" — configure as output and set value
     if (argc == 4 && strcasecmp(argv[1], "out") == 0) {
-        int pin = atoi(argv[2]);
-        int val = atoi(argv[3]);
+        int pin = parse_int(argv[2]);
+        int val = parse_int(argv[3]);
         if (!gpio_valid_pin(pin)) {
             printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
             return -1;
@@ -1459,7 +1462,7 @@ int cmd_gpio(int argc, char **argv)
     // "gpio in <pin> [pull]" — configure as input with optional pull
     //   pull: up, down, none (default: none)
     if ((argc == 3 || argc == 4) && strcasecmp(argv[1], "in") == 0) {
-        int pin = atoi(argv[2]);
+        int pin = parse_int(argv[2]);
         if (!gpio_valid_pin(pin)) {
             printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
             return -1;
@@ -1492,7 +1495,7 @@ int cmd_gpio(int argc, char **argv)
 
     // "gpio read <pin>" — read a single pin
     if (argc == 3 && strcasecmp(argv[1], "read") == 0) {
-        int pin = atoi(argv[2]);
+        int pin = parse_int(argv[2]);
         if (!gpio_valid_pin(pin)) {
             printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
             return -1;
@@ -1626,7 +1629,7 @@ int cmd_gps(int argc, char **argv)
                 printfnl(SOURCE_COMMANDS, F("Usage: gps set baud <4800|9600|19200|38400|57600|115200>\n"));
                 return -1;
             }
-            int rate = atoi(argv[3]);
+            int rate = parse_int(argv[3]);
             int code = -1;
             switch (rate) {
                 case 4800:   code = 0; break;
@@ -1654,7 +1657,7 @@ int cmd_gps(int argc, char **argv)
                 printfnl(SOURCE_COMMANDS, F("Usage: gps set rate <1|2|4|5|10>\n"));
                 return -1;
             }
-            int hz = atoi(argv[3]);
+            int hz = parse_int(argv[3]);
             int ms = -1;
             switch (hz) {
                 case 1:  ms = 1000; break;
@@ -1826,7 +1829,7 @@ int cmd_lora(int argc, char **argv)
         }
         else if (strcasecmp(sub, "power") == 0)
         {
-            int power = atoi(val);
+            int power = parse_int(val);
             config.lora_tx_power = power;
             int rc = lora_set_tx_power(power);
             if (rc != 0)
@@ -1856,7 +1859,7 @@ int cmd_lora(int argc, char **argv)
                 printfnl(SOURCE_COMMANDS, F("SF not available in FSK mode\n"));
                 return 0;
             }
-            int sf = atoi(val);
+            int sf = parse_int(val);
             config.lora_sf = sf;
             int rc = lora_set_sf(sf);
             if (rc != 0)
@@ -1871,7 +1874,7 @@ int cmd_lora(int argc, char **argv)
                 printfnl(SOURCE_COMMANDS, F("CR not available in FSK mode\n"));
                 return 0;
             }
-            int cr = atoi(val);
+            int cr = parse_int(val);
             config.lora_cr = cr;
             int rc = lora_set_cr(cr);
             if (rc != 0)
@@ -2046,8 +2049,8 @@ int cmd_led(int argc, char **argv)
 
     // led count <ch> <n> — resize a channel
     if (argc >= 4 && !strcasecmp(argv[1], "count")) {
-        int ch = atoi(argv[2]);
-        int n  = atoi(argv[3]);
+        int ch = parse_int(argv[2]);
+        int n  = parse_int(argv[3]);
         if (ch < 1 || ch > 4) {
             printfnl(SOURCE_COMMANDS, F("Invalid channel %d (1-4)\n"), ch);
             return 1;
@@ -2079,7 +2082,7 @@ int cmd_led(int argc, char **argv)
             printfnl(SOURCE_COMMANDS, F("Usage: led set <ch> <index|start-end|all> <#RRGGBB>\n"));
             return 1;
         }
-        int ch = atoi(argv[2]);
+        int ch = parse_int(argv[2]);
         if (ch < 1 || ch > 4 || !bufs[ch - 1]) {
             printfnl(SOURCE_COMMANDS, F("Invalid channel %d\n"), ch);
             return 1;
@@ -2097,10 +2100,10 @@ int cmd_led(int argc, char **argv)
             char *dash = strchr(argv[3], '-');
             if (dash) {
                 *dash = '\0';
-                start = atoi(argv[3]);
-                end   = atoi(dash + 1);
+                start = parse_int(argv[3]);
+                end   = parse_int(dash + 1);
             } else {
-                start = end = atoi(argv[3]);
+                start = end = parse_int(argv[3]);
             }
         }
         if (start < 0 || end >= n || start > end) {
@@ -2864,16 +2867,172 @@ static const char * const subs_debug[]  = {
     "gps", "gps_raw", "lora", "lora_raw", "wifi", "fsync",
     "sensors", "mqtt", "other", NULL
 };
+static const char * const subs_onoff[]  = { "on", "off", NULL };
+
+// TabCompleteFunc callbacks for multi-level completion
+static const char * const * tc_debug(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_debug;
+    if (wordIndex == 2 && nWords >= 2) {
+        // "debug off" takes no further args
+        if (strcasecmp(words[1], "off") == 0) return NULL;
+        return subs_onoff;
+    }
+    return NULL;
+}
+
+static const char * const * tc_config(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_config;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "set") == 0 || strcasecmp(words[1], "unset") == 0) {
+            // If partial word contains '.', show full section.key list
+            if (nWords > 2 && strchr(words[2], '.'))
+                return config_get_key_list();
+            // Otherwise show section names (with trailing dot)
+            return config_get_section_list();
+        }
+    }
+    if (wordIndex == 3 && nWords >= 3) {
+        if (strcasecmp(words[1], "set") == 0) {
+            int t = config_get_key_type(words[2]);
+            if (t == 4) return subs_onoff;           // CFG_BOOL → on/off
+            if (t == 0) return TAB_COMPLETE_VALUE_STR;   // CFG_STR
+            if (t == 1) return TAB_COMPLETE_VALUE_FLOAT; // CFG_FLOAT
+            if (t == 2) return TAB_COMPLETE_VALUE_INT;   // CFG_INT
+            if (t == 3) return TAB_COMPLETE_VALUE_HEX;   // CFG_HEX
+            return TAB_COMPLETE_VALUE;
+        }
+    }
+    return NULL;
+}
+
+static const char * const * tc_cue(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_cue;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "load") == 0) return TAB_COMPLETE_FILES;
+        if (strcasecmp(words[1], "start") == 0) return TAB_COMPLETE_VALUE_INT;
+    }
+    return NULL;
+}
 static const char * const subs_gpio[]   = { "set", "out", "in", "read", NULL };
+static const char * const subs_gpio_pull[] = { "up", "down", "none", NULL };
 static const char * const subs_gps[]    = { "info", "set", "save", "restart", "send", NULL };
+static const char * const subs_gps_set[] = { "baud", "rate", "mode", "nmea", NULL };
+static const char * const subs_gps_restart[] = { "hot", "warm", "cold", "factory", NULL };
+static const char * const subs_gps_mode[] = { "gps", "bds", "glonass", "gps+bds",
+                                              "gps+glonass", "bds+glonass", "all", NULL };
 static const char * const subs_led[]    = { "set", "clear", "count", NULL };
 static const char * const subs_lora[]   = { "freq", "power", "bw", "sf", "cr", "mode",
                                             "save", "restart", "send", NULL };
+static const char * const subs_lora_mode[] = { "lora", "fsk", NULL };
 static const char * const subs_mqtt[]   = { "broker", "port", "enable", "disable",
                                             "connect", "disconnect", "pub", NULL };
 static const char * const subs_psram[]  = { "test", "freq", "cache", NULL };
+static const char * const subs_psram_test[] = { "forever", NULL };
 static const char * const subs_wasm[]   = { "status", "info", NULL };
 static const char * const subs_wifi[]   = { "enable", "disable", "ssid", "password", NULL };
+
+static const char * const * tc_wifi(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_wifi;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "ssid") == 0 || strcasecmp(words[1], "password") == 0)
+            return TAB_COMPLETE_VALUE_STR;
+    }
+    return NULL;
+}
+
+static const char * const * tc_gpio(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_gpio;
+    if (wordIndex == 2 && nWords >= 2) {
+        // set/out/in/read all take a pin number
+        if (strcasecmp(words[1], "set") == 0 || strcasecmp(words[1], "out") == 0 ||
+            strcasecmp(words[1], "in") == 0  || strcasecmp(words[1], "read") == 0)
+            return TAB_COMPLETE_VALUE_INT;
+    }
+    if (wordIndex == 3 && nWords >= 3) {
+        if (strcasecmp(words[1], "set") == 0 || strcasecmp(words[1], "out") == 0)
+            return TAB_COMPLETE_VALUE_INT;  // 0 or 1
+        if (strcasecmp(words[1], "in") == 0)
+            return subs_gpio_pull;          // up/down/none
+    }
+    return NULL;
+}
+
+static const char * const * tc_lora(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_lora;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "freq") == 0)  return TAB_COMPLETE_VALUE_FLOAT;
+        if (strcasecmp(words[1], "power") == 0) return TAB_COMPLETE_VALUE_INT;
+        if (strcasecmp(words[1], "bw") == 0)    return TAB_COMPLETE_VALUE_FLOAT;
+        if (strcasecmp(words[1], "sf") == 0)    return TAB_COMPLETE_VALUE_INT;
+        if (strcasecmp(words[1], "cr") == 0)    return TAB_COMPLETE_VALUE_INT;
+        if (strcasecmp(words[1], "mode") == 0)  return subs_lora_mode;
+        if (strcasecmp(words[1], "send") == 0)  return TAB_COMPLETE_VALUE_STR;
+    }
+    return NULL;
+}
+
+static const char * const * tc_mqtt(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_mqtt;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "broker") == 0) return TAB_COMPLETE_VALUE_STR;
+        if (strcasecmp(words[1], "port") == 0)   return TAB_COMPLETE_VALUE_INT;
+        if (strcasecmp(words[1], "pub") == 0)    return TAB_COMPLETE_VALUE_STR;
+    }
+    if (wordIndex == 3 && nWords >= 3) {
+        if (strcasecmp(words[1], "pub") == 0) return TAB_COMPLETE_VALUE_STR;
+    }
+    return NULL;
+}
+
+static const char * const * tc_gps(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_gps;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "set") == 0)     return subs_gps_set;
+        if (strcasecmp(words[1], "restart") == 0)  return subs_gps_restart;
+        if (strcasecmp(words[1], "send") == 0)     return TAB_COMPLETE_VALUE_STR;
+    }
+    if (wordIndex == 3 && nWords >= 3) {
+        if (strcasecmp(words[1], "set") == 0) {
+            if (strcasecmp(words[2], "baud") == 0) return TAB_COMPLETE_VALUE_INT;
+            if (strcasecmp(words[2], "rate") == 0) return TAB_COMPLETE_VALUE_INT;
+            if (strcasecmp(words[2], "mode") == 0) return subs_gps_mode;
+            if (strcasecmp(words[2], "nmea") == 0) return TAB_COMPLETE_VALUE_STR;
+        }
+    }
+    return NULL;
+}
+
+static const char * const * tc_led(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_led;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "set") == 0)   return TAB_COMPLETE_VALUE_INT;  // channel
+        if (strcasecmp(words[1], "count") == 0) return TAB_COMPLETE_VALUE_INT;  // channel
+    }
+    if (wordIndex == 3 && nWords >= 3) {
+        if (strcasecmp(words[1], "set") == 0)   return TAB_COMPLETE_VALUE;      // index/range/all
+        if (strcasecmp(words[1], "count") == 0) return TAB_COMPLETE_VALUE_INT;  // count
+    }
+    if (wordIndex == 4 && nWords >= 4) {
+        if (strcasecmp(words[1], "set") == 0)   return TAB_COMPLETE_VALUE_HEX;  // #RRGGBB
+    }
+    return NULL;
+}
+
+static const char * const * tc_psram(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_psram;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "test") == 0) return subs_psram_test;
+        if (strcasecmp(words[1], "freq") == 0) return TAB_COMPLETE_VALUE_INT;
+    }
+    return NULL;
+}
+
+static const char * const * tc_param(int wordIndex, const char **words, int nWords) {
+    (void)words; (void)nWords;
+    if (wordIndex == 1) return TAB_COMPLETE_VALUE_INT;  // index
+    if (wordIndex == 2) return TAB_COMPLETE_VALUE_INT;  // value
+    return NULL;
+}
 
 void init_commands(Stream *dev)
 {
@@ -2886,55 +3045,55 @@ void init_commands(Stream *dev)
     // Commands — fileArgs=true for filename completion, subcommands for subcommand completion
     shell.addCommand(F("?"), cmd_help);
     shell.addCommand(F("art"), cmd_art);
-    shell.addCommand(F("cat"), listFile, true);
+    shell.addCommand(F("cat"), listFile, "*");
     shell.addCommand(F("clear"), cmd_clear);
     shell.addCommand(F("cls"), cmd_clear);
-    shell.addCommand(F("color"), cmd_color, false, subs_color);
+    shell.addCommand(F("color"), cmd_color, NULL, subs_color);
 #if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
-    shell.addCommand(F("compile"), cmd_compile, true);
+    shell.addCommand(F("compile"), cmd_compile, "*.bas;*.c");
 #endif
-    shell.addCommand(F("config"), cmd_config, false, subs_config);
-    shell.addCommand(F("cp"), cmd_cp, true);
-    shell.addCommand(F("cue"), cmd_cue, false, subs_cue);
-    shell.addCommand(F("debug"), cmd_debug, false, subs_debug);
-    shell.addCommand(F("del"), delFile, true);
+    shell.addCommand(F("config"), cmd_config, NULL, NULL, tc_config);
+    shell.addCommand(F("cp"), cmd_cp, "*");
+    shell.addCommand(F("cue"), cmd_cue, NULL, NULL, tc_cue);
+    shell.addCommand(F("debug"), cmd_debug, NULL, NULL, tc_debug);
+    shell.addCommand(F("del"), delFile, "*");
     shell.addCommand(F("df"), cmd_df);
-    shell.addCommand(F("deflate"), cmd_deflate, true);
-    shell.addCommand(F("dir"), listDir, true);
-    shell.addCommand(F("edit"), cmd_edit, true);
+    shell.addCommand(F("deflate"), cmd_deflate, "*");
+    shell.addCommand(F("dir"), listDir, "/");
+    shell.addCommand(F("edit"), cmd_edit, "*");
     shell.addCommand(F("free"), cmd_mem);
     shell.addCommand(F("game"), cmd_game);
-    shell.addCommand(F("gpio"), cmd_gpio, false, subs_gpio);
-    shell.addCommand(F("gps"), cmd_gps, false, subs_gps);
-    shell.addCommand(F("grep"), cmd_grep, true);
-    shell.addCommand(F("gunzip"), cmd_inflate, true);
-    shell.addCommand(F("gzip"), cmd_deflate, true);
+    shell.addCommand(F("gpio"), cmd_gpio, NULL, NULL, tc_gpio);
+    shell.addCommand(F("gps"), cmd_gps, NULL, NULL, tc_gps);
+    shell.addCommand(F("grep"), cmd_grep, "*");
+    shell.addCommand(F("gunzip"), cmd_inflate, "*.gz");
+    shell.addCommand(F("gzip"), cmd_deflate, "*");
     shell.addCommand(F("help"), cmd_help);
-    shell.addCommand(F("hexdump"), cmd_hexdump, true);
-    shell.addCommand(F("inflate"), cmd_inflate, true);
-    shell.addCommand(F("led"), cmd_led, false, subs_led);
-    shell.addCommand(F("list"), listFile, true);
-    shell.addCommand(F("load"), loadFile, true);
-    shell.addCommand(F("lora"), cmd_lora, false, subs_lora);
-    shell.addCommand(F("ls"), listDir, true);
-    shell.addCommand(F("md5"), cmd_md5, true);
-    shell.addCommand(F("md5sum"), cmd_md5, true);
+    shell.addCommand(F("hexdump"), cmd_hexdump, "*");
+    shell.addCommand(F("inflate"), cmd_inflate, "*.gz");
+    shell.addCommand(F("led"), cmd_led, NULL, NULL, tc_led);
+    shell.addCommand(F("list"), listFile, "*");
+    shell.addCommand(F("load"), loadFile, "*.bas;*.c;*.wasm");
+    shell.addCommand(F("lora"), cmd_lora, NULL, NULL, tc_lora);
+    shell.addCommand(F("ls"), listDir, "/");
+    shell.addCommand(F("md5"), cmd_md5, "*");
+    shell.addCommand(F("md5sum"), cmd_md5, "*");
     shell.addCommand(F("mem"), cmd_mem);
-    shell.addCommand(F("mkdir"), cmd_mkdir, true);
-    shell.addCommand(F("mqtt"), cmd_mqtt, false, subs_mqtt);
-    shell.addCommand(F("mv"), renFile, true);
-    shell.addCommand(F("param"), paramBasic);
+    shell.addCommand(F("mkdir"), cmd_mkdir, "/");
+    shell.addCommand(F("mqtt"), cmd_mqtt, NULL, NULL, tc_mqtt);
+    shell.addCommand(F("mv"), renFile, "*");
+    shell.addCommand(F("param"), paramBasic, NULL, NULL, tc_param);
     shell.addCommand(F("ps"), cmd_ps);
-    shell.addCommand(F("psram"), cmd_psram, false, subs_psram);
-    shell.addCommand(F("radio"), cmd_lora, false, subs_lora);
+    shell.addCommand(F("psram"), cmd_psram, NULL, NULL, tc_psram);
+    shell.addCommand(F("radio"), cmd_lora, NULL, NULL, tc_lora);
     shell.addCommand(F("reboot"), cmd_reboot);
-    shell.addCommand(F("ren"), renFile, true);
-    shell.addCommand(F("rm"), delFile, true);
-    shell.addCommand(F("rmdir"), cmd_rmdir, true);
-    shell.addCommand(F("run"), runBasic, true);
+    shell.addCommand(F("ren"), renFile, "*");
+    shell.addCommand(F("rm"), delFile, "*");
+    shell.addCommand(F("rmdir"), cmd_rmdir, "/");
+    shell.addCommand(F("run"), runBasic, "*.bas;*.c;*.wasm");
     shell.addCommand(F("sensors"), cmd_sensors);
-    shell.addCommand(F("sha256"), cmd_sha256, true);
-    shell.addCommand(F("sha256sum"), cmd_sha256, true);
+    shell.addCommand(F("sha256"), cmd_sha256, "*");
+    shell.addCommand(F("sha256sum"), cmd_sha256, "*");
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);
@@ -2942,10 +3101,10 @@ void init_commands(Stream *dev)
     shell.addCommand(F("uptime"), cmd_uptime);
     shell.addCommand(F("ver"), cmd_version);
     shell.addCommand(F("version"), cmd_version);
-    shell.addCommand(F("wifi"), cmd_wifi, false, subs_wifi);
+    shell.addCommand(F("wifi"), cmd_wifi, NULL, NULL, tc_wifi);
     shell.addCommand(F("winamp"), cmd_winamp);
 #ifdef INCLUDE_WASM
-    shell.addCommand(F("wasm"), cmd_wasm, false, subs_wasm);
+    shell.addCommand(F("wasm"), cmd_wasm, "*.wasm", subs_wasm);
 #endif
 }
 

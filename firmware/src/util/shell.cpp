@@ -25,6 +25,50 @@ static inline const char *sh_reset(void) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// Quote-aware tokenizer (drop-in replacement for strtok_r).
+// Handles "..." grouping and \" / \\ escapes both inside and outside quotes.
+// Modifies the input buffer in-place (like strtok_r).
+static char *quote_tokenizer(char *str, const char *delim, char **saveptr)
+{
+    char *p = str ? str : *saveptr;
+    if (!p) return NULL;
+
+    // Skip leading delimiters
+    while (*p && strchr(delim, *p)) p++;
+    if (!*p) { *saveptr = p; return NULL; }
+
+    char *token = p;
+    char *w = p;  // write pointer for in-place escape/quote removal
+
+    while (*p && !strchr(delim, *p)) {
+        if (*p == '"') {
+            // Quoted section — consume until closing quote
+            p++;
+            while (*p && *p != '"') {
+                if (*p == '\\' && (p[1] == '"' || p[1] == '\\')) {
+                    *w++ = p[1];
+                    p += 2;
+                } else {
+                    *w++ = *p++;
+                }
+            }
+            if (*p == '"') p++;  // skip closing quote
+        } else if (*p == '\\' && (p[1] == '"' || p[1] == '\\')) {
+            // Escaped quote or backslash outside quotes
+            *w++ = p[1];
+            p += 2;
+        } else {
+            *w++ = *p++;
+        }
+    }
+
+    if (*p) p++;  // skip trailing delimiter
+    *w = '\0';
+    *saveptr = p;
+    return token;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Serial command shell — based on ConezShell by Phil Jansen,
 // heavily modified for ConeZ (cursor editing, history, suspend/resume).
 
@@ -44,8 +88,10 @@ ConezShell::Command * ConezShell::firstCommand = NULL;
 class ConezShell::Command {
     public:
         Command(const __FlashStringHelper * n, CommandFunction f,
-                bool fa = false, const char * const *sc = NULL):
-            nameAndDocs(n), myFunc(f), fileArgs(fa), subcommands(sc) {};
+                const char *fs = NULL, const char * const *sc = NULL,
+                TabCompleteFunc tcf = NULL, bool va = false):
+            nameAndDocs(n), myFunc(f), fileSpec(fs), subcommands(sc),
+            tabCompleteFunc(tcf), valArgs(va) {};
 
         int execute(int argc, char **argv)
         {
@@ -100,15 +146,17 @@ class ConezShell::Command {
         const __FlashStringHelper * const nameAndDocs;
         const CommandFunction myFunc;
     public:
-        const bool fileArgs;                  // true = tab-completes filenames from LittleFS
+        const char * const fileSpec;           // NULL = no files, "*" = all, "*.bas;*.c" = filtered
         const char * const *subcommands;      // NULL-terminated list, or NULL
+        const TabCompleteFunc tabCompleteFunc; // multi-level completion callback, or NULL
+        const bool valArgs;                   // true = args are typed values, show <val>
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 ConezShell::ConezShell()
     : shellConnection(NULL),
       m_lastErrNo(EXIT_SUCCESS),
-      tokenizer(strtok_r)
+      tokenizer(quote_tokenizer)
 {
     resetBuffer();
     history[0] = '\0';
@@ -117,7 +165,7 @@ ConezShell::ConezShell()
     hist_write = 0;
     hist_nav = -1;
     inputActive = false;
-    lastWasTab = false;
+
 
     addCommand(F("history"), ConezShell::printHistory);
 };
@@ -125,9 +173,10 @@ ConezShell::ConezShell()
 //////////////////////////////////////////////////////////////////////////////
 void ConezShell::addCommand(
     const __FlashStringHelper * name, CommandFunction f,
-    bool fileArgs, const char * const *subcommands)
+    const char *fileSpec, const char * const *subcommands,
+    TabCompleteFunc tabCompleteFunc, bool valArgs)
 {
-    auto * newCmd = new Command(name, f, fileArgs, subcommands);
+    auto * newCmd = new Command(name, f, fileSpec, subcommands, tabCompleteFunc, valArgs);
 
     // insert in list alphabetically
     Command* temp2 = firstCommand;
@@ -338,7 +387,7 @@ bool ConezShell::prepInput(void)
         }
 
         // Normal character processing
-        if (c != 0x09) lastWasTab = false;  // reset on any non-tab key
+
         switch (c)
         {
             case 0x1B: // ESC
@@ -593,6 +642,43 @@ void ConezShell::resumeLine(Stream *out)
     for (int i = cursor; i < inptr; i++) out->write('\b');
 }
 
+// Map TAB_COMPLETE_VALUE_* sentinels to display labels.
+// Returns NULL if result is not a value sentinel.
+static const char *val_sentinel_label(const char * const *result)
+{
+    if (result == TAB_COMPLETE_VALUE)       return "<val>";
+    if (result == TAB_COMPLETE_VALUE_STR)   return "<string>";
+    if (result == TAB_COMPLETE_VALUE_INT)   return "<int>";
+    if (result == TAB_COMPLETE_VALUE_FLOAT) return "<float>";
+    if (result == TAB_COMPLETE_VALUE_HEX)   return "<hex>";
+    return NULL;
+}
+
+// Check if filename matches a fileSpec pattern ("*", "*.bas;*.c", "/" = dirs only).
+// Directories always match unless spec is "/" (dirs only).
+static bool matchesFileSpec(const char *fname, int flen, bool isDir, const char *spec)
+{
+    if (spec && spec[0] == '/' && spec[1] == '\0') return isDir;
+    if (isDir || !spec || (spec[0] == '*' && spec[1] == '\0')) return true;
+    // Walk semicolon-separated "*.ext" patterns
+    const char *p = spec;
+    while (*p) {
+        // Skip leading "*"
+        const char *ext = p;
+        if (*ext == '*') ext++;
+        // Find end of this pattern
+        const char *semi = ext;
+        while (*semi && *semi != ';') semi++;
+        int extLen = semi - ext;
+        // Check if filename ends with this suffix
+        if (extLen > 0 && flen >= extLen &&
+            strncasecmp(fname + flen - extLen, ext, extLen) == 0)
+            return true;
+        p = *semi ? semi + 1 : semi;
+    }
+    return false;
+}
+
 //////////////////////////////////////////////////////////////////////////////
 // Tab completion for commands (first word) and filenames (after space).
 // Called WITHOUT print_mutex held — acquires it internally as needed.
@@ -600,13 +686,27 @@ void ConezShell::tabComplete(void)
 {
     if (!shellConnection) return;
 
-    // Determine context: is there a space before cursor?
+    // Determine which word we're completing (0 = command, 1 = first arg, 2+ = later args)
+    // Quote-aware: "foo bar" counts as one word, not two.
     int wordStart = 0;
-    bool completingFile = false;
+    int wordIndex = 0;
+    bool inSpace = false;
+    bool inQuote = false;
     for (int i = 0; i < cursor; i++) {
-        if (linebuffer[i] == ' ') {
-            completingFile = true;
+        char ch = linebuffer[i];
+        if (inQuote) {
+            if (ch == '\\' && i + 1 < cursor && (linebuffer[i+1] == '"' || linebuffer[i+1] == '\\'))
+                i++;  // skip escaped char
+            else if (ch == '"')
+                inQuote = false;
+        } else if (ch == '"') {
+            inQuote = true;
+            inSpace = false;
+        } else if (ch == ' ') {
+            if (!inSpace) { wordIndex++; inSpace = true; }
             wordStart = i + 1;
+        } else {
+            inSpace = false;
         }
     }
 
@@ -614,21 +714,103 @@ void ConezShell::tabComplete(void)
     // whether to complete filenames, subcommands, or nothing.
     const char * const *subcmds = NULL;
     bool doFileComplete = false;
-    if (completingFile) {
+    const char *activeFileSpec = NULL;  // fileSpec for filtering (NULL = no files)
+    bool isSubcmdResult = false;  // true when showing subcommand-style list (show <cr>)
+    bool showValHint = false;     // true when valArgs command at word 2+ should show <val>
+    if (wordIndex > 0) {
         char firstWord[32];
         int fw = 0;
         while (fw < cursor && fw < (int)sizeof(firstWord) - 1 && linebuffer[fw] != ' ')
             firstWord[fw] = linebuffer[fw], fw++;
         firstWord[fw] = '\0';
 
+        Command *foundCmd = NULL;
         for (Command *cmd = firstCommand; cmd; cmd = cmd->next) {
-            if (cmd->compareName(firstWord) == 0) {
-                doFileComplete = cmd->fileArgs;
-                subcmds = cmd->subcommands;
-                break;
+            if (cmd->compareName(firstWord) == 0) { foundCmd = cmd; break; }
+        }
+        if (!foundCmd) return;
+
+        if (foundCmd->tabCompleteFunc) {
+            // Parse words from linebuffer for callback (quote-aware)
+            const char * const *result;
+            {
+                char lbcopy[SHELL_BUFSIZE];
+                memcpy(lbcopy, linebuffer, cursor);
+                lbcopy[cursor] = '\0';
+                const char *words[10];
+                int nWords = 0;
+                char *rest = NULL;
+                char *tok = quote_tokenizer(lbcopy, " \t", &rest);
+                while (tok && nWords < 10) {
+                    words[nWords++] = tok;
+                    tok = quote_tokenizer(NULL, " \t", &rest);
+                }
+                result = foundCmd->tabCompleteFunc(wordIndex, words, nWords);
+            }
+            if (result == TAB_COMPLETE_FILES) {
+                doFileComplete = true;
+                activeFileSpec = foundCmd->fileSpec ? foundCmd->fileSpec : "*";
+            } else if (val_sentinel_label(result)) {
+                getLock();
+                shellConnection->print(sh_reset());
+                shellConnection->print(F("\r\n"));
+                shellConnection->print(val_sentinel_label(result));
+                shellConnection->print(F("\r\n"));
+                shellConnection->print(sh_prompt());
+                shellConnection->write((const uint8_t*)linebuffer, inptr);
+                for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
+                releaseLock();
+
+                return;
+            } else if (result) {
+                subcmds = result;
+                isSubcmdResult = true;
+            } else {
+                // Callback says no completion — show <cr>
+                getLock();
+                shellConnection->print(sh_reset());
+                shellConnection->print(F("\r\n<cr>\r\n"));
+                shellConnection->print(sh_prompt());
+                shellConnection->write((const uint8_t*)linebuffer, inptr);
+                for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
+                releaseLock();
+                return;
+            }
+        } else {
+            doFileComplete = (foundCmd->fileSpec != NULL);
+            activeFileSpec = foundCmd->fileSpec;
+            if (wordIndex == 1) {
+                subcmds = foundCmd->subcommands;
+            }
+            if (foundCmd->subcommands) {
+                isSubcmdResult = true;
+                if (wordIndex > 1 && foundCmd->valArgs)
+                    showValHint = true;
+            }
+            if (!doFileComplete && !isSubcmdResult) {
+                getLock();
+                shellConnection->print(sh_reset());
+                // Show <val> if command expects typed values, otherwise <cr>
+                shellConnection->print(foundCmd->valArgs ? F("\r\n<val>\r\n") : F("\r\n<cr>\r\n"));
+                shellConnection->print(sh_prompt());
+                shellConnection->write((const uint8_t*)linebuffer, inptr);
+                for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
+                releaseLock();
+                return;
             }
         }
-        if (!doFileComplete && !subcmds) return;
+    }
+
+    // Auto-insert '/' at wordStart for file completion when prefix doesn't start with '/'
+    if (doFileComplete && (cursor == wordStart || linebuffer[wordStart] != '/') &&
+        inptr < SHELL_BUFSIZE - 1) {
+        getLock();
+        memmove(&linebuffer[wordStart + 1], &linebuffer[wordStart], inptr - wordStart);
+        linebuffer[wordStart] = '/';
+        inptr++;
+        cursor++;
+        linebuffer[inptr] = '\0';
+        releaseLock();
     }
 
     // Extract the prefix being completed
@@ -649,7 +831,7 @@ void ConezShell::tabComplete(void)
     Match matches[MAX_MATCHES];
     int nMatches = 0;
 
-    if (!completingFile) {
+    if (wordIndex == 0) {
         // Command completion — walk the linked list
         getLock();
         for (Command *cmd = firstCommand; cmd && nMatches < MAX_MATCHES; cmd = cmd->next) {
@@ -675,7 +857,7 @@ void ConezShell::tabComplete(void)
                 nMatches++;
             }
         }
-    } else {
+    } else if (doFileComplete) {
         // Filename completion — split prefix into dir + partial name
         char dirPath[SHELL_BUFSIZE];
         const char *partial = prefix;
@@ -707,7 +889,8 @@ void ConezShell::tabComplete(void)
                 int flen = strlen(fname);
                 bool isDir = f.isDirectory();
                 if (flen >= partialLen && flen < MAX_NAME &&
-                    strncasecmp(fname, partial, partialLen) == 0) {
+                    strncasecmp(fname, partial, partialLen) == 0 &&
+                    matchesFileSpec(fname, flen, isDir, activeFileSpec)) {
                     memcpy(matches[nMatches].name, fname, flen + 1);
                     matches[nMatches].len = flen;
                     matches[nMatches].isDir = isDir;
@@ -721,7 +904,17 @@ void ConezShell::tabComplete(void)
     }
 
     if (nMatches == 0) {
-        lastWasTab = true;
+        // Empty subcommand list + empty prefix = command is complete
+        if (isSubcmdResult && prefixLen == 0) {
+            getLock();
+            shellConnection->print(sh_reset());
+            shellConnection->print(showValHint ? F("\r\n<val>\r\n") : F("\r\n<cr>\r\n"));
+            shellConnection->print(sh_prompt());
+            shellConnection->write((const uint8_t*)linebuffer, inptr);
+            for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
+            releaseLock();
+        }
+
         return;
     }
 
@@ -739,7 +932,7 @@ void ConezShell::tabComplete(void)
     // How many new characters can we insert?
     // For files, the prefix being completed is just the partial filename part
     int typedPartLen;
-    if (completingFile) {
+    if (wordIndex > 0) {
         // Partial is the portion after the last slash
         const char *lastSlash = NULL;
         for (int i = 0; i < prefixLen; i++) {
@@ -769,9 +962,9 @@ void ConezShell::tabComplete(void)
         cursor += extension;
         linebuffer[inptr] = '\0';
 
-        // If single match, append suffix
-        if (nMatches == 1) {
-            char suffix = completingFile ? (matches[0].isDir ? '/' : ' ') : ' ';
+        // If single match, append suffix (skip if match ends with '.' — it's a prefix)
+        if (nMatches == 1 && matches[0].name[matches[0].len - 1] != '.') {
+            char suffix = wordIndex > 0 ? (matches[0].isDir ? '/' : ' ') : ' ';
             if (inptr < SHELL_BUFSIZE - 1) {
                 if (cursor < inptr)
                     memmove(&linebuffer[cursor + 1], &linebuffer[cursor], inptr - cursor);
@@ -784,27 +977,32 @@ void ConezShell::tabComplete(void)
 
         redrawLine(prevLen);
         releaseLock();
-        lastWasTab = false;
+    
     } else if (nMatches == 1) {
-        // Exact match, just append suffix
-        getLock();
-        int prevLen = inptr;
-        char suffix = completingFile ? (matches[0].isDir ? '/' : ' ') : ' ';
-        if (inptr < SHELL_BUFSIZE - 1) {
-            if (cursor < inptr)
-                memmove(&linebuffer[cursor + 1], &linebuffer[cursor], inptr - cursor);
-            linebuffer[cursor] = suffix;
-            inptr++;
-            cursor++;
-            linebuffer[inptr] = '\0';
-            redrawLine(prevLen);
+        // Exact match, append suffix (skip if match ends with '.' — it's a prefix)
+        if (matches[0].name[matches[0].len - 1] != '.') {
+            getLock();
+            int prevLen = inptr;
+            char suffix = wordIndex > 0 ? (matches[0].isDir ? '/' : ' ') : ' ';
+            if (inptr < SHELL_BUFSIZE - 1) {
+                if (cursor < inptr)
+                    memmove(&linebuffer[cursor + 1], &linebuffer[cursor], inptr - cursor);
+                linebuffer[cursor] = suffix;
+                inptr++;
+                cursor++;
+                linebuffer[inptr] = '\0';
+                redrawLine(prevLen);
+            }
+            releaseLock();
         }
-        releaseLock();
-        lastWasTab = false;
-    } else if (lastWasTab) {
-        // Second tab — list all matches
+    
+    } else {
+        // List all matches immediately
         getLock();
+        shellConnection->print(sh_reset());
         shellConnection->print(F("\r\n"));
+        // If completing subcommands, show [cr] to indicate bare command is also valid
+        if (isSubcmdResult) shellConnection->print(F("[cr]  "));
         for (int i = 0; i < nMatches; i++) {
             shellConnection->print(matches[i].name);
             if (matches[i].isDir) shellConnection->write('/');
@@ -816,9 +1014,7 @@ void ConezShell::tabComplete(void)
         shellConnection->write((const uint8_t*)linebuffer, inptr);
         for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
         releaseLock();
-        lastWasTab = false;
-    } else {
-        lastWasTab = true;
+    
     }
 }
 

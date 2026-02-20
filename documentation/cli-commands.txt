@@ -17,16 +17,78 @@ Up/Down arrows navigate command history (32 entries on PSRAM boards,
 1 entry on Heltec). Duplicate consecutive commands are suppressed.
 File paths are auto-normalized (/ prepended if missing).
 
+Quoting: arguments with spaces must be enclosed in double quotes.
+  - "Hello World"     → single argument: Hello World
+  - "Quote \"Mess\""  → single argument: Quote "Mess"
+  - Quote\"Mess\"     → single argument: Quote"Mess" (backslash-quote outside quotes)
+  - \\                → single backslash (inside or outside quotes)
+  Examples:
+    wifi ssid "My Network"
+    config set wifi.ssid "My Network"
+    mqtt pub test/topic "Hello World"
+
+Integer arguments: all integer arguments accept decimal, 0x hex, and
+  0 octal prefixes. Examples:
+    config set lora.sync_word 0x1424
+    lora power 10
+    gpio set 0x0A 1
+
 Tab completion: pressing Tab auto-completes the current word.
   - First word: completes command names (case-insensitive).
-  - After a command that takes file arguments (run, edit, cat, cp,
-    etc.): completes filenames from LittleFS. Directories get a
-    trailing /. Paths with subdirectories work (e.g. run /scripts/h<TAB>).
-  - After a command that has subcommands (config, debug, psram, led,
-    lora, wifi, etc.): completes from the registered subcommand list.
+  - After a command that takes file arguments: completes filenames from
+    LittleFS. A leading / is auto-inserted if not typed. Directories
+    get a trailing /. Paths with subdirectories work (e.g. run /scripts/h<TAB>).
+  - File filtering: commands only show relevant files. For example,
+    compile shows *.bas and *.c, run/load shows *.bas/*.c/*.wasm,
+    inflate/gunzip shows *.gz, dir/ls/rmdir shows only directories.
+  - After a command that has subcommands: completes from the registered
+    subcommand list. Many commands then complete deeper argument positions
+    with type-specific hints or further subcommand lists.
+  - Multi-level completion examples:
+      debug gps <TAB>              → on  off
+      config set <TAB>             → wifi.  gps.  lora.  system.  ...
+      config set wifi. <TAB>       → enabled  ssid  password
+      config set wifi.ssid <TAB>   → <string>
+      config set wifi.enabled <TAB> → on  off
+      config set lora.frequency <TAB> → <float>
+      config set led.count1 <TAB>  → <int>
+      config set led.color1 <TAB>  → <hex>
+      cue load <TAB>               → filename completion
+      cue start <TAB>              → <int>
+      wifi ssid <TAB>              → <string>
+      wifi enable <TAB>            → <cr>
+      lora freq <TAB>              → <float>
+      lora power <TAB>             → <int>
+      lora mode <TAB>              → lora  fsk
+      gpio set <TAB>               → <int>     (pin)
+      gpio set 5 <TAB>             → <int>     (0 or 1)
+      gpio in 5 <TAB>              → up  down  none
+      gps set <TAB>                → baud  rate  mode  nmea
+      gps set mode <TAB>           → gps  bds  glonass  ...  all
+      gps restart <TAB>            → hot  warm  cold  factory
+      led set <TAB>                → <int>     (channel)
+      led set 1 <TAB>              → <val>     (index/range/all)
+      led set 1 0 <TAB>            → <hex>     (#RRGGBB)
+      led count <TAB>              → <int>     (channel)
+      mqtt broker <TAB>            → <string>
+      mqtt port <TAB>              → <int>
+      psram freq <TAB>             → <int>
+      psram test <TAB>             → forever
+      param <TAB>                  → <int>     (index)
+      param 1 <TAB>                → <int>     (value)
+      free <TAB>                   → <cr>
+  - Indicators:
+      <cr>      command is complete, press Enter (shown alone)
+      [cr]      command is complete but subcommands also available (in list)
+      <val>     a typed-in value is expected (not completed)
+      <string>  a string value is expected
+      <int>     an integer value is expected
+      <float>   a float value is expected
+      <hex>     a hex value is expected
   - Single match: completes in-place with trailing space (or / for dirs).
-  - Multiple matches: inserts the longest common prefix. Press Tab again
-    to list all matches.
+  - Multiple matches with common prefix: inserts the common prefix, then
+    lists all matches.
+  - Multiple matches without common prefix: lists all matches immediately.
   - No match: nothing happens.
 
 
@@ -138,7 +200,8 @@ config
   config set section.key value
       Set a configuration value and save to flash.
       Debug settings take effect immediately; all others require reboot.
-      Values with spaces are supported (e.g. config set wifi.ssid My Net).
+      Values with spaces must be quoted (e.g. config set wifi.ssid "My Net").
+      Integer values accept 0x hex prefix (e.g. config set lora.sync_word 0x1424).
 
   config unset section.key
       Revert a single key to its compiled default and save.
@@ -411,8 +474,10 @@ mqtt
       Example: mqtt port 1884
 
   mqtt pub <topic> <payload>
-      Publish a message to a topic (for testing).
-      Example: mqtt pub test/hello world
+      Publish a message to a topic (for testing). Use quotes for payloads
+      with spaces.
+      Examples: mqtt pub test/hello world
+                mqtt pub test/hello "Hello World"
 
   Use "config set mqtt.broker <host>", "config set mqtt.port <num>",
   or "config set mqtt.enabled on" to persist across reboots.
@@ -538,8 +603,9 @@ wifi
       Disable WiFi and turn off the radio.
 
   wifi ssid <name>
-      Set the WiFi SSID and reconnect immediately. Not saved to flash;
-      use "config set wifi.ssid <name>" to persist across reboots.
+      Set the WiFi SSID and reconnect immediately. Use quotes for SSIDs
+      with spaces: wifi ssid "My Network". Not saved to flash; use
+      "config set wifi.ssid <name>" to persist across reboots.
 
   wifi password <psk>
   wifi pass <psk>
