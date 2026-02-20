@@ -51,7 +51,7 @@
 #define DEFAULT_AUTO_DST        true
 #define DEFAULT_CONE_ID         0
 #define DEFAULT_CONE_GROUP      0
-#define DEFAULT_NTP_SERVER      ""              // empty = use pool.ntp.org + time.nist.gov
+#define DEFAULT_NTP_SERVER      "pool.ntp.org"
 
 // MQTT
 #define DEFAULT_MQTT_BROKER     "sewerpipe.local"

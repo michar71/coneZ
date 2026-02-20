@@ -2021,6 +2021,7 @@ int cmd_time(int argc, char **argv)
     if (ts == 2)      src = "GPS+PPS";
     else if (ts == 1) src = "NTP";
     printfnl(SOURCE_COMMANDS, F("Source: %s\n"), src);
+    printfnl(SOURCE_COMMANDS, F("NTP:    %s\n"), config.ntp_server);
 #ifdef BOARD_HAS_GPS
     printfnl(SOURCE_COMMANDS, F("GPS fix: %s  Sats: %d\n"), get_gpsstatus() ? "Yes" : "No", get_satellites());
 #endif

@@ -505,10 +505,7 @@ uint8_t get_time_source(void)
 // NTP on GPS boards: provides time before GPS lock, NTP only wins if GPS+PPS hasn't set epoch yet
 void ntp_setup(void)
 {
-    if (config.ntp_server[0] != '\0')
-        configTime(0, 0, config.ntp_server, "pool.ntp.org");
-    else
-        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    configTime(0, 0, config.ntp_server, "time.nist.gov");
 }
 
 
@@ -679,10 +676,7 @@ uint8_t get_time_source(void)
 
 void ntp_setup(void)
 {
-    if (config.ntp_server[0] != '\0')
-        configTime(0, 0, config.ntp_server, "pool.ntp.org");
-    else
-        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    configTime(0, 0, config.ntp_server, "time.nist.gov");
 }
 
 

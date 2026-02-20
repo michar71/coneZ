@@ -37,7 +37,7 @@ timezone=-8
 auto_dst=on
 cone_id=0
 cone_group=0
-; ntp_server=192.168.1.100   ; local NTP server (blank = pool.ntp.org)
+; ntp_server=192.168.1.100   ; local NTP server (default: pool.ntp.org)
 
 [mqtt]
 ; broker=sewerpipe.local
