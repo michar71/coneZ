@@ -312,7 +312,10 @@ static void wasm_task_fun(void *parameter)
 
                 wasm_run(local_path);
             } else {
+                // No program queued — kill task to free 16KB stack
+                wasm_task_handle = NULL;
                 xSemaphoreGive(wasm_mutex);
+                vTaskDelete(NULL);
             }
         }
     }
@@ -345,11 +348,12 @@ bool set_wasm_program(const char *path)
     if (xSemaphoreTake(wasm_mutex, 1000) == pdTRUE) {
         strncpy(next_wasm, path, sizeof(next_wasm) - 1);
         next_wasm[sizeof(next_wasm) - 1] = '\0';
+        bool need_task = (wasm_task_handle == NULL);
         xSemaphoreGive(wasm_mutex);
 
-        // Create task on first use
+        // Create task if not running (killed after previous program ended to free 16KB stack)
         // Pin to core 1: HWCDC interrupt is on core 1 — cross-core Serial writes corrupt output
-        if (wasm_task_handle == NULL)
+        if (need_task)
             xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, 1);
 
         return true;
