@@ -17,6 +17,7 @@
 
 // ---------- Compiled defaults ----------
 // WiFi
+#define DEFAULT_WIFI_ENABLED    true
 #define DEFAULT_WIFI_SSID       "RN-ConeZ"
 #define DEFAULT_WIFI_PASSWORD   "conezconez"
 
@@ -79,6 +80,7 @@
 // ---------- Config struct ----------
 typedef struct {
     // [wifi]
+    bool    wifi_enabled;
     char    wifi_ssid[CONFIG_MAX_SSID];
     char    wifi_password[CONFIG_MAX_PASSWORD];
 

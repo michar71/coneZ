@@ -114,6 +114,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 ### Thread Communication
 
 - **printManager** (`console/printManager.cpp/h`): Mutex-protected logging. All text output outside of `setup()` must go through `printfnl()`. Each message has a `source_e` tag (SOURCE_BASIC, SOURCE_WASM, SOURCE_GPS, SOURCE_LORA, etc.) for filtering. The mutex also protects shell suspend/resume (erasing and redrawing the input line around background output).
+- **Shell** (`util/shell.cpp/h`): Command-line processor with cursor editing, history, and tab completion. Commands are registered via `addCommand(name, func, fileArgs, subcommands)`. The `fileArgs` flag enables filename completion from LittleFS; `subcommands` is a NULL-terminated `const char*[]` for subcommand completion. Adding a new command with subcommands: define a static array and pass it at registration. See `commands.cpp` for examples.
 - **Params** (`set_basic_param` / `get_basic_param`): 16-slot integer array for passing values between main loop and scripting runtimes. Accessed via `GETPARAM(id)` in BASIC or `get_param(id)`/`set_param(id,val)` in WASM.
 - **Script loading** (`set_script_program`): Auto-detects `.bas` vs `.wasm` by extension, routes to the appropriate runtime's mutex-protected queue. Creates the interpreter task on first use (lazy initialization).
 

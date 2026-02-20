@@ -401,52 +401,56 @@ void setup()
   sensors_setup();
 
 
-  Serial.println( "\nConnecting to wifi..." );
-  
+  if (config.wifi_enabled) {
+    Serial.println( "\nConnecting to wifi..." );
 
-  // Generate DHCP hostname: use config.device_name if set, else ConeZ-nnnn from MAC.
-  WiFi.mode( WIFI_STA );
+    // Generate DHCP hostname: use config.device_name if set, else ConeZ-nnnn from MAC.
+    WiFi.mode( WIFI_STA );
 
-  char hostname[CONFIG_MAX_DEVICE_NAME];
-  if (config.device_name[0] != '\0')
-  {
-    strlcpy( hostname, config.device_name, sizeof(hostname) );
-  }
-  else
-  {
-    uint8_t mac[6];
-    esp_read_mac( mac, ESP_MAC_WIFI_STA );
-    sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
-  }
+    char hostname[CONFIG_MAX_DEVICE_NAME];
+    if (config.device_name[0] != '\0')
+    {
+      strlcpy( hostname, config.device_name, sizeof(hostname) );
+    }
+    else
+    {
+      uint8_t mac[6];
+      esp_read_mac( mac, ESP_MAC_WIFI_STA );
+      sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
+    }
 
-  WiFi.setHostname( hostname );              // must precede WiFi.begin()
+    WiFi.setHostname( hostname );              // must precede WiFi.begin()
 
-  Serial.print( "Hostname: " );
-  Serial.println( hostname );
+    Serial.print( "Hostname: " );
+    Serial.println( hostname );
 
-  WiFi.begin( config.wifi_ssid, config.wifi_password );
+    WiFi.begin( config.wifi_ssid, config.wifi_password );
 
-  unsigned long t_wifi_start = millis();
+    unsigned long t_wifi_start = millis();
 
-  while( WiFi.status() != WL_CONNECTED && millis() - t_wifi_start < WIFI_TIMEOUT * 1000 )
-  {
-    delay( 500 );
-    Serial.print( "." );
-  }
+    while( WiFi.status() != WL_CONNECTED && millis() - t_wifi_start < WIFI_TIMEOUT * 1000 )
+    {
+      delay( 500 );
+      Serial.print( "." );
+    }
 
-  if( WiFi.status() == WL_CONNECTED )
-  {
-    Serial.println( " Connected");
-    Serial.print( "IP address: " );
-    Serial.println( WiFi.localIP() );
+    if( WiFi.status() == WL_CONNECTED )
+    {
+      Serial.println( " Connected");
+      Serial.print( "IP address: " );
+      Serial.println( WiFi.localIP() );
 
-    // Start NTP time sync (provides time on all boards, fills in before GPS lock)
-    ntp_setup();
-  }
-  else
-  {
-    Serial.println("");
-    Serial.println("WiFi timed out");
+      // Start NTP time sync (provides time on all boards, fills in before GPS lock)
+      ntp_setup();
+    }
+    else
+    {
+      Serial.println("");
+      Serial.println("WiFi timed out");
+    }
+  } else {
+    Serial.println( "\nWiFi disabled" );
+    WiFi.mode( WIFI_OFF );
   }
 
   http_setup();

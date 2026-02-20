@@ -32,7 +32,9 @@ class ConezShell : public Stream {
          * @param f The command function that will be called when the command
          *   is entered into the shell.
          */
-        void addCommand(const __FlashStringHelper * name, CommandFunction f);
+        void addCommand(const __FlashStringHelper * name, CommandFunction f,
+                        bool fileArgs = false,
+                        const char * const *subcommands = NULL);
 
         void attach(Stream & shellSource);
 

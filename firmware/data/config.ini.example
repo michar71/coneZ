@@ -3,6 +3,7 @@
 ; Only include settings you want to override — missing keys use compiled defaults.
 
 [wifi]
+enabled=on
 ssid=RN-ConeZ
 password=conezconez
 

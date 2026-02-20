@@ -35,6 +35,7 @@ Sections and Keys
 -----------------
 
 [wifi]
+  enabled           Enable WiFi at boot            (default: on)
   ssid              WiFi network name              (default: RN-ConeZ)
   password          WiFi password                  (default: conezconez)
 

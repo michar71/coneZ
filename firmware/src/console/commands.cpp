@@ -1187,6 +1187,24 @@ int cmd_mqtt(int argc, char **argv)
 
 int cmd_wifi(int argc, char **argv)
 {
+    // wifi enable
+    if (argc >= 2 && !strcasecmp(argv[1], "enable")) {
+        config.wifi_enabled = true;
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(config.wifi_ssid, config.wifi_password);
+        printfnl(SOURCE_COMMANDS, F("WiFi enabled — connecting to \"%s\"\n"), config.wifi_ssid);
+        return 0;
+    }
+
+    // wifi disable
+    if (argc >= 2 && !strcasecmp(argv[1], "disable")) {
+        config.wifi_enabled = false;
+        WiFi.disconnect();
+        WiFi.mode(WIFI_OFF);
+        printfnl(SOURCE_COMMANDS, F("WiFi disabled\n"));
+        return 0;
+    }
+
     // wifi ssid <name>
     if (argc >= 3 && !strcasecmp(argv[1], "ssid")) {
         strlcpy(config.wifi_ssid, argv[2], CONFIG_MAX_SSID);
@@ -1220,6 +1238,7 @@ int cmd_wifi(int argc, char **argv)
     getLock();
     Stream *out = getStream();
     out->println("WiFi Status:");
+    out->printf("  Enabled:     %s\n", config.wifi_enabled ? "yes" : "no");
     out->printf("  Config SSID: %s\n", config.wifi_ssid);
     out->printf("  Status:      %s\n", status);
 
@@ -2556,53 +2575,56 @@ int cmd_sha256(int argc, char **argv)
 int cmd_help( int argc, char **argv )
 {
     printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  art                                 Is it art? (ANSI)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  cat {filename}                      Show file contents\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  clear                               Clear screen (ANSI)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  color [on|off]                      Show or toggle ANSI color\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  compile {file} [run]                Compile .bas or .c to .wasm\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]            Show or change settings\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  cp {source} {dest}                  Copy file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]        Cue timeline engine\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]     Show or set debug message types\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  deflate {file} [output] [level]     Compress file to gzip format\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  del|rm {filename}                   Delete file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  df                                  Show filesystem usage\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  dir [path]                          List files\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  edit {filename}                     Edit file (nano-like editor)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  game                                Waste time (ANSI)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  gpio [set|out|in|read]              Show or configure GPIO pins\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  gps                                 Show GPS status\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  grep {pattern} [file]               Search file contents\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  help                                Show this help\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  hexdump {file} [count]              Hex dump file (default 256 bytes)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  history                             Show command history\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  inflate {file} [output]             Decompress gzip/zlib/deflate file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  led                                 Show LED configuration\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  load {filename}                     Load program (.bas or .wasm)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  lora                                Show LoRa radio status\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  md5 {filename}                      Compute MD5 hash\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mem                                 Show heap memory stats\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mqtt [enable|disable|connect|...]   MQTT status or control\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mkdir {dirname}                     Create directory\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  param {arg1} {arg2}                 Set program arguments\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  ps                                  Show task list and stack watermarks\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  psram [test [forever]] [freq <MHz>] PSRAM status, test, or set clock\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  reboot                              Reboot the system\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  ren {oldname} {newname}             Rename file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  rmdir {dirname}                     Remove empty directory\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  run {filename}                      Run program (.bas or .wasm)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  sensors                             Show sensor readings\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  sha256 {filename}                   Compute SHA-256 hash\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  stop                                Stop running program\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  tc                                  Show thread count\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  time                                Show current date/time\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  uptime                              Show system uptime\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  version                             Show firmware version\n" ) );
-#ifdef INCLUDE_WASM
-    printfnl( SOURCE_COMMANDS, F( "  wasm [status|info <file>]           WASM runtime status/info\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  art                                Is it art? (ANSI)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  cat|list {file}                    Show file contents\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  clear|cls                          Clear screen (ANSI)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  color [on|off]                     Show/toggle ANSI color\n" ) );
+#if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
+    printfnl( SOURCE_COMMANDS, F( "  compile {file} [run]               Compile .bas/.c to .wasm\n" ) );
 #endif
-    printfnl( SOURCE_COMMANDS, F( "  wifi                                Show WiFi status\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]           Show or change settings\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  cp {src} {dst}                     Copy file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]       Cue timeline engine\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  debug [off|{source} [on|off]]      Show/set debug sources\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  deflate|gzip {file} [out] [level]  Compress to gzip\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  del|rm {file}                      Delete file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  df                                 Show filesystem usage\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  dir|ls [path]                      List files\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  edit {file}                        Edit file (nano-like)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  game                               Waste time (ANSI)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  gpio [set|out|in|read]             Show/configure GPIO pins\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  gps [info|set|save|restart|send]   GPS status or configure\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  grep {pattern} [file]              Search file contents\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  help|?                             Show this help\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  hexdump {file} [count]             Hex dump (default 256)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  history                            Show command history\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  inflate|gunzip {file} [output]     Decompress gzip/zlib\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  led [set|clear|count]              Show/set LED config\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  load {file}                        Receive file via serial\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  lora|radio [freq|power|bw|sf|...]  LoRa status or configure\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  md5|md5sum {file}                  Compute MD5 hash\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mem|free                           Show heap memory stats\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mkdir {dir}                        Create directory\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mqtt [enable|disable|connect|...]  MQTT status or control\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  mv|ren {old} {new}                 Rename/move file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  param {id} {value}                 Set script parameter\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  ps                                 Show tasks and stack usage\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  psram [test|freq|cache]            PSRAM status/diagnostics\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  reboot                             Reboot the system\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  rmdir {dir}                        Remove empty directory\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  run {file}                         Run script (.bas/.wasm)\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  sensors                            Show sensor readings\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  sha256|sha256sum {file}            Compute SHA-256 hash\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  stop                               Stop running script\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  time|date                          Show current date/time\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  uptime                             Show system uptime\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  version|ver                        Show firmware version\n" ) );
+#ifdef INCLUDE_WASM
+    printfnl( SOURCE_COMMANDS, F( "  wasm [status|info <file>]          WASM runtime status/info\n" ) );
+#endif
+    printfnl( SOURCE_COMMANDS, F( "  wifi [enable|disable|ssid|pass]    WiFi status or control\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  winamp                             Audio visualizer (ANSI)\n" ) );
     return 0;
 }
 
@@ -2833,6 +2855,26 @@ int cmd_compile(int argc, char **argv)
 }
 #endif /* INCLUDE_BASIC_COMPILER || INCLUDE_C_COMPILER */
 
+// Subcommand lists for tab completion (NULL-terminated, stored in .rodata)
+static const char * const subs_color[]  = { "on", "off", NULL };
+static const char * const subs_config[] = { "set", "unset", "reset", NULL };
+static const char * const subs_cue[]    = { "load", "start", "stop", "status", NULL };
+static const char * const subs_debug[]  = {
+    "off", "system", "basic", "wasm", "commands", "shell",
+    "gps", "gps_raw", "lora", "lora_raw", "wifi", "fsync",
+    "sensors", "mqtt", "other", NULL
+};
+static const char * const subs_gpio[]   = { "set", "out", "in", "read", NULL };
+static const char * const subs_gps[]    = { "info", "set", "save", "restart", "send", NULL };
+static const char * const subs_led[]    = { "set", "clear", "count", NULL };
+static const char * const subs_lora[]   = { "freq", "power", "bw", "sf", "cr", "mode",
+                                            "save", "restart", "send", NULL };
+static const char * const subs_mqtt[]   = { "broker", "port", "enable", "disable",
+                                            "connect", "disconnect", "pub", NULL };
+static const char * const subs_psram[]  = { "test", "freq", "cache", NULL };
+static const char * const subs_wasm[]   = { "status", "info", NULL };
+static const char * const subs_wifi[]   = { "enable", "disable", "ssid", "password", NULL };
+
 void init_commands(Stream *dev)
 {
     shell.attach(*dev);
@@ -2841,58 +2883,58 @@ void init_commands(Stream *dev)
     //Test Commands
     shell.addCommand(F("test"), test);
 
-    //file Sydstem commands
+    // Commands — fileArgs=true for filename completion, subcommands for subcommand completion
     shell.addCommand(F("?"), cmd_help);
     shell.addCommand(F("art"), cmd_art);
-    shell.addCommand(F("cat"), listFile);
+    shell.addCommand(F("cat"), listFile, true);
     shell.addCommand(F("clear"), cmd_clear);
     shell.addCommand(F("cls"), cmd_clear);
-    shell.addCommand(F("color"), cmd_color);
+    shell.addCommand(F("color"), cmd_color, false, subs_color);
 #if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
-    shell.addCommand(F("compile"), cmd_compile);
+    shell.addCommand(F("compile"), cmd_compile, true);
 #endif
-    shell.addCommand(F("config"), cmd_config);
-    shell.addCommand(F("cp"), cmd_cp);
-    shell.addCommand(F("cue"), cmd_cue);
-    shell.addCommand(F("debug"), cmd_debug );
-    shell.addCommand(F("del"), delFile);
+    shell.addCommand(F("config"), cmd_config, false, subs_config);
+    shell.addCommand(F("cp"), cmd_cp, true);
+    shell.addCommand(F("cue"), cmd_cue, false, subs_cue);
+    shell.addCommand(F("debug"), cmd_debug, false, subs_debug);
+    shell.addCommand(F("del"), delFile, true);
     shell.addCommand(F("df"), cmd_df);
-    shell.addCommand(F("dir"), listDir);
-    shell.addCommand(F("ls"), listDir);
-    shell.addCommand(F("edit"), cmd_edit);
-    shell.addCommand(F("mkdir"), cmd_mkdir);
-    shell.addCommand(F("game"), cmd_game);
-    shell.addCommand(F("gpio"), cmd_gpio);
-    shell.addCommand(F("gps"), cmd_gps);
-    shell.addCommand(F("grep"), cmd_grep);
-    shell.addCommand(F("help"), cmd_help);
-    shell.addCommand(F("hexdump"), cmd_hexdump);
-    shell.addCommand(F("deflate"), cmd_deflate);
-    shell.addCommand(F("gzip"), cmd_deflate);
-    shell.addCommand(F("inflate"), cmd_inflate);
-    shell.addCommand(F("gunzip"), cmd_inflate);
-    shell.addCommand(F("led"), cmd_led);
-    shell.addCommand(F("list"), listFile);
-    shell.addCommand(F("load"), loadFile);
-    shell.addCommand(F("lora"), cmd_lora);
-    shell.addCommand(F("radio"), cmd_lora);
-    shell.addCommand(F("md5"), cmd_md5);
-    shell.addCommand(F("md5sum"), cmd_md5);
+    shell.addCommand(F("deflate"), cmd_deflate, true);
+    shell.addCommand(F("dir"), listDir, true);
+    shell.addCommand(F("edit"), cmd_edit, true);
     shell.addCommand(F("free"), cmd_mem);
+    shell.addCommand(F("game"), cmd_game);
+    shell.addCommand(F("gpio"), cmd_gpio, false, subs_gpio);
+    shell.addCommand(F("gps"), cmd_gps, false, subs_gps);
+    shell.addCommand(F("grep"), cmd_grep, true);
+    shell.addCommand(F("gunzip"), cmd_inflate, true);
+    shell.addCommand(F("gzip"), cmd_deflate, true);
+    shell.addCommand(F("help"), cmd_help);
+    shell.addCommand(F("hexdump"), cmd_hexdump, true);
+    shell.addCommand(F("inflate"), cmd_inflate, true);
+    shell.addCommand(F("led"), cmd_led, false, subs_led);
+    shell.addCommand(F("list"), listFile, true);
+    shell.addCommand(F("load"), loadFile, true);
+    shell.addCommand(F("lora"), cmd_lora, false, subs_lora);
+    shell.addCommand(F("ls"), listDir, true);
+    shell.addCommand(F("md5"), cmd_md5, true);
+    shell.addCommand(F("md5sum"), cmd_md5, true);
     shell.addCommand(F("mem"), cmd_mem);
-    shell.addCommand(F("mqtt"), cmd_mqtt);
-    shell.addCommand(F("mv"), renFile);
+    shell.addCommand(F("mkdir"), cmd_mkdir, true);
+    shell.addCommand(F("mqtt"), cmd_mqtt, false, subs_mqtt);
+    shell.addCommand(F("mv"), renFile, true);
     shell.addCommand(F("param"), paramBasic);
     shell.addCommand(F("ps"), cmd_ps);
-    shell.addCommand(F("psram"), cmd_psram);
-    shell.addCommand(F("reboot"), cmd_reboot );
-    shell.addCommand(F("ren"), renFile);
-    shell.addCommand(F("rm"), delFile);
-    shell.addCommand(F("rmdir"), cmd_rmdir);
-    shell.addCommand(F("run"), runBasic);
+    shell.addCommand(F("psram"), cmd_psram, false, subs_psram);
+    shell.addCommand(F("radio"), cmd_lora, false, subs_lora);
+    shell.addCommand(F("reboot"), cmd_reboot);
+    shell.addCommand(F("ren"), renFile, true);
+    shell.addCommand(F("rm"), delFile, true);
+    shell.addCommand(F("rmdir"), cmd_rmdir, true);
+    shell.addCommand(F("run"), runBasic, true);
     shell.addCommand(F("sensors"), cmd_sensors);
-    shell.addCommand(F("sha256"), cmd_sha256);
-    shell.addCommand(F("sha256sum"), cmd_sha256);
+    shell.addCommand(F("sha256"), cmd_sha256, true);
+    shell.addCommand(F("sha256sum"), cmd_sha256, true);
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);
@@ -2900,10 +2942,10 @@ void init_commands(Stream *dev)
     shell.addCommand(F("uptime"), cmd_uptime);
     shell.addCommand(F("ver"), cmd_version);
     shell.addCommand(F("version"), cmd_version);
-    shell.addCommand(F("wifi"), cmd_wifi);
+    shell.addCommand(F("wifi"), cmd_wifi, false, subs_wifi);
     shell.addCommand(F("winamp"), cmd_winamp);
 #ifdef INCLUDE_WASM
-    shell.addCommand(F("wasm"), cmd_wasm);
+    shell.addCommand(F("wasm"), cmd_wasm, false, subs_wasm);
 #endif
 }
 

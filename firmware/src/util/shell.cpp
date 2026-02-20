@@ -43,8 +43,9 @@ ConezShell::Command * ConezShell::firstCommand = NULL;
  */
 class ConezShell::Command {
     public:
-        Command(const __FlashStringHelper * n, CommandFunction f):
-            nameAndDocs(n), myFunc(f) {};
+        Command(const __FlashStringHelper * n, CommandFunction f,
+                bool fa = false, const char * const *sc = NULL):
+            nameAndDocs(n), myFunc(f), fileArgs(fa), subcommands(sc) {};
 
         int execute(int argc, char **argv)
         {
@@ -98,6 +99,9 @@ class ConezShell::Command {
 
         const __FlashStringHelper * const nameAndDocs;
         const CommandFunction myFunc;
+    public:
+        const bool fileArgs;                  // true = tab-completes filenames from LittleFS
+        const char * const *subcommands;      // NULL-terminated list, or NULL
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -120,9 +124,10 @@ ConezShell::ConezShell()
 
 //////////////////////////////////////////////////////////////////////////////
 void ConezShell::addCommand(
-    const __FlashStringHelper * name, CommandFunction f)
+    const __FlashStringHelper * name, CommandFunction f,
+    bool fileArgs, const char * const *subcommands)
 {
-    auto * newCmd = new Command(name, f);
+    auto * newCmd = new Command(name, f, fileArgs, subcommands);
 
     // insert in list alphabetically
     Command* temp2 = firstCommand;
@@ -605,6 +610,27 @@ void ConezShell::tabComplete(void)
         }
     }
 
+    // For arguments (after first word), look up the command to decide
+    // whether to complete filenames, subcommands, or nothing.
+    const char * const *subcmds = NULL;
+    bool doFileComplete = false;
+    if (completingFile) {
+        char firstWord[32];
+        int fw = 0;
+        while (fw < cursor && fw < (int)sizeof(firstWord) - 1 && linebuffer[fw] != ' ')
+            firstWord[fw] = linebuffer[fw], fw++;
+        firstWord[fw] = '\0';
+
+        for (Command *cmd = firstCommand; cmd; cmd = cmd->next) {
+            if (cmd->compareName(firstWord) == 0) {
+                doFileComplete = cmd->fileArgs;
+                subcmds = cmd->subcommands;
+                break;
+            }
+        }
+        if (!doFileComplete && !subcmds) return;
+    }
+
     // Extract the prefix being completed
     int prefixLen = cursor - wordStart;
     char prefix[SHELL_BUFSIZE];
@@ -637,6 +663,18 @@ void ConezShell::tabComplete(void)
             }
         }
         releaseLock();
+    } else if (subcmds) {
+        // Subcommand completion — walk NULL-terminated list
+        for (int i = 0; subcmds[i] && nMatches < MAX_MATCHES; i++) {
+            int slen = strlen(subcmds[i]);
+            if (slen >= prefixLen && slen < MAX_NAME &&
+                strncasecmp(subcmds[i], prefix, prefixLen) == 0) {
+                memcpy(matches[nMatches].name, subcmds[i], slen + 1);
+                matches[nMatches].len = slen;
+                matches[nMatches].isDir = false;
+                nMatches++;
+            }
+        }
     } else {
         // Filename completion — split prefix into dir + partial name
         char dirPath[SHELL_BUFSIZE];

@@ -17,60 +17,70 @@ Up/Down arrows navigate command history (32 entries on PSRAM boards,
 1 entry on Heltec). Duplicate consecutive commands are suppressed.
 File paths are auto-normalized (/ prepended if missing).
 
+Tab completion: pressing Tab auto-completes the current word.
+  - First word: completes command names (case-insensitive).
+  - After a command that takes file arguments (run, edit, cat, cp,
+    etc.): completes filenames from LittleFS. Directories get a
+    trailing /. Paths with subdirectories work (e.g. run /scripts/h<TAB>).
+  - After a command that has subcommands (config, debug, psram, led,
+    lora, wifi, etc.): completes from the registered subcommand list.
+  - Single match: completes in-place with trailing space (or / for dirs).
+  - Multiple matches: inserts the longest common prefix. Press Tab again
+    to list all matches.
+  - No match: nothing happens.
+
 
 Quick Reference
 ---------------
+Aliases are shown with |. Tab completion works for all commands,
+filenames, and subcommands.
 
-  ?                                  Show help
-  art                                Display ANSI traffic cone art (requires ANSI)
-  cat {filename}                     Show file contents
-  clear / cls                        Clear screen (requires ANSI)
+  art                                Display ANSI traffic cone art (ANSI)
+  cat|list {file}                    Show file contents
+  clear|cls                          Clear screen (ANSI)
   color [on|off]                     Show or toggle ANSI color output
-  compile {file.bas} [run]           Compile BASIC to WASM on-device
+  compile {file} [run]               Compile .bas or .c to .wasm on-device
   config [set|unset|reset]           Show or change settings
   cp {src} {dst}                     Copy file
   cue [load|start|stop|status]       Cue timeline engine control
-  debug [off | {source} [on|off]]    Show or set debug message types
-  del {filename}                     Delete file
+  debug [off|{source} [on|off]]      Show or set debug message types
+  deflate|gzip {file} [out] [level]  Compress file to gzip format
+  del|rm {file}                      Delete file
   df                                 Show filesystem usage
-  dir [path]                         List files (optionally in subdirectory)
-  ls [path]                          Alias for dir
-  edit {filename}                    Text editor (line editor if ANSI off)
-  game                               Conway's Game of Life (requires ANSI)
+  dir|ls [path]                      List files
+  edit {file}                        Text editor (line editor if ANSI off)
+  game                               Conway's Game of Life (ANSI)
   gpio [set|out|in|read]             Show or control GPIO pins
   gps [info|set|save|restart|send]   Show GPS status or configure module
   grep {pattern} [file]              Search file contents (case-insensitive)
-  help                               Show help (same as ?)
-  hexdump {filename} [count]         Hex+ASCII dump of file (default 256 bytes)
+  help|?                             Show help
+  hexdump {file} [count]             Hex+ASCII dump of file (default 256 bytes)
   history                            Show command history
-  inflate {input} [output]           Decompress gzip/zlib/deflate file
-  gunzip {input} [output]            Alias for inflate
+  inflate|gunzip {file} [output]     Decompress gzip/zlib/deflate file
   led [set|clear|count]              Show/set LED configuration and colors
-  load {filename}                    Receive file via serial (CTRL+Z to end)
-  lora [freq|power|bw|sf|cr|mode]     Show LoRa status or set radio params
-  radio                                Alias for lora
-  free                               Show heap memory (alias for mem)
-  mem                                Show heap memory stats
-  mqtt [enable|disable|connect|...]  Show MQTT status or manage connection
+  load {file}                        Receive file via serial (CTRL+Z to end)
+  lora|radio [freq|power|bw|sf|...]  Show LoRa status or set radio params
+  md5|md5sum {file}                  Compute MD5 hash
+  mem|free                           Show heap memory stats
   mkdir {path}                       Create directory
-  mv {oldname} {newname}             Rename/move file (alias for ren)
+  mqtt [enable|disable|connect|...]  Show MQTT status or manage connection
+  mv|ren {old} {new}                 Rename/move file
   param {id} {value}                 Set script parameter
   ps                                 Show task list and stack watermarks
-  psram [cache|test|freq]             Show PSRAM status or run diagnostics
+  psram [test|freq|cache]            Show PSRAM status or run diagnostics
   reboot                             Reboot the device
-  ren {oldname} {newname}            Rename file
   rmdir {path}                       Remove empty directory
-  run {filename}                     Run script (.bas or .wasm)
+  run {file}                         Run script (.bas or .wasm)
   sensors                            Show sensor readings
+  sha256|sha256sum {file}            Compute SHA-256 hash
   stop                               Stop running script
   tc                                 Show thread count per core
-  time / date                        Show current date/time and source
+  time|date                          Show current date/time and source
   uptime                             Show system uptime
-  ver                                Show firmware version (alias for version)
-  version                            Show firmware version and board info
+  version|ver                        Show firmware version and board info
   wasm [status|info <file>]          WASM runtime status/info
-  wifi [ssid|password|pass|psk]      Show WiFi status / set credentials (hot-apply)
-  winamp                             Audio visualizer (requires ANSI)
+  wifi [enable|disable|ssid|password] Show WiFi status or control
+  winamp                             Audio visualizer (ANSI)
 
 
 Detailed Command Descriptions
@@ -517,8 +527,15 @@ wasm
       Example: wasm info /rgb_cycle.wasm
 
 wifi
-  Show WiFi status: configured SSID, connection state, connected SSID,
-  BSSID, channel, RSSI, IP/gateway/subnet/DNS, hostname, MAC, TX power.
+  Show WiFi status: enabled, configured SSID, connection state, connected
+  SSID, BSSID, channel, RSSI, IP/gateway/subnet/DNS, hostname, MAC, TX
+  power.
+
+  wifi enable
+      Enable WiFi and connect using the configured SSID/password.
+
+  wifi disable
+      Disable WiFi and turn off the radio.
 
   wifi ssid <name>
       Set the WiFi SSID and reconnect immediately. Not saved to flash;
@@ -529,6 +546,9 @@ wifi
   wifi psk <psk>
       Set the WiFi password and reconnect immediately. Not saved to
       flash; use "config set wifi.password <psk>" to persist.
+
+  Use "config set wifi.enabled on|off" to persist the enabled state
+  across reboots. WiFi is enabled by default.
 
 winamp
   Audio visualizer LED effect. Displays a retro-style equalizer on

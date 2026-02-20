@@ -25,6 +25,7 @@ typedef struct {
 
 static const cfg_descriptor_t cfg_table[] = {
     // [wifi]
+    CFG_ENTRY("wifi",   "enabled",      CFG_BOOL,  wifi_enabled),
     CFG_ENTRY("wifi",   "ssid",         CFG_STR,   wifi_ssid),
     CFG_ENTRY("wifi",   "password",     CFG_STR,   wifi_password),
     // [gps]
@@ -92,6 +93,7 @@ static const char *CONFIG_PATH = "/config.ini";
 // ---------- Helpers ----------
 static void config_fill_defaults(conez_config_t *cfg)
 {
+    cfg->wifi_enabled     = DEFAULT_WIFI_ENABLED;
     strlcpy(cfg->wifi_ssid,       DEFAULT_WIFI_SSID,      sizeof(cfg->wifi_ssid));
     strlcpy(cfg->wifi_password,   DEFAULT_WIFI_PASSWORD,  sizeof(cfg->wifi_password));
 
