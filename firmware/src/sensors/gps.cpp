@@ -195,6 +195,11 @@ int gps_setup()
 
 int gps_loop()
 {
+    // Buffer for raw NMEA debug output — flush complete lines via printfnl
+    // so suspendLine/resumeLine protect the shell prompt.
+    static char raw_buf[96];
+    static int  raw_pos = 0;
+
     // Any characters from the GPS waiting for us?
     while( GPSSerial.available() )
     {
@@ -202,10 +207,13 @@ int gps_loop()
 
         if( getDebug( SOURCE_GPS_RAW ) )
         {
-
-            getLock();
-            getStream()->write( ch );
-            releaseLock();
+            if (raw_pos < (int)sizeof(raw_buf) - 1)
+                raw_buf[raw_pos++] = ch;
+            if (ch == '\n' || raw_pos >= (int)sizeof(raw_buf) - 1) {
+                raw_buf[raw_pos] = '\0';
+                printfnl(SOURCE_GPS_RAW, "%s", raw_buf);
+                raw_pos = 0;
+            }
         }
 
         gps.encode( ch );
