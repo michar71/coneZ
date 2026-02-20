@@ -62,12 +62,13 @@ int inflate_stream(const uint8_t *in, size_t in_len,
     const uint8_t *deflate_data = detect_format(in, in_len, &data_len, &tinfl_flags);
     if (!deflate_data) return -1;
 
-    // Heap-allocate 32KB dictionary (can't use stack on ShellTask)
+    // Heap-allocate dictionary + decompressor (can't use stack on 8KB ShellTask)
     uint8_t *dict = (uint8_t *)malloc(TINFL_LZ_DICT_SIZE);
     if (!dict) return -1;
 
-    tinfl_decompressor decomp;
-    tinfl_init(&decomp);
+    tinfl_decompressor *decomp = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
+    if (!decomp) { free(dict); return -1; }
+    tinfl_init(decomp);
 
     const uint8_t *in_ptr = deflate_data;
     size_t in_remaining = data_len;
@@ -81,7 +82,7 @@ int inflate_stream(const uint8_t *in, size_t in_len,
         uint32_t flags = tinfl_flags;
         if (in_remaining > 0) flags |= TINFL_FLAG_HAS_MORE_INPUT;
 
-        tinfl_status status = tinfl_decompress(&decomp, in_ptr, &in_bytes,
+        tinfl_status status = tinfl_decompress(decomp, in_ptr, &in_bytes,
             dict, dict + dict_ofs, &out_bytes, flags);
 
         in_ptr += in_bytes;
@@ -97,6 +98,7 @@ int inflate_stream(const uint8_t *in, size_t in_len,
         if (status < 0) break;
     }
 
+    free(decomp);
     free(dict);
     return result;
 }
