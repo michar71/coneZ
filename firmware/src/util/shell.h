@@ -109,8 +109,10 @@ class ConezShell : public Stream {
         bool historyGet(int offset, char *buf);  // offset: 0=most recent, 1=previous...
 
         bool inputActive;   // true when prompt is visible and user may be typing
+        bool lastWasTab;    // true when previous keypress was tab (for double-tab)
 
         void redrawLine(int prevLen);  // redraw line after mid-line edit
+        void tabComplete(void);        // tab completion for commands and filenames
 
         class Command;
         static Command * firstCommand;

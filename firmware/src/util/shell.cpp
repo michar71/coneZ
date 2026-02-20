@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <LittleFS.h>
 #include "shell.h"
 #include "printManager.h"
 #include "psram.h"
@@ -76,6 +77,21 @@ class ConezShell::Command {
             releaseLock();
         }
 
+        // Extract just the command name (before space) into buf.
+        // Returns length of name (truncated to bufsz-1).
+        int getName(char *buf, int bufsz) const
+        {
+            const char *p = (const char *)nameAndDocs;
+            int i = 0;
+            while (i < bufsz - 1) {
+                char ch = pgm_read_byte(p + i);
+                if (ch == '\0' || ch == ' ') break;
+                buf[i++] = ch;
+            }
+            buf[i] = '\0';
+            return i;
+        };
+
         Command * next;
 
     private:
@@ -97,6 +113,7 @@ ConezShell::ConezShell()
     hist_write = 0;
     hist_nav = -1;
     inputActive = false;
+    lastWasTab = false;
 
     addCommand(F("history"), ConezShell::printHistory);
 };
@@ -316,6 +333,7 @@ bool ConezShell::prepInput(void)
         }
 
         // Normal character processing
+        if (c != 0x09) lastWasTab = false;  // reset on any non-tab key
         switch (c)
         {
             case 0x1B: // ESC
@@ -391,6 +409,12 @@ bool ConezShell::prepInput(void)
                 break;
 
             case '\n':
+                break;
+
+            case 0x09: // TAB — auto-complete
+                releaseLock();   // tabComplete does its own locking
+                tabComplete();
+                getLock();       // re-acquire for loop epilogue
                 break;
 
             default:
@@ -562,6 +586,202 @@ void ConezShell::resumeLine(Stream *out)
     out->write((const uint8_t*)linebuffer, inptr);
     // reposition cursor if not at end
     for (int i = cursor; i < inptr; i++) out->write('\b');
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Tab completion for commands (first word) and filenames (after space).
+// Called WITHOUT print_mutex held — acquires it internally as needed.
+void ConezShell::tabComplete(void)
+{
+    if (!shellConnection) return;
+
+    // Determine context: is there a space before cursor?
+    int wordStart = 0;
+    bool completingFile = false;
+    for (int i = 0; i < cursor; i++) {
+        if (linebuffer[i] == ' ') {
+            completingFile = true;
+            wordStart = i + 1;
+        }
+    }
+
+    // Extract the prefix being completed
+    int prefixLen = cursor - wordStart;
+    char prefix[SHELL_BUFSIZE];
+    memcpy(prefix, &linebuffer[wordStart], prefixLen);
+    prefix[prefixLen] = '\0';
+
+    // Match collection — fixed-size, no heap alloc
+    // LittleFS filenames max 31 chars; command names are short too
+    static const int MAX_MATCHES = 16;
+    static const int MAX_NAME = 32;
+    struct Match {
+        char name[MAX_NAME];
+        int len;
+        bool isDir;
+    };
+    Match matches[MAX_MATCHES];
+    int nMatches = 0;
+
+    if (!completingFile) {
+        // Command completion — walk the linked list
+        getLock();
+        for (Command *cmd = firstCommand; cmd && nMatches < MAX_MATCHES; cmd = cmd->next) {
+            char name[MAX_NAME];
+            int nlen = cmd->getName(name, sizeof(name));
+            if (nlen >= prefixLen && strncasecmp(name, prefix, prefixLen) == 0) {
+                memcpy(matches[nMatches].name, name, nlen + 1);
+                matches[nMatches].len = nlen;
+                matches[nMatches].isDir = false;
+                nMatches++;
+            }
+        }
+        releaseLock();
+    } else {
+        // Filename completion — split prefix into dir + partial name
+        char dirPath[SHELL_BUFSIZE];
+        const char *partial = prefix;
+        int partialLen = prefixLen;
+
+        // Find last '/' to split dir from partial
+        const char *lastSlash = NULL;
+        for (int i = 0; i < prefixLen; i++) {
+            if (prefix[i] == '/') lastSlash = &prefix[i];
+        }
+
+        if (lastSlash) {
+            int dirLen = lastSlash - prefix + 1;
+            memcpy(dirPath, prefix, dirLen);
+            dirPath[dirLen] = '\0';
+            partial = lastSlash + 1;
+            partialLen = prefixLen - dirLen;
+        } else {
+            strcpy(dirPath, "/");
+            // partial stays as full prefix
+        }
+
+        getLock();
+        File root = LittleFS.open(dirPath);
+        if (root && root.isDirectory()) {
+            File f = root.openNextFile();
+            while (f && nMatches < MAX_MATCHES) {
+                const char *fname = f.name();
+                int flen = strlen(fname);
+                bool isDir = f.isDirectory();
+                if (flen >= partialLen && flen < MAX_NAME &&
+                    strncasecmp(fname, partial, partialLen) == 0) {
+                    memcpy(matches[nMatches].name, fname, flen + 1);
+                    matches[nMatches].len = flen;
+                    matches[nMatches].isDir = isDir;
+                    nMatches++;
+                }
+                f = root.openNextFile();
+            }
+            root.close();
+        }
+        releaseLock();
+    }
+
+    if (nMatches == 0) {
+        lastWasTab = true;
+        return;
+    }
+
+    // Compute longest common prefix among matches
+    int commonLen = matches[0].len;
+    for (int i = 1; i < nMatches; i++) {
+        int j = 0;
+        while (j < commonLen && j < matches[i].len &&
+               tolower((unsigned char)matches[0].name[j]) ==
+               tolower((unsigned char)matches[i].name[j]))
+            j++;
+        commonLen = j;
+    }
+
+    // How many new characters can we insert?
+    // For files, the prefix being completed is just the partial filename part
+    int typedPartLen;
+    if (completingFile) {
+        // Partial is the portion after the last slash
+        const char *lastSlash = NULL;
+        for (int i = 0; i < prefixLen; i++) {
+            if (prefix[i] == '/') lastSlash = &prefix[i];
+        }
+        typedPartLen = lastSlash ? (prefixLen - (lastSlash - prefix + 1)) : prefixLen;
+    } else {
+        typedPartLen = prefixLen;
+    }
+
+    int extension = commonLen - typedPartLen;
+
+    if (extension > 0) {
+        // Insert the new characters into linebuffer at cursor
+        // Use the case from the match, not from what was typed
+        const char *src = &matches[0].name[typedPartLen];
+        int room = SHELL_BUFSIZE - 1 - inptr;
+        if (extension > room) extension = room;
+
+        getLock();
+        int prevLen = inptr;
+        // Make room if cursor is mid-line
+        if (cursor < inptr)
+            memmove(&linebuffer[cursor + extension], &linebuffer[cursor], inptr - cursor);
+        memcpy(&linebuffer[cursor], src, extension);
+        inptr += extension;
+        cursor += extension;
+        linebuffer[inptr] = '\0';
+
+        // If single match, append suffix
+        if (nMatches == 1) {
+            char suffix = completingFile ? (matches[0].isDir ? '/' : ' ') : ' ';
+            if (inptr < SHELL_BUFSIZE - 1) {
+                if (cursor < inptr)
+                    memmove(&linebuffer[cursor + 1], &linebuffer[cursor], inptr - cursor);
+                linebuffer[cursor] = suffix;
+                inptr++;
+                cursor++;
+                linebuffer[inptr] = '\0';
+            }
+        }
+
+        redrawLine(prevLen);
+        releaseLock();
+        lastWasTab = false;
+    } else if (nMatches == 1) {
+        // Exact match, just append suffix
+        getLock();
+        int prevLen = inptr;
+        char suffix = completingFile ? (matches[0].isDir ? '/' : ' ') : ' ';
+        if (inptr < SHELL_BUFSIZE - 1) {
+            if (cursor < inptr)
+                memmove(&linebuffer[cursor + 1], &linebuffer[cursor], inptr - cursor);
+            linebuffer[cursor] = suffix;
+            inptr++;
+            cursor++;
+            linebuffer[inptr] = '\0';
+            redrawLine(prevLen);
+        }
+        releaseLock();
+        lastWasTab = false;
+    } else if (lastWasTab) {
+        // Second tab — list all matches
+        getLock();
+        shellConnection->print(F("\r\n"));
+        for (int i = 0; i < nMatches; i++) {
+            shellConnection->print(matches[i].name);
+            if (matches[i].isDir) shellConnection->write('/');
+            shellConnection->print(F("  "));
+        }
+        shellConnection->print(F("\r\n"));
+        // Re-display prompt + current line
+        shellConnection->print(sh_prompt());
+        shellConnection->write((const uint8_t*)linebuffer, inptr);
+        for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
+        releaseLock();
+        lastWasTab = false;
+    } else {
+        lastWasTab = true;
+    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
