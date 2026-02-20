@@ -2,6 +2,7 @@
 
 #include "wasm_wrapper.h"
 #include "wasm_internal.h"
+#include "m3_env.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -79,6 +80,7 @@ static void wasm_run(const char *path)
 {
     wasm_running = true;
     wasm_stop_requested = false;
+    set_basic_param(0, 0);    // clear stale stop flag from previous 'stop' command
     yield_counter = 0;
     strlcpy(wasm_current_path, path, sizeof(wasm_current_path));
 
@@ -150,7 +152,9 @@ static void wasm_run(const char *path)
     // Load module into runtime (runtime takes ownership)
     result = m3_LoadModule(runtime, module);
     if (result) {
-        printfnl(SOURCE_WASM, "wasm: load error: %s\n", result);
+        u32 pages = module->memoryInfo.initPages;
+        printfnl(SOURCE_WASM, "wasm: load error: %s (module wants %u pages = %uKB)\n",
+                 result, pages, (unsigned)(pages * 64));
         m3_FreeModule(module);
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
@@ -324,14 +328,29 @@ void setup_wasm()
 
 bool set_wasm_program(const char *path)
 {
+    // Stop the currently running program and wait for it to finish
+    if (wasm_running) {
+        wasm_stop_requested = true;
+        set_basic_param(0, 1);
+        // Clear any previously queued path so it doesn't start between stop and new queue
+        if (xSemaphoreTake(wasm_mutex, 1000) == pdTRUE) {
+            next_wasm[0] = 0;
+            xSemaphoreGive(wasm_mutex);
+        }
+        while (wasm_running) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+
     if (xSemaphoreTake(wasm_mutex, 1000) == pdTRUE) {
         strncpy(next_wasm, path, sizeof(next_wasm) - 1);
         next_wasm[sizeof(next_wasm) - 1] = '\0';
         xSemaphoreGive(wasm_mutex);
 
         // Create task on first use
+        // Pin to core 1: HWCDC interrupt is on core 1 — cross-core Serial writes corrupt output
         if (wasm_task_handle == NULL)
-            xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
+            xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, 1);
 
         return true;
     }

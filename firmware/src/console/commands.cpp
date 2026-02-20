@@ -890,7 +890,7 @@ int runBasic(int argc, char **argv)
         char path[64];
         normalize_path(path, sizeof(path), argv[1]);
         if (false == set_script_program(path))
-          printfnl(SOURCE_COMMANDS, F("Script already running or unknown type\n") );
+          printfnl(SOURCE_COMMANDS, F("Unknown script type (use .bas or .wasm)\n") );
         return 0;
     }
 }
@@ -2566,7 +2566,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]        Cue timeline engine\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  debug [off | {source} [on|off]]     Show or set debug message types\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  deflate {file} [output] [level]     Compress file to gzip format\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  del {filename}                      Delete file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  del|rm {filename}                   Delete file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  df                                  Show filesystem usage\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  dir [path]                          List files\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  edit {filename}                     Edit file (nano-like editor)\n" ) );
@@ -2887,6 +2887,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("psram"), cmd_psram);
     shell.addCommand(F("reboot"), cmd_reboot );
     shell.addCommand(F("ren"), renFile);
+    shell.addCommand(F("rm"), delFile);
     shell.addCommand(F("rmdir"), cmd_rmdir);
     shell.addCommand(F("run"), runBasic);
     shell.addCommand(F("sensors"), cmd_sensors);

@@ -77,16 +77,16 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | ShellTask | 1 | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
 | led_render | 1 | 2 | 4096 | `led_task_fun` in `led/led.cpp` | Always running |
 | BasicTask | any | 1 | 16384 | `basic_task_fun` in `basic/basic_wrapper.cpp` | Created on first script |
-| WasmTask | any | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Created on first script |
+| WasmTask | 1 | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Created on first script |
 
 **Core 1 tasks:**
 - **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi/HTTP, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration.
 - **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
 - **led_render** — Calls `FastLED.show()` at ~30 FPS when dirty, at least 1/sec unconditionally. Priority 2 preempts both loopTask and ShellTask.
 
-**Unpinned tasks (created on first use, not at boot):**
+**Script tasks (created on first use, not at boot):**
 - **BasicTask** — BASIC interpreter. `tskNO_AFFINITY` — scheduler places on whichever core has bandwidth (typically core 0 since core 1 is busier).
-- **WasmTask** — WASM interpreter. Same as BasicTask.
+- **WasmTask** — WASM interpreter. Pinned to core 1 for HWCDC safety (prints status/error messages via `printfnl`).
 
 **Critical rules:**
 - After `setup()`, only `led_render` calls `FastLED.show()`. All other code writes to `leds1`-`leds4` and calls `led_show()` to set the dirty flag. During `setup()` only, `led_show_now()` may be used.
@@ -101,13 +101,15 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 **The fix:** Pin all tasks that write to Serial to core 1, the same core as the HWCDC interrupt. On a single core, the interrupt *preempts* the task (cleanly saving/restoring state) rather than *racing* it on a separate core. This is the model the FIFO hardware was designed for.
 
 **Mandatory constraints:**
-1. **ShellTask MUST be pinned to core 1** (`xTaskCreatePinnedToCore(..., 1)`) — same core as loopTask and the HWCDC interrupt handler. This is the primary fix for the corruption bug.
+1. **All tasks that write to Serial MUST be pinned to core 1** (`xTaskCreatePinnedToCore(..., 1)`) — same core as the HWCDC interrupt handler. Currently this includes ShellTask, WasmTask, loopTask, and led_render. BasicTask does not write to Serial directly (output goes through the BASIC runtime's print mechanism on ShellTask).
 2. **All Serial output after `setup()` must go through `printfnl()`** which holds `print_mutex`. Direct `Serial.print()` calls from any task will bypass the mutex and corrupt output.
 3. **DualStream and TelnetServer both override `write(const uint8_t*, size_t)`** for efficient bulk writes. The per-byte `write(uint8_t)` override still exists for compatibility.
 4. **ESP-IDF component logging is suppressed** via `esp_log_level_set("*", ESP_LOG_NONE)` before ShellTask creation. With `ARDUINO_USB_CDC_ON_BOOT=1`, ESP-IDF log output shares the same USB CDC and bypasses `print_mutex`.
 5. **Interactive apps** (editor, game) use `setInteractive(true)` which makes `printfnl()` return immediately without writing. The app then writes directly to the stream under `getLock()`/`releaseLock()`. This is safe because ShellTask is the only task writing to Serial at that point.
 
-**If you add a new FreeRTOS task that needs Serial output:** Route it through `printfnl()`. Never call `Serial.print()` directly. If the task must be on core 0 (e.g., for a peripheral interrupt), use `printfnl()` — it acquires the mutex, so the actual `Serial.write()` happens on whatever core the calling task is on. However, this means the HWCDC FIFO is being written from core 0 while its interrupt handler runs on core 1, which can trigger the corruption bug. If this becomes a problem, the next step is a FreeRTOS StreamBuffer to queue output and have a dedicated core 1 task drain it to Serial.
+**TODO — core 1 bottleneck:** Pinning every Serial-writing task to core 1 is the simplest HWCDC workaround but leaves core 0 underutilized while core 1 is crowded (loopTask + ShellTask + WasmTask + led_render). A better long-term solution would decouple Serial output from the writing task — e.g., a FreeRTOS StreamBuffer where any task on any core enqueues text, and a small dedicated core 1 task drains it to Serial. This would let WasmTask and BasicTask run on either core freely while keeping all actual HWCDC FIFO writes on core 1.
+
+**If you add a new FreeRTOS task that needs Serial output:** Pin it to core 1 and route output through `printfnl()`. Never call `Serial.print()` directly. Do not use `tskNO_AFFINITY` for tasks that produce Serial output — the HWCDC corruption bug makes cross-core writes unsafe regardless of mutexes.
 
 ### Thread Communication
 
@@ -129,7 +131,7 @@ New BASIC functions are added by: (1) defining the C function that manipulates t
 
 ### WASM Runtime
 
-WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build flag. Loads `.wasm` binaries from LittleFS and runs them on Core 0. Entry point conventions: `setup()` + `loop()` (Arduino-style, loop runs until stopped), or `_start()` / `main()` (single-shot).
+WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build flag. Loads `.wasm` binaries from LittleFS and runs them on WasmTask (core 1). Entry point conventions: `setup()` + `loop()` (Arduino-style, loop runs until stopped), or `_start()` / `main()` (single-shot).
 
 **Source files:** `wasm_wrapper.cpp/h` (state, m3_Yield, `wasm_run()`, FreeRTOS task, public API) dispatches to per-category import files via `wasm_internal.h`:
 
@@ -178,7 +180,7 @@ Option 2 — **clang** (full C, optimized output):
 cd tools/wasm
 clang --target=wasm32 -mbulk-memory -O2 -nostdlib \
   -Wl,--no-entry -Wl,--export=setup -Wl,--export=loop \
-  -Wl,--allow-undefined \
+  -Wl,--allow-undefined -Wl,-z,stack-size=256 \
   -I . -o module.wasm module.c
 llvm-strip module.wasm
 ```
@@ -211,7 +213,7 @@ make -j$(nproc)
 
 **Data directory:** `simulator/conez/data/` ships example scripts copied from `firmware/data/`. Auto-detected at startup relative to the binary; overridable with `--sandbox`. CLI commands (`dir`, `cat`, `del`, `ren`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`) and WASM file I/O operate in this directory. Bare filenames in `run` resolve here.
 
-**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`/`ls`, `del`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`/`date`, `uptime`, `ver`/`version`, `wasm`, `cue`, `mqtt`, `inflate`/`gunzip`, `deflate`/`gzip`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, radio, reboot, tc, wifi, winamp) are not available.
+**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`/`ls`, `del`/`rm`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`/`date`, `uptime`, `ver`/`version`, `wasm`, `cue`, `mqtt`, `inflate`/`gunzip`, `deflate`/`gzip`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, radio, reboot, tc, wifi, winamp) are not available.
 
 **Source layout:** `src/gui/` (LED strip, console, sensor panel widgets), `src/state/` (LED buffers, sensor mock, config, cue engine), `src/wasm/` (runtime + 12 import files mirroring firmware), `src/worker/` (QThread for WASM, embedded compilation), `src/compiler/` (single-TU wrappers for embedded bas2wasm and c2wasm). Vendored wasm3 in `thirdparty/wasm3/source/`. Example data in `data/`.
 

@@ -1,7 +1,8 @@
 CC      = clang
 STRIP   = $(or $(shell which llvm-strip 2>/dev/null),$(shell which wasm-strip 2>/dev/null),$(shell ls /usr/lib/llvm-*/bin/llvm-strip 2>/dev/null | tail -1))
 CFLAGS  = --target=wasm32 -mbulk-memory -O2 -nostdlib -I .
-LDFLAGS = -Wl,--no-entry -Wl,--export=setup -Wl,--export=loop -Wl,--allow-undefined
+LDFLAGS = -Wl,--no-entry -Wl,--export=setup -Wl,--export=loop -Wl,--allow-undefined \
+          -Wl,-z,stack-size=256
 
 C_EXAMPLES    = examples/rgb_cycle.wasm examples/hsv_rainbow.wasm examples/sos_flash.wasm
 RUST_EXAMPLES = examples/rust_rainbow.wasm examples/rust_rgb_cycle.wasm examples/rust_alloc_demo.wasm
