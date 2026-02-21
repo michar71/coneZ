@@ -288,7 +288,8 @@ void setup()
 
   Serial.println();
 
-  // Print firmware version and hardware banner
+  // Reset ANSI state and clear any leftover bootloader color, then print banner
+  Serial.print("\033[0m\r");
   {
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_app_desc_t desc;

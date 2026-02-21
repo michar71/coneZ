@@ -1,0 +1,145 @@
+ESP-IDF sdkconfig.defaults Options Review
+==========================================
+
+The project uses `framework = espidf, arduino` (espressif32@6.12.0 /
+ESP-IDF 4.4.7). Configuration overrides go in `firmware/sdkconfig.defaults`
+and are applied automatically by PlatformIO — no manual `menuconfig` needed.
+
+Current settings (firmware/sdkconfig.defaults):
+  CONFIG_COMPILER_OPTIMIZATION_SIZE=y              -Os (IDF defaults to -Og)
+  CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y           Stack canary overflow detection
+  CONFIG_LOG_DEFAULT_LEVEL_NONE=y                   Compile out all IDF log strings
+  CONFIG_BT_ENABLED=n                               Bluetooth explicitly disabled
+  CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y      ~8KB IRAM savings
+  CONFIG_FREERTOS_HZ=1000                           Required by Arduino
+  CONFIG_ESP_INT_WDT_TIMEOUT_MS=800                 Longer WDT for PSRAM SPI
+  CONFIG_ESP_TASK_WDT_TIMEOUT_S=10                  Longer WDT for WASM compiles
+  CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16        Halved from 32
+  CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=16        Halved from 32
+  CONFIG_LWIP_STATS=y                               LWIP protocol statistics
+  CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2920              Halved TCP send buffer
+  CONFIG_LWIP_TCP_WND_DEFAULT=2920                  Halved TCP receive window
+  CONFIG_PARTITION_TABLE_CUSTOM=y                   Use partitions.csv
+  CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+Build flag (not Kconfig):
+  -DMIB2_STATS=1                                   Per-interface byte counters
+
+Note: after changing sdkconfig.defaults, delete the generated
+sdkconfig.<env> files to force PlatformIO to regenerate them.
+PlatformIO only merges sdkconfig.defaults on first build.
+
+
+Remaining Options (not yet applied)
+------------------------------------
+
+Status key:  [?] = needs investigation/testing before enabling
+             [+] = straightforward, low risk
+             [-] = skip (not recommended for this project)
+
+
+### Performance / CPU
+
+[?] CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y
+    Default: 160 MHz. 240 MHz improves WASM execution, on-device
+    compilation, and general throughput. Costs ~50mA extra. Need to
+    verify PlatformIO's board_build.f_cpu doesn't conflict.
+
+[?] CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+    Default: DIO (2-bit reads). QIO uses 4-bit reads for faster code
+    fetch from flash. Both ESP32-S3 modules (ConeZ PCB, Heltec V3)
+    should support QIO. Need to verify board_build.flash_mode in
+    platformio.ini agrees. Wrong flash mode = boot failure.
+
+
+### WiFi / Networking — Feature Removal
+
+[+] CONFIG_ESP32_WIFI_SOFTAP_SUPPORT=n
+    Default: y. We never run as a SoftAP. Saves flash.
+
+[+] CONFIG_ESP32_WIFI_ENABLE_WPA3_SAE=n
+    Default: y. WPA2 is sufficient for our use. Saves flash
+    (mbedTLS SAE operations). Re-enable if connecting to WPA3 APs.
+
+[+] CONFIG_LWIP_DHCPS=n
+    Default: y. DHCP server only needed for SoftAP. Saves flash.
+
+[+] CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+    Default: no affinity. Pins the TCP/IP task to core 0, keeping
+    core 1 for ShellTask, WasmTask, loopTask, and led_render.
+    Matches the WiFi task which already defaults to core 0.
+
+
+### Blocked
+
+[X] CONFIG_LWIP_IPV6=n
+    Would save ~20KB flash + RAM. Blocked because Arduino's bundled
+    Ethernet library (ETH.cpp) has IPv6 code without #if LWIP_IPV6
+    guards. The library is pulled in as a transitive dependency even
+    though we don't use Ethernet hardware. lib_ignore doesn't fully
+    prevent it from compiling.
+
+
+### Development / Debugging (enable as needed)
+
+[-] CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+    Enables uxTaskGetSystemState() for detailed task info. We already
+    have a `ps` command. Enable temporarily for deeper debugging.
+
+[-] CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+    Per-task CPU usage percentages. Requires USE_TRACE_FACILITY.
+    Useful for profiling core 1 congestion.
+
+[-] CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+    Adds core ID to vTaskList() output. Useful for verifying task
+    pinning on dual-core S3.
+
+[-] CONFIG_HEAP_POISONING_LIGHT=y
+    Catches use-after-free by poisoning freed blocks. ~1% malloc
+    overhead. Enable when hunting heap corruption bugs.
+
+[-] CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS=y
+    Aborts on any malloc failure. Useful for catching unexpected OOM
+    during development. Not for production.
+
+[-] CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
+    Hardware watchpoint on stack end. Triggers debugger immediately
+    on stack overflow. Costs one HW watchpoint.
+
+
+### Not Recommended
+
+[-] CONFIG_PM_ENABLE=y
+    Power management (DFS, light sleep). Adds interrupt latency and
+    RTOS tick jitter. Bad for 1000Hz tick, GPS PPS timing, and the
+    portMUX spinlock patterns in the time system.
+
+[-] CONFIG_NEWLIB_NANO_FORMAT=y
+    Nano printf saves flash but drops %lld support. We use %lld for
+    64-bit epoch milliseconds. Do not enable.
+
+[-] CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+    Routes WiFi/LWIP buffers to PSRAM. Risky with our custom SPI
+    PSRAM driver — could cause subtle timing issues. Skip.
+
+[-] CONFIG_LWIP_IRAM_OPTIMIZATION=y
+    ~10% TCP/UDP throughput boost but costs ~10KB IRAM. Our MQTT/HTTP
+    traffic is too light to justify this.
+
+[-] CONFIG_ESP32_WIFI_STATIC_RX_BUFFER_NUM=8
+    Each static RX buffer is ~1.6KB. Reducing from 10 to 8 saves
+    ~3.2KB but risks packet drops under burst traffic. Leave at
+    default unless RAM is critically tight.
+
+
+### Per-Board Considerations
+
+The Heltec V3 (no PSRAM, less RAM) would benefit more from the
+buffer reductions and feature removals. ConeZ PCB (8MB PSRAM) has
+more headroom but benefits from the CPU/flash speed options.
+
+PlatformIO does not natively support per-environment sdkconfig.defaults
+files. If per-board tuning is needed later, options include:
+  - sdkconfig.defaults.esp32s3 (target-specific, applies to both)
+  - Separate sdkconfig files via board_build.cmake_extra_args
+  - Conditional -D flags in platformio.ini build_flags per env

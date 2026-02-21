@@ -79,16 +79,32 @@ pre-compiled Arduino SDK, giving us full control over ESP-IDF configuration.
 - `components/esp_littlefs/` — LittleFS filesystem component (v1.14.8 for IDF 4.4 compat)
 - `main.cpp` — provides `app_main()` entry point (calls `initArduino()`, creates loopTask)
 
-**sdkconfig.defaults** currently enables:
-- `CONFIG_LWIP_STATS=y` — LWIP protocol statistics (IP/TCP/UDP packet counters)
+**sdkconfig.defaults** currently sets:
+- `CONFIG_COMPILER_OPTIMIZATION_SIZE=y` — `-Os` (IDF defaults to `-Og`; matches stock Arduino SDK)
+- `CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y` — stack canary overflow detection
+- `CONFIG_LOG_DEFAULT_LEVEL_NONE=y` — compile out all IDF log strings from flash
+- `CONFIG_BT_ENABLED=n` — Bluetooth explicitly disabled
+- `CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y` — saves ~8KB IRAM
 - `CONFIG_FREERTOS_HZ=1000` — required by Arduino framework
+- `CONFIG_ESP_INT_WDT_TIMEOUT_MS=800` — longer interrupt WDT for PSRAM SPI transfers
+- `CONFIG_ESP_TASK_WDT_TIMEOUT_S=10` — longer task WDT for on-device compilation
+- `CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16` — halved from 32 (light MQTT/HTTP traffic)
+- `CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=16` — halved from 32
+- `CONFIG_LWIP_STATS=y` — LWIP protocol statistics (IP/TCP/UDP packet counters)
+- `CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2920` — halved TCP send buffer (2x MSS vs 4x)
+- `CONFIG_LWIP_TCP_WND_DEFAULT=2920` — halved TCP receive window
 - `CONFIG_PARTITION_TABLE_CUSTOM=y` — uses our `partitions.csv`
 
+Additional build flag (not Kconfig): `-DMIB2_STATS=1` enables per-interface byte
+counters on LWIP netif structs (`ifinoctets`/`ifoutoctets`).
+
+See `documentation/sdkconfig-options.txt` for a full review of available options
+including items considered but deferred (IPv6, SoftAP, WPA3, CPU freq, flash mode).
+
 **ESP-IDF component: esp_littlefs.** LittleFS is not built into ESP-IDF 4.4 — it's
-provided via `components/esp_littlefs/` (git submodule of joltwallet/esp_littlefs,
-checked out at v1.14.8). The CMakeLists.txt was modified to use explicit source
-file lists instead of `file(GLOB)` which PlatformIO's builder doesn't process
-correctly.
+provided via `components/esp_littlefs/` (vendored from joltwallet/esp_littlefs
+v1.14.8). The CMakeLists.txt was modified to use explicit source file lists instead
+of `file(GLOB)` which PlatformIO's builder doesn't process correctly.
 
 **Entry point:** We provide our own `extern "C" void app_main()` in `main.cpp`
 instead of using `CONFIG_AUTOSTART_ARDUINO`. This gives us direct control over
@@ -497,14 +513,12 @@ See `c_sharp/mayhem/readme.md` for quick-start instructions.
 
 `INCLUDE_BASIC_COMPILER` and `INCLUDE_C_COMPILER` control the embedded bas2wasm and c2wasm compilers (on-device .bas/.c → .wasm compilation). Both are enabled by default. The `compile` CLI command compiles `.bas` files to `.wasm` on the device; optionally auto-runs the result with `compile file.bas run`.
 
-**Build size (conez-v0-1, ESP32-S3, 327,680 RAM / 2,097,152 flash):**
+**Build size (conez-v0-1, ESP32-S3, 327,680 RAM / 2,097,152 flash, both compilers):**
 
-| Config | RAM | RAM % | Flash | Flash % |
-|--------|-----|-------|-------|---------|
-| No compilers | 215,860 | 65.9% | 1,131,929 | 54.0% |
-| bas2wasm only | 219,772 | 67.1% | 1,164,373 | 55.5% |
-| c2wasm only | 221,660 | 67.6% | 1,192,517 | 56.9% |
-| Both compilers | 225,572 | 68.8% | 1,224,281 | 58.4% |
+| Version | RAM | RAM % | Flash | Flash % |
+|---------|-----|-------|-------|---------|
+| v0.01.x (Arduino framework) | 225,572 | 68.8% | 1,224,281 | 58.4% |
+| v0.02.x (ESP-IDF + Arduino, `-Os`) | 127,260 | 38.8% | 1,105,237 | 52.7% |
 
 Both compilers use dynamic allocation — large arrays are heap-allocated during compilation and freed afterward, so their permanent RAM cost is minimal (bas2wasm ~3.9KB, c2wasm ~5.8KB). Import tables are `const` (flash-mapped). On boards with PSRAM, bas2wasm's `data_buf` (4KB) and `data_items` (4KB) are allocated via `psram_malloc()` instead of the DRAM heap, reducing transient DRAM usage from ~26KB to ~18KB during compilation. Access goes through `bw_psram_read()`/`bw_psram_write()` (page-cache-friendly sequential patterns). Controlled by `BAS2WASM_USE_PSRAM`, auto-set in the firmware embed wrapper when `BOARD_HAS_IMPROVISED_PSRAM` or `BOARD_HAS_NATIVE_PSRAM` is defined. On boards without PSRAM (Heltec), `psram_malloc()` falls back to the system heap transparently.
 

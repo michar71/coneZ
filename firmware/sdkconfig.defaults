@@ -1,8 +1,40 @@
-# LWIP statistics (disabled in stock Arduino-ESP32 SDK)
-CONFIG_LWIP_STATS=y
+# CPU at full speed (IDF defaults to 160 MHz; board JSON says 240)
+CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y
+
+# Flash in QIO mode (4-bit reads; IDF defaults to DIO; board JSON says qio)
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# Optimize for size (IDF defaults to -Og; Arduino SDK used -Os)
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Stack overflow detection (function prologue/epilogue canaries)
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
+
+# Suppress all ESP-IDF log strings at compile time
+# (runtime suppression via esp_log_level_set doesn't remove the strings from flash)
+CONFIG_LOG_DEFAULT_LEVEL_NONE=y
+
+# Bluetooth — not used, make it explicit
+CONFIG_BT_ENABLED=n
+
+# Move non-ISR FreeRTOS functions from IRAM to flash (~8KB savings)
+CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y
 
 # FreeRTOS tick rate — Arduino requires 1000 Hz
 CONFIG_FREERTOS_HZ=1000
+
+# Watchdog timers — longer timeouts for PSRAM SPI transfers and WASM compiles
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=800
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# WiFi — reduce buffer counts (MQTT/HTTP traffic, not high throughput)
+CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+
+# LWIP — enable statistics, reduce TCP buffers for light traffic
+CONFIG_LWIP_STATS=y
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2920
+CONFIG_LWIP_TCP_WND_DEFAULT=2920
 
 # Partition table — use custom CSV
 CONFIG_PARTITION_TABLE_CUSTOM=y
