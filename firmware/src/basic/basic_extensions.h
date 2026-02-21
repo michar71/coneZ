@@ -396,7 +396,7 @@ void updateLEDs()
 
 unsigned long getTimestamp()
 {
-    return millis(); //Return the current timestamp in milliseconds
+    return uptime_ms(); //Return the current timestamp in milliseconds
 }
 
 int gpsPresentHW()

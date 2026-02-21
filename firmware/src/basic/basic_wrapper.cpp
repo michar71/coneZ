@@ -274,13 +274,13 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 default:
                     break;
             }
-            long start = millis();
+            long start = uptime_ms();
             long deadline = start + duration_ms;
-            while (millis() < deadline)
+            while (uptime_ms() < deadline)
             {
                 vTaskDelay(pdMS_TO_TICKS(1));
                 inc_thread_count(xPortGetCoreID());
-                if (timeout_ms > 0 && (millis() - start) > timeout_ms)
+                if (timeout_ms > 0 && (uptime_ms() - start) > timeout_ms)
                 {
                     return 0; //Timeout
                 }
@@ -295,7 +295,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 return -1; //No GPS Signal
             }
             //Now we can wait for the PPS Pulse
-            long t = millis();
+            long t = uptime_ms();
             if (condition == CONDITON_LOW_TO_HIGH)
             {
                 // Use ISR flag for sub-ms rising edge detection
@@ -307,7 +307,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                     {
                         return 1; //PPS rising edge received
                     }
-                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    if (timeout_ms > 0 && (uptime_ms() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
@@ -321,14 +321,14 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 while (!get_pps_flag()) {
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    if (timeout_ms > 0 && (uptime_ms() - t) > timeout_ms)
                         return 0;
                 }
                 // Now poll for falling edge
                 while (get_pps()) {
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    if (timeout_ms > 0 && (uptime_ms() - t) > timeout_ms)
                         return 0;
                 }
                 return 1; //PPS falling edge received
@@ -341,13 +341,13 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
         }
         case EVENT_PARAM:
         {
-            long t = millis();
+            long t = uptime_ms();
             if (condition == CONDITON_LARGER)
             {
                 do{
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    if (timeout_ms > 0 && (uptime_ms() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
@@ -359,7 +359,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 do{
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    if (timeout_ms > 0 && (uptime_ms() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
@@ -371,7 +371,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 do{
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    if (timeout_ms > 0 && (uptime_ms() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }
@@ -383,7 +383,7 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 do{
                     vTaskDelay(pdMS_TO_TICKS(1));
                     inc_thread_count(xPortGetCoreID());
-                    if (timeout_ms > 0 && (millis() - t) > timeout_ms)
+                    if (timeout_ms > 0 && (uptime_ms() - t) > timeout_ms)
                     {
                         return 0; //Timeout
                     }

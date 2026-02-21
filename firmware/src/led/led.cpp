@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "main.h"
 #include "led.h"
 #include "config.h"
 
@@ -136,13 +137,13 @@ static void led_task_fun( void *param )
     for (;;)
     {
         vTaskDelay(pdMS_TO_TICKS(33));   // ~30 FPS
-        if (led_dirty || millis() - last_show >= 1000)
+        if (led_dirty || uptime_ms() - last_show >= 1000)
         {
             led_dirty = false;
             xSemaphoreTake(led_mutex, portMAX_DELAY);
             FastLED.show();
             xSemaphoreGive(led_mutex);
-            last_show = millis();
+            last_show = uptime_ms();
         }
     }
 }

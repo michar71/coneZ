@@ -12,16 +12,16 @@
 // Protected by spinlock for 64-bit coherency on 32-bit Xtensa
 static portMUX_TYPE time_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile uint64_t epoch_at_pps = 0;      // epoch ms at last PPS/NTP update
-static volatile uint32_t millis_at_pps = 0;     // millis() at that same moment
+static volatile uint32_t millis_at_pps = 0;     // uptime_ms() at that same moment
 static volatile bool     epoch_valid = false;
 static volatile uint8_t  time_source = 0;        // 0=none, 1=NTP, 2=GPS+PPS
-static volatile uint32_t ntp_last_sync = 0;      // millis() at last NTP sync (0=never)
+static volatile uint32_t ntp_last_sync = 0;      // uptime_ms() at last NTP sync (0=never)
 
 // --- SNTP sync callback (fires on LWIP thread when NTP syncs) ---
 static void ntp_sync_cb(struct timeval *tv)
 {
     uint64_t ep = (uint64_t)tv->tv_sec * 1000ULL + (uint64_t)(tv->tv_usec / 1000);
-    uint32_t now_m = millis();
+    uint32_t now_m = uptime_ms();
 
     // Compute drift from previous time estimate
     int64_t drift_ms = 0;
@@ -56,7 +56,7 @@ void time_seed_compile(void)
 
     portENTER_CRITICAL(&time_mux);
     epoch_at_pps = ep;
-    millis_at_pps = millis();
+    millis_at_pps = uptime_ms();
     epoch_valid = true;
     // time_source stays 0 — NTP (1) and GPS (2) will override
     portEXIT_CRITICAL(&time_mux);
@@ -92,12 +92,12 @@ volatile int gps_minute = 0;
 volatile int gps_second = 0;
 
 // --- PPS interrupt state ---
-static volatile uint32_t pps_millis = 0;     // millis() captured in ISR
+static volatile uint32_t pps_millis = 0;     // uptime_ms() captured in ISR
 static volatile uint32_t pps_count = 0;      // increments each PPS edge
 static volatile bool     pps_edge_flag = false; // rising-edge flag, clear-on-read
 
 static nmea_data_t nmea;
-static uint32_t nmea_last_update_ms = 0;     // millis() at last location commit
+static uint32_t nmea_last_update_ms = 0;     // uptime_ms() at last location commit
 static uint32_t nmea_last_update_count = 0;  // tracks nmea.update_count
 
 // Serial
@@ -108,7 +108,7 @@ HardwareSerial GPSSerial(0);
 static void IRAM_ATTR pps_isr(void *arg)
 {
     (void)arg;
-    pps_millis = millis();
+    pps_millis = uptime_ms();
     pps_count++;
     portENTER_CRITICAL_ISR(&time_mux);
     pps_edge_flag = true;
@@ -221,7 +221,7 @@ int gps_loop()
         if (nmea.update_count != nmea_last_update_count)
         {
             nmea_last_update_count = nmea.update_count;
-            nmea_last_update_ms = millis();
+            nmea_last_update_ms = uptime_ms();
 
             gps_lat = nmea.lat;
             gps_lon = nmea.lon;
@@ -265,7 +265,7 @@ int gps_loop()
     }
 
     // Clear fix validity when GPS data goes stale (>10s without update)
-    if (gps_pos_valid && (millis() - nmea_last_update_ms) > 10000) {
+    if (gps_pos_valid && (uptime_ms() - nmea_last_update_ms) > 10000) {
         gps_pos_valid = false;
     }
 
@@ -464,7 +464,7 @@ bool get_pps_flag(void)
 uint32_t get_pps_age_ms(void)
 {
     if (pps_count == 0) return UINT32_MAX;  // never received
-    return millis() - pps_millis;
+    return uptime_ms() - pps_millis;
 }
 
 uint32_t get_pps_count(void)
@@ -493,7 +493,7 @@ uint64_t get_epoch_ms(void)
 
     if (!valid) return 0;
 
-    uint32_t elapsed = millis() - mp;  // unsigned wraps correctly at 49 days
+    uint32_t elapsed = uptime_ms() - mp;  // unsigned wraps correctly at 49 days
     return ep + elapsed;
 }
 
@@ -530,7 +530,7 @@ void ntp_loop(void)
         portENTER_CRITICAL(&time_mux);
         uint32_t mp = millis_at_pps;
         portEXIT_CRITICAL(&time_mux);
-        if (millis() - mp < 10000) return;  // GPS still fresh
+        if (uptime_ms() - mp < 10000) return;  // GPS still fresh
         // GPS stale — downgrade so NTP can fill in
         portENTER_CRITICAL(&time_mux);
         time_source = 0;
@@ -539,8 +539,8 @@ void ntp_loop(void)
 
     // Rate limit: update once per second
     static uint32_t last_ntp_ms = 0;
-    if (millis() - last_ntp_ms < 1000) return;
-    last_ntp_ms = millis();
+    if (uptime_ms() - last_ntp_ms < 1000) return;
+    last_ntp_ms = uptime_ms();
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -564,7 +564,7 @@ void ntp_loop(void)
     }
 
     uint64_t ep = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
-    uint32_t now_m = millis();
+    uint32_t now_m = uptime_ms();
 
     portENTER_CRITICAL(&time_mux);
     epoch_at_pps = ep;
@@ -679,7 +679,7 @@ uint64_t get_epoch_ms(void)
 
     if (!valid) return 0;
 
-    uint32_t elapsed = millis() - mp;
+    uint32_t elapsed = uptime_ms() - mp;
     return ep + elapsed;
 }
 
@@ -712,8 +712,8 @@ void ntp_loop(void)
 
     // Rate limit: update once per second
     static uint32_t last_ntp_ms = 0;
-    if (millis() - last_ntp_ms < 1000) return;
-    last_ntp_ms = millis();
+    if (uptime_ms() - last_ntp_ms < 1000) return;
+    last_ntp_ms = uptime_ms();
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -722,7 +722,7 @@ void ntp_loop(void)
     if (tv.tv_sec < 1704067200L) return;  // 2024-01-01 00:00:00 UTC
 
     uint64_t ep = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
-    uint32_t now_m = millis();
+    uint32_t now_m = uptime_ms();
 
     portENTER_CRITICAL(&time_mux);
     epoch_at_pps = ep;

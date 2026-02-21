@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "main.h"
 #include "led.h"
 #include "util.h"
@@ -89,9 +91,9 @@ void SOS_effect(void)
         prev_sec = sec;
 
         //Wait Offset MS
-        delay((int)round(offset_ms));
+        vTaskDelay(pdMS_TO_TICKS((int)round(offset_ms)));
         printfnl(SOURCE_OTHER, "PING - sec = %d", sec);
-      
+
         //Flash Light
         for (int ii = 255; ii>=0; ii=ii-32)
         {
@@ -101,9 +103,9 @@ void SOS_effect(void)
           col.b = ii;
           led_set_channel(1, 50, col);
           led_show();
-          delay (20);
+          vTaskDelay(pdMS_TO_TICKS(20));
         }
-        delay(25);
+        vTaskDelay(pdMS_TO_TICKS(25));
         led_set_channel(1, 50, CRGB::Black);
         led_show();
       }
@@ -154,25 +156,25 @@ void SOS_effect2(void)
             printfnl(SOURCE_OTHER, "Offset %.2f", offset_ms);
             printfnl(SOURCE_OTHER, "sec = %d", sec);
 
-            target_ms = millis() + (unsigned long)round(offset_ms);
+            target_ms = uptime_ms() + (unsigned long)round(offset_ms);
             state = WAIT_OFFSET;
         }
         break;
     }
 
     case WAIT_OFFSET:
-        if (millis() >= target_ms)
+        if (uptime_ms() >= target_ms)
         {
             printfnl(SOURCE_OTHER, "PING - offset_ms = %.2f", offset_ms);
 
             step = 0;
-            target_ms = millis();
+            target_ms = uptime_ms();
             state = RAMP_UP;
         }
         break;
 
     case RAMP_UP: {
-        if (millis() < target_ms)
+        if (uptime_ms() < target_ms)
             break;
 
         // step 0..15 → brightness 0,16,32,...,240
@@ -185,7 +187,7 @@ void SOS_effect2(void)
         led_show();
 
         step++;
-        target_ms = millis() + 20;
+        target_ms = uptime_ms() + 20;
 
         if (step >= 16)
         {
@@ -196,7 +198,7 @@ void SOS_effect2(void)
     }
 
     case RAMP_DOWN: {
-        if (millis() < target_ms)
+        if (uptime_ms() < target_ms)
             break;
 
         // step 0..31 → brightness 255,247,239,...,7 (255 - step*8)
@@ -210,7 +212,7 @@ void SOS_effect2(void)
         led_show();
 
         step++;
-        target_ms = millis() + 20;
+        target_ms = uptime_ms() + 20;
 
         if (step >= 32)
         {
@@ -277,7 +279,7 @@ void CIRCLE_effect(void)
         prev_sec = sec;
 
         //Wait Offset MS
-        delay((int)round(offset_ms));
+        vTaskDelay(pdMS_TO_TICKS((int)round(offset_ms)));
         printfnl(SOURCE_OTHER, "PING - sec = %d", sec);
       
         int hue = (int)map(deg,0,360,0,255);
@@ -289,7 +291,7 @@ void CIRCLE_effect(void)
         col.setHSV(hue,255,255);
         led_set_channel(1, 50, col);
         led_show();
-        delay (20);
+        vTaskDelay(pdMS_TO_TICKS(20));
         //offset_cnt = offset_cnt + 5;
       }
 }

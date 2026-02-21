@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "esp_system.h"
+#include "main.h"
 #include "conez_mqtt.h"
 #include "config.h"
 #include "printManager.h"
@@ -264,10 +265,10 @@ static void handle_connack(const uint8_t *payload, uint32_t plen)
     }
 
     state = ST_CONNECTED;
-    connected_at_ms = millis();
+    connected_at_ms = uptime_ms();
     last_heartbeat_ms = 0;
-    last_pingreq_ms = millis();
-    last_pingresp_ms = millis();
+    last_pingreq_ms = uptime_ms();
+    last_pingresp_ms = uptime_ms();
     reconnect_delay_ms = MQTT_BACKOFF_INIT;
     user_disconnected = false;
 
@@ -359,7 +360,7 @@ static int parse_and_dispatch(void)
         handle_suback(payload, rem_len);
         break;
     case MQTT_PINGRESP:
-        last_pingresp_ms = millis();
+        last_pingresp_ms = uptime_ms();
         break;
     default:
         printfnl(SOURCE_MQTT, "Unknown packet type %d\n", pkt_type);
@@ -376,14 +377,14 @@ static void send_heartbeat(void)
     char payload[128];
     snprintf(payload, sizeof(payload),
              "{\"uptime\":%lu,\"heap\":%lu,\"temp\":%.1f,\"rssi\":%d}",
-             (unsigned long)(millis() / 1000),
+             (unsigned long)(uptime_ms() / 1000),
              (unsigned long)esp_get_free_heap_size(),
              getTemp(),
              WiFi.RSSI());
 
     int len = build_publish_buf(tx_buf, MQTT_BUF_SIZE, topic_status, payload, false);
     if (len > 0) mqtt_send(tx_buf, len);
-    last_heartbeat_ms = millis();
+    last_heartbeat_ms = uptime_ms();
 }
 
 // ---------- Read from TCP ----------
@@ -458,7 +459,7 @@ void mqtt_setup(void)
 
 void mqtt_loop(void)
 {
-    uint32_t now = millis();
+    uint32_t now = uptime_ms();
 
     // Handle force flags from ShellTask
     if (force_disconnect_flag) {
@@ -515,7 +516,7 @@ void mqtt_loop(void)
             return;
         }
         state = ST_WAIT_CONNACK;
-        last_attempt_ms = millis();
+        last_attempt_ms = uptime_ms();
         break;
     }
 
@@ -524,7 +525,7 @@ void mqtt_loop(void)
             printfnl(SOURCE_MQTT, "CONNACK timeout, disconnecting\n");
             tcp.stop();
             state = ST_DISCONNECTED;
-            last_attempt_ms = millis();
+            last_attempt_ms = uptime_ms();
             // Apply backoff
             if (reconnect_delay_ms < MQTT_BACKOFF_INIT)
                 reconnect_delay_ms = MQTT_BACKOFF_INIT;
@@ -598,7 +599,7 @@ const char *mqtt_state_str(void)
 uint32_t mqtt_uptime_sec(void)
 {
     if (state != ST_CONNECTED) return 0;
-    return (millis() - connected_at_ms) / 1000;
+    return (uptime_ms() - connected_at_ms) / 1000;
 }
 
 uint32_t mqtt_tx_count(void) { return s_tx_count; }

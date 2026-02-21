@@ -134,7 +134,7 @@ External libraries in `platformio.ini` `lib_deps`:
 
 | Library | Version | Arduino required? | Notes |
 |---------|---------|-------------------|-------|
-| RadioLib | ^7.6.0 | No (HAL-based) | Uses `RadioLibHal` abstraction. Ships a reference ESP-IDF HAL in `examples/NonArduino/ESP-IDF/`. Currently uses Arduino SPI/GPIO via `RADIOLIB_BUILD_ARDUINO`. |
+| RadioLib | ^7.6.0 | No (HAL-based) | Uses `RadioLibHal` abstraction. Custom `EspHal` class in `lora/lora_hal.h` — raw GPSPI3 register access for SPI, ESP-IDF `driver/gpio.h` for GPIO, `esp_timer` for timing. No Arduino dependency. |
 | FastLED | ^3.10.1 | No (optional) | `#ifdef ARDUINO` guards around `Arduino.h`. LED output uses direct ESP32 RMT registers (`platforms/esp/32/`), not Arduino GPIO. On IDF 4.4 uses RMT4 driver; I2S parallel driver requires IDF 5 (harmless warning at compile time). |
 | sunset | ^1.1.7 | No | Pure C++ math (`<cmath>`, `<ctime>`). Zero platform dependency. |
 | Wasm3 | ^0.5.0 | No | Pure C interpreter. Zero platform dependency. |
@@ -143,9 +143,9 @@ Local library in `lib/`:
 
 | Library | Arduino required? | Notes |
 |---------|-------------------|-------|
-| MPU9250_WE | Yes | Library supports both I2C and SPI, but ConeZ only uses I2C (`MPU6500_WE mpu(0x68)` — `TwoWire` constructor). Depends on Arduino `Wire`. Small enough to rewrite with `driver/i2c.h`. |
+| *(none)* | — | MPU9250_WE was removed; replaced by custom MPU6500 driver in `sensors/mpu6500.cpp`/`.h` using ESP-IDF `driver/i2c.h`. |
 
-**No library is a hard blocker for dropping Arduino.** RadioLib and FastLED have IDF-native code paths. Wasm3 and sunset are pure C/C++. MPU9250_WE is the only library that unconditionally requires Arduino, but it's small and local.
+**No library is a hard blocker for dropping Arduino.** RadioLib uses a custom ESP-IDF HAL (`lora_hal.h`). FastLED has IDF-native RMT code paths. Wasm3 and sunset are pure C/C++.
 
 ### Arduino Migration Path
 
@@ -153,22 +153,22 @@ The project currently uses `framework = espidf, arduino`. Arduino could be dropp
 entirely (`framework = espidf` only) — all Arduino APIs have direct ESP-IDF
 equivalents. This section documents the migration surface.
 
-**Remaining Arduino API usage across firmware (~370 call sites):**
+**Remaining Arduino API usage across firmware (~250 call sites):**
 
 | Arduino API | ~Count | Files | ESP-IDF Replacement | Status |
 |-------------|--------|-------|---------------------|--------|
 | Serial (print/read/write) | 135 | 9 | UART driver or USB CDC (`tinyusb`). HWCDC core-1 constraint remains. | Pending |
-| millis/delay/micros | 105 | 15 | `esp_timer_get_time()/1000`, `vTaskDelay(pdMS_TO_TICKS(ms))`, `esp_timer_get_time()` | Pending |
 | LittleFS / File | 77 | 15 | Already an IDF component (`esp_littlefs`). Switch to POSIX `open()`/`read()`/`write()`/`stat()`. | Pending |
-| SPI (SPIClass) | 56 | 2 | `driver/spi_master.h`. PSRAM code already uses direct `GPSPI2` register writes. | Pending |
-| GPIO (pinMode/digitalWrite) | 40 | 6 | `driver/gpio.h`, `gpio_set_level()`, `gpio_set_direction()` | Pending |
 | WiFi (WiFi.begin/status) | 39 | 6 | `esp_wifi.h` (already included alongside Arduino WiFi) | Pending |
+| EVERY_N_SECONDS | 1 | 1 | Simple `uptime_ms()` check or `esp_timer` periodic | Pending |
+| ~~millis/delay/micros~~ | ~~105~~ | — | `uptime_ms()`, `uptime_us()` in `main.h`; `vTaskDelay(pdMS_TO_TICKS(ms))`; `esp_timer_get_time()` | **Done** |
+| ~~SPI (SPIClass)~~ | ~~56~~ | — | Raw GPSPI2/GPSPI3 register access (`soc/spi_struct.h`). PSRAM uses hardware cmd/addr phases; LoRa uses custom `EspHal` RadioLib HAL in `lora/lora_hal.h`. | **Done** |
+| ~~GPIO (pinMode/digitalWrite)~~ | ~~40~~ | — | `driver/gpio.h`, `gpio_set_level()`, `gpio_set_direction()` | **Done** |
 | ~~WebServer~~ | ~~37~~ | — | `esp_http_server.h` (IDF built-in). URI-matching handlers with `httpd_req_t*`, runs in own FreeRTOS task (no polling). OTA uses raw binary POST via JavaScript `fetch()`. | **Done** |
-| Wire (I2C) | 10 | 2 | `driver/i2c.h` | Pending |
-| Update (OTA) | 8 | 1 | `esp_ota_ops.h` (already used for partition inspection) | Pending |
-| EVERY_N_SECONDS | 1 | 1 | Simple `millis()` check or `esp_timer` periodic | Pending |
 | ~~String class~~ | ~~26~~ | — | `snprintf()` + static char buffers with `page_cat`/`page_catf` helpers | **Done** |
 | ~~ESP.* helpers~~ | ~~13~~ | — | `esp_chip_info()`, `esp_get_free_heap_size()`, `heap_caps_get_total_size()`, `spi_flash_get_chip_size()`, `esp_clk_cpu_freq()`, `esp_spiram_get_size()`, `esp_restart()` | **Done** |
+| ~~Wire (I2C)~~ | ~~10~~ | — | `driver/i2c.h` — custom MPU6500 driver replaces MPU9250_WE library | **Done** |
+| ~~Update (OTA)~~ | ~~8~~ | — | `esp_ota_ops.h` + `esp_partition.h` (inline handlers in http.cpp) | **Done** |
 
 **Migration difficulty by subsystem:**
 
@@ -176,18 +176,17 @@ equivalents. This section documents the migration surface.
 |-----------|------------|--------|
 | String class | Easy | **Done** — static buffers with `page_cat`/`page_catf` in http.cpp, `cfg_cat`/`cfg_catf` in config.cpp, `snprintf` in lut.cpp, C string ops in shell.cpp, byte-array `readData` in lora.cpp |
 | ESP.* helpers | Easy | **Done** — direct IDF API calls |
-| GPIO, timing | Easy | Pending — 1:1 replacements, mechanical |
-| I2C (Wire) | Easy | Pending — only 2 files, `driver/i2c.h` is straightforward |
-| LittleFS | Easy | Pending — already an IDF component; swap `File` class for POSIX calls |
-| OTA (Update) | Easy | Pending — already wraps `esp_ota_*` which we already include |
-| WiFi | Medium | Pending — thin wrapper over `esp_wifi.h`, but event model differs |
-| SPI (PSRAM/LoRa) | Medium | Pending — PSRAM already uses direct registers; RadioLib needs custom HAL |
-| Serial/HWCDC | Medium | Pending — core debug path, must preserve core-1 pinning. Need `tinyusb` CDC or UART driver. |
+| GPIO, timing | Easy | **Done** — `driver/gpio.h` for GPIO; `uptime_ms()`/`uptime_us()` in `main.h` for timing; `vTaskDelay(pdMS_TO_TICKS())` for delay |
+| I2C (Wire) | Easy | **Done** — custom MPU6500 driver in `sensors/mpu6500.cpp` using `driver/i2c.h`, replacing MPU9250_WE library |
+| OTA (Update) | Easy | **Done** — `esp_ota_ops.h` + `esp_partition.h`, inline handlers in http.cpp |
+| SPI (PSRAM/LoRa) | Medium | **Done** — PSRAM uses raw GPSPI2 registers with hardware cmd/addr/dummy phases; LoRa uses custom `EspHal` RadioLib HAL with raw GPSPI3 registers (`lora/lora_hal.h`). See PSRAM section for performance analysis. |
 | WebServer | Hard | **Done** — `esp_http_server` with URI handlers, raw binary OTA upload, JS-driven form |
+| LittleFS | Easy | Pending — already an IDF component; swap `File` class for POSIX calls |
+| WiFi | Medium | Pending — thin wrapper over `esp_wifi.h`, but event model differs |
+| Serial/HWCDC | Medium | Pending — core debug path, must preserve core-1 pinning. Need `tinyusb` CDC or UART driver. |
 
-**In progress.** String class, ESP.* helpers, and WebServer are complete. All
-remaining replacements are mechanical (no architectural changes needed), but
-touching ~370 call sites across ~25 files makes it a multi-day effort.
+**In progress.** Three subsystems remain: Serial/HWCDC (~135 call sites), LittleFS (~77),
+and WiFi (~39). All remaining replacements are mechanical (no architectural changes needed).
 
 ## Architecture
 
@@ -595,10 +594,10 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 
 ### Key Hardware Interfaces
 
-- **LoRa:** RadioLib, SX1262/SX1268 via SPI, two modes selectable via `lora.rf_mode` config key. **LoRa mode** (default): configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW). **FSK mode**: configurable bit rate, frequency deviation, RX bandwidth, data shaping, whitening, sync word (hex string), CRC. Shared params (frequency, TX power, preamble) work in both modes. CLI `lora` subcommands (`freq`, `power`, `bw`, `sf`, `cr`, `mode`) hot-apply changes without saving to config; `config set lora.*` persists but requires reboot.
+- **LoRa:** RadioLib, SX1262/SX1268 via SPI (custom `EspHal` HAL in `lora/lora_hal.h` — raw GPSPI3 registers, ESP-IDF GPIO/timers, no Arduino dependency). Two modes selectable via `lora.rf_mode` config key. **LoRa mode** (default): configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW). **FSK mode**: configurable bit rate, frequency deviation, RX bandwidth, data shaping, whitening, sync word (hex string), CRC. Shared params (frequency, TX power, preamble) work in both modes. CLI `lora` subcommands (`freq`, `power`, `bw`, `sf`, `cr`, `mode`) hot-apply changes without saving to config; `config set lora.*` persists but requires reboot.
 - **GPS:** ATGM336H (AT6558 chipset) via UART (9600 baud), parsed by inline NMEA parser (`sensors/nmea.h`/`nmea.cpp` — pure C, no Arduino dependency), with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`). Parser handles RMC, GGA, and GSA sentences from any GNSS talker ID.
 - **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. Default boot color per channel configurable via `led.color1`–`color4` (hex 0xRRGGBB, default 0x000000/off). CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is mutex-protected against the render task. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
-- **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
+- **IMU:** MPU6500 on I2C 0x68 (custom driver in `sensors/mpu6500.cpp`/`.h` using `driver/i2c.h`)
 - **Temp:** TMP102 on I2C 0x48 (inline driver in `sensors/sensors.cpp` — reads register 0x00 via Wire)
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
 - **WiFi:** STA mode, SSID/password from config system. CLI `wifi ssid`/`wifi psk` hot-apply (disconnect + reconnect) without saving to config; `config set wifi.*` persists but requires reboot.
@@ -652,26 +651,35 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 
 **Hardware details (ConeZ PCB):** LY68L6400SLIT (Lyontek), 64Mbit/8MB, 23-bit address, SPI-only wiring (no quad), FSPI bus (SPI2) on GPIO 5/4/6/7 (CE/MISO/SCK/MOSI). These are **GPIO matrix** routed (not IOMUX), so the documented reliable max is 26 MHz; IOMUX pins (GPIO 10–13) would allow 80 MHz. Default boot clock: 40 MHz (APB/2). Read command auto-selects: slow read `0x03` (no wait, max 33 MHz) vs fast read `0x0B` (8 wait cycles, max 133 MHz). 8µs tCEM max per CE# assertion — driver chunks transfers to stay within budget. 1KB page size. Datasheet: `hardware/datasheets/LY68L6400SLIT.pdf`.
 
-**SPI clock and tCEM:** ESP32-S3 SPI clock = APB (80 MHz) / integer N. The driver computes the actual achieved frequency and sizes chunks accordingly. At low frequencies, the 4-byte command overhead (cmd + 3 addr) dominates — at 5 MHz only 1 byte of payload fits per tCEM window.
+**SPI driver architecture:** The PSRAM driver uses **raw GPSPI2 (SPI2/FSPI) register access** — no Arduino SPI library, no ESP-IDF SPI master driver. All SPI operations go through `soc/spi_struct.h` register writes. Key components in `psram.cpp`:
 
-**Runtime SPI clock changes (`psram freq`):** The Arduino SPI library's `beginTransaction()` acquires two locks that are never released (we own the FSPI bus exclusively and never call `endTransaction()`): the Arduino `paramLock` and the HAL-level `spi->lock`. Both are held by loopTask from `psram_setup()`. Since `psram freq` runs on ShellTask, it cannot use any Arduino SPI API — `setFrequency()`, `beginTransaction()`, `endTransaction()`, and even the HAL's `spiSetClockDiv()` all try to acquire one of these permanently-held locks, causing deadlock. The fix: `psram_change_freq()` writes the SPI2 clock register directly via `GPSPI2.clock.val` (from `soc/spi_struct.h`), computing the divider with `spiFrequencyToClockDiv()`. This bypasses all lock layers and is safe under `psram_mutex`. Note: `spiFrequencyToClockDiv()` and the `SPISettings` constructor compute the same dividers on this framework version; earlier ESP32 Arduino versions had a special-case APB/2 path in `SPISettings` that `spiFrequencyToClockDiv()` missed.
+- `spi2_init()` — enables SPI2 peripheral clock gate, configures mode 0 / MSB-first, routes pins via GPIO matrix (`esp_rom_gpio_connect_out_signal/in_signal`)
+- `spi_freq_to_clkdiv()` — computes ESP32-S3 clock divider register value (4-bit `clkdiv_pre` × 6-bit `clkcnt_n`)
+- `spi2_transfer()` — single-byte SPI with `spi2_set_bitlen` caching and `spi2_phases_dirty` cleanup
+- **Hardware command/address/dummy phases** — the SPI peripheral sends cmd+addr+dummy from dedicated registers (`user.usr_command`, `addr`, `user1.usr_dummy_cyclelen`), keeping the 64-byte FIFO exclusively for data. Data is copied directly between the caller's buffer and `data_buf[]` via `uint32_t*` word access (memcpy fallback for unaligned buffers). This eliminates all intermediate buffer copies.
 
-**Throughput benchmarks (ConeZ PCB v0.1, 8MB, `psram test`):**
+**tCEM chunking:** The LY68L6400 has an 8µs max CE# assertion time. The driver computes `psram_read_chunk` and `psram_write_chunk` based on frequency, accounting for command/address overhead, and caps at 64 bytes (FIFO capacity). At 80 MHz, the data chunk is capped at 64 bytes even though tCEM would allow 76, because cmd/addr are handled outside the FIFO. This is actually more tCEM-safe than the previous approach, which split 80-byte combined buffers across two FIFO loads with a CPU gap between them.
 
-Baseline measured with single-task architecture (shell in loopTask). Current numbers are ~15% lower due to ShellTask context-switching overhead and `printfnl` suspend/resume during progress output. Frequency scaling ratios are consistent between both.
+**Runtime SPI clock changes (`psram freq`):** `psram_change_freq()` writes the SPI2 clock register directly via `GPSPI2.clock.val`, computes the divider with `spi_freq_to_clkdiv()`, invalidates the bitlen cache, and is safe under `psram_mutex`.
 
-| Actual SPI Clock | Read KB/s | Write KB/s | Current Read | Current Write | Notes |
+**SPI migration performance analysis.** Four strategies were benchmarked during the Arduino SPI → raw register migration. All numbers from `psram test` on ConeZ PCB v0.1 (8MB LY68L6400SLIT):
+
+| Strategy | 40 MHz Write | 40 MHz Read | 80 MHz Write | 80 MHz Read | Notes |
 |---|---|---|---|---|---|
-| 5.00 MHz | 88 | 93 | | | 1 byte payload/chunk — overhead-dominated |
-| 6.67 MHz | 97 | 103 | | | |
-| 8.00 MHz | 346 | 374 | | | |
-| 10.00 MHz | 498 | 545 | | | |
-| 13.33 MHz | 705 | 786 | | | |
-| 16.00 MHz | 917 | 1,030 | | | |
-| 20.00 MHz | 1,233 | 1,414 | | | |
-| 26.67 MHz | 1,603 | 1,893 | | | Max documented for GPIO matrix routing |
-| 40.00 MHz | 2,216 | 2,800 | | | Default boot clock (APB/2) |
-| 80.00 MHz | 3,327 | 4,534 | 2,830 | 3,855 | APB/1 — requires IOMUX pins for reliability |
+| Arduino `SPIClass` (baseline) | 2,800 | 2,216 | 4,534 | 3,327 | Arduino NL (no-lock) variant with `_inTransaction=true` |
+| 1. Raw registers + combined buffer | 2,150 | 1,608 | 3,252 | 2,254 | cmd+addr+data in one tx[] array, byte-by-byte FIFO packing |
+| 2. + memcpy packing + bitlen cache | 2,334 | 1,828 | 3,670 | 2,662 | `memcpy` to `uint32_t buf[16]` for FIFO pack/unpack; skip `cmd.update` when `ms_dlen` unchanged |
+| 3. + direct `uint32_t*` FIFO access | 2,395 | 1,922 | 3,837 | 2,852 | Aligned buffers bypass intermediate buf[16]; `__attribute__((aligned(4)))` on stack arrays |
+| **4. Hardware cmd/addr phases (final)** | **2,407** | **1,999** | **4,214** | **3,338** | SPI peripheral handles cmd+addr+dummy from registers; FIFO is data-only; zero intermediate buffers |
+
+Key lessons: (a) ESP32-S3 requires `cmd.update` before `cmd.usr` whenever `ms_dlen` changes — removing it causes PSRAM to return MF=0x00 KGD=0x00 even on fresh power-up. (b) `clk_gate.clk_en/mst_clk_active/mst_clk_sel` must be enabled before any SPI operation — ESP32-S3 specific, not needed on ESP32. (c) The biggest win came from eliminating intermediate buffer copies via hardware phases, not from micro-optimizing the FIFO packing loop. (d) At 80 MHz, hardware phases actually fix a tCEM compliance issue — the old two-FIFO-load approach pushed CE# time slightly past 8µs.
+
+**Throughput benchmarks (ConeZ PCB v0.1, 8MB, `psram test`, hardware SPI phases):**
+
+| Actual SPI Clock | Read KB/s | Write KB/s | Notes |
+|---|---|---|---|
+| 40.00 MHz | 1,999 | 2,407 | Default boot clock (APB/2) |
+| 80.00 MHz | 3,338 | 4,214 | APB/1 — requires IOMUX pins for reliability |
 
 ### Configuration
 

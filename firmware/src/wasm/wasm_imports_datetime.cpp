@@ -16,18 +16,18 @@ m3ApiRawFunction(m3_get_epoch_ms)
     m3ApiReturn((int64_t)get_epoch_ms());
 }
 
-// i32 millis_()  - renamed to avoid collision with Arduino millis()
+// i32 millis_()  - renamed to avoid collision with Arduino uptime_ms()
 m3ApiRawFunction(m3_millis)
 {
     m3ApiReturnType(int32_t);
-    m3ApiReturn((int32_t)millis());
+    m3ApiReturn((int32_t)uptime_ms());
 }
 
 // I64 millis64()
 m3ApiRawFunction(m3_millis64)
 {
     m3ApiReturnType(int64_t);
-    m3ApiReturn((int64_t)millis());
+    m3ApiReturn((int64_t)uptime_ms());
 }
 
 // void delay_ms(i32 ms) — yields to FreeRTOS
@@ -87,7 +87,7 @@ m3ApiRawFunction(m3_time_valid) {
 // I64 get_uptime_ms()
 m3ApiRawFunction(m3_get_uptime_ms) {
     m3ApiReturnType(int64_t);
-    m3ApiReturn((int64_t)millis());
+    m3ApiReturn((int64_t)uptime_ms());
 }
 
 // I64 get_last_comm_ms()

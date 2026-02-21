@@ -1,14 +1,12 @@
 #include "sensors.h"
 #include <Arduino.h>
-#include <Wire.h>
-#include <MPU6500_WE.h>
 #include "driver/i2c.h"
 #include "board.h"
 #include "printManager.h"
+#include "mpu6500.h"
+#include <math.h>
 
-#define MPU6500_ADDR 0x68
 #define TMP102_ADDR 0x48
-MPU6500_WE mpu(MPU6500_ADDR);
 
 // TMP102 temperature read — inlined from abandoned yannicked/Sensor_TMP102 library.
 // Datasheet: http://www.ti.com/lit/ds/symlink/tmp102.pdf
@@ -37,9 +35,6 @@ static float tmp102_read(void) {
 
 // Marked volatile for cross-core visibility (Core 1 writes, Core 0 reads).
 volatile float temperature = -500;
-xyzFloat gValue;
-xyzFloat gyr;
-xyzFloat angle;
 volatile float mpu_temp;
 volatile float resultantG = 0;
 
@@ -55,30 +50,23 @@ void sensors_setup(void)
 {
     Serial.println("TMP102 initialized");
 
-    if(!mpu.init())
+    if(!mpu6500_init())
     {
         Serial.println("MPU6500 does not respond");
     }
     else
     {
         Serial.println("MPU6500 is connected");
-        mpu.enableGyrDLPF();
-        mpu.setGyrDLPF(MPU6500_DLPF_6);
-        mpu.setSampleRateDivider(5);
-        mpu.setGyrRange(MPU6500_GYRO_RANGE_250);
-        mpu.setAccRange(MPU6500_ACC_RANGE_2G);
-        mpu.enableAccDLPF(true);
-        mpu.setAccDLPF(MPU6500_DLPF_6);
         IMU_available = true;
     }
 
     //Setup ADC's
-    
+
     sensors_loop();
 
     Serial.printf("TMP102 Temperature: %.2f C\n", temperature);
-    Serial.printf("MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f\n", gValue.x, gValue.y, gValue.z);
-    if (gValue.z < 0.5) {
+    Serial.printf("MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f\n", v_accX, v_accY, v_accZ);
+    if (v_accZ < 0.5) {
         Serial.println("Looks like we are in space, not on earth...");
     } else {
         Serial.println("Seems we are on earth and upright, not in space...");
@@ -90,22 +78,19 @@ void sensors_loop(void)
 {
     // Read temperature from TMP102
     temperature = tmp102_read();
-    //printfnl(SOURCE_SENSORS, "TMP102 Temperature: %.2f C", temperature);
 
     // Read accelerometer data from MPU6500
     if (IMU_available) {
-        gValue = mpu.getGValues();
-        gyr = mpu.getGyrValues();
-        mpu_temp = mpu.getTemperature();
-        angle = mpu.getAngles();
-        resultantG = mpu.getResultantG(gValue);
+        mpu6500_read();
+        mpu_vec3_t acc = mpu6500_accel();
+        mpu_temp = mpu6500_temp();
+        resultantG = sqrtf(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
 
         // Cache volatile copies for cross-core reads
-        v_accX = gValue.x;
-        v_accY = gValue.y;
-        v_accZ = gValue.z;
+        v_accX = acc.x;
+        v_accY = acc.y;
+        v_accZ = acc.z;
     }
-    //printfnl(SOURCE_SENSORS, "MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f", accX, accY, accZ);
 
     //Read ADC's
     adc_bat_mv = analogReadMilliVolts(ADC_BAT_PIN);
@@ -162,7 +147,7 @@ bool imuAvailable(void)
 
 bool MPU_Calibrate(void)
 {
-    mpu.autoOffsets();
+    mpu6500_calibrate();
     printfnl(SOURCE_SENSORS,"MPU6500 calibration done");
     return true;
 }

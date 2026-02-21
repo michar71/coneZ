@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "driver/gpio.h"
 #include "main.h"
 #include "util.h"
@@ -15,14 +17,14 @@ void blinkloop( int flashes )
     for( i = 0; i < flashes; ++i )
     {
       gpio_set_level( (gpio_num_t)LED_PIN, 1 );
-      delay( 250 );
+      vTaskDelay(pdMS_TO_TICKS(250));
       gpio_set_level( (gpio_num_t)LED_PIN, 0 );
-      delay( 250 );
+      vTaskDelay(pdMS_TO_TICKS(250));
     }
 
     gpio_set_level( (gpio_num_t)LED_PIN, 0 );
 
-    delay( 1000 );
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     Serial.print( "." );
   }

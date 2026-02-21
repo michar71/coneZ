@@ -3,6 +3,7 @@
 #include "conez_mqtt.h"
 #include "config.h"
 #include "psram.h"
+#include "main.h"
 #include <LittleFS.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -37,7 +38,7 @@ void print_ts(void)
 {
     // Print the timestamp if enabled (decimal seconds)
     if (ts) {
-        unsigned long ms = millis();
+        unsigned long ms = uptime_ms();
         char ts_buf[16];
         snprintf(ts_buf, sizeof(ts_buf), "%lu.%03lu", ms / 1000, ms % 1000);
         if (ansi_enabled) {
@@ -138,7 +139,7 @@ void vprintfnl( source_e source, const char *format, va_list args )
                           && !(debug & SOURCE_COMMANDS);
     if (sink_tag && !commands_gated) {
         char sink_buf[max_txt + 32];
-        unsigned long ms = millis();
+        unsigned long ms = uptime_ms();
         snprintf(sink_buf, sizeof(sink_buf), "[%lu.%03lu] [%s] %s", ms / 1000, ms % 1000, sink_tag, buf);
         // Strip ANSI escape sequences in-place
         char *r = sink_buf, *w = sink_buf;

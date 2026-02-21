@@ -273,7 +273,7 @@ int test(int argc, char **argv)
 int cmd_reboot( int argc, char **argv )
 {
     printfnl( SOURCE_SYSTEM, "Rebooting...\n" );
-    delay( 1000 );
+    vTaskDelay(pdMS_TO_TICKS(1000));
     esp_restart();
 
     return 0;
@@ -1211,7 +1211,7 @@ int cmd_status(int argc, char **argv)
         proj = desc.project_name;
     }
 
-    unsigned long ms = millis();
+    unsigned long ms = uptime_ms();
     unsigned long totalSec = ms / 1000;
     unsigned int days  = totalSec / 86400;
     unsigned int hours = (totalSec % 86400) / 3600;
@@ -1526,7 +1526,7 @@ static volatile uint32_t wifi_connected_since = 0;
 static void wifi_event_cb(arduino_event_id_t event)
 {
     if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED)
-        wifi_connected_since = millis();
+        wifi_connected_since = uptime_ms();
     else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
         wifi_connected_since = 0;
 }
@@ -1600,7 +1600,7 @@ int cmd_wifi(int argc, char **argv)
         out->printf("  Hostname:    %s\n", WiFi.getHostname());
         uint32_t since = wifi_connected_since;
         if (since) {
-            unsigned long sec = (millis() - since) / 1000;
+            unsigned long sec = (uptime_ms() - since) / 1000;
             out->printf("  Connected:   %lud %02luh %02lum %02lus\n",
                 sec / 86400, (sec % 86400) / 3600, (sec % 3600) / 60, sec % 60);
         }
@@ -2398,7 +2398,7 @@ int cmd_time(int argc, char **argv)
     // NTP line with sync age
     uint32_t ntp_sync = get_ntp_last_sync_ms();
     if (ntp_sync) {
-        unsigned long ago = (millis() - ntp_sync) / 1000;
+        unsigned long ago = (uptime_ms() - ntp_sync) / 1000;
         printfnl(SOURCE_COMMANDS, "NTP:    %s  (synced %lus ago)\n", config.ntp_server, ago);
     } else {
         printfnl(SOURCE_COMMANDS, "NTP:    %s  (never synced)\n", config.ntp_server);
@@ -2409,7 +2409,7 @@ int cmd_time(int argc, char **argv)
 #endif
 
     // Uptime
-    unsigned long ms = millis();
+    unsigned long ms = uptime_ms();
     unsigned long totalSec = ms / 1000;
     unsigned int days  = totalSec / 86400;
     unsigned int hours = (totalSec % 86400) / 3600;
@@ -2631,7 +2631,7 @@ int cmd_winamp(int argc, char **argv)
 
     const int song_len = 213;  // 3:33
     int elapsed = 0;
-    unsigned long last_sec = millis();
+    unsigned long last_sec = uptime_ms();
 
     getLock();
     Stream *out = getStream();
@@ -2640,7 +2640,7 @@ int cmd_winamp(int argc, char **argv)
 
     for (;;) {
         // Advance clock
-        if (millis() - last_sec >= 1000) {
+        if (uptime_ms() - last_sec >= 1000) {
             last_sec += 1000;
             elapsed++;
             if (elapsed >= song_len) elapsed = 0;

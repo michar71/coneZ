@@ -6,7 +6,6 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "driver/i2c.h"
-#include <Wire.h>
 #include "main.h"
 #include <WiFi.h>
 #include "esp_system.h"
@@ -154,13 +153,13 @@ static void blink_leds(CRGB col)
 {
     leds1[0] = CRGB::Black;
     led_show_now();
-    delay(300);
+    vTaskDelay(pdMS_TO_TICKS(300));
     leds1[0] = col;
     led_show_now();
-    delay(500);
+    vTaskDelay(pdMS_TO_TICKS(500));
     leds1[0] = CRGB::Black;
     led_show_now();
-    delay(300);
+    vTaskDelay(pdMS_TO_TICKS(300));
 }
 #endif
 
@@ -269,9 +268,9 @@ void setup()
   gpio_set_level( (gpio_num_t)SOLAR_PWM_PIN, 1 );
 #endif
 
-  delay( 250 );
+  vTaskDelay(pdMS_TO_TICKS(250));
 
-  delay(1000);
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
 #ifdef BOARD_HAS_BUZZER
   //Buzzer Setup
@@ -281,9 +280,9 @@ void setup()
   // LED pin
   gpio_set_direction( (gpio_num_t)LED_PIN, GPIO_MODE_OUTPUT );
   gpio_set_level( (gpio_num_t)LED_PIN, 0 );
-  delay( 500 );
+  vTaskDelay(pdMS_TO_TICKS(500));
   gpio_set_level( (gpio_num_t)LED_PIN, 1 );
-  delay( 500 );
+  vTaskDelay(pdMS_TO_TICKS(500));
   gpio_set_level( (gpio_num_t)LED_PIN, 0 );
 
 
@@ -291,12 +290,12 @@ void setup()
 
   //WAIT FOR SERIAL USB PORT TO CONNECXT BEOFRE CONTINUING
   #ifdef WAIT_FOR_USB_SERIAL
-    unsigned long t_start = millis();
+    unsigned long t_start = uptime_ms();
 
     while (!Serial)
     {
       #ifdef WAIT_FOR_USB_SERIAL_TIMEOUT
-        if( millis() - t_start > WAIT_FOR_USB_SERIAL_TIMEOUT * 1000 )
+        if( uptime_ms() - t_start > WAIT_FOR_USB_SERIAL_TIMEOUT * 1000 )
           break;
       #endif
     }
@@ -357,7 +356,7 @@ void setup()
   {
     Serial.printf("\rSpeaker: %d Hz  ", ii);
     buzzer(ii, 128);
-    delay(100);
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
   buzzer(20000, 0);
   Serial.println("\rSpeaker: OK          \n");
@@ -393,13 +392,13 @@ void setup()
 
     led_set_channel(1, 4, CRGB::Red);
     led_show_now();
-    delay(500);
+    vTaskDelay(pdMS_TO_TICKS(500));
     led_set_channel(1, 4, CRGB::Green);
     led_show_now();
-    delay(500);
+    vTaskDelay(pdMS_TO_TICKS(500));
     led_set_channel(1, 4, CRGB::Blue);
     led_show_now();
-    delay(500);
+    vTaskDelay(pdMS_TO_TICKS(500));
     led_set_channel(1, 4, CRGB::Black);
     led_show_now();
 
@@ -421,7 +420,17 @@ void setup()
 #endif
 
   // I2C
-  Wire.begin( I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ );
+  {
+    i2c_config_t i2c_conf = {};
+    i2c_conf.mode = I2C_MODE_MASTER;
+    i2c_conf.sda_io_num = I2C_SDA_PIN;
+    i2c_conf.scl_io_num = I2C_SCL_PIN;
+    i2c_conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
+    i2c_conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+    i2c_conf.master.clk_speed = I2C_FREQ;
+    i2c_param_config(I2C_NUM_0, &i2c_conf);
+    i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
+  }
   dump_i2c();
 
 
@@ -462,11 +471,11 @@ void setup()
 
     WiFi.begin( config.wifi_ssid, config.wifi_password );
 
-    unsigned long t_wifi_start = millis();
+    unsigned long t_wifi_start = uptime_ms();
 
-    while( WiFi.status() != WL_CONNECTED && millis() - t_wifi_start < WIFI_TIMEOUT * 1000 )
+    while( WiFi.status() != WL_CONNECTED && uptime_ms() - t_wifi_start < WIFI_TIMEOUT * 1000 )
     {
-      delay( 500 );
+      vTaskDelay(pdMS_TO_TICKS(500));
       Serial.print( "." );
     }
 
@@ -558,7 +567,7 @@ void loop()
   //delay( 1000 );
   //digitalWrite( LED_PIN, LOW );
 
-  if( millis() % 500 > 250 )
+  if( uptime_ms() % 500 > 250 )
     gpio_set_level( (gpio_num_t)LED_PIN, 1 );
   else
     gpio_set_level( (gpio_num_t)LED_PIN, 0 );

@@ -4,6 +4,19 @@
 #include "board.h"
 #include "led.h"
 #include <sys/stat.h>
+#include "esp_timer.h"
+
+// Monotonic millisecond timer (replaces Arduino millis())
+// Wraps at ~49 days, same as Arduino. ISR-safe on ESP32.
+static inline uint32_t uptime_ms(void) {
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+// Monotonic microsecond timer (replaces Arduino micros())
+// Wraps at ~71 minutes, same as Arduino. ISR-safe on ESP32.
+static inline uint32_t uptime_us(void) {
+    return (uint32_t)esp_timer_get_time();
+}
 
 // Check file existence via POSIX stat() instead of LittleFS.exists(),
 // which internally calls open() and triggers VFS error logs for missing files.

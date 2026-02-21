@@ -70,13 +70,13 @@ m3ApiRawFunction(m3_wait_pps) {
 
     if (!get_gpsstatus()) m3ApiReturn(-1);
     get_pps_flag();  // clear stale flag
-    unsigned long t = millis();
+    unsigned long t = uptime_ms();
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1));
         inc_thread_count(xPortGetCoreID());
         if (get_pps_flag()) m3ApiReturn(1);
         if (wasm_stop_requested || get_basic_param(0) == 1) m3ApiReturn(0);
-        if (timeout_ms > 0 && (int32_t)(millis() - t) > timeout_ms) m3ApiReturn(0);
+        if (timeout_ms > 0 && (int32_t)(uptime_ms() - t) > timeout_ms) m3ApiReturn(0);
     }
 }
 
@@ -89,7 +89,7 @@ m3ApiRawFunction(m3_wait_param) {
     m3ApiGetArg(int32_t, value);
     m3ApiGetArg(int32_t, timeout_ms);
 
-    unsigned long t = millis();
+    unsigned long t = uptime_ms();
     while (true) {
         int p = get_basic_param(id);
         bool match = false;
@@ -101,7 +101,7 @@ m3ApiRawFunction(m3_wait_param) {
         }
         if (match) m3ApiReturn(1);
         if (wasm_stop_requested || get_basic_param(0) == 1) m3ApiReturn(0);
-        if (timeout_ms > 0 && (int32_t)(millis() - t) > timeout_ms) m3ApiReturn(0);
+        if (timeout_ms > 0 && (int32_t)(uptime_ms() - t) > timeout_ms) m3ApiReturn(0);
         vTaskDelay(pdMS_TO_TICKS(1));
         inc_thread_count(xPortGetCoreID());
     }

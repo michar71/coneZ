@@ -4,17 +4,15 @@
 #include "util.h"
 #include "printManager.h"
 #include "config.h"
+#include "lora_hal.h"
 
-#define LORA_SPI_FREQ           1000000
-
-SPIClass spiLoRa( HSPI );
-SPISettings spiLoRaSettings( LORA_SPI_FREQ, MSBFIRST, SPI_MODE0 );
+static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
 
 // Create the LoRa radio object depending on which board we're building for.
 #ifdef BOARD_LORA_SX1268
-  SX1268 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
+  SX1268 radio = new Module(&loraHal, LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY);
 #elif defined( BOARD_LORA_SX1262 )
-  SX1262 radio = new Module( LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY, spiLoRa, spiLoRaSettings );
+  SX1262 radio = new Module(&loraHal, LORA_PIN_CS, LORA_PIN_DIO1, LORA_PIN_RST, LORA_PIN_BUSY);
 #endif
 
 
@@ -64,8 +62,6 @@ static int parse_hex_syncword(const char *hex, uint8_t *out, int maxlen)
 int lora_setup( void )
 {
   Serial.println("Init LoRa... ");
-
-  spiLoRa.begin( LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI, LORA_PIN_CS );
 
   radio.setTCXO( 1.8, 5000 );
   radio.setDio2AsRfSwitch();

@@ -1,8 +1,13 @@
 #include <Arduino.h>
-#include <SPI.h>
+#include <string.h>
 #include <soc/spi_struct.h>
+#include <soc/spi_reg.h>
 #include <freertos/semphr.h>
 #include "driver/gpio.h"
+#include "driver/periph_ctrl.h"
+#include "esp_rom_gpio.h"
+#include "soc/gpio_sig_map.h"
+#include "main.h"
 #include "board.h"
 #ifdef BOARD_HAS_NATIVE_PSRAM
 #include "esp_spiram.h"
@@ -91,13 +96,128 @@ static int      psram_read_overhead = 5;    // recalculated by psram_set_freq()
 static int      psram_read_chunk = 35;      // recalculated by psram_set_freq()
 static int      psram_write_chunk = 36;     // recalculated by psram_set_freq()
 
-// Buffers sized for max frequency (80 MHz = 80 bytes/CEM)
-static constexpr int PSRAM_MAX_BYTES_PER_CEM = PSRAM_SPI_FREQ_MAX / 1000000;  // 80
-static constexpr int PSRAM_MAX_READ_CHUNK  = PSRAM_MAX_BYTES_PER_CEM - 4;     // 76
-static constexpr int PSRAM_MAX_WRITE_CHUNK = PSRAM_MAX_BYTES_PER_CEM - 4;     // 76
 
-static SPIClass    spiPSRAM(FSPI);
 static bool        psram_ok = false;
+
+// ---- Raw SPI2 (FSPI) register access ----
+
+// Compute SPI clock divider register value for ESP32-S3 SPI2.
+// ESP32-S3 fields: clkcnt_n (6-bit), clkdiv_pre (4-bit).
+// SPI_clk = APB_CLK / ((clkdiv_pre + 1) * (clkcnt_n + 1))
+static uint32_t spi_freq_to_clkdiv(uint32_t freq) {
+    const uint32_t apb = APB_CLK_FREQ;  // 80 MHz
+    if (freq >= apb)
+        return SPI_CLK_EQU_SYSCLK;  // bit 31: SPI clock = APB clock
+
+    // Search for closest frequency <= target
+    uint32_t best_val = 0;
+    uint32_t best_freq = 0;
+    for (uint32_t n = 1; n <= 63; n++) {
+        uint32_t pre = apb / (freq * (n + 1));
+        if (pre > 0) pre--;  // pre is 0-based
+        // Try pre and pre+1 to bracket the target
+        for (uint32_t p = pre; p <= pre + 1 && p <= 15; p++) {
+            uint32_t actual = apb / ((p + 1) * (n + 1));
+            if (actual <= freq && actual > best_freq) {
+                best_freq = actual;
+                uint32_t h = ((n + 1) / 2) - 1;
+                best_val = (n & 0x3F)           // clkcnt_l [5:0]
+                         | ((h & 0x3F) << 6)    // clkcnt_h [11:6]
+                         | ((n & 0x3F) << 12)   // clkcnt_n [17:12]
+                         | ((p & 0xF) << 18);   // clkdiv_pre [21:18]
+                if (actual == freq) return best_val;
+            }
+        }
+    }
+    return best_val;
+}
+
+// Initialize SPI2 peripheral with raw register access.
+static void spi2_init(int sck, int miso, int mosi, uint32_t freq) {
+    periph_module_enable(PERIPH_SPI2_MODULE);
+
+    // ESP32-S3: enable SPI module clock gate and select PLL (80 MHz APB)
+    GPSPI2.clk_gate.clk_en = 1;
+    GPSPI2.clk_gate.mst_clk_active = 1;
+    GPSPI2.clk_gate.mst_clk_sel = 1;
+
+    // Reset control registers
+    GPSPI2.slave.val = 0;
+    GPSPI2.misc.val = 0;
+    GPSPI2.user.val = 0;
+    GPSPI2.user1.val = 0;
+    GPSPI2.ctrl.val = 0;
+    GPSPI2.clock.val = 0;
+    for (int i = 0; i < 16; i++)
+        GPSPI2.data_buf[i] = 0;
+
+    // Full-duplex mode
+    GPSPI2.user.usr_mosi = 1;
+    GPSPI2.user.usr_miso = 1;
+    GPSPI2.user.doutdin = 1;
+
+    // SPI Mode 0: CPOL=0, CPHA=0
+    GPSPI2.misc.ck_idle_edge = 0;
+    GPSPI2.user.ck_out_edge = 0;
+
+    // MSB first
+    GPSPI2.ctrl.wr_bit_order = 0;
+    GPSPI2.ctrl.rd_bit_order = 0;
+
+    // Set clock
+    GPSPI2.clock.val = spi_freq_to_clkdiv(freq);
+
+    // Synchronize register changes from APB domain into SPI module domain
+    GPSPI2.cmd.update = 1;
+    while (GPSPI2.cmd.update) ;
+
+    // Route SPI2 (FSPI) signals through GPIO matrix
+    gpio_set_direction((gpio_num_t)sck, GPIO_MODE_INPUT_OUTPUT);
+    gpio_set_direction((gpio_num_t)mosi, GPIO_MODE_INPUT_OUTPUT);
+    gpio_set_direction((gpio_num_t)miso, GPIO_MODE_INPUT);
+    esp_rom_gpio_connect_out_signal(sck, FSPICLK_OUT_IDX, false, false);
+    esp_rom_gpio_connect_out_signal(mosi, FSPID_OUT_IDX, false, false);
+    esp_rom_gpio_connect_in_signal(miso, FSPIQ_IN_IDX, false);
+}
+
+// Track last bitlen synced to SPI2 to avoid redundant cmd.update calls.
+// ms_dlen changes require cmd.update before cmd.usr on ESP32-S3.
+static int spi2_last_bitlen = -1;
+
+// True when hardware phases (command/address/dummy) may be enabled from
+// a previous PSRAM transfer.  spi2_transfer() checks and resets this.
+static bool spi2_phases_dirty = false;
+
+// Sync ms_dlen to hardware, skipping cmd.update if unchanged.
+static inline void spi2_set_bitlen(int bits) {
+    if (bits != spi2_last_bitlen) {
+        GPSPI2.ms_dlen.ms_data_bitlen = bits;
+        GPSPI2.cmd.update = 1;
+        while (GPSPI2.cmd.update) ;
+        spi2_last_bitlen = bits;
+    }
+}
+
+// Transfer a single byte over SPI2. Returns the byte read.
+static uint8_t spi2_transfer(uint8_t b) {
+    if (__builtin_expect(spi2_phases_dirty, 0)) {
+        // Restore generic full-duplex mode after hardware-phase PSRAM transfer
+        GPSPI2.user.usr_command = 0;
+        GPSPI2.user.usr_addr = 0;
+        GPSPI2.user.usr_dummy = 0;
+        GPSPI2.user.usr_mosi = 1;
+        GPSPI2.user.usr_miso = 1;
+        GPSPI2.user.doutdin = 1;
+        spi2_phases_dirty = false;
+        spi2_last_bitlen = -1;  // force re-sync
+    }
+    spi2_set_bitlen(7);
+    GPSPI2.data_buf[0] = b;
+    GPSPI2.cmd.usr = 1;
+    while (GPSPI2.cmd.usr) ;
+    return GPSPI2.data_buf[0] & 0xFF;
+}
+
 
 // Compute actual SPI clock: APB / ceil(APB / requested), same as hardware divider.
 static uint32_t psram_actual_freq(uint32_t requested) {
@@ -114,11 +234,12 @@ static void psram_set_freq(uint32_t freq_hz) {
     psram_fast_read = (psram_freq > 33000000);
     psram_read_overhead = psram_fast_read ? 5 : 4;
     int bytes_per_cem = (psram_freq / 1000000) * 8 / 8;
-    psram_read_chunk  = bytes_per_cem - psram_read_overhead;
-    psram_write_chunk = bytes_per_cem - 4;
-    // SPI clock is set by the caller — setup uses endTransaction/beginTransaction
-    // (which takes the SPI bus mutex on loopTask), runtime uses setFrequency()
-    // (which doesn't touch the bus mutex, safe from ShellTask).
+    int read_data  = bytes_per_cem - psram_read_overhead;
+    int write_data = bytes_per_cem - 4;
+    // Cap to FIFO size (64 bytes) — hardware cmd/addr/dummy phases are outside FIFO
+    psram_read_chunk  = (read_data  > 64) ? 64 : read_data;
+    psram_write_chunk = (write_data > 64) ? 64 : write_data;
+    // SPI clock register is set by the caller (direct GPSPI2.clock.val write).
 }
 
 // ---- Low-level helpers ----
@@ -128,7 +249,7 @@ static inline void cs_high() { gpio_set_level((gpio_num_t)PSR_CE, 1); }
 
 static void psram_cmd(uint8_t cmd) {
     cs_low();
-    spiPSRAM.transfer(cmd);
+    spi2_transfer(cmd);
     cs_high();
 }
 
@@ -141,46 +262,102 @@ static void psram_reset() {
 
 static uint16_t psram_read_id() {
     cs_low();
-    spiPSRAM.transfer(PSRAM_CMD_READ_ID);
-    spiPSRAM.transfer(0); spiPSRAM.transfer(0); spiPSRAM.transfer(0); // 24-bit addr
-    uint8_t mfid = spiPSRAM.transfer(0);
-    uint8_t kgd  = spiPSRAM.transfer(0);
+    spi2_transfer(PSRAM_CMD_READ_ID);
+    spi2_transfer(0); spi2_transfer(0); spi2_transfer(0); // 24-bit addr
+    uint8_t mfid = spi2_transfer(0);
+    uint8_t kgd  = spi2_transfer(0);
     cs_high();
     return (mfid << 8) | kgd;
 }
 
-// ---- Core read/write (single chunk, bulk SPI transfer, respects tCEM) ----
+// ---- Core read/write using SPI2 hardware command/address/dummy phases ----
+// The SPI peripheral sends cmd+addr+dummy from dedicated registers (not the FIFO),
+// so data_buf is used exclusively for payload data.  This eliminates all intermediate
+// buffer copies — data goes directly between the caller's buffer and the FIFO.
+// len must be <= 64 (FIFO capacity: 16 × 32-bit words).
 
-// Read up to psram_read_chunk bytes in one CE# assertion.
-// Uses transferBytes() for a single SPI FIFO transaction.
-// At <= 33 MHz uses slow read (0x03, no wait); above uses fast read (0x0B, 1 wait byte).
-static void psram_read_chunk_fn(uint32_t addr, uint8_t *buf, size_t len) {
-    uint8_t tx[5 + PSRAM_MAX_READ_CHUNK] = {};  // sized for max freq
-    uint8_t rx[5 + PSRAM_MAX_READ_CHUNK];
-    tx[0] = psram_fast_read ? PSRAM_CMD_FAST_READ : PSRAM_CMD_READ;
-    tx[1] = (addr >> 16) & 0xFF;
-    tx[2] = (addr >> 8)  & 0xFF;
-    tx[3] = addr & 0xFF;
-    // If fast read, tx[4] is the wait byte (already zero)
-    size_t total = psram_read_overhead + len;
+// Write len bytes to PSRAM at addr.
+static void psram_write_chunk_fn(uint32_t addr, const uint8_t *buf, size_t len) {
+    // Configure: command(8-bit WRITE) + address(24-bit) + data(MOSI only)
+    GPSPI2.user.val = (1 << 27)   // usr_mosi
+                    | (1 << 30)   // usr_addr
+                    | (1 << 31);  // usr_command
+    GPSPI2.user2.usr_command_bitlen = 7;
+    GPSPI2.user2.usr_command_value = PSRAM_CMD_WRITE;
+    GPSPI2.user1.usr_addr_bitlen = 23;
+    GPSPI2.addr = addr << 8;  // MSB-first: top 24 bits sent on wire
+    GPSPI2.ms_dlen.ms_data_bitlen = len * 8 - 1;
+
+    // Load data directly into FIFO
+    uint32_t words = (len + 3) / 4;
+    if (__builtin_expect(((uintptr_t)buf & 3) == 0, 1)) {
+        const uint32_t *src = (const uint32_t *)buf;
+        for (uint32_t w = 0; w < words; w++)
+            GPSPI2.data_buf[w] = src[w];
+    } else {
+        uint32_t tmp[16];
+        tmp[words - 1] = 0;
+        memcpy(tmp, buf, len);
+        for (uint32_t w = 0; w < words; w++)
+            GPSPI2.data_buf[w] = tmp[w];
+    }
+
     cs_low();
-    spiPSRAM.transferBytes(tx, rx, total);
+    GPSPI2.cmd.update = 1;
+    while (GPSPI2.cmd.update) ;
+    GPSPI2.cmd.usr = 1;
+    while (GPSPI2.cmd.usr) ;
     cs_high();
-    memcpy(buf, &rx[psram_read_overhead], len);
+
+    spi2_phases_dirty = true;
+    spi2_last_bitlen = -1;
 }
 
-// Write up to psram_write_chunk bytes in one CE# assertion.
-static void psram_write_chunk_fn(uint32_t addr, const uint8_t *buf, size_t len) {
-    uint8_t tx[4 + PSRAM_MAX_WRITE_CHUNK];  // sized for max freq
-    tx[0] = PSRAM_CMD_WRITE;
-    tx[1] = (addr >> 16) & 0xFF;
-    tx[2] = (addr >> 8)  & 0xFF;
-    tx[3] = addr & 0xFF;
-    memcpy(&tx[4], buf, len);
-    size_t total = 4 + len;
+// Read len bytes from PSRAM at addr.
+static void psram_read_chunk_fn(uint32_t addr, uint8_t *buf, size_t len) {
+    // Configure: command(8-bit) + address(24-bit) + [dummy(8-clk)] + data(MISO only)
+    uint32_t user_val = (1 << 28)   // usr_miso
+                      | (1 << 30)   // usr_addr
+                      | (1 << 31);  // usr_command
+    if (psram_fast_read)
+        user_val |= (1 << 29);     // usr_dummy
+    GPSPI2.user.val = user_val;
+    GPSPI2.user2.usr_command_bitlen = 7;
+    GPSPI2.user2.usr_command_value = psram_fast_read ? PSRAM_CMD_FAST_READ : PSRAM_CMD_READ;
+    GPSPI2.user1.usr_addr_bitlen = 23;
+    GPSPI2.user1.usr_dummy_cyclelen = 7;  // 8 dummy clocks - 1 (used only when usr_dummy=1)
+    GPSPI2.addr = addr << 8;
+    GPSPI2.ms_dlen.ms_data_bitlen = len * 8 - 1;
+
     cs_low();
-    spiPSRAM.transferBytes(tx, NULL, total);
+    GPSPI2.cmd.update = 1;
+    while (GPSPI2.cmd.update) ;
+    GPSPI2.cmd.usr = 1;
+    while (GPSPI2.cmd.usr) ;
     cs_high();
+
+    // Read data directly from FIFO
+    uint32_t full = len / 4;
+    if (__builtin_expect(((uintptr_t)buf & 3) == 0, 1)) {
+        uint32_t *dst = (uint32_t *)buf;
+        for (uint32_t w = 0; w < full; w++)
+            dst[w] = GPSPI2.data_buf[w];
+        if (len & 3) {
+            uint32_t last = GPSPI2.data_buf[full];
+            uint8_t *tail = buf + full * 4;
+            for (uint32_t b = 0; b < (len & 3); b++)
+                tail[b] = (last >> (b * 8)) & 0xFF;
+        }
+    } else {
+        uint32_t tmp[16];
+        uint32_t words = (len + 3) / 4;
+        for (uint32_t w = 0; w < words; w++)
+            tmp[w] = GPSPI2.data_buf[w];
+        memcpy(buf, tmp, len);
+    }
+
+    spi2_phases_dirty = true;
+    spi2_last_bitlen = -1;
 }
 
 // ---- Internal bulk API (raw 0-based SPI addresses, loops over chunks) ----
@@ -554,13 +731,10 @@ int psram_setup(void) {
     cs_high();
 
     // We own the FSPI bus exclusively — no other peripheral shares it.
-    // beginTransaction configures the SPI correctly (SPISettings has a
-    // special-case divider for >= APB/2 that spiFrequencyToClockDiv misses).
-    // The transaction stays open — loopTask holds the bus lock permanently.
+    // Direct register access via GPSPI2 — no Arduino SPI locks involved.
     // Runtime freq changes from ShellTask write the clock register directly.
-    spiPSRAM.begin(PSR_SCK, PSR_MISO, PSR_MOSI, -1);  // no auto-CS
+    spi2_init(PSR_SCK, PSR_MISO, PSR_MOSI, PSRAM_SPI_FREQ_DEFAULT);
     psram_set_freq(PSRAM_SPI_FREQ_DEFAULT);
-    spiPSRAM.beginTransaction(SPISettings(PSRAM_SPI_FREQ_DEFAULT, MSBFIRST, SPI_MODE0));
 
     psram_reset();
 
@@ -630,7 +804,7 @@ int psram_test(bool forever) {
         uint8_t pass_xor = (uint8_t)pass;  // Vary pattern each pass
 
         printfnl(SOURCE_COMMANDS, "Pass %u: writing...\n", pass + 1);
-        unsigned long t0 = micros();
+        unsigned long t0 = uptime_us();
 
         // Write phase: address-derived pattern XORed with pass number
         for (uint32_t addr = 0; addr < size; addr += 64) {
@@ -644,10 +818,10 @@ int psram_test(bool forever) {
             }
         }
 
-        unsigned long t_write = micros() - t0;
+        unsigned long t_write = uptime_us() - t0;
 
         printfnl(SOURCE_COMMANDS, "Pass %u: verifying...\n", pass + 1);
-        unsigned long t1 = micros();
+        unsigned long t1 = uptime_us();
 
         // Verify phase
         for (uint32_t addr = 0; addr < size; addr += 64) {
@@ -668,7 +842,7 @@ int psram_test(bool forever) {
             }
         }
 
-        unsigned long t_read = micros() - t1;
+        unsigned long t_read = uptime_us() - t1;
 
         // Benchmark results
         uint32_t write_kbps = (t_write > 0) ? (uint32_t)((uint64_t)size * 1000 / t_write) : 0;
@@ -809,13 +983,11 @@ int psram_change_freq(uint32_t freq_hz) {
     PSRAM_LOCK();
     psram_cache_flush();
     psram_set_freq(freq_hz);
-    // Write the SPI2 clock register directly via the SOC peripheral struct.
-    // beginTransaction() in setup permanently holds both paramLock and the HAL
-    // spi->lock on loopTask (endTransaction is never called — we own the bus
-    // exclusively).  So we can't use any Arduino SPI API from ShellTask.
-    // Direct register write is safe under psram_mutex.  GPSPI2 is the SPI2
-    // (FSPI) peripheral on ESP32-S3.
-    GPSPI2.clock.val = spiFrequencyToClockDiv(freq_hz);
+    // Write the SPI2 clock register directly — safe under psram_mutex.
+    GPSPI2.clock.val = spi_freq_to_clkdiv(freq_hz);
+    GPSPI2.cmd.update = 1;
+    while (GPSPI2.cmd.update) ;
+    spi2_last_bitlen = -1;  // invalidate — next transfer will re-sync ms_dlen
     PSRAM_UNLOCK();
     return 0;
 }
@@ -991,7 +1163,7 @@ int psram_test(bool forever) {
         uint8_t pass_xor = (uint8_t)pass;
 
         printfnl(SOURCE_COMMANDS, "Pass %u: writing %u bytes...\n", pass + 1, avail);
-        unsigned long t0 = micros();
+        unsigned long t0 = uptime_us();
 
         // Write pattern
         for (size_t i = 0; i < avail; i++) {
@@ -999,10 +1171,10 @@ int psram_test(bool forever) {
             if ((i & 0xFFFF) == 0) vTaskDelay(1);
         }
 
-        unsigned long t_write = micros() - t0;
+        unsigned long t_write = uptime_us() - t0;
 
         printfnl(SOURCE_COMMANDS, "Pass %u: verifying...\n", pass + 1);
-        unsigned long t1 = micros();
+        unsigned long t1 = uptime_us();
 
         // Verify
         for (size_t i = 0; i < avail; i++) {
@@ -1016,7 +1188,7 @@ int psram_test(bool forever) {
             if ((i & 0xFFFF) == 0) vTaskDelay(1);
         }
 
-        unsigned long t_read = micros() - t1;
+        unsigned long t_read = uptime_us() - t1;
 
         // Benchmark results
         uint32_t write_kbps = (t_write > 0) ? (uint32_t)((uint64_t)avail * 1000 / t_write) : 0;
