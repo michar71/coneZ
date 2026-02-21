@@ -2,16 +2,13 @@
 
 #include "wasm_internal.h"
 #include "main.h"
-#include "FS.h"
-#include <LittleFS.h>
 
 // ---------- File I/O state ----------
 
 #define WASM_MAX_OPEN_FILES  4
 #define WASM_MAX_PATH_LEN  128
 
-static File wasm_files[WASM_MAX_OPEN_FILES];
-static bool wasm_file_open[WASM_MAX_OPEN_FILES] = {false};
+static FILE *wasm_files[WASM_MAX_OPEN_FILES] = {};
 
 // Validate a WASM-supplied path: must start with '/', no '..', not /config.ini
 static bool wasm_path_ok(const char *path, int len)
@@ -42,9 +39,9 @@ static bool wasm_extract_path(IM3Runtime runtime, int32_t ptr, int32_t len, char
 void wasm_close_all_files(void)
 {
     for (int i = 0; i < WASM_MAX_OPEN_FILES; i++) {
-        if (wasm_file_open[i]) {
-            wasm_files[i].close();
-            wasm_file_open[i] = false;
+        if (wasm_files[i]) {
+            fclose(wasm_files[i]);
+            wasm_files[i] = NULL;
         }
     }
 }
@@ -79,23 +76,24 @@ m3ApiRawFunction(m3_file_open)
     // Find a free slot
     int slot = -1;
     for (int i = 0; i < WASM_MAX_OPEN_FILES; i++) {
-        if (!wasm_file_open[i]) { slot = i; break; }
+        if (!wasm_files[i]) { slot = i; break; }
     }
     if (slot < 0) m3ApiReturn(-1);
 
     // Open
     const char *fmode;
     switch (mode) {
-        case 0:  fmode = FILE_READ;   break;
-        case 1:  fmode = FILE_WRITE;  break;
-        case 2:  fmode = FILE_APPEND; break;
+        case 0:  fmode = "r";  break;
+        case 1:  fmode = "w";  break;
+        case 2:  fmode = "a";  break;
         default: m3ApiReturn(-1);
     }
 
-    wasm_files[slot] = LittleFS.open(path, fmode);
+    char fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(fpath, sizeof(fpath), path);
+    wasm_files[slot] = fopen(fpath, fmode);
     if (!wasm_files[slot]) m3ApiReturn(-1);
 
-    wasm_file_open[slot] = true;
     m3ApiReturn(slot);
 }
 
@@ -103,9 +101,9 @@ m3ApiRawFunction(m3_file_open)
 m3ApiRawFunction(m3_file_close)
 {
     m3ApiGetArg(int32_t, handle);
-    if (handle >= 0 && handle < WASM_MAX_OPEN_FILES && wasm_file_open[handle]) {
-        wasm_files[handle].close();
-        wasm_file_open[handle] = false;
+    if (handle >= 0 && handle < WASM_MAX_OPEN_FILES && wasm_files[handle]) {
+        fclose(wasm_files[handle]);
+        wasm_files[handle] = NULL;
     }
     m3ApiSuccess();
 }
@@ -118,7 +116,7 @@ m3ApiRawFunction(m3_file_read)
     m3ApiGetArg(int32_t, buf_ptr);
     m3ApiGetArg(int32_t, max_len);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(-1);
     }
 
@@ -128,7 +126,7 @@ m3ApiRawFunction(m3_file_read)
         m3ApiReturn(-1);
     }
 
-    int bytes = wasm_files[handle].read(mem_base + buf_ptr, max_len);
+    int bytes = (int)fread(mem_base + buf_ptr, 1, max_len, wasm_files[handle]);
     m3ApiReturn(bytes);
 }
 
@@ -140,7 +138,7 @@ m3ApiRawFunction(m3_file_write)
     m3ApiGetArg(int32_t, buf_ptr);
     m3ApiGetArg(int32_t, len);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(-1);
     }
 
@@ -150,7 +148,7 @@ m3ApiRawFunction(m3_file_write)
         m3ApiReturn(-1);
     }
 
-    int bytes = wasm_files[handle].write(mem_base + buf_ptr, len);
+    int bytes = (int)fwrite(mem_base + buf_ptr, 1, len, wasm_files[handle]);
     m3ApiReturn(bytes);
 }
 
@@ -160,11 +158,11 @@ m3ApiRawFunction(m3_file_size)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, handle);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(-1);
     }
 
-    m3ApiReturn((int32_t)wasm_files[handle].size());
+    m3ApiReturn((int32_t)fsize(wasm_files[handle]));
 }
 
 // i32 file_seek(i32 handle, i32 pos) -> 1 on success, 0 on failure
@@ -174,11 +172,11 @@ m3ApiRawFunction(m3_file_seek)
     m3ApiGetArg(int32_t, handle);
     m3ApiGetArg(int32_t, pos);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(0);
     }
 
-    m3ApiReturn(wasm_files[handle].seek(pos) ? 1 : 0);
+    m3ApiReturn(fseek(wasm_files[handle], pos, SEEK_SET) == 0 ? 1 : 0);
 }
 
 // i32 file_tell(i32 handle) -> current position or -1
@@ -187,11 +185,11 @@ m3ApiRawFunction(m3_file_tell)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, handle);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(-1);
     }
 
-    m3ApiReturn((int32_t)wasm_files[handle].position());
+    m3ApiReturn((int32_t)ftell(wasm_files[handle]));
 }
 
 // i32 file_exists(i32 path_ptr, i32 path_len) -> 1/0
@@ -211,7 +209,9 @@ m3ApiRawFunction(m3_file_delete) {
     m3ApiGetArg(int32_t, path_len);
     char path[WASM_MAX_PATH_LEN];
     if (!wasm_extract_path(runtime, path_ptr, path_len, path)) m3ApiReturn(0);
-    m3ApiReturn(LittleFS.remove(path) ? 1 : 0);
+    char fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(fpath, sizeof(fpath), path);
+    m3ApiReturn(unlink(fpath) == 0 ? 1 : 0);
 }
 
 // i32 file_rename(i32 old_ptr, i32 old_len, i32 new_ptr, i32 new_len) -> 1/0
@@ -224,7 +224,10 @@ m3ApiRawFunction(m3_file_rename) {
     char old_path[WASM_MAX_PATH_LEN], new_path[WASM_MAX_PATH_LEN];
     if (!wasm_extract_path(runtime, old_ptr, old_len, old_path)) m3ApiReturn(0);
     if (!wasm_extract_path(runtime, new_ptr, new_len, new_path)) m3ApiReturn(0);
-    m3ApiReturn(LittleFS.rename(old_path, new_path) ? 1 : 0);
+    char old_fpath[WASM_MAX_PATH_LEN + 16], new_fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(old_fpath, sizeof(old_fpath), old_path);
+    lfs_path(new_fpath, sizeof(new_fpath), new_path);
+    m3ApiReturn(rename(old_fpath, new_fpath) == 0 ? 1 : 0);
 }
 
 
@@ -235,7 +238,9 @@ m3ApiRawFunction(m3_file_mkdir) {
     m3ApiGetArg(int32_t, path_len);
     char path[WASM_MAX_PATH_LEN];
     if (!wasm_extract_path(runtime, path_ptr, path_len, path)) m3ApiReturn(0);
-    m3ApiReturn(LittleFS.mkdir(path) ? 1 : 0);
+    char fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(fpath, sizeof(fpath), path);
+    m3ApiReturn(mkdir(fpath, 0755) == 0 ? 1 : 0);
 }
 
 // i32 file_rmdir(i32 path_ptr, i32 path_len) -> 1/0
@@ -245,7 +250,9 @@ m3ApiRawFunction(m3_file_rmdir) {
     m3ApiGetArg(int32_t, path_len);
     char path[WASM_MAX_PATH_LEN];
     if (!wasm_extract_path(runtime, path_ptr, path_len, path)) m3ApiReturn(0);
-    m3ApiReturn(LittleFS.rmdir(path) ? 1 : 0);
+    char fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(fpath, sizeof(fpath), path);
+    m3ApiReturn(rmdir(fpath) == 0 ? 1 : 0);
 }
 
 
@@ -279,22 +286,23 @@ m3ApiRawFunction(m3_basic_file_open)
     // Find a free slot
     int slot = -1;
     for (int i = 0; i < WASM_MAX_OPEN_FILES; i++) {
-        if (!wasm_file_open[i]) { slot = i; break; }
+        if (!wasm_files[i]) { slot = i; break; }
     }
     if (slot < 0) m3ApiReturn(-1);
 
     const char *fmode;
     switch (mode) {
-        case 0:  fmode = FILE_READ;   break;
-        case 1:  fmode = FILE_WRITE;  break;
-        case 2:  fmode = FILE_APPEND; break;
+        case 0:  fmode = "r";  break;
+        case 1:  fmode = "w";  break;
+        case 2:  fmode = "a";  break;
         default: m3ApiReturn(-1);
     }
 
-    wasm_files[slot] = LittleFS.open(path, fmode);
+    char fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(fpath, sizeof(fpath), path);
+    wasm_files[slot] = fopen(fpath, fmode);
     if (!wasm_files[slot]) m3ApiReturn(-1);
 
-    wasm_file_open[slot] = true;
     m3ApiReturn(slot);
 }
 
@@ -302,9 +310,9 @@ m3ApiRawFunction(m3_basic_file_open)
 m3ApiRawFunction(m3_basic_file_close)
 {
     m3ApiGetArg(int32_t, handle);
-    if (handle >= 0 && handle < WASM_MAX_OPEN_FILES && wasm_file_open[handle]) {
-        wasm_files[handle].close();
-        wasm_file_open[handle] = false;
+    if (handle >= 0 && handle < WASM_MAX_OPEN_FILES && wasm_files[handle]) {
+        fclose(wasm_files[handle]);
+        wasm_files[handle] = NULL;
     }
     m3ApiSuccess();
 }
@@ -317,7 +325,7 @@ m3ApiRawFunction(m3_basic_file_print)
     m3ApiGetArg(int32_t, handle);
     m3ApiGetArg(int32_t, str_ptr);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(-1);
     }
 
@@ -328,8 +336,8 @@ m3ApiRawFunction(m3_basic_file_print)
     int len = wasm_strlen(mem_base, mem_size, (uint32_t)str_ptr);
     int written = 0;
     if (len > 0)
-        written = wasm_files[handle].write(mem_base + (uint32_t)str_ptr, len);
-    written += wasm_files[handle].write((const uint8_t *)"\n", 1);
+        written = (int)fwrite(mem_base + (uint32_t)str_ptr, 1, len, wasm_files[handle]);
+    written += (int)fwrite("\n", 1, 1, wasm_files[handle]);
     m3ApiReturn(written);
 }
 
@@ -340,7 +348,7 @@ m3ApiRawFunction(m3_basic_file_readln)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, handle);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(0);
     }
 
@@ -348,8 +356,8 @@ m3ApiRawFunction(m3_basic_file_readln)
     char buf[256];
     int pos = 0;
     while (pos < (int)sizeof(buf) - 1) {
-        int c = wasm_files[handle].read();
-        if (c < 0) break;          // EOF
+        int c = fgetc(wasm_files[handle]);
+        if (c == EOF) break;          // EOF
         if (c == '\n') break;       // end of line
         buf[pos++] = (char)c;
     }
@@ -374,11 +382,11 @@ m3ApiRawFunction(m3_basic_file_eof)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, handle);
 
-    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_file_open[handle]) {
+    if (handle < 0 || handle >= WASM_MAX_OPEN_FILES || !wasm_files[handle]) {
         m3ApiReturn(1);  // treat invalid handle as EOF
     }
 
-    m3ApiReturn(wasm_files[handle].available() == 0 ? 1 : 0);
+    m3ApiReturn(feof(wasm_files[handle]) ? 1 : 0);
 }
 
 

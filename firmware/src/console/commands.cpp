@@ -1,6 +1,7 @@
 #include "commands.h"
-#include <LittleFS.h>
-#include <FS.h>
+#include "esp_littlefs.h"
+#include <dirent.h>
+#include <sys/stat.h>
 #include "shell.h"
 #include "conez_wifi.h"
 #include "esp_system.h"
@@ -80,20 +81,25 @@ static inline int parse_int(const char *s) { return (int)strtol(s, NULL, 0); }
 
 //Serial/Telnet Shell comamnds
 
-void renameFile(fs::FS &fs, const char *path1, const char *path2) 
+void renameFile(const char *path1, const char *path2) 
 {
     printfnl(SOURCE_COMMANDS, "Renaming file %s to %s\r\n", path1, path2);
-    if (fs.rename(path1, path2)) {
+    char fp1[256], fp2[256];
+    lfs_path(fp1, sizeof(fp1), path1);
+    lfs_path(fp2, sizeof(fp2), path2);
+    if (rename(fp1, fp2) == 0) {
       printfnl(SOURCE_COMMANDS, "- file renamed\n" );
     } else {
       printfnl(SOURCE_COMMANDS, "- rename failed\n" );
     }
 }
   
-void deleteFile(fs::FS &fs, const char *path)
+void deleteFile(const char *path)
 {
     printfnl(SOURCE_COMMANDS, "Deleting file: %s\r\n", path);
-    if (fs.remove(path)) {
+    char fpath[256];
+    lfs_path(fpath, sizeof(fpath), path);
+    if (unlink(fpath) == 0) {
       printfnl(SOURCE_COMMANDS, "- file deleted\n" );
     } else {
       printfnl(SOURCE_COMMANDS, "- delete failed\n" );
@@ -121,37 +127,43 @@ static int dir_entry_cmp(const void *a, const void *b)
 static int effective_tz_offset(int year, int month, int day);
 static const char *tz_label(int tz_hours);
 
-static void dir_list(fs::FS &fs, const char *dirname, int indent,
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+static void dir_list(const char *dirname, int indent,
                      Stream *out, bool showTime, int nameWidth,
                      int *fileCount, int *dirCount, uint32_t *totalSize,
                      const char *filter = NULL)
 {
-    File root = fs.open(dirname);
-    if (!root || !root.isDirectory()) return;
+    char dpath[128];
+    lfs_path(dpath, sizeof(dpath), dirname);
+    DIR *dir = opendir(dpath);
+    if (!dir) return;
 
     // Collect entries (heap-allocated to avoid stack overflow on recursion)
     const int MAX_ENTRIES = 32;
     DirEntry *entries = (DirEntry *)malloc(MAX_ENTRIES * sizeof(DirEntry));
-    if (!entries) { root.close(); return; }
+    if (!entries) { closedir(dir); return; }
 
     int n = 0;
-    File file = root.openNextFile();
-    while (file && n < MAX_ENTRIES) {
+    struct dirent *ent;
+    while ((ent = readdir(dir)) && n < MAX_ENTRIES) {
+        // Build full POSIX path for stat
+        char fullpath[192];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dpath, ent->d_name);
+        struct stat st;
+        if (stat(fullpath, &st) != 0) continue;
+        bool isDir = S_ISDIR(st.st_mode);
         // Apply filter to files only (directories always shown)
-        if (filter && !file.isDirectory() && !glob_match(filter, file.name())) {
-            file = root.openNextFile();
-            continue;
-        }
+        if (filter && !isDir && !glob_match(filter, ent->d_name)) continue;
         DirEntry *e = &entries[n];
-        strncpy(e->name, file.name(), sizeof(e->name) - 1);
+        strncpy(e->name, ent->d_name, sizeof(e->name) - 1);
         e->name[sizeof(e->name) - 1] = '\0';
-        e->isDir = file.isDirectory();
-        e->size = e->isDir ? 0 : file.size();
-        e->mtime = file.getLastWrite();
+        e->isDir = isDir;
+        e->size = isDir ? 0 : (uint32_t)st.st_size;
+        e->mtime = st.st_mtime;
         n++;
-        file = root.openNextFile();
     }
-    root.close();
+    closedir(dir);
 
     qsort(entries, n, sizeof(DirEntry), dir_entry_cmp);
 
@@ -166,7 +178,7 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
             snprintf(subpath, sizeof(subpath), "%s%s%s",
                      dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
                      e->name);
-            dir_list(fs, subpath, indent + 2, out, showTime, nameWidth,
+            dir_list(subpath, indent + 2, out, showTime, nameWidth,
                      fileCount, dirCount, totalSize);
         } else {
             *totalSize += e->size;
@@ -189,61 +201,75 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
     }
     free(entries);
 }
+#pragma GCC diagnostic pop
 
 // Pre-scan to find longest filename at any level
-static void dir_max_name(fs::FS &fs, const char *dirname, int *maxLen)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+static void dir_max_name(const char *dirname, int *maxLen)
 {
-    File root = fs.open(dirname);
-    if (!root || !root.isDirectory()) return;
+    char dpath[128];
+    lfs_path(dpath, sizeof(dpath), dirname);
+    DIR *dir = opendir(dpath);
+    if (!dir) return;
 
-    File file = root.openNextFile();
-    while (file) {
-        int len = strlen(file.name());
+    struct dirent *ent;
+    while ((ent = readdir(dir))) {
+        int len = strlen(ent->d_name);
         if (len > *maxLen) *maxLen = len;
-        if (file.isDirectory()) {
+        char fullpath[192];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dpath, ent->d_name);
+        struct stat st;
+        if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode)) {
             char subpath[128];
             snprintf(subpath, sizeof(subpath), "%s%s%s",
                      dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
-                     file.name());
-            dir_max_name(fs, subpath, maxLen);
+                     ent->d_name);
+            dir_max_name(subpath, maxLen);
         }
-        file = root.openNextFile();
     }
+    closedir(dir);
 }
+#pragma GCC diagnostic pop
 
-void readFile(fs::FS &fs, const char *path) 
+void readFile(const char *path) 
 {
     printfnl(SOURCE_COMMANDS,"Listing file: %s\r\n\n", path);
-  
-    File file = fs.open(path);
-    if (!file || file.isDirectory()) 
+
+    char fpath[256];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *file = fopen(fpath, "r");
+    if (!file) 
     {
       printfnl(SOURCE_COMMANDS, "- failed to open file for reading\n" );
       return;
     }
-  
+
     char buf[128];
-    while (file.available())
+    while (fgets(buf, sizeof(buf), file))
     {
-      int len = file.readBytesUntil('\n', buf, sizeof(buf) - 1);
-      buf[len] = '\0';
+      int len = strlen(buf);
+      if (len > 0 && buf[len-1] == '\n') buf[--len] = '\0';
+      if (len > 0 && buf[len-1] == '\r') buf[--len] = '\0';
       printfnl(SOURCE_COMMANDS, "%s\n", buf);
     }
     printfnl(SOURCE_COMMANDS, "\n" );
     printfnl(SOURCE_COMMANDS, "- file read complete\n" );
-    file.close();
+    fclose(file);
   }
   
-  void writeFile(fs::FS &fs, const char *path, const char *message) 
+  void writeFile(const char *path, const char *message) 
   {
     printfnl(SOURCE_COMMANDS, "Writing file: %s\r\n", path);
-  
-    File file = fs.open(path, FILE_WRITE);
+
+    char fpath[256];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *file = fopen(fpath, "w");
     if (!file) {
       printfnl(SOURCE_COMMANDS, "- failed to open file for writing\n" );
       return;
     }
-    if (file.print(message)) 
+    if (fputs(message, file) >= 0) 
     {
       printfnl(SOURCE_COMMANDS, "- file written\n" );
     } 
@@ -251,7 +277,7 @@ void readFile(fs::FS &fs, const char *path)
     {
       printfnl(SOURCE_COMMANDS, "- write failed\n" );
     }
-    file.close();
+    fclose(file);
   }
 
 /*
@@ -393,10 +419,10 @@ int delFile(int argc, char **argv)
                 continue;
             }
             for (int j = 0; j < count; j++)
-                deleteFile(LittleFS, matches[j]);
+                deleteFile(matches[j]);
             free(matches);
         } else {
-            deleteFile(LittleFS, path);
+            deleteFile(path);
         }
     }
     return rc;
@@ -405,9 +431,10 @@ int delFile(int argc, char **argv)
 // Build destination path: if dst is a directory, append basename of src
 static void resolve_dest(char *dst, size_t dstsz, const char *src)
 {
-    File d = LittleFS.open(dst);
-    if (d && d.isDirectory()) {
-        d.close();
+    char dpath[256];
+    lfs_path(dpath, sizeof(dpath), dst);
+    struct stat st;
+    if (stat(dpath, &st) == 0 && S_ISDIR(st.st_mode)) {
         const char *name = strrchr(src, '/');
         name = name ? name + 1 : src;
         char tmp[64];
@@ -417,8 +444,6 @@ static void resolve_dest(char *dst, size_t dstsz, const char *src)
         else
             snprintf(tmp, sizeof(tmp), "%s/%s", dst, name);
         strlcpy(dst, tmp, dstsz);
-    } else if (d) {
-        d.close();
     }
 }
 
@@ -445,9 +470,10 @@ int renFile(int argc, char **argv)
             return 1;
         }
         // Dest must be a directory for wildcard move
-        File d = LittleFS.open(path2);
-        bool isDir = d && d.isDirectory();
-        if (d) d.close();
+        char dpath[256];
+        lfs_path(dpath, sizeof(dpath), path2);
+        struct stat st_d;
+        bool isDir = (stat(dpath, &st_d) == 0 && S_ISDIR(st_d.st_mode));
         if (!isDir) {
             printfnl(SOURCE_COMMANDS, "Destination must be a directory for wildcard move\n");
             free(matches);
@@ -459,7 +485,7 @@ int renFile(int argc, char **argv)
             strlcpy(destpath, path2, sizeof(destpath));
             resolve_dest(destpath, sizeof(destpath), matches[j]);
             if (strcmp(matches[j], destpath) != 0)
-                renameFile(LittleFS, matches[j], destpath);
+                renameFile(matches[j], destpath);
         }
         free(matches);
         return rc;
@@ -473,7 +499,7 @@ int renFile(int argc, char **argv)
         return 1;
     }
 
-    renameFile(LittleFS, path1, path2);
+    renameFile(path1, path2);
     return 0;
 }
 
@@ -496,12 +522,12 @@ int listFile(int argc, char **argv)
                 continue;
             }
             for (int j = 0; j < count; j++) {
-                readFile(LittleFS, matches[j]);
+                readFile(matches[j]);
                 printfnl(SOURCE_COMMANDS, "\n");
             }
             free(matches);
         } else {
-            readFile(LittleFS, path);
+            readFile(path);
             printfnl(SOURCE_COMMANDS, "\n");
         }
     }
@@ -531,12 +557,13 @@ int listDir(int argc, char **argv)
         strcpy(path, "/");
     }
 
-    File root = LittleFS.open(path);
-    if (!root || !root.isDirectory()) {
+    char dpath[256];
+    lfs_path(dpath, sizeof(dpath), path);
+    struct stat st_dir;
+    if (stat(dpath, &st_dir) != 0 || !S_ISDIR(st_dir.st_mode)) {
         printfnl(SOURCE_COMMANDS, "Not a directory: %s\n", path);
         return 1;
     }
-    root.close();
 
     int nameWidth = 20;
     bool showTime = get_time_valid();
@@ -545,7 +572,7 @@ int listDir(int argc, char **argv)
 
     getLock();
     Stream *out = getStream();
-    dir_list(LittleFS, path, 0, out, showTime, nameWidth,
+    dir_list(path, 0, out, showTime, nameWidth,
              &fileCount, &dirCount, &totalSize, filter);
     out->printf("%d file%s, %d dir%s, %u bytes\n",
         fileCount, fileCount == 1 ? "" : "s",
@@ -557,8 +584,8 @@ int listDir(int argc, char **argv)
 
 int cmd_df(int argc, char **argv)
 {
-    size_t total = LittleFS.totalBytes();
-    size_t used  = LittleFS.usedBytes();
+    size_t total = 0, used = 0;
+    esp_littlefs_info("spiffs", &total, &used);
     size_t free  = total - used;
     unsigned pct = total ? (unsigned)(used * 100 / total) : 0;
 
@@ -572,14 +599,16 @@ int cmd_df(int argc, char **argv)
 
 static void grep_file(const char *pattern, const char *path, bool show_filename)
 {
-    File f = LittleFS.open(path, "r");
-    if (!f || f.isDirectory()) return;
+    char fpath[256];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *f = fopen(fpath, "r");
+    if (!f) return;
 
     char buf[256];
     int lineno = 0;
-    while (f.available()) {
-        int len = f.readBytesUntil('\n', buf, sizeof(buf) - 1);
-        buf[len] = '\0';
+    while (fgets(buf, sizeof(buf), f)) {
+        int len = strlen(buf);
+        if (len > 0 && buf[len - 1] == '\n') buf[--len] = '\0';
         if (len > 0 && buf[len - 1] == '\r') buf[--len] = '\0';
         lineno++;
 
@@ -601,32 +630,39 @@ static void grep_file(const char *pattern, const char *path, bool show_filename)
                 printfnl(SOURCE_NONE, "%3d: %s\n", lineno, buf);
         }
     }
-    f.close();
+    fclose(f);
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
 static void grep_dir(const char *pattern, const char *dirname)
 {
-    File root = LittleFS.open(dirname);
-    if (!root || !root.isDirectory()) return;
+    char dpath[128];
+    lfs_path(dpath, sizeof(dpath), dirname);
+    DIR *dir = opendir(dpath);
+    if (!dir) return;
 
-    File file = root.openNextFile();
-    while (file) {
-        if (file.isDirectory()) {
-            char subpath[128];
-            snprintf(subpath, sizeof(subpath), "%s%s%s",
-                     dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
-                     file.name());
-            grep_dir(pattern, subpath);
+    struct dirent *ent;
+    while ((ent = readdir(dir))) {
+        // Build app-level path (e.g. /dir/file)
+        char apppath[128];
+        snprintf(apppath, sizeof(apppath), "%s%s%s",
+                 dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
+                 ent->d_name);
+        // Build POSIX path for stat
+        char fullpath[160];
+        lfs_path(fullpath, sizeof(fullpath), apppath);
+        struct stat st;
+        if (stat(fullpath, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            grep_dir(pattern, apppath);
         } else {
-            char filepath[128];
-            snprintf(filepath, sizeof(filepath), "%s%s%s",
-                     dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
-                     file.name());
-            grep_file(pattern, filepath, true);
+            grep_file(pattern, apppath, true);
         }
-        file = root.openNextFile();
     }
+    closedir(dir);
 }
+#pragma GCC diagnostic pop
 
 int cmd_grep(int argc, char **argv)
 {
@@ -661,27 +697,30 @@ int cmd_grep(int argc, char **argv)
 
 static int copy_file(const char *src, const char *dst)
 {
-    File in = LittleFS.open(src, "r");
+    char sfp[256], dfp[256];
+    lfs_path(sfp, sizeof(sfp), src);
+    lfs_path(dfp, sizeof(dfp), dst);
+    FILE *in = fopen(sfp, "r");
     if (!in) {
         printfnl(SOURCE_COMMANDS, "Cannot open %s\n", src);
         return 1;
     }
-    File out = LittleFS.open(dst, FILE_WRITE);
+    FILE *out = fopen(dfp, "w");
     if (!out) {
-        in.close();
+        fclose(in);
         printfnl(SOURCE_COMMANDS, "Cannot create %s\n", dst);
         return 1;
     }
 
     uint8_t buf[256];
     size_t total = 0;
-    while (in.available()) {
-        size_t n = in.read(buf, sizeof(buf));
-        out.write(buf, n);
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        fwrite(buf, 1, n, out);
         total += n;
     }
-    in.close();
-    out.close();
+    fclose(in);
+    fclose(out);
     printfnl(SOURCE_COMMANDS, "Copied %u bytes: %s -> %s\n", (unsigned)total, src, dst);
     return 0;
 }
@@ -709,9 +748,10 @@ int cmd_cp(int argc, char **argv)
             return 1;
         }
         // Dest must be a directory for wildcard copy
-        File d = LittleFS.open(dst);
-        bool isDir = d && d.isDirectory();
-        if (d) d.close();
+        char cp_dpath[256];
+        lfs_path(cp_dpath, sizeof(cp_dpath), dst);
+        struct stat cp_st;
+        bool isDir = (stat(cp_dpath, &cp_st) == 0 && S_ISDIR(cp_st.st_mode));
         if (!isDir) {
             printfnl(SOURCE_COMMANDS, "Destination must be a directory for wildcard copy\n");
             free(matches);
@@ -740,11 +780,11 @@ int cmd_cp(int argc, char **argv)
     return copy_file(src, dst);
 }
 
-// Streaming write callback for LittleFS File
+// Streaming write callback for FILE*
 static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
 {
-    File *f = (File *)ctx;
-    return f->write(data, len) == len ? 0 : -1;
+    FILE *f = (FILE *)ctx;
+    return fwrite(data, 1, len, f) == len ? 0 : -1;
 }
 
 // Decompress a gzip, zlib, or raw deflate file using streaming inflate
@@ -775,40 +815,44 @@ int cmd_inflate(int argc, char **argv)
     }
 
     // Read entire compressed file into heap
-    File in = LittleFS.open(src, "r");
+    char src_fp[256];
+    lfs_path(src_fp, sizeof(src_fp), src);
+    FILE *in = fopen(src_fp, "r");
     if (!in) {
         printfnl(SOURCE_COMMANDS, "Cannot open %s\n", src);
         return 1;
     }
-    size_t in_size = in.size();
+    size_t in_size = fsize(in);
     if (in_size == 0) {
-        in.close();
+        fclose(in);
         printfnl(SOURCE_COMMANDS, "File is empty\n");
         return 1;
     }
     uint8_t *in_buf = (uint8_t *)malloc(in_size);
     if (!in_buf) {
-        in.close();
+        fclose(in);
         printfnl(SOURCE_COMMANDS, "Out of memory (%u bytes)\n", (unsigned)in_size);
         return 1;
     }
-    in.read(in_buf, in_size);
-    in.close();
+    fread(in_buf, 1, in_size, in);
+    fclose(in);
 
     // Stream decompressed chunks directly to output file
-    File out = LittleFS.open(dst, FILE_WRITE);
+    char dst_fp[256];
+    lfs_path(dst_fp, sizeof(dst_fp), dst);
+    FILE *out = fopen(dst_fp, "w");
     if (!out) {
         free(in_buf);
         printfnl(SOURCE_COMMANDS, "Cannot create %s\n", dst);
         return 1;
     }
 
-    int result = inflate_stream(in_buf, in_size, file_write_cb, &out);
-    out.close();
+    int result = inflate_stream(in_buf, in_size, file_write_cb, out);
+    fclose(out);
     free(in_buf);
 
     if (result < 0) {
-        LittleFS.remove(dst);
+        unlink(dst_fp);
         printfnl(SOURCE_COMMANDS, "Decompression error\n");
         return 1;
     }
@@ -844,39 +888,43 @@ int cmd_deflate(int argc, char **argv)
     if (level < 0) level = 0;
     if (level > 10) level = 10;
 
-    File in = LittleFS.open(src, "r");
+    char defl_src_fp[256];
+    lfs_path(defl_src_fp, sizeof(defl_src_fp), src);
+    FILE *in = fopen(defl_src_fp, "r");
     if (!in) {
         printfnl(SOURCE_COMMANDS, "Cannot open %s\n", src);
         return 1;
     }
-    size_t in_size = in.size();
+    size_t in_size = fsize(in);
     if (in_size == 0) {
-        in.close();
+        fclose(in);
         printfnl(SOURCE_COMMANDS, "File is empty\n");
         return 1;
     }
     uint8_t *in_buf = (uint8_t *)malloc(in_size);
     if (!in_buf) {
-        in.close();
+        fclose(in);
         printfnl(SOURCE_COMMANDS, "Out of memory (%u bytes)\n", (unsigned)in_size);
         return 1;
     }
-    in.read(in_buf, in_size);
-    in.close();
+    fread(in_buf, 1, in_size, in);
+    fclose(in);
 
-    File out = LittleFS.open(dst, FILE_WRITE);
+    char defl_dst_fp[256];
+    lfs_path(defl_dst_fp, sizeof(defl_dst_fp), dst);
+    FILE *out = fopen(defl_dst_fp, "w");
     if (!out) {
         free(in_buf);
         printfnl(SOURCE_COMMANDS, "Cannot create %s\n", dst);
         return 1;
     }
 
-    int result = gzip_stream(in_buf, in_size, file_write_cb, &out, 15, 8, level);
-    out.close();
+    int result = gzip_stream(in_buf, in_size, file_write_cb, out, 15, 8, level);
+    fclose(out);
     free(in_buf);
 
     if (result < 0) {
-        LittleFS.remove(dst);
+        unlink(defl_dst_fp);
         printfnl(SOURCE_COMMANDS, "Compression error\n");
         return 1;
     }
@@ -896,7 +944,9 @@ int cmd_hexdump(int argc, char **argv)
     char path[64];
     normalize_path(path, sizeof(path), argv[1]);
 
-    File f = LittleFS.open(path, "r");
+    char hex_fp[256];
+    lfs_path(hex_fp, sizeof(hex_fp), path);
+    FILE *f = fopen(hex_fp, "r");
     if (!f) {
         printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
@@ -905,13 +955,13 @@ int cmd_hexdump(int argc, char **argv)
     int limit = (argc >= 3) ? parse_int(argv[2]) : 256;
     if (limit <= 0) limit = 256;
 
-    size_t fsize = f.size();
-    printfnl(SOURCE_COMMANDS, "%s  (%u bytes)\n", path, (unsigned)fsize);
+    size_t file_size = fsize(f);
+    printfnl(SOURCE_COMMANDS, "%s  (%u bytes)\n", path, (unsigned)file_size);
 
     uint8_t buf[16];
     int offset = 0;
-    while (f.available() && offset < limit) {
-        int n = f.read(buf, 16);
+    while (!feof(f) && offset < limit) {
+        int n = fread(buf, 1, 16, f);
         if (n <= 0) break;
         if (offset + n > limit) n = limit - offset;
 
@@ -938,9 +988,9 @@ int cmd_hexdump(int argc, char **argv)
 
         offset += n;
     }
-    f.close();
-    if ((int)fsize > limit)
-        printfnl(SOURCE_COMMANDS, "... (%u more bytes)\n", (unsigned)(fsize - limit));
+    fclose(f);
+    if ((int)file_size > limit)
+        printfnl(SOURCE_COMMANDS, "... (%u more bytes)\n", (unsigned)(file_size - limit));
     return 0;
 }
 
@@ -952,7 +1002,9 @@ int cmd_mkdir(int argc, char **argv)
     }
     char path[64];
     normalize_path(path, sizeof(path), argv[1]);
-    if (LittleFS.mkdir(path))
+    char mk_fp[256];
+    lfs_path(mk_fp, sizeof(mk_fp), path);
+    if (mkdir(mk_fp, 0755) == 0)
         printfnl(SOURCE_COMMANDS, "Created %s\n", path);
     else
         printfnl(SOURCE_COMMANDS, "Failed to create %s\n", path);
@@ -967,7 +1019,9 @@ int cmd_rmdir(int argc, char **argv)
     }
     char path[64];
     normalize_path(path, sizeof(path), argv[1]);
-    if (LittleFS.rmdir(path))
+    char rm_fp[256];
+    lfs_path(rm_fp, sizeof(rm_fp), path);
+    if (rmdir(rm_fp) == 0)
         printfnl(SOURCE_COMMANDS, "Removed %s\n", path);
     else
         printfnl(SOURCE_COMMANDS, "Failed to remove %s (not empty?)\n", path);
@@ -995,7 +1049,9 @@ int loadFile(int argc, char **argv)
         getLock();
         getStream()->flush();
         //create file
-        File file = LittleFS.open(path, FILE_WRITE);
+        char load_fp[256];
+        lfs_path(load_fp, sizeof(load_fp), path);
+        FILE *file = fopen(load_fp, "w");
         if (!file)
         {
             releaseLock();
@@ -1029,13 +1085,13 @@ int loadFile(int argc, char **argv)
                     {
                         //Write line
                         line[charcount] = '\0';
-                        if (file.print(line))
+                        if (fputs(line, file) >= 0)
                         {
                         } 
                         else 
                         {
                           getStream()->printf("Write Error\n");
-                          file.close();
+                          fclose(file);
                           releaseLock();
                           return 1;
                         }
@@ -1051,7 +1107,7 @@ int loadFile(int argc, char **argv)
         }
         while (isDone == false);
         //close file
-        file.close();
+        fclose(file);
         releaseLock();
         printfnl(SOURCE_COMMANDS, "%d Lines written to file\n", linecount);
         
@@ -2882,7 +2938,9 @@ int cmd_clear( int argc, char **argv )
 
 static int md5_file(const char *path)
 {
-    File f = LittleFS.open(path, "r");
+    char fpath[256];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *f = fopen(fpath, "r");
     if (!f) {
         printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
@@ -2893,12 +2951,11 @@ static int md5_file(const char *path)
     mbedtls_md5_starts_ret(&ctx);
 
     uint8_t buf[256];
-    while (f.available()) {
-        int n = f.read(buf, sizeof(buf));
-        if (n <= 0) break;
+    int n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
         mbedtls_md5_update_ret(&ctx, buf, n);
     }
-    f.close();
+    fclose(f);
 
     uint8_t digest[16];
     mbedtls_md5_finish_ret(&ctx, digest);
@@ -2943,7 +3000,9 @@ int cmd_md5(int argc, char **argv)
 
 static int sha256_file(const char *path)
 {
-    File f = LittleFS.open(path, "r");
+    char fpath[256];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *f = fopen(fpath, "r");
     if (!f) {
         printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
@@ -2954,12 +3013,11 @@ static int sha256_file(const char *path)
     mbedtls_sha256_starts_ret(&ctx, 0);
 
     uint8_t buf[256];
-    while (f.available()) {
-        int n = f.read(buf, sizeof(buf));
-        if (n <= 0) break;
+    int n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
         mbedtls_sha256_update_ret(&ctx, buf, n);
     }
-    f.close();
+    fclose(f);
 
     uint8_t digest[32];
     mbedtls_sha256_finish_ret(&ctx, digest);
@@ -3082,14 +3140,15 @@ int cmd_wasm(int argc, char **argv)
         }
         char path[64];
         normalize_path(path, sizeof(path), argv[2]);
-        File f = LittleFS.open(path, "r");
-        if (!f) {
+        char wasm_fp[256];
+        lfs_path(wasm_fp, sizeof(wasm_fp), path);
+        struct stat wasm_st;
+        if (stat(wasm_fp, &wasm_st) != 0) {
             printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
             return 1;
         }
         printfnl(SOURCE_COMMANDS, "WASM Module: %s\n", path);
-        printfnl(SOURCE_COMMANDS, "  Size: %u bytes\n", (unsigned)f.size());
-        f.close();
+        printfnl(SOURCE_COMMANDS, "  Size: %u bytes\n", (unsigned)wasm_st.st_size);
         return 0;
     }
 
@@ -3195,21 +3254,23 @@ int cmd_compile(int argc, char **argv)
     }
 
     // Read source file
-    File f = LittleFS.open(path, "r");
+    char compile_fp[256];
+    lfs_path(compile_fp, sizeof(compile_fp), path);
+    FILE *f = fopen(compile_fp, "r");
     if (!f) {
         printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
     }
-    int slen = f.size();
+    int slen = fsize(f);
     char *src = (char *)malloc(slen + 1);
     if (!src) {
-        f.close();
+        fclose(f);
         printfnl(SOURCE_COMMANDS, "Out of memory\n");
         return 1;
     }
-    f.readBytes(src, slen);
+    fread(src, 1, slen, f);
     src[slen] = 0;
-    f.close();
+    fclose(f);
 
     // Compile
     // Use bw_ or cw_ prefixed Buf type depending on compiler
@@ -3270,14 +3331,16 @@ int cmd_compile(int argc, char **argv)
     char out_path[64];
     snprintf(out_path, sizeof(out_path), "%.*s.wasm", (int)(dot - path), path);
 
-    File out = LittleFS.open(out_path, FILE_WRITE);
+    char out_fp[256];
+    lfs_path(out_fp, sizeof(out_fp), out_path);
+    FILE *out = fopen(out_fp, "w");
     if (!out) {
         printfnl(SOURCE_COMMANDS, "Cannot create %s\n", out_path);
         free(wasm_data);
         return 1;
     }
-    out.write(wasm_data, wasm_len);
-    out.close();
+    fwrite(wasm_data, 1, wasm_len, out);
+    fclose(out);
     printfnl(SOURCE_COMMANDS, "Wrote %d bytes to %s\n", wasm_len, out_path);
     free(wasm_data);
 

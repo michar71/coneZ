@@ -7,8 +7,6 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "printManager.h"
-#include "FS.h"
-#include <LittleFS.h>
 #include "main.h"
 #include "basic_wrapper.h"   // get_basic_param / set_basic_param
 
@@ -85,17 +83,19 @@ static void wasm_run(const char *path)
     strlcpy(wasm_current_path, path, sizeof(wasm_current_path));
 
     // Load file from LittleFS
-    File f = LittleFS.open(path, "r");
+    char fpath[256];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *f = fopen(fpath, "r");
     if (!f) {
         printfnl(SOURCE_WASM, "wasm: cannot open %s\n", path);
         wasm_running = false;
         return;
     }
 
-    size_t wasm_size = f.size();
+    size_t wasm_size = fsize(f);
     if (wasm_size == 0) {
         printfnl(SOURCE_WASM, "wasm: %s is empty\n", path);
-        f.close();
+        fclose(f);
         wasm_running = false;
         return;
     }
@@ -104,13 +104,13 @@ static void wasm_run(const char *path)
     uint8_t *wasm_buf = (uint8_t *)malloc(wasm_size);
     if (!wasm_buf) {
         printfnl(SOURCE_WASM, "wasm: alloc failed (%u bytes)\n", (unsigned)wasm_size);
-        f.close();
+        fclose(f);
         wasm_running = false;
         return;
     }
 
-    size_t bytes_read = f.read(wasm_buf, wasm_size);
-    f.close();
+    size_t bytes_read = fread(wasm_buf, 1, wasm_size, f);
+    fclose(f);
 
     if (bytes_read != wasm_size) {
         printfnl(SOURCE_WASM, "wasm: read error (%u/%u)\n", (unsigned)bytes_read, (unsigned)wasm_size);

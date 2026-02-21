@@ -1,6 +1,4 @@
 #include <Arduino.h>
-#include <LittleFS.h>
-#include <FS.h>
 #include "cue.h"
 #include "main.h"
 #include "config.h"
@@ -196,7 +194,9 @@ bool cue_load(const char *path)
         return false;
     }
 
-    File f = LittleFS.open(path, "r");
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *f = fopen(fpath, "rb");
     if (!f) {
         printfnl(SOURCE_SYSTEM, "cue: cannot open %s\n", path);
         return false;
@@ -204,34 +204,34 @@ bool cue_load(const char *path)
 
     // Read header
     cue_header hdr;
-    if (f.read((uint8_t *)&hdr, sizeof(hdr)) != sizeof(hdr)) {
+    if (fread(&hdr, 1, sizeof(hdr), f) != sizeof(hdr)) {
         printfnl(SOURCE_SYSTEM, "cue: header read failed\n");
-        f.close();
+        fclose(f);
         return false;
     }
 
     // Validate header
     if (hdr.magic != CUE_MAGIC) {
         printfnl(SOURCE_SYSTEM, "cue: bad magic 0x%08X (expected 0x%08X)\n", hdr.magic, CUE_MAGIC);
-        f.close();
+        fclose(f);
         return false;
     }
 
     if (hdr.version != 0) {
         printfnl(SOURCE_SYSTEM, "cue: unsupported version %d\n", hdr.version);
-        f.close();
+        fclose(f);
         return false;
     }
 
     if (hdr.record_size < sizeof(cue_entry)) {
-        printfnl(SOURCE_SYSTEM, "cue: record_size %d too small (need %d)\n", hdr.record_size, sizeof(cue_entry));
-        f.close();
+        printfnl(SOURCE_SYSTEM, "cue: record_size %d too small (need %d)\n", hdr.record_size, (int)sizeof(cue_entry));
+        fclose(f);
         return false;
     }
 
     if (hdr.num_cues == 0) {
         printfnl(SOURCE_SYSTEM, "cue: file has 0 cues\n");
-        f.close();
+        fclose(f);
         return false;
     }
 
@@ -239,26 +239,26 @@ bool cue_load(const char *path)
     cue_entry *new_list = new (std::nothrow) cue_entry[hdr.num_cues];
     if (!new_list) {
         printfnl(SOURCE_SYSTEM, "cue: alloc failed for %d cues\n", hdr.num_cues);
-        f.close();
+        fclose(f);
         return false;
     }
 
     // Read entries, using record_size to stride for forward compatibility
     uint16_t skip = hdr.record_size - sizeof(cue_entry);
     for (int i = 0; i < hdr.num_cues; i++) {
-        if (f.read((uint8_t *)&new_list[i], sizeof(cue_entry)) != sizeof(cue_entry)) {
+        if (fread(&new_list[i], 1, sizeof(cue_entry), f) != sizeof(cue_entry)) {
             printfnl(SOURCE_SYSTEM, "cue: read failed at entry %d\n", i);
             delete[] new_list;
-            f.close();
+            fclose(f);
             return false;
         }
         // Skip extra bytes if newer format has larger records
         if (skip > 0) {
-            f.seek(f.position() + skip);
+            fseek(f, skip, SEEK_CUR);
         }
     }
 
-    f.close();
+    fclose(f);
 
     // Replace previous cue list
     if (cue_list) {

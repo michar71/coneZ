@@ -18,8 +18,7 @@
 #include <esp_app_format.h>
 #include <nvs_flash.h>
 #include <nvs.h>
-#include <LittleFS.h>
-#include <FS.h>
+#include "esp_littlefs.h"
 #include <RadioLib.h>
 #include "dualstream.h"
 #include "shell.h"
@@ -74,48 +73,29 @@ void init_LittleFS()
 {
   Serial.println("---- LittleFS ----");
 
+  esp_vfs_littlefs_conf_t conf = {};
+  conf.base_path = LFS_PREFIX;
+  conf.partition_label = "spiffs";   // legacy name in partitions.csv
+  conf.format_if_mount_failed = true;
+  conf.dont_mount = false;
 
-  if (!LittleFS.begin(true)) {
-    Serial.println("Failed to mount LittleFS, even after formatting.");
+  esp_err_t err = esp_vfs_littlefs_register(&conf);
+  if (err != ESP_OK) {
+    Serial.printf("Failed to mount LittleFS: %s\n", esp_err_to_name(err));
     return;
   }
 
   littlefs_mounted = true;
   Serial.println("LittleFS mounted successfully.");
 
-  size_t total = LittleFS.totalBytes();
-  size_t used = LittleFS.usedBytes();
+  size_t total = 0, used = 0;
+  esp_littlefs_info("spiffs", &total, &used);
 
   Serial.println("LittleFS Stats:");
-  Serial.printf("  Total bytes : %u\n", total);
-  Serial.printf("  Used bytes  : %u\n", used);
-  Serial.printf("  Free bytes  : %u\n", total - used);
+  Serial.printf("  Total bytes : %u\n", (unsigned)total);
+  Serial.printf("  Used bytes  : %u\n", (unsigned)used);
+  Serial.printf("  Free bytes  : %u\n", (unsigned)(total - used));
   Serial.println( "" );
-}
-
-
-void list_dir(fs::FS &fs, const char *dirname, uint8_t levels = 1) 
-{
-  Serial.printf("Listing directory: %s\n", dirname);
-
-  File root = fs.open(dirname);
-  if (!root || !root.isDirectory()) {
-    Serial.println("Failed to open directory");
-    return;
-  }
-
-  File file = root.openNextFile();
-  while (file) {
-    if (file.isDirectory()) {
-      Serial.printf("  [DIR ] %s\n", file.name());
-      if (levels > 0) {
-        list_dir(fs, file.path(), levels - 1);
-      }
-    } else {
-      Serial.printf("  [FILE] %s\t(%u bytes)\n", file.name(), file.size());
-    }
-    file = root.openNextFile();
-  }
 }
 
 
@@ -365,7 +345,6 @@ void setup()
   //dump_nvs();
   print_nvs_stats();
   init_LittleFS();
-  //list_dir( LittleFS, "/" );
 
   // Load config from /config.ini (or use compiled defaults)
   config_init();

@@ -4,6 +4,7 @@
 #include "board.h"
 #include "led.h"
 #include <sys/stat.h>
+#include <stdio.h>
 #include "esp_timer.h"
 
 // Monotonic millisecond timer (replaces Arduino millis())
@@ -18,12 +19,36 @@ static inline uint32_t uptime_us(void) {
     return (uint32_t)esp_timer_get_time();
 }
 
+// LittleFS VFS mount point — POSIX calls need the full path.
+#define LFS_PREFIX "/littlefs"
+
+// Prepend the LittleFS mount point to an application-level path.
+// Application paths start with '/' (e.g. "/config.ini").
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+static inline const char *lfs_path(char *buf, size_t bufsz, const char *path)
+{
+    snprintf(buf, bufsz, LFS_PREFIX "%s", path);
+    return buf;
+}
+#pragma GCC diagnostic pop
+
+// Get file size via seek (for FILE* handles).
+static inline long fsize(FILE *f)
+{
+    long pos = ftell(f);
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, pos, SEEK_SET);
+    return sz;
+}
+
 // Check file existence via POSIX stat() instead of LittleFS.exists(),
 // which internally calls open() and triggers VFS error logs for missing files.
 static inline bool file_exists(const char *path)
 {
     char fullpath[256];
-    snprintf(fullpath, sizeof(fullpath), "/littlefs%s", path);
+    lfs_path(fullpath, sizeof(fullpath), path);
     struct stat st;
     return (stat(fullpath, &st) == 0);
 }

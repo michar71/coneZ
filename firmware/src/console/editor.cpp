@@ -1,6 +1,4 @@
 #include "editor.h"
-#include <LittleFS.h>
-#include <FS.h>
 #include "printManager.h"
 #include "shell.h"
 #include "psram.h"
@@ -171,19 +169,22 @@ static bool editor_load(EditorState *ed, const char *path)
 
     if (!ed_ensure_capacity(ed, 1)) return false;
 
-    File f = LittleFS.open(path, "r");
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *f = fopen(fpath, "r");
     if (f) {
         char buf[ED_LINE_MAX];
-        while (f.available() && ed->num_lines < ED_MAX_LINES) {
-            int len = f.readBytesUntil('\n', buf, sizeof(buf) - 1);
-            buf[len] = '\0';
-            if (len > 0 && buf[len - 1] == '\r') buf[--len] = '\0';
+        while (fgets(buf, sizeof(buf), f) && ed->num_lines < ED_MAX_LINES) {
+            int len = strlen(buf);
+            // Strip trailing newline/CR
+            while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
+                buf[--len] = '\0';
 
             if (!ed_ensure_capacity(ed, ed->num_lines + 1)) break;
             psram_write(ed_line_addr(ed, ed->num_lines), (const uint8_t *)buf, ED_LINE_MAX);
             ed->num_lines++;
         }
-        f.close();
+        fclose(f);
     }
 
     // Always have at least one line
@@ -209,17 +210,19 @@ static bool editor_save(EditorState *ed)
 {
     ed_flush_work(ed);
 
-    File f = LittleFS.open(ed->filepath, FILE_WRITE);
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), ed->filepath);
+    FILE *f = fopen(fpath, "w");
     if (!f) return false;
 
     char buf[ED_LINE_MAX];
     for (int i = 0; i < ed->num_lines; i++) {
         psram_read(ed_line_addr(ed, i), (uint8_t *)buf, ED_LINE_MAX);
         buf[ED_LINE_MAX - 1] = '\0';
-        f.print(buf);
-        f.print('\n');
+        fputs(buf, f);
+        fputc('\n', f);
     }
-    f.close();
+    fclose(f);
     ed->modified = false;
     snprintf(ed->status_msg, sizeof(ed->status_msg), "Saved %d lines", ed->num_lines);
     return true;

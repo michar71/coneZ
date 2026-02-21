@@ -6,8 +6,8 @@
 #include <esp_app_format.h>
 #include <nvs_flash.h>
 #include <nvs.h>
-#include <LittleFS.h>
-#include <FS.h>
+#include "esp_littlefs.h"
+#include <dirent.h>
 #include "main.h"
 #include "http.h"
 #include "config.h"
@@ -152,53 +152,56 @@ static esp_err_t http_reboot(httpd_req_t *req)
 
 
 // Show LittleFS directory listing (appends to page_buf).
-static void page_cat_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 3 )
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+static void page_cat_dir_list(const char *dirname, uint8_t levels = 3)
 {
     page_catf("Directory: %s%s\n", dirname, strcmp(dirname, "/") ? "/" : "");
 
-    File root = fs.open( dirname );
-
-    if( !root || !root.isDirectory() )
-    {
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), dirname);
+    DIR *d = opendir(fpath);
+    if (!d) {
         page_cat(" - failed to open directory\n");
         return;
     }
 
-    File file = root.openNextFile();
-    while( file )
-    {
-        if( !file.isDirectory() )
-        {
+    // First pass: list files
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        char entpath[128];
+        snprintf(entpath, sizeof(entpath), "%s/%s", fpath, ent->d_name);
+        struct stat st;
+        if (stat(entpath, &st) != 0) continue;
+        if (!S_ISDIR(st.st_mode)) {
             page_catf("  %s%s%s   %u bytes\n",
-                dirname, strcmp(dirname, "/") ? "/" : "", file.name(), (unsigned)file.size());
+                dirname, strcmp(dirname, "/") ? "/" : "", ent->d_name, (unsigned)st.st_size);
         }
-
-        file = root.openNextFile();
     }
-
     page_cat("\n");
 
-    // Now list subdirectories
+    // Second pass: recurse into subdirectories
     bool any_dirs_listed = false;
-    root.rewindDirectory();
-    file = root.openNextFile();
-    while( file )
-    {
-        if (file.isDirectory())
-        {
-            if (levels)
-            {
-                page_cat_dir_list( fs, file.path(), levels - 1 );
-                any_dirs_listed = true;
-            }
+    rewinddir(d);
+    while ((ent = readdir(d)) != NULL) {
+        char entpath[128];
+        snprintf(entpath, sizeof(entpath), "%s/%s", fpath, ent->d_name);
+        struct stat st;
+        if (stat(entpath, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode) && levels > 0) {
+            char subdir[128];
+            snprintf(subdir, sizeof(subdir), "%s%s%s",
+                     dirname, strcmp(dirname, "/") ? "/" : "", ent->d_name);
+            page_cat_dir_list(subdir, levels - 1);
+            any_dirs_listed = true;
         }
-
-        file = root.openNextFile();
     }
+    closedir(d);
 
-    if( any_dirs_listed )
+    if (any_dirs_listed)
         page_cat("\n");
 }
+#pragma GCC diagnostic pop
 
 
 static esp_err_t http_dir(httpd_req_t *req)
@@ -215,13 +218,13 @@ static esp_err_t http_dir(httpd_req_t *req)
     }
 
     // Start from the root directory.
-    page_cat_dir_list( LittleFS, "/" );
+    page_cat_dir_list("/");
 
     page_cat("<br><hr>");
 
     // Filesystem space stats:
-    size_t total = LittleFS.totalBytes();
-    size_t used = LittleFS.usedBytes();
+    size_t total = 0, used = 0;
+    esp_littlefs_info("spiffs", &total, &used);
 
     // Avoid divide by 0 if no filesystem.
     if( total < 1 )
@@ -372,8 +375,8 @@ static esp_err_t http_update_post(httpd_req_t *req)
             return ESP_FAIL;
         }
     } else {
-        // Filesystem: find partition labeled "spiffs" in partition table
-        LittleFS.end();
+        // Filesystem: unmount before erasing partition
+        esp_vfs_littlefs_unregister("spiffs");
         part = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
         if (!part) {

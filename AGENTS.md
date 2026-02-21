@@ -157,12 +157,12 @@ The project currently uses `framework = espidf, arduino`. Arduino could be dropp
 entirely (`framework = espidf` only) — all Arduino APIs have direct ESP-IDF
 equivalents. This section documents the migration surface.
 
-**Remaining Arduino API usage across firmware (~250 call sites):**
+**Remaining Arduino API usage across firmware (~135 call sites):**
 
 | Arduino API | ~Count | Files | ESP-IDF Replacement | Status |
 |-------------|--------|-------|---------------------|--------|
 | Serial (print/read/write) | 135 | 9 | UART driver or USB CDC (`tinyusb`). HWCDC core-1 constraint remains. | Pending |
-| LittleFS / File | 77 | 15 | Already an IDF component (`esp_littlefs`). Switch to POSIX `open()`/`read()`/`write()`/`stat()`. | Pending |
+| ~~LittleFS / File~~ | ~~77~~ | — | POSIX `fopen()`/`fread()`/`fwrite()`/`stat()`/`opendir()` via `esp_vfs_littlefs` VFS mount at `/littlefs`. `lfs_path()` helper in `main.h`. | **Done** |
 | ~~WiFi (WiFi.begin/status)~~ | ~~39~~ | — | `conez_wifi.h` wrapping `esp_wifi.h`/`esp_netif.h`/`esp_event.h`. Telnet uses BSD sockets. MQTT uses `esp_mqtt_client`. NTP uses direct `esp_sntp`. | **Done** |
 | ~~EVERY_N_SECONDS~~ | ~~1~~ | — | Removed (was a FastLED macro) | **Done** |
 | ~~millis/delay/micros~~ | ~~105~~ | — | `uptime_ms()`, `uptime_us()` in `main.h`; `vTaskDelay(pdMS_TO_TICKS(ms))`; `esp_timer_get_time()` | **Done** |
@@ -185,11 +185,11 @@ equivalents. This section documents the migration surface.
 | OTA (Update) | Easy | **Done** — `esp_ota_ops.h` + `esp_partition.h`, inline handlers in http.cpp |
 | SPI (PSRAM/LoRa) | Medium | **Done** — PSRAM uses raw GPSPI2 registers with hardware cmd/addr/dummy phases; LoRa uses custom `EspHal` RadioLib HAL with raw GPSPI3 registers (`lora/lora_hal.h`). See PSRAM section for performance analysis. |
 | WebServer | Hard | **Done** — `esp_http_server` with URI handlers, raw binary OTA upload, JS-driven form |
-| LittleFS | Easy | Pending — already an IDF component; swap `File` class for POSIX calls |
+| LittleFS | Easy | **Done** — POSIX `fopen`/`fread`/`fwrite`/`stat`/`opendir` via `esp_vfs_littlefs` VFS mount at `/littlefs`. `lfs_path()` prepends mount point. `file_exists()` uses `stat()`. |
 | WiFi | Medium | **Done** — `conez_wifi.h/cpp` wraps ESP-IDF WiFi init/events/state/queries. Telnet uses BSD sockets (`lwip/sockets.h`). MQTT uses ESP-IDF `esp_mqtt_client`. NTP uses direct `sntp_*()` API. |
 | Serial/HWCDC | Medium | Pending — core debug path, must preserve core-1 pinning. Need `tinyusb` CDC or UART driver. |
 
-**In progress.** Two subsystems remain: Serial/HWCDC (~135 call sites) and LittleFS (~77).
+**In progress.** One subsystem remains: Serial/HWCDC (~135 call sites).
 All remaining replacements are mechanical (no architectural changes needed).
 
 ## Architecture
@@ -611,7 +611,7 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
   curl -X POST --data-binary @firmware.bin http://<ip>/update?type=firmware
   curl -X POST --data-binary @littlefs.bin http://<ip>/update?type=filesystem
   ```
-  Uses Arduino `Update` library (wraps ESP-IDF `esp_ota_*`). Filesystem upload calls `LittleFS.end()` before writing. Auto-reboots on success. Progress logged via `printfnl(SOURCE_SYSTEM, ...)`.
+  Uses ESP-IDF `esp_ota_ops.h` + `esp_partition.h`. Filesystem upload calls `esp_vfs_littlefs_unregister()` before writing. Auto-reboots on success. Progress logged via `printfnl(SOURCE_SYSTEM, ...)`.
 - **MQTT:** ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp/h`. Connects to the sewerpipe broker over WiFi with auto-reconnect (built into esp_mqtt). Publishes JSON heartbeats every 30s to `conez/{id}/status` with uptime, heap, temp, RSSI. Debug messages are forwarded to `conez/{id}/debug` by printManager (SOURCE_MQTT excluded to prevent loops). Subscribes to `conez/{id}/cmd/#` for per-cone commands. The esp_mqtt task runs on core 1 (`CONFIG_MQTT_USE_CORE_1` in sdkconfig.defaults) for HWCDC safety. Config section `[mqtt]` with `broker` (default: `sewerpipe.local`), `port` (default: 1883), and `enabled` (default: on) keys. CLI: `mqtt` (status), `mqtt enable`/`disable`, `mqtt connect`/`disconnect`, `mqtt broker <host>` (hot-apply), `mqtt pub <topic> <payload>`. Debug output via `SOURCE_MQTT` (default on). `mqtt_publish()` is thread-safe (esp_mqtt uses a recursive mutex). See `documentation/mqtt.txt` for topic hierarchy and protocol details.
 - **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) uses BSD sockets (`lwip/sockets.h`) with non-blocking I/O, supports up to 3 simultaneous clients with per-slot IAC state, bare `\n` → `\r\n` translation on output, prompt delivery on connect, and Ctrl+D per-session disconnect. Arrow keys, Home/End/Delete, Ctrl-A/E/U, 32-entry command history (PSRAM-backed ring buffer on ConeZ PCB, single-entry DRAM fallback on Heltec). ANSI color output on by default, toggleable at runtime via `color on`/`color off` CLI command (`setAnsiEnabled()`/`getAnsiEnabled()` in `printManager.h`). Commands requiring ANSI (art, clear, game, winamp) error out when color is off; editor falls back to a line-based mode. `CORE_DEBUG_LEVEL=0` in `platformio.ini` suppresses Arduino library log macros (`log_e`/`log_w`/etc.) at compile time — these bypass `esp_log_level_set()` and would corrupt HWCDC output. File commands auto-normalize paths (prepend `/` if missing) via `normalize_path()` in `main.h`. Full-screen text editor (`console/editor.cpp/h`) for on-device script editing, with line-editor fallback when ANSI is disabled. See `documentation/cli-commands.txt` for the full command reference.
 

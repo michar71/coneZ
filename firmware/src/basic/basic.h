@@ -446,20 +446,22 @@ int check_error(char* filen)
 /* INTERPRETER LOOP */
 int interp(char* filen) 
 {	
-	File file;
+	FILE *file = NULL;
 	int len;
 	int error = 0;
 	//Open file
 	if (filen != NULL)
 	{
-		file = LittleFS.open(filen);
-		if (file.size() > 0)
+		char fpath[256];
+		lfs_path(fpath, sizeof(fpath), filen);
+		file = fopen(fpath, "r");
+		if (file)
 			printfnl(SOURCE_BASIC,"File: %s opened\n", filen);
 		else
 		{
 			printfnl(SOURCE_BASIC,"File: %s does not exist!\n", filen);
 			return 0;
-		}	
+		}
 	}
 	for (;;) 
 	{
@@ -474,11 +476,11 @@ int interp(char* filen)
 			}
 			if (filen!=NULL)
 			{
-				len  = file.readBytesUntil('\n', lp=lbuf,sizeof lbuf);
-				lbuf[len] = 0;
 				lp = lbuf;
-				if (file.available()==false)
-					break;
+				if (!fgets(lbuf, sizeof lbuf, file)) break;
+				len = strlen(lbuf);
+				if (len > 0 && lbuf[len-1] == '\n') lbuf[--len] = 0;
+				if (len > 0 && lbuf[len-1] == '\r') lbuf[--len] = 0;
 			}
 			else
 			{
@@ -507,7 +509,7 @@ int interp(char* filen)
 			if ((error=check_error(filen)) > -1) return error; 
 		}
 		printfnl(SOURCE_BASIC,"Compiled Size: %d Bytes\n", cpc * 4);
-		ipc=cpc+1, compile=0, file.close(), filen=NULL; /* DONE COMPILING */
+		ipc=cpc+1, compile=0, filen=NULL; if (file) { fclose(file); file = NULL; } /* DONE COMPILING */
 		emit((int (*)())BYE_);							/* RUN PROGRAM */
 		DRIVER();  										/* MOVE PROGRAM FORWARD */			
 		//Handle Errors

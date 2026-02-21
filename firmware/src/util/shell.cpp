@@ -1,6 +1,8 @@
 #include <Arduino.h>
-#include <LittleFS.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "shell.h"
+#include "main.h"
 #include "printManager.h"
 #include "psram.h"
 #include "telnet.h"
@@ -896,14 +898,21 @@ void ConezShell::tabComplete(void)
             // partial stays as full prefix
         }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
         getLock();
-        File root = LittleFS.open(dirPath);
-        if (root && root.isDirectory()) {
-            File f = root.openNextFile();
-            while (f && nMatches < MAX_MATCHES) {
-                const char *fname = f.name();
+        char dpath[128];
+        lfs_path(dpath, sizeof(dpath), dirPath);
+        DIR *dir = opendir(dpath);
+        if (dir) {
+            struct dirent *ent;
+            while ((ent = readdir(dir)) && nMatches < MAX_MATCHES) {
+                const char *fname = ent->d_name;
                 int flen = strlen(fname);
-                bool isDir = f.isDirectory();
+                char fullpath[192];
+                snprintf(fullpath, sizeof(fullpath), "%s/%s", dpath, fname);
+                struct stat st;
+                bool isDir = (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode));
                 if (flen >= partialLen && flen < MAX_NAME &&
                     strncasecmp(fname, partial, partialLen) == 0 &&
                     matchesFileSpec(fname, flen, isDir, activeFileSpec)) {
@@ -912,11 +921,11 @@ void ConezShell::tabComplete(void)
                     matches[nMatches].isDir = isDir;
                     nMatches++;
                 }
-                f = root.openNextFile();
             }
-            root.close();
+            closedir(dir);
         }
         releaseLock();
+#pragma GCC diagnostic pop
     }
 
     if (nMatches == 0) {

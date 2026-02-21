@@ -1,6 +1,4 @@
 #include <Arduino.h>
-#include <LittleFS.h>
-#include <FS.h>
 #include <esp_http_server.h>
 #include "config.h"
 #include "main.h"
@@ -288,7 +286,9 @@ static char *str_trim(char *s)
 // ---------- INI parser ----------
 static void config_parse_ini(void)
 {
-    File f = LittleFS.open(CONFIG_PATH, "r");
+    char fpath[64];
+    lfs_path(fpath, sizeof(fpath), CONFIG_PATH);
+    FILE *f = fopen(fpath, "r");
     if (!f)
         return;
 
@@ -297,13 +297,12 @@ static void config_parse_ini(void)
     char line[128];
     char section[16] = "";
 
-    while (f.available())
+    while (fgets(line, sizeof(line), f))
     {
-        int len = f.readBytesUntil('\n', line, sizeof(line) - 1);
-        line[len] = '\0';
+        int len = strlen(line);
 
-        // Trim trailing \r
-        if (len > 0 && line[len - 1] == '\r')
+        // Strip trailing newline/CR
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
             line[--len] = '\0';
 
         // Skip blank lines and comments
@@ -343,7 +342,7 @@ static void config_parse_ini(void)
         }
     }
 
-    f.close();
+    fclose(f);
     Serial.println("Config loaded.");
 }
 
@@ -368,7 +367,9 @@ void config_save(void)
         return;
     }
 
-    File f = LittleFS.open(CONFIG_PATH, "w");
+    char fpath[64];
+    lfs_path(fpath, sizeof(fpath), CONFIG_PATH);
+    FILE *f = fopen(fpath, "w");
     if (!f)
     {
         printfnl(SOURCE_COMMANDS, "Error: cannot open %s for writing\n", CONFIG_PATH);
@@ -386,40 +387,43 @@ void config_save(void)
         if (strcmp(d->section, prev_section) != 0)
         {
             if (i > 0)
-                f.print("\n");
-            f.printf("[%s]\n", d->section);
+                fprintf(f, "\n");
+            fprintf(f, "[%s]\n", d->section);
             prev_section = d->section;
         }
 
         switch (d->type)
         {
         case CFG_STR:
-            f.printf("%s=%s\n", d->key, (const char *)(base + d->offset));
+            fprintf(f, "%s=%s\n", d->key, (const char *)(base + d->offset));
             break;
         case CFG_FLOAT:
-            f.printf("%s=%.9g\n", d->key, *(float *)(base + d->offset));
+            fprintf(f, "%s=%.9g\n", d->key, *(float *)(base + d->offset));
             break;
         case CFG_INT:
-            f.printf("%s=%d\n", d->key, *(int *)(base + d->offset));
+            fprintf(f, "%s=%d\n", d->key, *(int *)(base + d->offset));
             break;
         case CFG_HEX:
-            f.printf("%s=0x%04X\n", d->key, *(int *)(base + d->offset));
+            fprintf(f, "%s=0x%04X\n", d->key, *(int *)(base + d->offset));
             break;
         case CFG_BOOL:
-            f.printf("%s=%s\n", d->key, *(bool *)(base + d->offset) ? "on" : "off");
+            fprintf(f, "%s=%s\n", d->key, *(bool *)(base + d->offset) ? "on" : "off");
             break;
         }
     }
 
-    f.close();
+    fclose(f);
     printfnl(SOURCE_COMMANDS, "Config saved to %s\n", CONFIG_PATH);
 }
 
 
 void config_reset(void)
 {
-    if (littlefs_mounted && file_exists(CONFIG_PATH))
-        LittleFS.remove(CONFIG_PATH);
+    if (littlefs_mounted && file_exists(CONFIG_PATH)) {
+        char fpath[64];
+        lfs_path(fpath, sizeof(fpath), CONFIG_PATH);
+        unlink(fpath);
+    }
 
     config_fill_defaults(&config);
     printfnl(SOURCE_COMMANDS, "Config reset to compiled defaults.\n");

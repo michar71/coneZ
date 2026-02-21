@@ -1,5 +1,5 @@
 #include "lut.h"
-#include <LittleFS.h>
+#include "main.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "printManager.h"
@@ -32,7 +32,9 @@ int checkLut(uint8_t index)
     //Try to open the file
     char filename[16];
     snprintf(filename, sizeof(filename), "/LUT_%d.csv", index);
-    File file = LittleFS.open(filename, FILE_READ);
+    char fpath[64];
+    lfs_path(fpath, sizeof(fpath), filename);
+    FILE *file = fopen(fpath, "r");
     if (!file)
     {
         lut_unlock();
@@ -40,14 +42,13 @@ int checkLut(uint8_t index)
         return -1; //LUT does not exists
     }
     int count = 0;
-    char c;
-    while (file.available())
+    int c;
+    while ((c = fgetc(file)) != EOF)
     {
-        c = file.read();
         if (c == ',')
             count++;
     }
-    file.close();
+    fclose(file);
     if (count == 0)
     {
         lut_unlock();
@@ -93,7 +94,9 @@ int loadLut(uint8_t index)
     //Open the file and read the values into the LUT
     char filename[16];
     snprintf(filename, sizeof(filename), "/LUT_%d.csv", index);
-    File file = LittleFS.open(filename, FILE_READ);
+    char fpath[64];
+    lfs_path(fpath, sizeof(fpath), filename);
+    FILE *file = fopen(fpath, "r");
     if (!file)
     {
         free(pLUT);
@@ -105,9 +108,9 @@ int loadLut(uint8_t index)
     int i = 0;
     char valbuf[16];
     int vi = 0;
-    while (file.available())
+    int c;
+    while ((c = fgetc(file)) != EOF)
     {
-        char c = file.read();
         if (c == ',')
         {
             valbuf[vi] = '\0';
@@ -116,7 +119,7 @@ int loadLut(uint8_t index)
         }
         else if (vi < (int)sizeof(valbuf) - 1)
         {
-            valbuf[vi++] = c;
+            valbuf[vi++] = (char)c;
         }
     }
 
@@ -126,7 +129,7 @@ int loadLut(uint8_t index)
         pLUT[i++] = atoi(valbuf);
     }
 
-    file.close();
+    fclose(file);
 
     lutSize = i; //Set the size of the LUT
     currentLUTIndex = index; //Set current LUT index
@@ -148,7 +151,9 @@ int saveLut(uint8_t index)
     //Open the file for writing
     char filename[16];
     snprintf(filename, sizeof(filename), "/LUT_%d.csv", index);
-    File file = LittleFS.open(filename, FILE_WRITE);
+    char fpath[64];
+    lfs_path(fpath, sizeof(fpath), filename);
+    FILE *file = fopen(fpath, "w");
     if (!file)
     {
         lut_unlock();
@@ -158,12 +163,12 @@ int saveLut(uint8_t index)
     //Write the values to the file
     for (int i = 0; i < lutSize; i++)
     {
-        file.print(pLUT[i]);
+        fprintf(file, "%d", pLUT[i]);
         if (i < lutSize - 1)
-            file.print(","); //Add comma between values
+            fprintf(file, ","); //Add comma between values
     }
 
-    file.close();
+    fclose(file);
     lut_unlock();
     return 1; //Success
 }

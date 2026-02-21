@@ -1,6 +1,8 @@
-#include <Arduino.h>
-#include <LittleFS.h>
 #include "glob.h"
+#include "main.h"
+#include <dirent.h>
+#include <string.h>
+#include <stdlib.h>
 
 bool has_glob_chars(const char *s)
 {
@@ -31,6 +33,8 @@ bool glob_match(const char *pat, const char *str)
     return *str == '\0';
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
 int glob_expand(const char *pattern, char (**results)[128])
 {
     *results = NULL;
@@ -51,27 +55,33 @@ int glob_expand(const char *pattern, char (**results)[128])
         filepart = pattern;
     }
 
-    File root = LittleFS.open(dir);
-    if (!root || !root.isDirectory()) {
-        if (root) root.close();
-        return 0;
-    }
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), dir);
+    DIR *d = opendir(fpath);
+    if (!d) return 0;
 
     char (*buf)[128] = (char (*)[128])malloc(MAX_GLOB_MATCHES * 128);
-    if (!buf) { root.close(); return 0; }
+    if (!buf) { closedir(d); return 0; }
 
     int count = 0;
-    File f = root.openNextFile();
-    while (f && count < MAX_GLOB_MATCHES) {
-        if (!f.isDirectory() && glob_match(filepart, f.name())) {
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL && count < MAX_GLOB_MATCHES) {
+        // Skip directories — only match files
+        // Use stat to check if entry is a directory
+        char entpath[192];
+        snprintf(entpath, sizeof(entpath), "%s/%s", fpath, ent->d_name);
+        struct stat st;
+        if (stat(entpath, &st) == 0 && S_ISDIR(st.st_mode))
+            continue;
+
+        if (glob_match(filepart, ent->d_name)) {
             snprintf(buf[count], 128, "%s%s%s",
                      dir, (dir[strlen(dir) - 1] == '/') ? "" : "/",
-                     f.name());
+                     ent->d_name);
             count++;
         }
-        f = root.openNextFile();
     }
-    root.close();
+    closedir(d);
 
     if (count == 0) {
         free(buf);
@@ -86,3 +96,4 @@ int glob_expand(const char *pattern, char (**results)[128])
     *results = buf;
     return count;
 }
+#pragma GCC diagnostic pop

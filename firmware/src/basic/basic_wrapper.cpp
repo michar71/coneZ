@@ -62,8 +62,6 @@ bool set_script_program(char *path)
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_task_wdt.h"
-#include "FS.h"
-#include <LittleFS.h>
 #define BASIC_WRAPPER_TU
 #define REAL_ESP32_HW
 #include "basic.h"

@@ -4,8 +4,6 @@
 #include "main.h"
 #include "inflate.h"
 #include "psram.h"
-#include "FS.h"
-#include <LittleFS.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,11 +42,11 @@ static void copy_from_wasm(const uint8_t *mem_base, uint32_t offset, uint8_t *ds
         psram_read((uint32_t)(uintptr_t)src, dst, len);
 }
 
-// Streaming write callback for LittleFS File
+// Streaming write callback for FILE*
 static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
 {
-    File *f = (File *)ctx;
-    return f->write(data, len) == len ? 0 : -1;
+    FILE *f = (FILE *)ctx;
+    return fwrite(data, 1, len, f) == len ? 0 : -1;
 }
 
 // Streaming write callback for WASM memory (PSRAM-safe)
@@ -86,24 +84,28 @@ m3ApiRawFunction(m3_inflate_file)
     if (!extract_path(runtime, dst_ptr, dst_len, dst_path)) m3ApiReturn(-1);
 
     // Read compressed file
-    File f = LittleFS.open(src_path, "r");
+    char src_fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(src_fpath, sizeof(src_fpath), src_path);
+    FILE *f = fopen(src_fpath, "r");
     if (!f) m3ApiReturn(-1);
-    size_t in_size = f.size();
-    if (in_size == 0) { f.close(); m3ApiReturn(-1); }
+    size_t in_size = fsize(f);
+    if (in_size == 0) { fclose(f); m3ApiReturn(-1); }
     uint8_t *in_buf = (uint8_t *)malloc(in_size);
-    if (!in_buf) { f.close(); m3ApiReturn(-1); }
-    f.read(in_buf, in_size);
-    f.close();
+    if (!in_buf) { fclose(f); m3ApiReturn(-1); }
+    fread(in_buf, 1, in_size, f);
+    fclose(f);
 
     // Stream decompressed chunks directly to output file
-    File out = LittleFS.open(dst_path, FILE_WRITE);
+    char dst_fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(dst_fpath, sizeof(dst_fpath), dst_path);
+    FILE *out = fopen(dst_fpath, "w");
     if (!out) { free(in_buf); m3ApiReturn(-1); }
 
-    int result = inflate_stream(in_buf, in_size, file_write_cb, &out);
-    out.close();
+    int result = inflate_stream(in_buf, in_size, file_write_cb, out);
+    fclose(out);
     free(in_buf);
 
-    if (result < 0) LittleFS.remove(dst_path);
+    if (result < 0) unlink(dst_fpath);
     m3ApiReturn(result);
 }
 
@@ -126,14 +128,16 @@ m3ApiRawFunction(m3_inflate_file_to_mem)
     if (!extract_path(runtime, src_ptr, src_len, src_path)) m3ApiReturn(-1);
 
     // Read compressed file
-    File f = LittleFS.open(src_path, "r");
+    char src_fpath[WASM_MAX_PATH_LEN + 16];
+    lfs_path(src_fpath, sizeof(src_fpath), src_path);
+    FILE *f = fopen(src_fpath, "r");
     if (!f) m3ApiReturn(-1);
-    size_t in_size = f.size();
-    if (in_size == 0) { f.close(); m3ApiReturn(-1); }
+    size_t in_size = fsize(f);
+    if (in_size == 0) { fclose(f); m3ApiReturn(-1); }
     uint8_t *in_buf = (uint8_t *)malloc(in_size);
-    if (!in_buf) { f.close(); m3ApiReturn(-1); }
-    f.read(in_buf, in_size);
-    f.close();
+    if (!in_buf) { fclose(f); m3ApiReturn(-1); }
+    fread(in_buf, 1, in_size, f);
+    fclose(f);
 
     // Stream decompressed chunks directly to WASM memory (PSRAM-safe)
     struct wasm_mem_ctx ctx = { mem_base, (uint32_t)dst_ptr, (size_t)dst_max, 0 };

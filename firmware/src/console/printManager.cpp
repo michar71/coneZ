@@ -4,7 +4,6 @@
 #include "config.h"
 #include "psram.h"
 #include "main.h"
-#include <LittleFS.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -24,7 +23,7 @@ static uint32_t log_ring_base = 0;   // PSRAM address (0 = not allocated)
 static int      log_ring_slots = 0;  // set at runtime by log_init()
 static int      log_ring_head = 0;   // next write slot
 static int      log_ring_count = 0;  // entries written (clamped to log_ring_slots)
-static File     log_file;            // file sink (open when truthy)
+static FILE    *log_file = NULL;      // file sink (open when non-NULL)
 
 void printManagerInit(Stream* defaultStream)
 {
@@ -168,7 +167,8 @@ void vprintfnl( source_e source, const char *format, va_list args )
 
         // File sink (always, including SOURCE_MQTT)
         if (log_file) {
-            log_file.println(sink_buf);
+            fprintf(log_file, "%s\n", sink_buf);
+            fflush(log_file);
         }
 
         // MQTT sink (skip SOURCE_MQTT to prevent infinite feedback loop)
@@ -351,16 +351,20 @@ void log_free(void)
 bool log_open(const char *path)
 {
     if (log_file) {
-        log_file.close();
+        fclose(log_file);
+        log_file = NULL;
     }
-    log_file = LittleFS.open(path, FILE_APPEND);
-    return (bool)log_file;
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), path);
+    log_file = fopen(fpath, "a");
+    return log_file != NULL;
 }
 
 void log_close(void)
 {
     if (log_file) {
-        log_file.close();
+        fclose(log_file);
+        log_file = NULL;
     }
 }
 
@@ -368,7 +372,9 @@ bool log_save(const char *path)
 {
     if (!log_ring_base || log_ring_count == 0) return false;
 
-    File f = LittleFS.open(path, FILE_WRITE);
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), path);
+    FILE *f = fopen(fpath, "w");
     if (!f) return false;
 
     int start = (log_ring_count < log_ring_slots) ? 0 : log_ring_head;
@@ -382,10 +388,10 @@ bool log_save(const char *path)
         if (entry[0]) {
             int len = strlen(entry);
             if (len > 0 && entry[len - 1] == '\n') entry[len - 1] = '\0';
-            f.println(entry);
+            fprintf(f, "%s\n", entry);
         }
     }
-    f.close();
+    fclose(f);
     return true;
 }
 
