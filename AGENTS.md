@@ -487,8 +487,8 @@ Unified time API in `sensors/gps.h`/`gps.cpp` provides millisecond-precision epo
 
 **Tiered sources (higher priority wins):**
 - **GPS + PPS** (time_source=2, ~1us accuracy) — ConeZ PCB only. PPS rising edge triggers `IRAM_ATTR` ISR that captures `millis()`. NMEA sentence (arriving ~100-200ms later) provides absolute time for the preceding edge. Epoch stored under `portMUX_TYPE` spinlock (64-bit not atomic on 32-bit Xtensa).
-- **NTP** (time_source=1, ~10-50ms accuracy) — Any board with WiFi. Uses ESP32 SNTP via `configTime()`. NTP server configurable via `[system] ntp_server` config key.
-- **Compile-time** (time_source=0) — Fallback seeded from `__DATE__`/`__TIME__` at boot via `time_seed_compile()`. Provides approximate time (~seconds drift per day) when no GPS or NTP is available. `get_time_valid()` returns true, `get_epoch_ms()` returns a reasonable value. Automatically overridden when NTP or GPS connects.
+- **NTP** (time_source=1, ~10-50ms accuracy) — Any board with WiFi. Uses ESP32 SNTP via `configTime()`. Auto-initializes in `ntp_loop()` when WiFi connects (no need to call `ntp_setup()` from WiFi commands). Re-syncs periodically (`config.ntp_interval`, default 3600s). NTP server configurable via `[system] ntp_server` config key.
+- **Compile-time** (time_source=0) — Fallback seeded from `BUILD_EPOCH_S` (UTC epoch at build time, computed by PlatformIO) at boot via `time_seed_compile()`. Provides approximate time (~seconds drift per day) when no GPS or NTP is available. `get_time_valid()` returns true, `get_epoch_ms()` returns a reasonable value. Automatically overridden when NTP or GPS connects.
 
 **GPS staleness fallback:** If PPS stops arriving for >10 seconds (GPS loss), `ntp_loop()` downgrades `time_source` to 0, allowing NTP to take over if WiFi is available. Compile-time seed remains valid as a last resort.
 

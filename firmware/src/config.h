@@ -52,6 +52,7 @@
 #define DEFAULT_CONE_ID         0
 #define DEFAULT_CONE_GROUP      0
 #define DEFAULT_NTP_SERVER      "pool.ntp.org"
+#define DEFAULT_NTP_INTERVAL    3600            // seconds between NTP re-syncs
 
 // MQTT
 #define DEFAULT_MQTT_BROKER     "sewerpipe.local"
@@ -115,6 +116,7 @@ typedef struct {
     int     cone_id;
     int     cone_group;
     char    ntp_server[CONFIG_MAX_NTP_SERVER];
+    int     ntp_interval;
 
     // [mqtt]
     char    mqtt_broker[CONFIG_MAX_MQTT_BROKER];

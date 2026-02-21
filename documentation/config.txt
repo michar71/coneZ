@@ -99,6 +99,10 @@ Sections and Keys
                       Fallback: time.nist.gov. Set to a local NTP server
                       address for minimal network latency at installations
                       (e.g. 192.168.1.100).
+  ntp_interval      Seconds between NTP re-syncs   (default: 3600)
+                      How often the SNTP client re-synchronizes with the
+                      NTP server. Set lower for tighter time accuracy,
+                      higher to reduce network traffic.
 
 [mqtt]
   broker            MQTT broker hostname           (default: sewerpipe.local)

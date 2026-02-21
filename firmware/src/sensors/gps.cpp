@@ -1,5 +1,7 @@
 #include <Arduino.h>
+#include <WiFi.h>
 #include <sys/time.h>
+#include "esp_sntp.h"
 #include "main.h"
 #include "gps.h"
 #include "printManager.h"
@@ -13,41 +15,40 @@ static volatile uint32_t millis_at_pps = 0;     // millis() at that same moment
 static volatile bool     epoch_valid = false;
 static volatile uint8_t  time_source = 0;        // 0=none, 1=NTP, 2=GPS+PPS
 
-// --- Compile-time seed ---
-// Parse __DATE__ ("Feb 16 2026") and __TIME__ ("13:45:02") into epoch ms.
-// Called early in setup() so get_epoch_ms() returns a reasonable value even
-// before NTP or GPS are available. NTP (source 1) and GPS+PPS (source 2)
-// override this automatically when they connect.
-static uint64_t parse_compile_time(void)
+// --- SNTP sync callback (fires on LWIP thread when NTP syncs) ---
+static void ntp_sync_cb(struct timeval *tv)
 {
-    const char *date = __DATE__;  // "Mmm dd yyyy"
-    const char *time = __TIME__;  // "hh:mm:ss"
+    uint64_t ep = (uint64_t)tv->tv_sec * 1000ULL + (uint64_t)(tv->tv_usec / 1000);
+    uint32_t now_m = millis();
 
-    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-    int mon = 0;
-    for (int i = 0; i < 12; i++) {
-        if (date[0] == months[i*3] && date[1] == months[i*3+1] && date[2] == months[i*3+2]) {
-            mon = i;
-            break;
-        }
+    // Compute drift from previous time estimate
+    int64_t drift_ms = 0;
+    portENTER_CRITICAL(&time_mux);
+    if (epoch_valid) {
+        uint64_t old_ep = epoch_at_pps + (now_m - millis_at_pps);
+        drift_ms = (int64_t)ep - (int64_t)old_ep;
     }
+    epoch_at_pps = ep;
+    millis_at_pps = now_m;
+    epoch_valid = true;
+    if (time_source < 1) time_source = 1;
+    portEXIT_CRITICAL(&time_mux);
 
-    struct tm tm = {};
-    tm.tm_year = atoi(date + 7) - 1900;
-    tm.tm_mon  = mon;
-    tm.tm_mday = atoi(date + 4);
-    tm.tm_hour = atoi(time);
-    tm.tm_min  = atoi(time + 3);
-    tm.tm_sec  = atoi(time + 6);
-
-    time_t t = mktime(&tm);  // assumes UTC (ESP32 default, no TZ set at boot)
-    if (t < 0) return 0;
-    return (uint64_t)t * 1000ULL;
+    if (drift_ms != 0) {
+        printfnl(SOURCE_SYSTEM, "NTP synced (drift %+lld ms)\n", (long long)drift_ms);
+    } else {
+        printfnl(SOURCE_SYSTEM, "NTP synced (first sync)\n");
+    }
 }
 
+// --- Compile-time seed ---
+// BUILD_EPOCH_S is the UTC epoch at build time, computed by PlatformIO
+// (see platformio.ini). Called early in setup() so get_epoch_ms() returns
+// a reasonable value even before NTP or GPS are available.
 void time_seed_compile(void)
 {
-    uint64_t ep = parse_compile_time();
+#ifdef BUILD_EPOCH_S
+    uint64_t ep = (uint64_t)BUILD_EPOCH_S * 1000ULL;
     if (ep == 0) return;
 
     portENTER_CRITICAL(&time_mux);
@@ -56,6 +57,7 @@ void time_seed_compile(void)
     epoch_valid = true;
     // time_source stays 0 — NTP (1) and GPS (2) will override
     portEXIT_CRITICAL(&time_mux);
+#endif
 }
 
 #ifdef BOARD_HAS_GPS
@@ -505,12 +507,19 @@ uint8_t get_time_source(void)
 // NTP on GPS boards: provides time before GPS lock, NTP only wins if GPS+PPS hasn't set epoch yet
 void ntp_setup(void)
 {
+    sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
+    sntp_set_time_sync_notification_cb(ntp_sync_cb);
     configTime(0, 0, config.ntp_server, "time.nist.gov");
 }
 
 
 void ntp_loop(void)
 {
+    // Auto-initialize SNTP when WiFi connects (handles CLI wifi commands, reconnects)
+    if (WiFi.status() == WL_CONNECTED && !sntp_enabled()) {
+        ntp_setup();
+    }
+
     // If GPS+PPS is active, only allow NTP fallback if GPS is stale (>10s)
     if (time_source >= 2) {
         portENTER_CRITICAL(&time_mux);
@@ -676,12 +685,19 @@ uint8_t get_time_source(void)
 
 void ntp_setup(void)
 {
+    sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
+    sntp_set_time_sync_notification_cb(ntp_sync_cb);
     configTime(0, 0, config.ntp_server, "time.nist.gov");
 }
 
 
 void ntp_loop(void)
 {
+    // Auto-initialize SNTP when WiFi connects (handles CLI wifi commands, reconnects)
+    if (WiFi.status() == WL_CONNECTED && !sntp_enabled()) {
+        ntp_setup();
+    }
+
     // Rate limit: update once per second
     static uint32_t last_ntp_ms = 0;
     if (millis() - last_ntp_ms < 1000) return;

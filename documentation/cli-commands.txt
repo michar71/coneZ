@@ -621,8 +621,11 @@ time / date
   (GPS+PPS, NTP, or compile-time), and epoch milliseconds. Time is
   displayed in the local timezone (config system.timezone + auto DST).
   Available on all boards — GPS boards use PPS-disciplined time,
-  others fall back to NTP when WiFi is connected. If neither GPS nor
-  NTP is available, time starts from the firmware's compile timestamp.
+  others fall back to NTP when WiFi is connected. NTP auto-initializes
+  whenever WiFi connects (including via CLI commands) and re-syncs
+  periodically (config system.ntp_interval, default 3600s). If neither
+  GPS nor NTP is available, time starts from the firmware's compile
+  timestamp.
 
 uptime
   Show time since boot in days, hours, minutes, seconds.
