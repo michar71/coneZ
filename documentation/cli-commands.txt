@@ -135,6 +135,7 @@ filenames, and subcommands.
   run {file}                         Run script (.bas or .wasm)
   sensors                            Show sensor readings
   sha256|sha256sum {file}            Compute SHA-256 hash
+  status                             Show one-screen system overview
   stop                               Stop running script
   tc                                 Show thread count per core
   time|date                          Show current date/time and source
@@ -552,6 +553,13 @@ run {filename}
 sensors
   Show sensor readings: IMU (roll/pitch/yaw/acceleration), temperature,
   battery voltage, solar voltage. Available sensors depend on the board.
+
+status
+  Show a compact one-screen system overview. Each subsystem gets one line:
+  firmware version and uptime, cone identity (id/group), WiFi, MQTT, LoRa,
+  GPS (boards with GPS only), time, script (WASM), cue engine, heap, PSRAM,
+  LEDs (boards with RGB LEDs), and sensors. Inactive or unavailable
+  subsystems show a short status (e.g. "Disabled", "idle", "not available").
 
 stop
   Stop the currently running script. Sets parameter 0 to 1 (checked by

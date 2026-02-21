@@ -116,6 +116,7 @@ static int dir_entry_cmp(const void *a, const void *b)
 }
 
 static int effective_tz_offset(int year, int month, int day);
+static const char *tz_label(int tz_hours);
 
 static void dir_list(fs::FS &fs, const char *dirname, int indent,
                      Stream *out, bool showTime, int nameWidth,
@@ -1047,6 +1048,151 @@ int tc(int argc, char **argv)
         }
         return 0;
     }
+}
+
+
+int cmd_status(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_app_desc_t desc;
+    const char *ver = "?";
+    const char *proj = "conez";
+    if (running && esp_ota_get_partition_description(running, &desc) == ESP_OK) {
+        ver = desc.version;
+        proj = desc.project_name;
+    }
+
+    unsigned long ms = millis();
+    unsigned long totalSec = ms / 1000;
+    unsigned int days  = totalSec / 86400;
+    unsigned int hours = (totalSec % 86400) / 3600;
+    unsigned int mins  = (totalSec % 3600) / 60;
+
+    const char *board_name =
+#ifdef BOARD_CONEZ_V0_1
+        "conez-v0-1";
+#elif defined(BOARD_HELTEC_LORA32_V3)
+        "heltec-lora32-v3";
+#else
+        "unknown";
+#endif
+
+    getLock();
+    Stream *out = getStream();
+
+    // Version + uptime
+    out->printf("ConeZ %s  %s  up %ud %02uh %02um\n", ver, board_name, days, hours, mins);
+
+    // Cone identity
+    out->printf("Cone:    id=%d  group=%d\n", config.cone_id, config.cone_group);
+
+    // WiFi
+    wl_status_t wst = WiFi.status();
+    if (!config.wifi_enabled) {
+        out->printf("WiFi:    Disabled\n");
+    } else if (wst == WL_CONNECTED) {
+        out->printf("WiFi:    Connected  %s  RSSI %d dBm\n",
+            WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    } else {
+        out->printf("WiFi:    Disconnected  (SSID: %s)\n", config.wifi_ssid);
+    }
+
+    // MQTT
+    if (!config.mqtt_enabled) {
+        out->printf("MQTT:    Disabled\n");
+    } else if (mqtt_connected()) {
+        out->printf("MQTT:    Connected  %s:%d  TX:%lu RX:%lu\n",
+            config.mqtt_broker, config.mqtt_port,
+            (unsigned long)mqtt_tx_count(), (unsigned long)mqtt_rx_count());
+    } else {
+        out->printf("MQTT:    %s  %s:%d\n",
+            mqtt_state_str(), config.mqtt_broker, config.mqtt_port);
+    }
+
+    // LoRa
+    out->printf("LoRa:    %s  %.1f MHz  TX:%lu RX:%lu\n",
+        lora_get_mode(), lora_get_frequency(),
+        (unsigned long)lora_get_tx_count(), (unsigned long)lora_get_rx_count());
+
+    // GPS
+#ifdef BOARD_HAS_GPS
+    {
+        static const char *fix_names[] = { "Unknown", "No Fix", "2D", "3D" };
+        int ft = get_fix_type();
+        const char *fix_str = (ft >= 0 && ft <= 3) ? fix_names[ft] : "Unknown";
+        if (get_gpsstatus())
+            out->printf("GPS:     %s  %d sats  %.6f %.6f\n",
+                fix_str, get_satellites(), get_lat(), get_lon());
+        else
+            out->printf("GPS:     %s  %d sats\n", fix_str, get_satellites());
+    }
+#endif
+
+    // Time
+    if (get_time_valid()) {
+        uint64_t epoch = get_epoch_ms();
+        int utc_y = get_year(), utc_m = get_month(), utc_d = get_day();
+        int tz = effective_tz_offset(utc_y, utc_m, utc_d);
+        time_t local_t = (time_t)(epoch / 1000) + tz * 3600;
+        struct tm ltm;
+        gmtime_r(&local_t, &ltm);
+
+        uint8_t ts = get_time_source();
+        const char *src = "none";
+        if (ts == 2)      src = "GPS+PPS";
+        else if (ts == 1) src = "NTP";
+
+        out->printf("Time:    %04d-%02d-%02d %02d:%02d:%02d %s  source=%s  NTP=%s\n",
+            ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday,
+            ltm.tm_hour, ltm.tm_min, ltm.tm_sec,
+            tz_label(tz), src, config.ntp_server);
+    } else {
+        out->printf("Time:    not available  NTP=%s\n", config.ntp_server);
+    }
+
+    // Script
+#ifdef INCLUDE_WASM
+    if (wasm_is_running()) {
+        const char *p = wasm_get_current_path();
+        out->printf("Script:  %s (running)\n", p ? p : "?");
+    } else {
+        out->printf("Script:  idle\n");
+    }
+#endif
+
+    // Cue
+    if (cue_is_playing())
+        out->printf("Cue:     playing  elapsed %lu ms\n", (unsigned long)cue_get_elapsed_ms());
+    else
+        out->printf("Cue:     idle\n");
+
+    // Heap
+    out->printf("Heap:    %u free  (min %u)\n",
+        (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size());
+
+    // PSRAM
+    if (psram_available())
+        out->printf("PSRAM:   %u KB  used %u  free %u\n",
+            (unsigned)(psram_size() / 1024),
+            (unsigned)(psram_bytes_used() / 1024),
+            (unsigned)(psram_bytes_free() / 1024));
+    else
+        out->printf("PSRAM:   not available\n");
+
+    // LEDs
+#ifdef BOARD_HAS_RGB_LEDS
+    out->printf("LEDs:    ch1=%d ch2=%d ch3=%d ch4=%d\n",
+        config.led_count1, config.led_count2, config.led_count3, config.led_count4);
+#endif
+
+    // Sensors
+    out->printf("Sensors: IMU=%s  temp=%.1fC  bat=%.2fV  solar=%.2fV\n",
+        imuAvailable() ? "yes" : "no", getTemp(), bat_voltage(), solar_voltage());
+
+    releaseLock();
+    return 0;
 }
 
 
@@ -3095,6 +3241,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("sensors"), cmd_sensors);
     shell.addCommand(F("sha256"), cmd_sha256, "*");
     shell.addCommand(F("sha256sum"), cmd_sha256, "*");
+    shell.addCommand(F("status"), cmd_status);
     shell.addCommand(F("stop"), stopBasic);
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);
