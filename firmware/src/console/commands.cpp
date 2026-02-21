@@ -2266,17 +2266,16 @@ int cmd_led(int argc, char **argv)
     }
 
     // led (no args) — show config + RGB values
-    getLock();
-    Stream *out = getStream();
-    out->println("LED Config:");
+    printfnl(SOURCE_COMMANDS, "LED Config:\n");
     for (int ch = 0; ch < 4; ch++) {
-        out->printf("  Strip %d: %d LEDs\n", ch + 1, counts[ch]);
+        printfnl(SOURCE_COMMANDS, "  Strip %d: %d LEDs\n", ch + 1, counts[ch]);
     }
     for (int ch = 0; ch < 4; ch++) {
         if (!bufs[ch] || counts[ch] == 0) continue;
-        out->printf("\nCh%d:", ch + 1);
         if (getAnsiEnabled()) {
-            out->print(" [");
+            getLock();
+            Stream *out = getStream();
+            out->printf("\nCh%d: [", ch + 1);
             uint8_t pr = 0, pg = 0, pb = 0;
             bool first = true;
             for (int i = 0; i < counts[ch]; i++) {
@@ -2288,19 +2287,20 @@ int cmd_led(int argc, char **argv)
                 }
                 out->print("\xe2\x96\x88");  // U+2588 FULL BLOCK (UTF-8)
             }
-            out->print("\033[0m]");
+            out->print("\033[0m]\n");
+            releaseLock();
+        } else {
+            printfnl(SOURCE_COMMANDS, "\nCh%d:\n", ch + 1);
         }
-        out->println();
         for (int i = 0; i < counts[ch]; i++) {
             if (i % 8 == 0)
-                out->printf("  %3d:", i);
+                printfnl(SOURCE_COMMANDS, "  %3d:", i);
             CRGB c = bufs[ch][i];
-            out->printf(" #%02X%02X%02X", c.r, c.g, c.b);
+            printfnl(SOURCE_COMMANDS, " #%02X%02X%02X", c.r, c.g, c.b);
             if (i % 8 == 7 || i == counts[ch] - 1)
-                out->println();
+                printfnl(SOURCE_COMMANDS, "\n");
         }
     }
-    releaseLock();
 #else
     printfnl(SOURCE_COMMANDS, F("RGB LEDs not available on this board\n"));
 #endif

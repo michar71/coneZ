@@ -246,6 +246,10 @@ debug
   Sources: SYSTEM, BASIC, WASM, COMMANDS, SHELL, GPS, GPS_RAW, LORA,
            LORA_RAW, FSYNC, WIFI, SENSORS, OTHER
 
+  When MQTT is connected, enabled debug messages are also published to
+  the MQTT topic conez/{cone_id}/debug (except SOURCE_MQTT, to prevent
+  feedback loops). See documentation/mqtt.txt for payload format.
+
 game
   Conway's Game of Life on a 30x20 toroidal grid with RGB age-based
   coloring. Runs at ~10 FPS. Press any key to exit.

@@ -12,6 +12,7 @@ Topic Hierarchy
 ---------------
 
     conez/{id}/status       Heartbeat (published by cone)
+    conez/{id}/debug        Debug log stream (published by cone)
     conez/{id}/cmd/#        Commands (subscribed by cone)
 
 Per-Cone Status: conez/{id}/status
@@ -32,6 +33,31 @@ Use cases:
   - Show controller monitors which cones are alive
   - Dashboard displays fleet health
   - Detect offline cones (no heartbeat for >60s)
+
+Per-Cone Debug Stream: conez/{id}/debug
+----------------------------------------
+
+Published whenever a debug message is printed via printfnl(). QoS 0,
+not retained. Only fires when MQTT is connected and the source's debug
+flag is enabled.
+
+Payload: plain text with uptime timestamp, source tag, and message.
+
+    [100.123] [GPS] Fix acquired: 37.786971500, -122.419415300
+    [205.400] [LORA] RX 32 bytes from cone 7
+    [1800.050] [SYSTEM] WiFi reconnected
+
+The timestamp is decimal seconds since boot (millis / 1000). The tag
+matches the debug source name (SYSTEM, GPS, LORA, WASM, BASIC, etc.).
+
+Messages from SOURCE_MQTT are excluded to prevent infinite feedback
+loops. CLI output (SOURCE_NONE, SOURCE_COMMANDS) is also excluded —
+only tagged debug messages are forwarded.
+
+Use cases:
+  - Remote log monitoring without serial/telnet connection
+  - Fleet-wide debug aggregation (subscribe to conez/+/debug)
+  - Automated alerting on specific debug patterns
 
 Per-Cone Commands: conez/{id}/cmd/#
 ------------------------------------
@@ -75,6 +101,7 @@ For monitoring tools (mosquitto_sub, MQTT Explorer, etc.):
 
     conez/#                   Everything — all cones, all topics
     conez/+/status            All cone heartbeats
+    conez/+/debug             All cone debug streams
     conez/+/cmd/#             All commands to all cones
     conez/5/cmd/#             All commands to cone 5
 

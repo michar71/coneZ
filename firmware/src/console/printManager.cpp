@@ -1,5 +1,7 @@
 #include "printManager.h"
 #include "shell.h"
+#include "mqtt_client.h"
+#include "config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -23,17 +25,19 @@ void printManagerInit(Stream* defaultStream)
 
 void print_ts(void)
 {
-    // Print the timestamp if enabled
+    // Print the timestamp if enabled (decimal seconds)
     if (ts) {
-        unsigned long currentMillis = millis();
+        unsigned long ms = millis();
+        char ts_buf[16];
+        snprintf(ts_buf, sizeof(ts_buf), "%lu.%03lu", ms / 1000, ms % 1000);
         if (ansi_enabled) {
             OutputStream->print("\033[36m[");     // cyan bracket
             OutputStream->print("\033[34m");      // blue number
-            OutputStream->print(currentMillis);
+            OutputStream->print(ts_buf);
             OutputStream->print("\033[36m] ");    // cyan bracket
         } else {
             OutputStream->print("[");
-            OutputStream->print(currentMillis);
+            OutputStream->print(ts_buf);
             OutputStream->print("] ");
         }
     }
@@ -59,8 +63,8 @@ void vprintfnl( source_e source, const char *format, va_list args )
         return; // Failed to acquire mutex
     }
 
-    // Early out if source is disabled
-    if (source != SOURCE_NONE && !(debug & source)) {
+    // Early out if source is disabled (COMMANDS always prints — it's CLI output)
+    if (source != SOURCE_NONE && source != SOURCE_COMMANDS && !(debug & source)) {
         xSemaphoreGive(print_mutex);
         return;
     }
@@ -69,13 +73,13 @@ void vprintfnl( source_e source, const char *format, va_list args )
     shell.suspendLine(OutputStream);
 
     // Print source tag (SOURCE_NONE prints with no prefix)
+    const char *tag = NULL;
     {
-        const char *tag = NULL;
         switch (source) {
             case SOURCE_BASIC:     tag = "BASIC";    break;
             case SOURCE_WASM:      tag = "WASM";     break;
             case SOURCE_SHELL:     tag = "SHELL";    break;
-            case SOURCE_COMMANDS:  tag = "COMMANDS";  break;
+            case SOURCE_COMMANDS:  break;  // no prefix for CLI output
             case SOURCE_SYSTEM:    tag = "SYSTEM";    break;
             case SOURCE_GPS:       tag = "GPS";       break;
             case SOURCE_GPS_RAW:   tag = "GPS_RAW";   break;
@@ -105,6 +109,38 @@ void vprintfnl( source_e source, const char *format, va_list args )
     }
     vsnprintf(buf, max_txt, format, args);
     OutputStream->print(buf);
+
+    // Publish debug messages to MQTT for remote monitoring
+    // Skip: SOURCE_NONE (raw output) and SOURCE_MQTT (prevents infinite loop)
+    // SOURCE_COMMANDS forwarded only if its debug flag is enabled
+    const char *mqtt_tag = tag ? tag : (source == SOURCE_COMMANDS ? "CMD" : NULL);
+    if (mqtt_tag && source != SOURCE_MQTT && mqtt_connected()
+        && (source != SOURCE_COMMANDS || (debug & SOURCE_COMMANDS))) {
+        static bool in_mqtt_debug = false;
+        if (!in_mqtt_debug) {
+            in_mqtt_debug = true;
+            char topic[48];
+            snprintf(topic, sizeof(topic), "conez/%d/debug", config.cone_id);
+            char payload[max_txt + 32];
+            unsigned long ms = millis();
+            snprintf(payload, sizeof(payload), "[%lu.%03lu] [%s] %s", ms / 1000, ms % 1000, mqtt_tag, buf);
+            // Strip any ANSI escape sequences from payload
+            char *r = payload, *w = payload;
+            while (*r) {
+                if (*r == '\033' && *(r+1) == '[') {
+                    r += 2;
+                    while (*r && !(*r >= 'A' && *r <= 'Z') && !(*r >= 'a' && *r <= 'z'))
+                        r++;
+                    if (*r) r++; // skip terminating letter
+                } else {
+                    *w++ = *r++;
+                }
+            }
+            *w = '\0';
+            mqtt_publish(topic, payload);
+            in_mqtt_debug = false;
+        }
+    }
 
     // Redraw the command line after our output
     shell.resumeLine(OutputStream);
