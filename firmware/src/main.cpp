@@ -536,7 +536,7 @@ void setup()
   usb_printf("CLI active on USB + Telnet\n\n");
   shell.showPrompt();
 
-  xTaskCreatePinnedToCore(shell_task_fun, "ShellTask", 8192, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(shell_task_fun, "ShellTask", 8192, NULL, 1, NULL, tskNO_AFFINITY);
 }
 
 

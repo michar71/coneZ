@@ -191,22 +191,22 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | Task | Core | Priority | Stack | Source | Lifecycle |
 |------|------|----------|-------|--------|-----------|
 | loopTask | 1 | 1 | 8192 | `loop()` in `main.cpp` | Always running |
-| ShellTask | 1 | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
+| ShellTask | any | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
 | httpd | 1 | 6 | 6144 | `esp_http_server` in `http/http.cpp` | Always running |
 | mqtt_task | 1 | 5 | 4096 | ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp` | Created when MQTT connects |
 | led_render | 1 | 2 | 4096 | `led_task_fun` in `led/led.cpp` | Always running |
 | BasicTask | any | 1 | 16384 | `basic_task_fun` in `basic/basic_wrapper.cpp` | Created on first script |
-| WasmTask | 1 | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Created on first script |
+| WasmTask | any | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Created on first script |
 
-**Core 1 tasks:**
+**Core 1 tasks (pinned):**
 - **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
 - **httpd** — ESP-IDF `esp_http_server` task. Handles all HTTP requests autonomously (no polling needed). Pinned to core 1. Stack 6144 for HTML generation and OTA streaming.
-- **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
 - **led_render** — Calls `led_show_now()` at ~30 FPS when dirty, at least 1/sec unconditionally. Priority 2 preempts both loopTask and ShellTask. (Hardware LED output currently stubbed — RMT driver TBD.)
 
-**Script tasks (created on first use, not at boot):**
-- **BasicTask** — BASIC interpreter. `tskNO_AFFINITY` — scheduler places on whichever core has bandwidth (typically core 0 since core 1 is busier).
-- **WasmTask** — WASM interpreter. Pinned to core 1 by convention (no longer required for USB safety since `usb_serial_jtag` driver is cross-core safe).
+**Floating tasks (`tskNO_AFFINITY` — scheduler places on whichever core has bandwidth):**
+- **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
+- **BasicTask** — BASIC interpreter. Created on first script, not at boot.
+- **WasmTask** — WASM interpreter. Created on first script, not at boot.
 
 **Critical rules:**
 - After `setup()`, only `led_render` calls `led_show_now()`. All other code writes to `leds1`-`leds4` and calls `led_show()` to set the dirty flag. During `setup()` only, `led_show_now()` may be used.
@@ -226,7 +226,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 3. **ESP-IDF component logging is suppressed** via `esp_log_level_set("*", ESP_LOG_NONE)` — shares the USB CDC.
 4. **Interactive apps** (editor, game) use `setInteractive(true)` which makes `printfnl()` return immediately. The app writes directly under `getLock()`/`releaseLock()`.
 
-**Historical note:** The core-1 pinning constraint from the Arduino HWCDC era is no longer required. Tasks are still pinned to core 1 by convention but could safely use `tskNO_AFFINITY`.
+**Historical note:** The core-1 pinning constraint from the Arduino HWCDC era is no longer required. ShellTask, BasicTask, and WasmTask now use `tskNO_AFFINITY` — the scheduler places them on whichever core has bandwidth. Only loopTask and led_render remain pinned to core 1.
 
 ### Thread Communication
 
@@ -429,7 +429,7 @@ New BASIC functions are added by: (1) defining the C function that manipulates t
 
 ### WASM Runtime
 
-WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build flag. Loads `.wasm` binaries from LittleFS and runs them on WasmTask (core 1). Entry point conventions: `setup()` + `loop()` (loop runs until stopped), or `_start()` / `main()` (single-shot).
+WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build flag. Loads `.wasm` binaries from LittleFS and runs them on WasmTask (`tskNO_AFFINITY`). Entry point conventions: `setup()` + `loop()` (loop runs until stopped), or `_start()` / `main()` (single-shot).
 
 **Source files:** `wasm_wrapper.cpp/h` (state, m3_Yield, `wasm_run()`, FreeRTOS task, public API) dispatches to per-category import files via `wasm_internal.h`:
 

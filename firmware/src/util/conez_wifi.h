@@ -14,7 +14,7 @@ typedef enum {
     WIFI_ST_CONNECT_FAILED
 } wifi_state_e;
 
-// Call once in setup() after initArduino() — creates netif, event loop, event handlers
+// Call once in setup() — creates netif, event loop, event handlers
 void wifi_init(void);
 
 // Connect as STA with the given credentials and hostname

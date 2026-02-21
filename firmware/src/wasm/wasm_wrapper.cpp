@@ -352,9 +352,8 @@ bool set_wasm_program(const char *path)
         xSemaphoreGive(wasm_mutex);
 
         // Create task if not running (killed after previous program ended to free 16KB stack)
-        // Pin to core 1 for consistency with other tasks
         if (need_task)
-            xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, 1);
+            xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
 
         return true;
     }
