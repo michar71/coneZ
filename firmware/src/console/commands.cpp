@@ -2788,7 +2788,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  compile {file} [run]               Compile .bas/.c to .wasm\n" ) );
 #endif
     printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]           Show or change settings\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  cp {src} {dst}                     Copy file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  copy|cp {src} {dst}                Copy file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]       Cue timeline engine\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  debug [off|{source} [on|off]]      Show/set debug sources\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  deflate|gzip {file} [out] [level]  Compress to gzip\n" ) );
@@ -2812,7 +2812,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  mem|free                           Show heap memory stats\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mkdir {dir}                        Create directory\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mqtt [enable|disable|connect|...]  MQTT status or control\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mv|ren {old} {new}                 Rename/move file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  move|mv|ren {old} {new}            Rename/move file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  param {id} {value}                 Set script parameter\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  ps                                 Show tasks and stack usage\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  psram [test|freq|cache]            PSRAM status/diagnostics\n" ) );
@@ -2876,9 +2876,11 @@ int cmd_psram(int argc, char **argv)
 {
     if (argc >= 2 && !strcasecmp(argv[1], "test")) {
         bool forever = (argc >= 3 && !strcasecmp(argv[2], "forever"));
+        log_free();
         shell.historyFree();
         int result = psram_test(forever);
         shell.historyInit();
+        log_init();
         return result;
     }
     if (argc >= 2 && !strcasecmp(argv[1], "cache")) {
@@ -3268,6 +3270,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("compile"), cmd_compile, "*.bas;*.c");
 #endif
     shell.addCommand(F("config"), cmd_config, NULL, NULL, tc_config);
+    shell.addCommand(F("copy"), cmd_cp, "*");
     shell.addCommand(F("cp"), cmd_cp, "*");
     shell.addCommand(F("cue"), cmd_cue, NULL, NULL, tc_cue);
     shell.addCommand(F("debug"), cmd_debug, NULL, NULL, tc_debug);
@@ -3296,6 +3299,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("md5sum"), cmd_md5, "*");
     shell.addCommand(F("mem"), cmd_mem);
     shell.addCommand(F("mkdir"), cmd_mkdir, "/");
+    shell.addCommand(F("move"), renFile, "*");
     shell.addCommand(F("mqtt"), cmd_mqtt, NULL, NULL, tc_mqtt);
     shell.addCommand(F("mv"), renFile, "*");
     shell.addCommand(F("param"), paramBasic, NULL, NULL, tc_param);

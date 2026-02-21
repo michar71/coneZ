@@ -343,11 +343,24 @@ void log_init(void)
 {
     log_ring_slots = psram_available() ? 128 : 16;
     log_ring_base = psram_malloc(log_ring_slots * LOG_ENTRY_SIZE);
+    log_ring_head = 0;
+    log_ring_count = 0;
     if (log_ring_base) {
         // Zero first byte of each slot (marks empty)
         for (int i = 0; i < log_ring_slots; i++) {
             psram_write8(log_ring_base + (uint32_t)i * LOG_ENTRY_SIZE, 0);
         }
+    }
+}
+
+void log_free(void)
+{
+    if (log_ring_base) {
+        psram_free(log_ring_base);
+        log_ring_base = 0;
+        log_ring_slots = 0;
+        log_ring_head = 0;
+        log_ring_count = 0;
     }
 }
 

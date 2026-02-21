@@ -109,7 +109,7 @@ filenames, and subcommands.
   color [on|off]                     Show or toggle ANSI color output
   compile {file} [run]               Compile .bas or .c to .wasm on-device
   config [set|unset|reset]           Show or change settings
-  cp {src} {dst}                     Copy file
+  copy|cp {src} {dst}                Copy file
   cue [load|start|stop|status]       Cue timeline engine control
   debug [off|{source} [on|off]]      Show or set debug message types
   deflate|gzip {file} [out] [level]  Compress file to gzip format
@@ -134,7 +134,7 @@ filenames, and subcommands.
   mem|free                           Show heap memory stats
   mkdir {path}                       Create directory
   mqtt [enable|disable|connect|...]  Show MQTT status or manage connection
-  mv|ren {old} {new}                 Rename/move file
+  move|mv|ren {old} {new}            Rename/move file
   param {id} {value}                 Set script parameter
   ps                                 Show task list and stack watermarks
   psram [test|freq|cache]            Show PSRAM status or run diagnostics
@@ -198,6 +198,7 @@ compile {file.bas|file.c} [run]
             compile /demo.c
             compile /demo.c run
 
+copy {src} {dst}
 cp {src} {dst}
   Copy a file on LittleFS.
   Example: cp /startup.bas /startup_backup.bas
@@ -419,8 +420,8 @@ led
       Set all LEDs on all channels to black (#000000).
 
 log
-  Show recent debug messages from the PSRAM ring buffer (256 entries on
-  ConeZ PCB, 32 on Heltec). The ring buffer always captures tagged debug
+  Show recent debug messages from the PSRAM ring buffer (128 entries on
+  ConeZ PCB, 16 on Heltec). The ring buffer always captures tagged debug
   messages (same payload as MQTT debug: timestamp + source tag + message,
   ANSI stripped). No configuration needed — the buffer is allocated at
   boot and fills silently. If PSRAM allocation fails, the buffer is
@@ -533,6 +534,7 @@ mkdir {path}
   Create a directory on LittleFS.
   Example: mkdir /scripts
 
+move {oldname} {newname}
 mv {oldname} {newname}
   Alias for ren. Rename or move a file on LittleFS.
   Example: mv /old.bas /new.bas

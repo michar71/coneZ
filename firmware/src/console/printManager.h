@@ -86,6 +86,7 @@ long get_thread_count(int thread);
 
 // Debug log system — PSRAM ring buffer + optional file sink
 void log_init(void);
+void log_free(void);
 bool log_open(const char *path);
 void log_close(void);
 void log_show(void);
