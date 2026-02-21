@@ -26,6 +26,11 @@ static volatile bool wasm_running = false;
 volatile bool wasm_stop_requested = false;
 static char wasm_current_path[256] = {0};
 
+// Persistent pre-allocated WASM linear memory (1 page = 64KB + header).
+// Allocated once at boot, reused across runs to avoid heap fragmentation.
+static const u32 PREALLOC_PAGES = 1;
+static M3MemoryHeader *s_prealloc_mem = NULL;
+
 
 // ---------- Automatic yield via m3_Yield override ----------
 // wasm3 declares m3_Yield() as M3_WEAK and calls it on every Call opcode.
@@ -100,20 +105,13 @@ static void wasm_run(const char *path)
         return;
     }
 
-    // Pre-allocate WASM linear memory while heap has a large contiguous block.
-    // The subsequent env/runtime/module allocations fragment the heap; grabbing
-    // the big block first ensures it succeeds.  We inject it into the runtime
-    // before m3_LoadModule so ResizeMemory() finds it already allocated
-    // (same-size realloc is a no-op in wasm3).
-    const u32 prealloc_pages = 1;  // ConeZ modules use -Wl,-z,stack-size=256 → 1 page
-    size_t prealloc_bytes = prealloc_pages * d_m3MemPageSize + sizeof(M3MemoryHeader);
-    M3MemoryHeader *prealloc_mem = (M3MemoryHeader *)calloc(1, prealloc_bytes);
+    // Track whether we lent the persistent prealloc block to this runtime
+    bool prealloc_injected = false;
 
     // Allocate buffer for .wasm binary (must persist during module lifetime)
     uint8_t *wasm_buf = (uint8_t *)malloc(wasm_size);
     if (!wasm_buf) {
         printfnl(SOURCE_WASM, "wasm: alloc failed (%u bytes)\n", (unsigned)wasm_size);
-        free(prealloc_mem);
         fclose(f);
         wasm_running = false;
         return;
@@ -124,7 +122,6 @@ static void wasm_run(const char *path)
 
     if (bytes_read != wasm_size) {
         printfnl(SOURCE_WASM, "wasm: read error (%u/%u)\n", (unsigned)bytes_read, (unsigned)wasm_size);
-        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
@@ -134,7 +131,6 @@ static void wasm_run(const char *path)
     IM3Environment env = m3_NewEnvironment();
     if (!env) {
         printfnl(SOURCE_WASM, "wasm: env alloc failed\n");
-        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
@@ -144,7 +140,6 @@ static void wasm_run(const char *path)
     if (!runtime) {
         printfnl(SOURCE_WASM, "wasm: runtime alloc failed\n");
         m3_FreeEnvironment(env);
-        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
@@ -157,22 +152,22 @@ static void wasm_run(const char *path)
         printfnl(SOURCE_WASM, "wasm: parse error: %s\n", result);
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
-        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
     }
 
-    // Inject pre-allocated linear memory into the runtime.  When m3_LoadModule
-    // calls ResizeMemory(initPages), it sees numPages already == initPages, so
-    // m3_Realloc(ptr, size, size) returns the same pointer (no-op fast path).
-    if (prealloc_mem && module->memoryInfo.initPages == prealloc_pages) {
-        runtime->memory.mallocated = prealloc_mem;
-        runtime->memory.numPages = prealloc_pages;
-        prealloc_mem = NULL;  // runtime owns it now
-    } else {
-        free(prealloc_mem);
-        prealloc_mem = NULL;
+    // Inject persistent pre-allocated linear memory into the runtime.  When
+    // m3_LoadModule calls ResizeMemory(initPages), it sees numPages already ==
+    // initPages, so m3_Realloc(ptr, size, size) returns the same pointer (no-op).
+    // We detach it before m3_FreeRuntime() so the block persists across runs.
+    if (s_prealloc_mem && module->memoryInfo.initPages == PREALLOC_PAGES) {
+        // Zero the data portion (header stays intact from initial calloc)
+        memset((uint8_t *)s_prealloc_mem + sizeof(M3MemoryHeader), 0,
+               PREALLOC_PAGES * d_m3MemPageSize);
+        runtime->memory.mallocated = s_prealloc_mem;
+        runtime->memory.numPages = PREALLOC_PAGES;
+        prealloc_injected = true;
     }
 
     // Load module into runtime (runtime takes ownership)
@@ -182,6 +177,7 @@ static void wasm_run(const char *path)
         printfnl(SOURCE_WASM, "wasm: load error: %s (module wants %u pages = %uKB)\n",
                  result, pages, (unsigned)(pages * 64));
         m3_FreeModule(module);
+        if (prealloc_injected) runtime->memory.mallocated = NULL;
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -193,6 +189,7 @@ static void wasm_run(const char *path)
     result = link_imports(module);
     if (result) {
         printfnl(SOURCE_WASM, "wasm: link error: %s\n", result);
+        if (prealloc_injected) runtime->memory.mallocated = NULL;
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -219,6 +216,7 @@ static void wasm_run(const char *path)
 
     if (!func_setup && !func_loop && !func_start) {
         printfnl(SOURCE_WASM, "wasm: no entry point (setup/loop/_start/main)\n");
+        if (prealloc_injected) runtime->memory.mallocated = NULL;
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -241,6 +239,7 @@ static void wasm_run(const char *path)
     result = m3_RunStart(module);
     if (result) {
         printfnl(SOURCE_WASM, "wasm: start section error: %s\n", result);
+        if (prealloc_injected) runtime->memory.mallocated = NULL;
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -302,11 +301,13 @@ static void wasm_run(const char *path)
         }
     }
 
-    // Cleanup
+    // Cleanup — detach persistent prealloc block before freeing runtime
     wasm_close_all_files();
     wasm_reset_gamma();
     wasm_string_pool_reset();
     wasm_current_path[0] = '\0';
+    if (prealloc_injected)
+        runtime->memory.mallocated = NULL;  // don't let m3_FreeRuntime() free our persistent block
     m3_FreeRuntime(runtime);
     m3_FreeEnvironment(env);
     free(wasm_buf);
@@ -338,10 +339,7 @@ static void wasm_task_fun(void *parameter)
 
                 wasm_run(local_path);
             } else {
-                // No program queued — kill task to free 16KB stack
-                wasm_task_handle = NULL;
                 xSemaphoreGive(wasm_mutex);
-                vTaskDelete(NULL);
             }
         }
     }
@@ -353,6 +351,13 @@ static void wasm_task_fun(void *parameter)
 void setup_wasm()
 {
     wasm_mutex = xSemaphoreCreateMutex();
+
+    // Pre-allocate linear memory block once — persists across runs
+    size_t prealloc_bytes = PREALLOC_PAGES * d_m3MemPageSize + sizeof(M3MemoryHeader);
+    s_prealloc_mem = (M3MemoryHeader *)calloc(1, prealloc_bytes);
+
+    // Start task at boot — keeps 16KB stack + 64KB prealloc pinned in heap
+    xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
 }
 
 bool set_wasm_program(const char *path)
@@ -374,13 +379,7 @@ bool set_wasm_program(const char *path)
     if (xSemaphoreTake(wasm_mutex, 1000) == pdTRUE) {
         strncpy(next_wasm, path, sizeof(next_wasm) - 1);
         next_wasm[sizeof(next_wasm) - 1] = '\0';
-        bool need_task = (wasm_task_handle == NULL);
         xSemaphoreGive(wasm_mutex);
-
-        // Create task if not running (killed after previous program ended to free 16KB stack)
-        if (need_task)
-            xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
-
         return true;
     }
     return false;
