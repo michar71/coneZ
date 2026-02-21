@@ -7,6 +7,6 @@
 # ESP-IDF generated files (PlatformIO creates these from sdkconfig.defaults)
 sdkconfig.conez-v0-1
 sdkconfig.heltec_wifi_lora_32_V3
-CMakeLists.txt
-src/CMakeLists.txt
+/CMakeLists.txt
+/src/CMakeLists.txt
 dependencies.lock
