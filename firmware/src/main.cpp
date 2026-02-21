@@ -38,7 +38,7 @@
 #define WAIT_FOR_USB_SERIAL
 #define WAIT_FOR_USB_SERIAL_TIMEOUT 15    // Seconds
 
-#define WIFI_TIMEOUT                10    // Seconds
+#define WIFI_TIMEOUT                5     // Seconds
 
 #include "commands.h"
 

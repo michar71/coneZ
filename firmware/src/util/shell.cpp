@@ -3,6 +3,7 @@
 #include "shell.h"
 #include "printManager.h"
 #include "psram.h"
+#include "telnet.h"
 
 // Prompt and color strings — selected at runtime via getAnsiEnabled()
 #define SH_PROMPT_ANSI      "\033[1;32m> \033[33m"      // bold green "> ", then yellow
@@ -193,6 +194,16 @@ void ConezShell::addCommand(
 //////////////////////////////////////////////////////////////////////////////
 bool ConezShell::executeIfInput(void)
 {
+    // Send prompt + current input to newly-connected telnet clients
+    if (inputActive && telnet.hasNewClients()) {
+        getLock();
+        telnet.sendToNew(sh_prompt());
+        if (inptr > 0)
+            telnet.sendToNew((const uint8_t *)linebuffer, inptr);
+        telnet.clearNewClients();
+        releaseLock();
+    }
+
     bool bufferReady = prepInput();
     bool didSomething = false;
 
