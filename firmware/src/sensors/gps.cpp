@@ -1,7 +1,7 @@
 #include <Arduino.h>
-#include <WiFi.h>
 #include <sys/time.h>
 #include "esp_sntp.h"
+#include "conez_wifi.h"
 #include "driver/gpio.h"
 #include "main.h"
 #include "gps.h"
@@ -514,14 +514,17 @@ void ntp_setup(void)
 {
     sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
     sntp_set_time_sync_notification_cb(ntp_sync_cb);
-    configTime(0, 0, config.ntp_server, "time.nist.gov");
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, config.ntp_server);
+    sntp_setservername(1, "time.nist.gov");
+    sntp_init();
 }
 
 
 void ntp_loop(void)
 {
     // Auto-initialize SNTP when WiFi connects (handles CLI wifi commands, reconnects)
-    if (WiFi.status() == WL_CONNECTED && !sntp_enabled()) {
+    if (wifi_is_connected() && !sntp_enabled()) {
         ntp_setup();
     }
 
@@ -699,14 +702,17 @@ void ntp_setup(void)
 {
     sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
     sntp_set_time_sync_notification_cb(ntp_sync_cb);
-    configTime(0, 0, config.ntp_server, "time.nist.gov");
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, config.ntp_server);
+    sntp_setservername(1, "time.nist.gov");
+    sntp_init();
 }
 
 
 void ntp_loop(void)
 {
     // Auto-initialize SNTP when WiFi connects (handles CLI wifi commands, reconnects)
-    if (WiFi.status() == WL_CONNECTED && !sntp_enabled()) {
+    if (wifi_is_connected() && !sntp_enabled()) {
         ntp_setup();
     }
 

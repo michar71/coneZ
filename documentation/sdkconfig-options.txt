@@ -21,11 +21,16 @@ Current settings (firmware/sdkconfig.defaults):
   CONFIG_LWIP_STATS=y                                LWIP protocol statistics
   CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2920               Halved TCP send buffer
   CONFIG_LWIP_TCP_WND_DEFAULT=2920                   Halved TCP receive window
+  CONFIG_MQTT_TASK_CORE_SELECTION_ENABLED=y           Pin esp_mqtt task to a specific core
+  CONFIG_MQTT_USE_CORE_1=y                           MQTT task on core 1 (HWCDC safety)
   CONFIG_PARTITION_TABLE_CUSTOM=y                    Use partitions.csv
   CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-Build flag (not Kconfig):
-  -DMIB2_STATS=1                                   Per-interface byte counters
+CMakeLists.txt (not Kconfig — no MIB2_STATS option in ESP-IDF 4.4):
+  target_compile_definitions(__idf_lwip PRIVATE MIB2_STATS=1)
+                                                     Per-interface byte counters
+  Also defined via -D MIB2_STATS=1 in build_flags for project sources.
+  Both are needed: CMakeLists.txt for LWIP component, build_flags for project code.
 
 Note: after changing sdkconfig.defaults, delete the generated
 sdkconfig.<env> files to force PlatformIO to regenerate them.

@@ -192,7 +192,8 @@ before any hardware that depends on config values is initialized:
   lora_setup()             Reads config.lora_*
   gps_setup()              Reads config.origin_*
   sensors_setup()
-  WiFi.begin()             Reads config.wifi_*
+  wifi_init()              Initialize WiFi subsystem (netif, events)
+  wifi_start()             Reads config.wifi_*, connects as STA
   ntp_setup()              Starts SNTP if WiFi connected
   printManagerInit()
   config_apply_debug()     Applies config.dbg_* settings

@@ -255,9 +255,33 @@ static void psram_cmd(uint8_t cmd) {
 
 static void psram_reset() {
     psram_cmd(PSRAM_CMD_RESET_EN);
-    delayMicroseconds(1);
+    ets_delay_us(1);
     psram_cmd(PSRAM_CMD_RESET);
-    delayMicroseconds(200);  // wait for reset + init
+    ets_delay_us(200);  // wait for reset + init
+}
+
+// Flush the SPI bus to recover from a stuck PSRAM state machine.
+// If the ESP32 resets mid-SPI-transaction (e.g. reflash during psram test),
+// the PSRAM chip may be waiting for more clock cycles to complete a partial
+// read/write.  CS# high terminates the stuck operation, then dummy clocks
+// with CS# asserted complete any partial byte boundary.  A second CS# high
+// ensures the chip is cleanly idle before we issue real commands.
+static void psram_bus_recovery() {
+    // 1. CS# high — terminate any in-progress operation
+    cs_high();
+    ets_delay_us(50);
+
+    // 2. CS# low → clock out dummy bytes → CS# high
+    //    Completes any partial byte the chip was expecting.
+    //    0xFF is not a valid PSRAM command, so if the chip interprets it
+    //    as an opcode it will ignore it.  The CS# rising edge at the end
+    //    resets the state machine to idle.
+    cs_low();
+    ets_delay_us(1);
+    for (int i = 0; i < 8; i++)
+        spi2_transfer(0xFF);
+    cs_high();
+    ets_delay_us(50);
 }
 
 static uint16_t psram_read_id() {
@@ -727,8 +751,12 @@ int psram_setup(void) {
 
     Serial.print("Init PSRAM... ");
 
+    // Immediately claim CE# and drive high — if the previous session was
+    // interrupted mid-SPI-transaction (e.g. reflash during psram test),
+    // this terminates the stuck operation.
     gpio_set_direction((gpio_num_t)PSR_CE, GPIO_MODE_OUTPUT);
     cs_high();
+    ets_delay_us(100);
 
     // We own the FSPI bus exclusively — no other peripheral shares it.
     // Direct register access via GPSPI2 — no Arduino SPI locks involved.
@@ -736,11 +764,23 @@ int psram_setup(void) {
     spi2_init(PSR_SCK, PSR_MISO, PSR_MOSI, PSRAM_SPI_FREQ_DEFAULT);
     psram_set_freq(PSRAM_SPI_FREQ_DEFAULT);
 
-    psram_reset();
+    // Bus recovery + reset + ID read, with retries.
+    // First attempt always does recovery — a soft reset during an active SPI
+    // transaction leaves the PSRAM state machine stuck, and a plain reset
+    // sequence won't work because the reset commands get consumed as data bytes.
+    uint8_t mfid = 0, kgd = 0;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        psram_bus_recovery();
+        psram_reset();
 
-    uint16_t id = psram_read_id();
-    uint8_t mfid = id >> 8;
-    uint8_t kgd  = id & 0xFF;
+        uint16_t id = psram_read_id();
+        mfid = id >> 8;
+        kgd  = id & 0xFF;
+
+        if (mfid == 0x0D) break;  // valid manufacturer ID
+        Serial.printf("MF=0x%02X (retry %d)... ", mfid, attempt + 1);
+    }
+
     Serial.printf("MF=0x%02X KGD=0x%02X ", mfid, kgd);
 
     if (mfid != 0x0D) {

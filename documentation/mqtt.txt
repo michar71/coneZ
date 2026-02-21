@@ -157,10 +157,12 @@ Persistent (requires reboot):
 Connection Behavior
 -------------------
 
+  - Uses ESP-IDF esp_mqtt_client (not a hand-rolled implementation)
   - Auto-connects when WiFi is available and mqtt.enabled is on
-  - Reconnects with exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s cap
-  - Backoff resets on successful CONNACK
-  - PINGREQ sent every 30s (keepalive/2) to maintain connection
+  - Auto-reconnects with built-in backoff (esp_mqtt default: 10s)
+  - Keepalive: 60 seconds
   - Heartbeat published every 30s to conez/{id}/status
   - Clean session (no persistent subscriptions on broker)
   - QoS 0 for all publishes (fire-and-forget)
+  - mqtt_task runs on core 1 (CONFIG_MQTT_USE_CORE_1 in sdkconfig)
+  - mqtt_publish() is thread-safe (esp_mqtt uses a recursive mutex)

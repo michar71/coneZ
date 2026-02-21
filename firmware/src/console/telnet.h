@@ -2,12 +2,12 @@
 #define TELNET_H
 
 #include <Arduino.h>
-#include <WiFi.h>
+#include "lwip/sockets.h"
 
 #define TELNET_MAX_CLIENTS 3
 
 struct TelnetClientSlot {
-    WiFiClient client;
+    int     fd;         // socket fd, -1 = empty
     int     iac_state;  // 0=normal, 1=got IAC, 2=got IAC+cmd, 3=subneg
     uint8_t iac_cmd;    // command byte saved from state 1
     bool    needs_prompt; // true after connect, cleared by sendToNew()
@@ -40,12 +40,16 @@ public:
     void   clearNewClients();
 
 private:
-    WiFiServer server;
+    int      listen_fd;
+    uint16_t port;
     TelnetClientSlot clients[TELNET_MAX_CLIENTS];
     bool prev_was_cr;   // for \n → \r\n translation across write calls
 
     void checkClient();
     void negotiate(TelnetClientSlot &slot);
+    bool slot_connected(TelnetClientSlot &slot);
+    void slot_close(TelnetClientSlot &slot);
+    int  slot_send(TelnetClientSlot &slot, const uint8_t *buf, size_t len);
 };
 
 extern TelnetServer telnet;

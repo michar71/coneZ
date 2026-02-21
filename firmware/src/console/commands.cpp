@@ -2,7 +2,7 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include "shell.h"
-#include <WiFi.h>
+#include "conez_wifi.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "driver/gpio.h"
@@ -34,7 +34,6 @@
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
 #include "lwip/stats.h"
-#include "lwip/netif.h"
 #include <csetjmp>
 /*
  * Forward-declare only the embedded compiler APIs we need.
@@ -1236,12 +1235,12 @@ int cmd_status(int argc, char **argv)
     out->printf("Cone:    id=%d  group=%d\n", config.cone_id, config.cone_group);
 
     // WiFi
-    wl_status_t wst = WiFi.status();
     if (!config.wifi_enabled) {
         out->printf("WiFi:    Disabled\n");
-    } else if (wst == WL_CONNECTED) {
-        out->printf("WiFi:    Connected  %s  RSSI %d dBm\n",
-            WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    } else if (wifi_is_connected()) {
+        char ip[16];
+        wifi_get_ip_str(ip, sizeof(ip));
+        out->printf("WiFi:    Connected  %s  RSSI %d dBm\n", ip, (int)wifi_get_rssi());
     } else {
         out->printf("WiFi:    Disconnected  (SSID: %s)\n", config.wifi_ssid);
     }
@@ -1467,6 +1466,7 @@ int cmd_mqtt(int argc, char **argv)
     // mqtt enable
     if (argc >= 2 && !strcasecmp(argv[1], "enable")) {
         config.mqtt_enabled = true;
+        mqtt_force_connect();
         printfnl(SOURCE_COMMANDS, "MQTT enabled\n");
         return 0;
     }
@@ -1521,23 +1521,12 @@ int cmd_mqtt(int argc, char **argv)
 }
 
 
-static volatile uint32_t wifi_connected_since = 0;
-
-static void wifi_event_cb(arduino_event_id_t event)
-{
-    if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED)
-        wifi_connected_since = uptime_ms();
-    else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
-        wifi_connected_since = 0;
-}
-
 int cmd_wifi(int argc, char **argv)
 {
     // wifi enable
     if (argc >= 2 && !strcasecmp(argv[1], "enable")) {
         config.wifi_enabled = true;
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(config.wifi_ssid, config.wifi_password);
+        wifi_start(config.wifi_ssid, config.wifi_password, wifi_get_hostname());
         printfnl(SOURCE_COMMANDS, "WiFi enabled — connecting to \"%s\"\n", config.wifi_ssid);
         return 0;
     }
@@ -1545,8 +1534,7 @@ int cmd_wifi(int argc, char **argv)
     // wifi disable
     if (argc >= 2 && !strcasecmp(argv[1], "disable")) {
         config.wifi_enabled = false;
-        WiFi.disconnect();
-        WiFi.mode(WIFI_OFF);
+        wifi_stop();
         printfnl(SOURCE_COMMANDS, "WiFi disabled\n");
         return 0;
     }
@@ -1554,8 +1542,7 @@ int cmd_wifi(int argc, char **argv)
     // wifi ssid <name>
     if (argc >= 3 && !strcasecmp(argv[1], "ssid")) {
         strlcpy(config.wifi_ssid, argv[2], CONFIG_MAX_SSID);
-        WiFi.disconnect();
-        WiFi.begin(config.wifi_ssid, config.wifi_password);
+        wifi_reconnect(config.wifi_ssid, config.wifi_password);
         printfnl(SOURCE_COMMANDS, "SSID set to \"%s\" — reconnecting\n", config.wifi_ssid);
         return 0;
     }
@@ -1563,42 +1550,37 @@ int cmd_wifi(int argc, char **argv)
     // wifi password <psk>  /  wifi psk <psk>
     if (argc >= 3 && (!strcasecmp(argv[1], "password") || !strcasecmp(argv[1], "pass") || !strcasecmp(argv[1], "psk"))) {
         strlcpy(config.wifi_password, argv[2], CONFIG_MAX_PASSWORD);
-        WiFi.disconnect();
-        WiFi.begin(config.wifi_ssid, config.wifi_password);
+        wifi_reconnect(config.wifi_ssid, config.wifi_password);
         printfnl(SOURCE_COMMANDS, "Password updated — reconnecting\n");
         return 0;
     }
 
     // wifi (no args) — show status
-    wl_status_t st = WiFi.status();
-    const char *status;
-    switch (st) {
-        case WL_CONNECTED:      status = "Connected";      break;
-        case WL_NO_SSID_AVAIL:  status = "SSID not found"; break;
-        case WL_CONNECT_FAILED: status = "Connect failed"; break;
-        case WL_IDLE_STATUS:    status = "Idle";            break;
-        case WL_DISCONNECTED:   status = "Disconnected";    break;
-        default:                status = "Unknown";         break;
-    }
-
     getLock();
     Stream *out = getStream();
     out->println("WiFi Status:");
     out->printf("  Enabled:     %s\n", config.wifi_enabled ? "yes" : "no");
     out->printf("  Config SSID: %s\n", config.wifi_ssid);
-    out->printf("  Status:      %s\n", status);
+    out->printf("  Status:      %s\n", wifi_state_str());
 
-    if (st == WL_CONNECTED) {
-        out->printf("  SSID:        %s\n", WiFi.SSID().c_str());
-        out->printf("  BSSID:       %s\n", WiFi.BSSIDstr().c_str());
-        out->printf("  Channel:     %d\n", WiFi.channel());
-        out->printf("  RSSI:        %d dBm\n", WiFi.RSSI());
-        out->printf("  IP:          %s\n", WiFi.localIP().toString().c_str());
-        out->printf("  Gateway:     %s\n", WiFi.gatewayIP().toString().c_str());
-        out->printf("  Subnet:      %s\n", WiFi.subnetMask().toString().c_str());
-        out->printf("  DNS:         %s\n", WiFi.dnsIP().toString().c_str());
-        out->printf("  Hostname:    %s\n", WiFi.getHostname());
-        uint32_t since = wifi_connected_since;
+    if (wifi_is_connected()) {
+        char buf[64];
+        wifi_get_ssid(buf, sizeof(buf));
+        out->printf("  SSID:        %s\n", buf);
+        wifi_get_bssid_str(buf, sizeof(buf));
+        out->printf("  BSSID:       %s\n", buf);
+        out->printf("  Channel:     %d\n", wifi_get_channel());
+        out->printf("  RSSI:        %d dBm\n", (int)wifi_get_rssi());
+        wifi_get_ip_str(buf, sizeof(buf));
+        out->printf("  IP:          %s\n", buf);
+        wifi_get_gateway_str(buf, sizeof(buf));
+        out->printf("  Gateway:     %s\n", buf);
+        wifi_get_subnet_str(buf, sizeof(buf));
+        out->printf("  Subnet:      %s\n", buf);
+        wifi_get_dns_str(buf, sizeof(buf));
+        out->printf("  DNS:         %s\n", buf);
+        out->printf("  Hostname:    %s\n", wifi_get_hostname());
+        uint32_t since = wifi_get_connected_since();
         if (since) {
             unsigned long sec = (uptime_ms() - since) / 1000;
             out->printf("  Connected:   %lud %02luh %02lum %02lus\n",
@@ -1612,11 +1594,8 @@ int cmd_wifi(int argc, char **argv)
         out->printf("  UDP TX/RX:   %u / %u datagrams\n",
             (unsigned)lwip_stats.udp.xmit, (unsigned)lwip_stats.udp.recv);
 #endif
-#if MIB2_STATS
-        struct netif *sta_nif = netif_find("st0");
-        if (sta_nif) {
-            uint32_t tx = sta_nif->mib2_counters.ifoutoctets;
-            uint32_t rx = sta_nif->mib2_counters.ifinoctets;
+        uint32_t tx, rx;
+        if (wifi_get_byte_counts(&tx, &rx)) {
             if (tx < 1024 && rx < 1024)
                 out->printf("  Bytes TX/RX: %u / %u\n", (unsigned)tx, (unsigned)rx);
             else if (tx < 1048576 && rx < 1048576)
@@ -1624,14 +1603,13 @@ int cmd_wifi(int argc, char **argv)
             else
                 out->printf("  Bytes TX/RX: %.1f MB / %.1f MB\n", tx / 1048576.0f, rx / 1048576.0f);
         }
-#endif
     }
 
     uint8_t mac[6];
-    WiFi.macAddress(mac);
+    wifi_get_mac(mac);
     out->printf("  MAC:         %02X:%02X:%02X:%02X:%02X:%02X\n",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    out->printf("  TX power:    %.1f dBm\n", WiFi.getTxPower() / 4.0f);
+    out->printf("  TX power:    %.1f dBm\n", wifi_get_tx_power_dbm() / 4.0f);
     releaseLock();
 
     return 0;
@@ -3503,7 +3481,6 @@ void init_commands(Stream *dev)
 {
     shell.attach(*dev);
     shell.historyInit();
-    WiFi.onEvent(wifi_event_cb);
 
     //Test Commands
     shell.addCommand("test", test);

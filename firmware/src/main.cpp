@@ -7,7 +7,7 @@
 #include "driver/ledc.h"
 #include "driver/i2c.h"
 #include "main.h"
-#include <WiFi.h>
+#include "conez_wifi.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_spi_flash.h"
@@ -21,7 +21,6 @@
 #include <LittleFS.h>
 #include <FS.h>
 #include <RadioLib.h>
-#include <esp_wifi.h>
 #include "dualstream.h"
 #include "shell.h"
 #include "basic_wrapper.h"
@@ -446,12 +445,13 @@ void setup()
   sensors_setup();
 
 
+  // Initialize WiFi subsystem (netif, event loop, event handlers)
+  wifi_init();
+
   if (config.wifi_enabled) {
     Serial.println( "\nConnecting to wifi..." );
 
     // Generate DHCP hostname: use config.device_name if set, else ConeZ-nnnn from MAC.
-    WiFi.mode( WIFI_STA );
-
     char hostname[CONFIG_MAX_DEVICE_NAME];
     if (config.device_name[0] != '\0')
     {
@@ -464,26 +464,26 @@ void setup()
       sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
     }
 
-    WiFi.setHostname( hostname );              // must precede WiFi.begin()
-
     Serial.print( "Hostname: " );
     Serial.println( hostname );
 
-    WiFi.begin( config.wifi_ssid, config.wifi_password );
+    wifi_start( config.wifi_ssid, config.wifi_password, hostname );
 
     unsigned long t_wifi_start = uptime_ms();
 
-    while( WiFi.status() != WL_CONNECTED && uptime_ms() - t_wifi_start < WIFI_TIMEOUT * 1000 )
+    while( !wifi_is_connected() && uptime_ms() - t_wifi_start < WIFI_TIMEOUT * 1000 )
     {
       vTaskDelay(pdMS_TO_TICKS(500));
       Serial.print( "." );
     }
 
-    if( WiFi.status() == WL_CONNECTED )
+    if( wifi_is_connected() )
     {
+      char ip[16];
+      wifi_get_ip_str(ip, sizeof(ip));
       Serial.println( " Connected");
       Serial.print( "IP address: " );
-      Serial.println( WiFi.localIP() );
+      Serial.println( ip );
 
       // Start NTP time sync (provides time on all boards, fills in before GPS lock)
       ntp_setup();
@@ -495,7 +495,6 @@ void setup()
     }
   } else {
     Serial.println( "\nWiFi disabled" );
-    WiFi.mode( WIFI_OFF );
   }
 
   http_setup();

@@ -95,8 +95,12 @@ pre-compiled Arduino SDK, giving us full control over ESP-IDF configuration.
 - `CONFIG_LWIP_TCP_WND_DEFAULT=2920` — halved TCP receive window
 - `CONFIG_PARTITION_TABLE_CUSTOM=y` — uses our `partitions.csv`
 
-Additional build flag (not Kconfig): `-DMIB2_STATS=1` enables per-interface byte
-counters on LWIP netif structs (`ifinoctets`/`ifoutoctets`).
+Additional build flag: `-DMIB2_STATS=1` (in `platformio.ini` **and** `CMakeLists.txt`
+via `target_compile_definitions(__idf_lwip PRIVATE MIB2_STATS=1)`) enables MIB2
+fields in LWIP's `struct netif`. Both defines are needed — `platformio.ini` reaches
+project sources while the CMake target reaches the LWIP component. Note: ESP-IDF's
+`wlanif.c` never increments these counters, so actual byte counting is done via
+netif function pointer wrappers in `conez_wifi.cpp` (see WiFi subsystem).
 
 See `documentation/sdkconfig-options.txt` for a full review of available options
 including items considered but deferred (IPv6, SoftAP, WPA3, CPU freq, flash mode).
@@ -159,8 +163,8 @@ equivalents. This section documents the migration surface.
 |-------------|--------|-------|---------------------|--------|
 | Serial (print/read/write) | 135 | 9 | UART driver or USB CDC (`tinyusb`). HWCDC core-1 constraint remains. | Pending |
 | LittleFS / File | 77 | 15 | Already an IDF component (`esp_littlefs`). Switch to POSIX `open()`/`read()`/`write()`/`stat()`. | Pending |
-| WiFi (WiFi.begin/status) | 39 | 6 | `esp_wifi.h` (already included alongside Arduino WiFi) | Pending |
-| EVERY_N_SECONDS | 1 | 1 | Simple `uptime_ms()` check or `esp_timer` periodic | Pending |
+| ~~WiFi (WiFi.begin/status)~~ | ~~39~~ | — | `conez_wifi.h` wrapping `esp_wifi.h`/`esp_netif.h`/`esp_event.h`. Telnet uses BSD sockets. MQTT uses `esp_mqtt_client`. NTP uses direct `esp_sntp`. | **Done** |
+| ~~EVERY_N_SECONDS~~ | ~~1~~ | — | Removed (was a FastLED macro) | **Done** |
 | ~~millis/delay/micros~~ | ~~105~~ | — | `uptime_ms()`, `uptime_us()` in `main.h`; `vTaskDelay(pdMS_TO_TICKS(ms))`; `esp_timer_get_time()` | **Done** |
 | ~~SPI (SPIClass)~~ | ~~56~~ | — | Raw GPSPI2/GPSPI3 register access (`soc/spi_struct.h`). PSRAM uses hardware cmd/addr phases; LoRa uses custom `EspHal` RadioLib HAL in `lora/lora_hal.h`. | **Done** |
 | ~~GPIO (pinMode/digitalWrite)~~ | ~~40~~ | — | `driver/gpio.h`, `gpio_set_level()`, `gpio_set_direction()` | **Done** |
@@ -182,11 +186,11 @@ equivalents. This section documents the migration surface.
 | SPI (PSRAM/LoRa) | Medium | **Done** — PSRAM uses raw GPSPI2 registers with hardware cmd/addr/dummy phases; LoRa uses custom `EspHal` RadioLib HAL with raw GPSPI3 registers (`lora/lora_hal.h`). See PSRAM section for performance analysis. |
 | WebServer | Hard | **Done** — `esp_http_server` with URI handlers, raw binary OTA upload, JS-driven form |
 | LittleFS | Easy | Pending — already an IDF component; swap `File` class for POSIX calls |
-| WiFi | Medium | Pending — thin wrapper over `esp_wifi.h`, but event model differs |
+| WiFi | Medium | **Done** — `conez_wifi.h/cpp` wraps ESP-IDF WiFi init/events/state/queries. Telnet uses BSD sockets (`lwip/sockets.h`). MQTT uses ESP-IDF `esp_mqtt_client`. NTP uses direct `sntp_*()` API. |
 | Serial/HWCDC | Medium | Pending — core debug path, must preserve core-1 pinning. Need `tinyusb` CDC or UART driver. |
 
-**In progress.** Three subsystems remain: Serial/HWCDC (~135 call sites), LittleFS (~77),
-and WiFi (~39). All remaining replacements are mechanical (no architectural changes needed).
+**In progress.** Two subsystems remain: Serial/HWCDC (~135 call sites) and LittleFS (~77).
+All remaining replacements are mechanical (no architectural changes needed).
 
 ## Architecture
 
@@ -199,6 +203,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | loopTask | 1 | 1 | 8192 | Arduino `loop()` in `main.cpp` | Always running |
 | ShellTask | 1 | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
 | httpd | 1 | 6 | 6144 | `esp_http_server` in `http/http.cpp` | Always running |
+| mqtt_task | 1 | 5 | 4096 | ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp` | Created when MQTT connects |
 | led_render | 1 | 2 | 4096 | `led_task_fun` in `led/led.cpp` | Always running |
 | BasicTask | any | 1 | 16384 | `basic_task_fun` in `basic/basic_wrapper.cpp` | Created on first script |
 | WasmTask | 1 | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Created on first script |
@@ -600,15 +605,15 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `sensors/mpu6500.cpp`/`.h` using `driver/i2c.h`)
 - **Temp:** TMP102 on I2C 0x48 (inline driver in `sensors/sensors.cpp` — reads register 0x00 via Wire)
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
-- **WiFi:** STA mode, SSID/password from config system. CLI `wifi ssid`/`wifi psk` hot-apply (disconnect + reconnect) without saving to config; `config set wifi.*` persists but requires reboot.
+- **WiFi:** STA mode via `conez_wifi.h/cpp` wrapping ESP-IDF `esp_wifi`/`esp_netif`/`esp_event`. SSID/password from config system. Event-driven state tracking (`wifi_state_e`), IP acquisition via `IP_EVENT_STA_GOT_IP`. CLI `wifi ssid`/`wifi psk` hot-apply (disconnect + reconnect) without saving to config; `config set wifi.*` persists but requires reboot. Byte counting via LWIP netif function pointer wrappers (`counted_linkoutput`/`counted_input` in `conez_wifi.cpp`) — installed on IP acquisition, since ESP-IDF's `wlanif.c` doesn't increment MIB2 counters. `wifi_get_byte_counts()` provides the totals.
 - **HTTP/OTA:** ESP-IDF `esp_http_server` on port 80 (`http/http.cpp`). Runs in its own FreeRTOS task (pinned to core 1, stack 6144) — no polling needed. Root page shows GPS, partition info, and links to `/config`, `/dir`, `/nvs`, `/update`, `/reboot`. Config form submits URL-encoded POST body, parsed with `httpd_query_key_value()` + `url_decode()`. OTA firmware/filesystem upload at `/update` — HTML form uses JavaScript `fetch()` for raw binary POST (no multipart parsing), `type` passed as query param. CLI-friendly via curl:
   ```
   curl -X POST --data-binary @firmware.bin http://<ip>/update?type=firmware
   curl -X POST --data-binary @littlefs.bin http://<ip>/update?type=filesystem
   ```
   Uses Arduino `Update` library (wraps ESP-IDF `esp_ota_*`). Filesystem upload calls `LittleFS.end()` before writing. Auto-reboots on success. Progress logged via `printfnl(SOURCE_SYSTEM, ...)`.
-- **MQTT:** Minimal MQTT 3.1.1 client in `mqtt/conez_mqtt.cpp/h`. Connects to the sewerpipe broker over WiFi using Arduino `WiFiClient`. State machine: DISCONNECTED → WAIT_CONNACK → CONNECTED. Auto-reconnects with exponential backoff (1s → 30s cap). Publishes JSON heartbeats every 30s to `conez/{id}/status` with uptime, heap, temp, RSSI. Debug messages are forwarded to `conez/{id}/debug` by printManager (SOURCE_MQTT excluded to prevent loops). Subscribes to `conez/{id}/cmd/#` for per-cone commands. PINGREQ at keepalive/2 (30s). Config section `[mqtt]` with `broker` (default: `sewerpipe.local`), `port` (default: 1883), and `enabled` (default: on) keys. CLI: `mqtt` (status), `mqtt enable`/`disable`, `mqtt connect`/`disconnect`, `mqtt broker <host>` (hot-apply), `mqtt pub <topic> <payload>`. Debug output via `SOURCE_MQTT` (default on). Runs on loopTask (core 1); ShellTask can safely call `mqtt_publish()` and force flags (same core, time-sliced). See `documentation/mqtt.txt` for topic hierarchy and protocol details.
-- **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) supports up to 3 simultaneous clients with per-slot IAC state, bare `\n` → `\r\n` translation on output, prompt delivery on connect, and Ctrl+D per-session disconnect. Arrow keys, Home/End/Delete, Ctrl-A/E/U, 32-entry command history (PSRAM-backed ring buffer on ConeZ PCB, single-entry DRAM fallback on Heltec). ANSI color output on by default, toggleable at runtime via `color on`/`color off` CLI command (`setAnsiEnabled()`/`getAnsiEnabled()` in `printManager.h`). Commands requiring ANSI (art, clear, game, winamp) error out when color is off; editor falls back to a line-based mode. `CORE_DEBUG_LEVEL=0` in `platformio.ini` suppresses Arduino library log macros (`log_e`/`log_w`/etc.) at compile time — these bypass `esp_log_level_set()` and would corrupt HWCDC output. File commands auto-normalize paths (prepend `/` if missing) via `normalize_path()` in `main.h`. Full-screen text editor (`console/editor.cpp/h`) for on-device script editing, with line-editor fallback when ANSI is disabled. See `documentation/cli-commands.txt` for the full command reference.
+- **MQTT:** ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp/h`. Connects to the sewerpipe broker over WiFi with auto-reconnect (built into esp_mqtt). Publishes JSON heartbeats every 30s to `conez/{id}/status` with uptime, heap, temp, RSSI. Debug messages are forwarded to `conez/{id}/debug` by printManager (SOURCE_MQTT excluded to prevent loops). Subscribes to `conez/{id}/cmd/#` for per-cone commands. The esp_mqtt task runs on core 1 (`CONFIG_MQTT_USE_CORE_1` in sdkconfig.defaults) for HWCDC safety. Config section `[mqtt]` with `broker` (default: `sewerpipe.local`), `port` (default: 1883), and `enabled` (default: on) keys. CLI: `mqtt` (status), `mqtt enable`/`disable`, `mqtt connect`/`disconnect`, `mqtt broker <host>` (hot-apply), `mqtt pub <topic> <payload>`. Debug output via `SOURCE_MQTT` (default on). `mqtt_publish()` is thread-safe (esp_mqtt uses a recursive mutex). See `documentation/mqtt.txt` for topic hierarchy and protocol details.
+- **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) uses BSD sockets (`lwip/sockets.h`) with non-blocking I/O, supports up to 3 simultaneous clients with per-slot IAC state, bare `\n` → `\r\n` translation on output, prompt delivery on connect, and Ctrl+D per-session disconnect. Arrow keys, Home/End/Delete, Ctrl-A/E/U, 32-entry command history (PSRAM-backed ring buffer on ConeZ PCB, single-entry DRAM fallback on Heltec). ANSI color output on by default, toggleable at runtime via `color on`/`color off` CLI command (`setAnsiEnabled()`/`getAnsiEnabled()` in `printManager.h`). Commands requiring ANSI (art, clear, game, winamp) error out when color is off; editor falls back to a line-based mode. `CORE_DEBUG_LEVEL=0` in `platformio.ini` suppresses Arduino library log macros (`log_e`/`log_w`/etc.) at compile time — these bypass `esp_log_level_set()` and would corrupt HWCDC output. File commands auto-normalize paths (prepend `/` if missing) via `normalize_path()` in `main.h`. Full-screen text editor (`console/editor.cpp/h`) for on-device script editing, with line-editor fallback when ANSI is disabled. See `documentation/cli-commands.txt` for the full command reference.
 
 ### Time System
 
@@ -616,7 +621,7 @@ Unified time API in `sensors/gps.h`/`gps.cpp` provides millisecond-precision epo
 
 **Tiered sources (higher priority wins):**
 - **GPS + PPS** (time_source=2, ~1us accuracy) — ConeZ PCB only. PPS rising edge triggers `IRAM_ATTR` ISR that captures `millis()`. NMEA sentence (arriving ~100-200ms later) provides absolute time for the preceding edge. Epoch stored under `portMUX_TYPE` spinlock (64-bit not atomic on 32-bit Xtensa).
-- **NTP** (time_source=1, ~10-50ms accuracy) — Any board with WiFi. Uses ESP32 SNTP via `configTime()`. Auto-initializes in `ntp_loop()` when WiFi connects (no need to call `ntp_setup()` from WiFi commands). Re-syncs periodically (`config.ntp_interval`, default 3600s). NTP server configurable via `[system] ntp_server` config key.
+- **NTP** (time_source=1, ~10-50ms accuracy) — Any board with WiFi. Uses ESP-IDF `esp_sntp` directly (`sntp_setoperatingmode`/`sntp_setservername`/`sntp_init`). Auto-initializes in `ntp_loop()` when WiFi connects (no need to call `ntp_setup()` from WiFi commands). Re-syncs periodically (`config.ntp_interval`, default 3600s). NTP server configurable via `[system] ntp_server` config key.
 - **Compile-time** (time_source=0) — Fallback seeded from `BUILD_EPOCH_S` (UTC epoch at build time, computed by PlatformIO) at boot via `time_seed_compile()`. Provides approximate time (~seconds drift per day) when no GPS or NTP is available. `get_time_valid()` returns true, `get_epoch_ms()` returns a reasonable value. Automatically overridden when NTP or GPS connects.
 
 **GPS staleness fallback:** If PPS stops arriving for >10 seconds (GPS loss), `ntp_loop()` downgrades `time_source` to 0, allowing NTP to take over if WiFi is available. Compile-time seed remains valid as a last resort.
@@ -644,6 +649,8 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 **Read/write:** Typed accessors (`psram_read8`/`16`/`32`/`64`, `psram_write8`/`16`/`32`/`64`) and bulk (`psram_read`, `psram_write`). On improvised PSRAM, bulk transfers are chunked to respect the chip's 8µs tCEM limit and routed through the DRAM page cache. Bounds-checked against `BOARD_PSRAM_SIZE`. Memory operations (`psram_memset`, `psram_memcpy`, `psram_memcmp`) accept mixed address types.
 
 **DRAM page cache:** Write-back LRU cache for improvised SPI PSRAM (no-op on native/stubs). Default 128 pages × 512 bytes = ~65KB DRAM. Configurable at compile time via `PSRAM_CACHE_PAGES` and `PSRAM_CACHE_PAGE_SIZE`. Set `PSRAM_CACHE_PAGES` to 0 to disable.
+
+**Bus recovery:** `psram_bus_recovery()` handles the case where a soft reset (reflash) interrupts a SPI transaction mid-flight, leaving the PSRAM state machine stuck. It de-asserts CE#, then clocks out 8 dummy bytes to flush any partial command the chip was waiting on. `psram_setup()` retries init up to 3 times with bus recovery + reset between attempts. If the chip remains stuck (MF=0x00), a full power cycle (unplug USB) is required.
 
 **Thread safety:** All public functions are protected by a recursive FreeRTOS mutex. Safe to call from any task. The memory test (`psram_test`) runs without the mutex and requires exclusive access — refuses to run if any allocations exist.
 
