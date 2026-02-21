@@ -256,7 +256,9 @@ void setup()
   gpio_set_direction( (gpio_num_t)BUZZER_PIN, GPIO_MODE_OUTPUT );
 #endif
 
-  // LED pin
+  // LED pin — gpio_reset_pin() sets IO MUX to GPIO function.
+  // Required for GPIO 40 (ConeZ) which defaults to JTAG MTDO on ESP32-S3.
+  gpio_reset_pin( (gpio_num_t)LED_PIN );
   gpio_set_direction( (gpio_num_t)LED_PIN, GPIO_MODE_OUTPUT );
   gpio_set_level( (gpio_num_t)LED_PIN, 0 );
   vTaskDelay(pdMS_TO_TICKS(500));

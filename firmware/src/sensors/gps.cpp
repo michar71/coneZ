@@ -573,7 +573,9 @@ void ntp_loop(void)
     epoch_at_pps = ep;
     millis_at_pps = now_m;
     epoch_valid = true;
-    if (time_source < 1) time_source = 1;
+    // Don't promote time_source here — only ntp_sync_cb() should set it to 1.
+    // The system clock may be valid from RTC retention across soft resets,
+    // not from an actual NTP sync this session.
     portEXIT_CRITICAL(&time_mux);
 
     // Populate date/time volatiles so existing getters work even before GPS fix
@@ -734,7 +736,8 @@ void ntp_loop(void)
     epoch_at_pps = ep;
     millis_at_pps = now_m;
     epoch_valid = true;
-    if (time_source < 1) time_source = 1;
+    // Don't promote time_source here — only ntp_sync_cb() should set it to 1.
+    // The system clock may be valid from RTC retention across soft resets.
     portEXIT_CRITICAL(&time_mux);
 
     // Populate date/time volatiles so existing getters work

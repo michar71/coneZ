@@ -297,6 +297,7 @@ int test(int argc, char **argv)
 
 int cmd_reboot( int argc, char **argv )
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: reboot\n"); return 1; }
     printfnl( SOURCE_SYSTEM, "Rebooting...\n" );
     vTaskDelay(pdMS_TO_TICKS(1000));
     esp_restart();
@@ -584,6 +585,7 @@ int listDir(int argc, char **argv)
 
 int cmd_df(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: df\n"); return 1; }
     size_t total = 0, used = 0;
     esp_littlefs_info("spiffs", &total, &used);
     size_t free  = total - used;
@@ -1166,6 +1168,7 @@ int paramBasic(int argc, char **argv)
 
 int cmd_mem(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: mem\n"); return 1; }
     printfnl(SOURCE_COMMANDS, "Heap:\n" );
     printfnl(SOURCE_COMMANDS, "  Free:    %u bytes\n", esp_get_free_heap_size() );
     printfnl(SOURCE_COMMANDS, "  Min:     %u bytes  (lowest since boot)\n", esp_get_minimum_free_heap_size() );
@@ -1188,6 +1191,7 @@ int cmd_mem(int argc, char **argv)
 
 int cmd_ps(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: ps\n"); return 1; }
     UBaseType_t numTasks = uxTaskGetNumberOfTasks();
     TaskStatus_t *taskList = (TaskStatus_t *)malloc(numTasks * sizeof(TaskStatus_t));
     if (!taskList) {
@@ -1255,7 +1259,8 @@ int tc(int argc, char **argv)
 
 int cmd_status(int argc, char **argv)
 {
-    (void)argc; (void)argv;
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: status\n"); return 1; }
+    (void)argv;
 
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_app_desc_t desc;
@@ -1401,6 +1406,7 @@ int cmd_status(int argc, char **argv)
 
 int cmd_version(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: version\n"); return 1; }
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_app_desc_t desc;
 
@@ -2357,6 +2363,7 @@ int cmd_lora(int argc, char **argv)
 
 int cmd_sensors(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: sensors\n"); return 1; }
     printfnl(SOURCE_COMMANDS, "Sensors:\n");
 
 #ifdef BOARD_HAS_IMU
@@ -2396,6 +2403,7 @@ int cmd_sensors(int argc, char **argv)
 
 int cmd_time(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: time\n"); return 1; }
     static const char *dayNames[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
     if (get_time_valid()) {
@@ -2589,6 +2597,7 @@ int cmd_led(int argc, char **argv)
 
 int cmd_art( int argc, char **argv )
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: art\n"); return 1; }
     if (!getAnsiEnabled()) {
         printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
@@ -2633,6 +2642,7 @@ static void wa_repeat(Stream *out, const char *ch, int n)
 
 int cmd_winamp(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: winamp\n"); return 1; }
     if (!getAnsiEnabled()) {
         printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
@@ -2807,6 +2817,7 @@ int cmd_winamp(int argc, char **argv)
 
 int cmd_game(int argc, char **argv)
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: game\n"); return 1; }
     if (!getAnsiEnabled()) {
         printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
@@ -2924,6 +2935,7 @@ int cmd_color(int argc, char **argv)
 
 int cmd_clear( int argc, char **argv )
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: clear\n"); return 1; }
     if (!getAnsiEnabled()) {
         printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
@@ -3063,6 +3075,7 @@ int cmd_sha256(int argc, char **argv)
 
 int cmd_help( int argc, char **argv )
 {
+    if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: help\n"); return 1; }
     printfnl( SOURCE_COMMANDS, "Available commands:\n" );
     printfnl( SOURCE_COMMANDS, "  art                                Is it art? (ANSI)\n" );
     printfnl( SOURCE_COMMANDS, "  cat|list {file}                    Show file contents\n" );

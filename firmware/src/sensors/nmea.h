@@ -39,6 +39,7 @@ typedef struct {
     uint8_t  term_num;            // which field (0 = sentence ID)
     uint8_t  sentence_type;       // 0=unknown, 1=RMC, 2=GGA, 3=GSA
     uint8_t  parity;              // running XOR checksum
+    bool     in_sentence;         // between '$' and CR/LF
     bool     in_checksum;         // past the '*'
     uint8_t  checksum_chars;      // how many hex digits read after '*'
     uint8_t  checksum_val;        // parsed checksum value

@@ -130,6 +130,11 @@ static void process_term(nmea_data_t *d) {
             d->s_date_valid = (d->term[0] != '\0');
             break;
         }
+        case 12: // Mode indicator (NMEA 2.3+): A=autonomous, D=differential,
+            //   E=estimated(DR), N=not valid, P=precise, R=RTK, S=simulator
+            if (d->term[0] == 'E' || d->term[0] == 'N' || d->term[0] == 'S')
+                d->s_has_fix = false;
+            break;
         }
         break;
 
@@ -158,8 +163,9 @@ static void process_term(nmea_data_t *d) {
         case 5: // E/W
             if (d->term[0] == 'W') d->s_lon = -d->s_lon;
             break;
-        case 6: // Fix quality (0=invalid, 1=GPS, 2=DGPS, ...)
-            d->s_has_fix = (d->term[0] != '0' && d->term[0] != '\0');
+        case 6: // Fix quality: 1=GPS, 2=DGPS, 3=PPS, 4=RTK, 5=FloatRTK
+            //   6=estimated(DR), 7=manual, 8=simulation — not real fixes
+            d->s_has_fix = (d->term[0] >= '1' && d->term[0] <= '5');
             break;
         case 7: // Number of satellites
             d->s_satellites = parse_int(d->term);
@@ -263,6 +269,7 @@ bool nmea_encode(nmea_data_t *d, char c) {
         d->term_num = 0;
         d->term[0] = '\0';
         d->parity = 0;
+        d->in_sentence = true;
         d->in_checksum = false;
         d->checksum_chars = 0;
         d->checksum_val = 0;
@@ -281,8 +288,8 @@ bool nmea_encode(nmea_data_t *d, char c) {
         return false;
     }
 
-    // Ignore until we see a '$'
-    if (d->sentence_type == NMEA_UNKNOWN && d->term_num == 0 && d->term_pos == 0 && !d->in_checksum)
+    // Ignore bytes until we see a '$'
+    if (!d->in_sentence)
         return false;
 
     // End of sentence
@@ -294,6 +301,7 @@ bool nmea_encode(nmea_data_t *d, char c) {
             }
         }
         // Reset for next sentence
+        d->in_sentence = false;
         d->term_pos = 0;
         d->term_num = 0;
         d->sentence_type = NMEA_UNKNOWN;
