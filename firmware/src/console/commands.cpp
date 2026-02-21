@@ -2806,6 +2806,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  inflate|gunzip {file} [output]     Decompress gzip/zlib\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  led [set|clear|count]              Show/set LED config\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  load {file}                        Receive file via serial\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  log [to|save|close|stop]           Debug log buffer/file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  lora|radio [freq|power|bw|sf|...]  LoRa status or configure\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  md5|md5sum {file}                  Compute MD5 hash\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  mem|free                           Show heap memory stats\n" ) );
@@ -2820,6 +2821,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  run {file}                         Run script (.bas/.wasm)\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  sensors                            Show sensor readings\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  sha256|sha256sum {file}            Compute SHA-256 hash\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  status                             System overview\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  stop                               Stop running script\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  time|date                          Show current date/time\n" ) );
