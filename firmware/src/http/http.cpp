@@ -445,7 +445,7 @@ int http_setup()
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 12;
-    cfg.stack_size = 6144;
+    cfg.stack_size = 4096;
     cfg.core_id = 1;
 
     if (httpd_start(&server, &cfg) != ESP_OK) {

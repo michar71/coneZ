@@ -356,8 +356,8 @@ void setup_wasm()
     size_t prealloc_bytes = PREALLOC_PAGES * d_m3MemPageSize + sizeof(M3MemoryHeader);
     s_prealloc_mem = (M3MemoryHeader *)calloc(1, prealloc_bytes);
 
-    // Start task at boot — keeps 16KB stack + 64KB prealloc pinned in heap
-    xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 16384, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
+    // Start task at boot — keeps 8KB stack + 64KB prealloc pinned in heap
+    xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 8192, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
 }
 
 bool set_wasm_program(const char *path)

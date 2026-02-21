@@ -588,5 +588,5 @@ static void loopTask(void *pvParameters)
 
 extern "C" void app_main()
 {
-    xTaskCreatePinnedToCore(loopTask, "loopTask", 8192, NULL, 1, NULL, 1);
+    xTaskCreatePinnedToCore(loopTask, "loopTask", 4096, NULL, 1, NULL, 1);
 }

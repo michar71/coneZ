@@ -190,23 +190,23 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 
 | Task | Core | Priority | Stack | Source | Lifecycle |
 |------|------|----------|-------|--------|-----------|
-| loopTask | 1 | 1 | 8192 | `loop()` in `main.cpp` | Always running |
+| loopTask | 1 | 1 | 4096 | `loop()` in `main.cpp` | Always running |
 | ShellTask | any | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
-| httpd | 1 | 6 | 6144 | `esp_http_server` in `http/http.cpp` | Always running |
+| httpd | 1 | 6 | 4096 | `esp_http_server` in `http/http.cpp` | Always running |
 | mqtt_task | 1 | 5 | 4096 | ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp` | Created when MQTT connects |
-| led_render | 1 | 2 | 4096 | `led_task_fun` in `led/led.cpp` | Always running |
+| led_render | 1 | 2 | 2048 | `led_task_fun` in `led/led.cpp` | Always running |
 | BasicTask | any | 1 | 16384 | `basic_task_fun` in `basic/basic_wrapper.cpp` | Created on first script |
-| WasmTask | any | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Always running |
+| WasmTask | any | 1 | 8192 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Always running |
 
 **Core 1 tasks (pinned):**
 - **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
-- **httpd** — ESP-IDF `esp_http_server` task. Handles all HTTP requests autonomously (no polling needed). Pinned to core 1. Stack 6144 for HTML generation and OTA streaming.
+- **httpd** — ESP-IDF `esp_http_server` task. Handles all HTTP requests autonomously (no polling needed). Pinned to core 1. Stack 4096 for HTML generation and OTA streaming.
 - **led_render** — Pushes LED data to hardware via RMT at ~30 FPS when dirty, at least 2/sec unconditionally. Priority 2 preempts both loopTask and ShellTask.
 
 **Floating tasks (`tskNO_AFFINITY` — scheduler places on whichever core has bandwidth):**
 - **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
 - **BasicTask** — BASIC interpreter. Created on first script, not at boot.
-- **WasmTask** — WASM interpreter. Created at boot; persists between runs to hold 16KB stack + 64KB pre-allocated linear memory in place, preventing heap fragmentation.
+- **WasmTask** — WASM interpreter. Created at boot; persists between runs to hold 8KB stack + 64KB pre-allocated linear memory in place, preventing heap fragmentation.
 
 **Critical rules:**
 - After `setup()`, only `led_render` calls `led_show_now()`. All other code writes to `leds1`-`leds4` and calls `led_show()` to set the dirty flag. During `setup()` only, `led_show_now()` may be used.

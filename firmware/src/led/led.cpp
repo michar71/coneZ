@@ -342,7 +342,7 @@ void led_start_task( void )
     xTaskCreatePinnedToCore(
         led_task_fun,
         "led_render",
-        4096,           // stack size
+        2048,           // stack size
         NULL,
         2,              // priority
         NULL,
