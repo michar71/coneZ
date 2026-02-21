@@ -3,8 +3,11 @@ ConeZ CLI Command Reference
 
 The CLI is available simultaneously on both USB Serial and Telnet (port
 23). All output goes to both streams; input is accepted from either.
-The Telnet server negotiates IAC WILL ECHO + WILL SGA so clients
-operate in character mode with server-side echo.
+Up to 3 simultaneous Telnet sessions are supported. The Telnet server
+negotiates IAC WILL ECHO + WILL SGA so clients operate in character mode
+with server-side echo. New Telnet connections receive the current prompt
+and any partially-typed input immediately. Ctrl+D disconnects the
+individual Telnet session.
 
 The desktop simulator (see simulator.txt) supports a subset of these
 commands in its console: ?/help, run, stop, open, dir/ls, del, cat/list,
