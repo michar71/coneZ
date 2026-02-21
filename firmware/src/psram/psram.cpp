@@ -633,8 +633,11 @@ int psram_test(bool forever) {
             for (int i = 0; i < 64; i++)
                 wbuf[i] = (uint8_t)((addr + i) ^ ((addr + i) >> 8) ^ pass_xor);
             psram_raw_write(addr, wbuf, 64);
-            if (pass == 0 && (addr & 0xFFFFF) == 0)
-                printfnl(SOURCE_COMMANDS, "  Write: %u KB / %u KB\n", addr/1024, size/1024);
+            if ((addr & 0xFFFF) == 0) {
+                vTaskDelay(1);  // Feed task WDT every 64KB
+                if (pass == 0 && (addr & 0xFFFFF) == 0)
+                    printfnl(SOURCE_COMMANDS, "  Write: %u KB / %u KB\n", addr/1024, size/1024);
+            }
         }
 
         unsigned long t_write = micros() - t0;
@@ -654,8 +657,11 @@ int psram_test(bool forever) {
                     errors++;
                 }
             }
-            if (pass == 0 && (addr & 0xFFFFF) == 0)
-                printfnl(SOURCE_COMMANDS, "  Verify: %u KB / %u KB\n", addr/1024, size/1024);
+            if ((addr & 0xFFFF) == 0) {
+                vTaskDelay(1);  // Feed task WDT every 64KB
+                if (pass == 0 && (addr & 0xFFFFF) == 0)
+                    printfnl(SOURCE_COMMANDS, "  Verify: %u KB / %u KB\n", addr/1024, size/1024);
+            }
         }
 
         unsigned long t_read = micros() - t1;
