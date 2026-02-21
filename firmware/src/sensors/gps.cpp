@@ -14,6 +14,7 @@ static volatile uint64_t epoch_at_pps = 0;      // epoch ms at last PPS/NTP upda
 static volatile uint32_t millis_at_pps = 0;     // millis() at that same moment
 static volatile bool     epoch_valid = false;
 static volatile uint8_t  time_source = 0;        // 0=none, 1=NTP, 2=GPS+PPS
+static volatile uint32_t ntp_last_sync = 0;      // millis() at last NTP sync (0=never)
 
 // --- SNTP sync callback (fires on LWIP thread when NTP syncs) ---
 static void ntp_sync_cb(struct timeval *tv)
@@ -32,6 +33,7 @@ static void ntp_sync_cb(struct timeval *tv)
     millis_at_pps = now_m;
     epoch_valid = true;
     if (time_source < 1) time_source = 1;
+    ntp_last_sync = now_m;
     portEXIT_CRITICAL(&time_mux);
 
     if (drift_ms != 0) {
@@ -503,6 +505,11 @@ uint8_t get_time_source(void)
     return time_source;
 }
 
+uint32_t get_ntp_last_sync_ms(void)
+{
+    return ntp_last_sync;
+}
+
 
 // NTP on GPS boards: provides time before GPS lock, NTP only wins if GPS+PPS hasn't set epoch yet
 void ntp_setup(void)
@@ -680,6 +687,11 @@ uint64_t get_epoch_ms(void)
 uint8_t get_time_source(void)
 {
     return time_source;
+}
+
+uint32_t get_ntp_last_sync_ms(void)
+{
+    return ntp_last_sync;
 }
 
 

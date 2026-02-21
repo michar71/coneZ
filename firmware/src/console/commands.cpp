@@ -1191,19 +1191,6 @@ int cmd_ps(int argc, char **argv)
 }
 
 
-int cmd_uptime(int argc, char **argv)
-{
-    unsigned long ms = millis();
-    unsigned long totalSec = ms / 1000;
-    unsigned int days  = totalSec / 86400;
-    unsigned int hours = (totalSec % 86400) / 3600;
-    unsigned int mins  = (totalSec % 3600) / 60;
-    unsigned int secs  = totalSec % 60;
-    printfnl(SOURCE_COMMANDS, F("Uptime: %ud %02uh %02um %02us\n"), days, hours, mins, secs );
-    return 0;
-}
-
-
 int tc(int argc, char **argv)
 {
     if (argc != 1)
@@ -1315,6 +1302,7 @@ int cmd_status(int argc, char **argv)
         const char *src = "none";
         if (ts == 2)      src = "GPS+PPS";
         else if (ts == 1) src = "NTP";
+        else if (get_time_valid()) src = "build";
 
         out->printf("Time:    %04d-%02d-%02d %02d:%02d:%02d %s  source=%s  NTP=%s\n",
             ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday,
@@ -1924,7 +1912,8 @@ static void gps_show_status(void)
     }
     static const char *src_names[] = { "None", "NTP", "GPS+PPS" };
     uint8_t ts = get_time_source();
-    printfnl(SOURCE_COMMANDS, F("  Time src:   %s\n"), src_names[ts < 3 ? ts : 0]);
+    const char *tsn = (ts == 0 && get_time_valid()) ? "Build" : src_names[ts < 3 ? ts : 0];
+    printfnl(SOURCE_COMMANDS, F("  Time src:   %s\n"), tsn);
     uint32_t pps_age = get_pps_age_ms();
     if (pps_age == UINT32_MAX)
         printfnl(SOURCE_COMMANDS, F("  PPS:        No (never received)\n"));
@@ -2377,11 +2366,30 @@ int cmd_time(int argc, char **argv)
     const char *src = "none";
     if (ts == 2)      src = "GPS+PPS";
     else if (ts == 1) src = "NTP";
+    else if (get_time_valid()) src = "build";
     printfnl(SOURCE_COMMANDS, F("Source: %s\n"), src);
-    printfnl(SOURCE_COMMANDS, F("NTP:    %s\n"), config.ntp_server);
+
+    // NTP line with sync age
+    uint32_t ntp_sync = get_ntp_last_sync_ms();
+    if (ntp_sync) {
+        unsigned long ago = (millis() - ntp_sync) / 1000;
+        printfnl(SOURCE_COMMANDS, F("NTP:    %s  (synced %lus ago)\n"), config.ntp_server, ago);
+    } else {
+        printfnl(SOURCE_COMMANDS, F("NTP:    %s  (never synced)\n"), config.ntp_server);
+    }
+
 #ifdef BOARD_HAS_GPS
     printfnl(SOURCE_COMMANDS, F("GPS fix: %s  Sats: %d\n"), get_gpsstatus() ? "Yes" : "No", get_satellites());
 #endif
+
+    // Uptime
+    unsigned long ms = millis();
+    unsigned long totalSec = ms / 1000;
+    unsigned int days  = totalSec / 86400;
+    unsigned int hours = (totalSec % 86400) / 3600;
+    unsigned int mins  = (totalSec % 3600) / 60;
+    unsigned int secs  = totalSec % 60;
+    printfnl(SOURCE_COMMANDS, F("Uptime: %ud %02uh %02um %02us\n"), days, hours, mins, secs);
 
     return 0;
 }
@@ -3534,7 +3542,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("tc"), tc);
     shell.addCommand(F("time"), cmd_time);
     shell.addCommand(F("date"), cmd_time);
-    shell.addCommand(F("uptime"), cmd_uptime);
+    shell.addCommand(F("uptime"), cmd_time);
     shell.addCommand(F("ver"), cmd_version);
     shell.addCommand(F("version"), cmd_version);
     shell.addCommand(F("wifi"), cmd_wifi, NULL, NULL, tc_wifi);
