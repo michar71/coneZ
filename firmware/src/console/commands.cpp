@@ -29,6 +29,7 @@
 #include "mqtt_client.h"
 #include "inflate.h"
 #include "deflate.h"
+#include "glob.h"
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
 #include <csetjmp>
@@ -120,7 +121,8 @@ static const char *tz_label(int tz_hours);
 
 static void dir_list(fs::FS &fs, const char *dirname, int indent,
                      Stream *out, bool showTime, int nameWidth,
-                     int *fileCount, int *dirCount, uint32_t *totalSize)
+                     int *fileCount, int *dirCount, uint32_t *totalSize,
+                     const char *filter = NULL)
 {
     File root = fs.open(dirname);
     if (!root || !root.isDirectory()) return;
@@ -133,6 +135,11 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
     int n = 0;
     File file = root.openNextFile();
     while (file && n < MAX_ENTRIES) {
+        // Apply filter to files only (directories always shown)
+        if (filter && !file.isDirectory() && !glob_match(filter, file.name())) {
+            file = root.openNextFile();
+            continue;
+        }
         DirEntry *e = &entries[n];
         strncpy(e->name, file.name(), sizeof(e->name) - 1);
         e->name[sizeof(e->name) - 1] = '\0';
@@ -152,7 +159,7 @@ static void dir_list(fs::FS &fs, const char *dirname, int indent,
         if (e->isDir) {
             out->printf("%*s%s/\n", indent, "", e->name);
             (*dirCount)++;
-            // Recurse with increased indent
+            // Recurse with increased indent (filter only applies to top level)
             char subpath[128];
             snprintf(subpath, sizeof(subpath), "%s%s%s",
                      dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
@@ -367,52 +374,160 @@ int cmd_debug( int argc, char **argv )
 
 int delFile(int argc, char **argv)
 {
-    if (argc != 2)
-    {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: del <file ...>\n"));
         return 1;
     }
-    char path[64];
-    normalize_path(path, sizeof(path), argv[1]);
-    deleteFile(LittleFS, path);
-    return 0;
+    int rc = 0;
+    for (int i = 1; i < argc; i++) {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[i]);
+        if (has_glob_chars(path)) {
+            char (*matches)[64];
+            int count = glob_expand(path, &matches);
+            if (!count) {
+                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                rc = 1;
+                continue;
+            }
+            for (int j = 0; j < count; j++)
+                deleteFile(LittleFS, matches[j]);
+            free(matches);
+        } else {
+            deleteFile(LittleFS, path);
+        }
+    }
+    return rc;
+}
+
+// Build destination path: if dst is a directory, append basename of src
+static void resolve_dest(char *dst, size_t dstsz, const char *src)
+{
+    File d = LittleFS.open(dst);
+    if (d && d.isDirectory()) {
+        d.close();
+        const char *name = strrchr(src, '/');
+        name = name ? name + 1 : src;
+        char tmp[64];
+        size_t len = strlen(dst);
+        if (len > 0 && dst[len - 1] == '/')
+            snprintf(tmp, sizeof(tmp), "%s%s", dst, name);
+        else
+            snprintf(tmp, sizeof(tmp), "%s/%s", dst, name);
+        strlcpy(dst, tmp, dstsz);
+    } else if (d) {
+        d.close();
+    }
 }
 
 int renFile(int argc, char **argv)
 {
-    if (argc != 3)
-    {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
+    if (argc != 3) {
+        printfnl(SOURCE_COMMANDS, F("Usage: mv <source> <dest>\n"));
         return 1;
     }
     char path1[64], path2[64];
     normalize_path(path1, sizeof(path1), argv[1]);
     normalize_path(path2, sizeof(path2), argv[2]);
+
+    if (has_glob_chars(path2)) {
+        printfnl(SOURCE_COMMANDS, F("Wildcards not allowed in destination\n"));
+        return 1;
+    }
+
+    if (has_glob_chars(path1)) {
+        char (*matches)[64];
+        int count = glob_expand(path1, &matches);
+        if (!count) {
+            printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[1]);
+            return 1;
+        }
+        // Dest must be a directory for wildcard move
+        File d = LittleFS.open(path2);
+        bool isDir = d && d.isDirectory();
+        if (d) d.close();
+        if (!isDir) {
+            printfnl(SOURCE_COMMANDS, F("Destination must be a directory for wildcard move\n"));
+            free(matches);
+            return 1;
+        }
+        int rc = 0;
+        for (int j = 0; j < count; j++) {
+            char destpath[64];
+            strlcpy(destpath, path2, sizeof(destpath));
+            resolve_dest(destpath, sizeof(destpath), matches[j]);
+            if (strcmp(matches[j], destpath) != 0)
+                renameFile(LittleFS, matches[j], destpath);
+        }
+        free(matches);
+        return rc;
+    }
+
+    // Non-glob path
+    resolve_dest(path2, sizeof(path2), path1);
+
+    if (strcmp(path1, path2) == 0) {
+        printfnl(SOURCE_COMMANDS, F("Source and destination are the same file\n"));
+        return 1;
+    }
+
     renameFile(LittleFS, path1, path2);
     return 0;
 }
 
 int listFile(int argc, char **argv)
 {
-    if (argc != 2)
-    {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: cat <file ...>\n"));
         return 1;
     }
-    char path[64];
-    normalize_path(path, sizeof(path), argv[1]);
-    readFile(LittleFS, path);
-    printfnl(SOURCE_COMMANDS, F("\n"));
-    return 0;
+    int rc = 0;
+    for (int i = 1; i < argc; i++) {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[i]);
+        if (has_glob_chars(path)) {
+            char (*matches)[64];
+            int count = glob_expand(path, &matches);
+            if (!count) {
+                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                rc = 1;
+                continue;
+            }
+            for (int j = 0; j < count; j++) {
+                readFile(LittleFS, matches[j]);
+                printfnl(SOURCE_COMMANDS, F("\n"));
+            }
+            free(matches);
+        } else {
+            readFile(LittleFS, path);
+            printfnl(SOURCE_COMMANDS, F("\n"));
+        }
+    }
+    return rc;
 }
 
 int listDir(int argc, char **argv)
 {
     char path[64];
-    if (argc >= 2)
+    const char *filter = NULL;
+
+    if (argc >= 2) {
         normalize_path(path, sizeof(path), argv[1]);
-    else
+        // If arg has wildcards, split into dir + filter pattern
+        if (has_glob_chars(path)) {
+            const char *lastSlash = strrchr(path, '/');
+            if (lastSlash) {
+                filter = lastSlash + 1;
+                // Trim path to directory part
+                if (lastSlash == path)
+                    path[1] = '\0';  // root "/"
+                else
+                    path[lastSlash - path] = '\0';
+            }
+        }
+    } else {
         strcpy(path, "/");
+    }
 
     File root = LittleFS.open(path);
     if (!root || !root.isDirectory()) {
@@ -429,7 +544,7 @@ int listDir(int argc, char **argv)
     getLock();
     Stream *out = getStream();
     dir_list(LittleFS, path, 0, out, showTime, nameWidth,
-             &fileCount, &dirCount, &totalSize);
+             &fileCount, &dirCount, &totalSize, filter);
     out->printf("%d file%s, %d dir%s, %u bytes\n",
         fileCount, fileCount == 1 ? "" : "s",
         dirCount, dirCount == 1 ? "" : "s",
@@ -519,10 +634,21 @@ int cmd_grep(int argc, char **argv)
     }
 
     if (argc >= 3) {
-        // Search specific file
         char path[64];
         normalize_path(path, sizeof(path), argv[2]);
-        grep_file(argv[1], path, false);
+        if (has_glob_chars(path)) {
+            char (*matches)[64];
+            int count = glob_expand(path, &matches);
+            if (!count) {
+                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[2]);
+                return 1;
+            }
+            for (int j = 0; j < count; j++)
+                grep_file(argv[1], matches[j], count > 1);
+            free(matches);
+        } else {
+            grep_file(argv[1], path, false);
+        }
     } else {
         // Search all files recursively
         grep_dir(argv[1], "/");
@@ -531,16 +657,8 @@ int cmd_grep(int argc, char **argv)
 }
 
 
-int cmd_cp(int argc, char **argv)
+static int copy_file(const char *src, const char *dst)
 {
-    if (argc != 3) {
-        printfnl(SOURCE_COMMANDS, F("Usage: cp <source> <dest>\n"));
-        return 1;
-    }
-    char src[64], dst[64];
-    normalize_path(src, sizeof(src), argv[1]);
-    normalize_path(dst, sizeof(dst), argv[2]);
-
     File in = LittleFS.open(src, "r");
     if (!in) {
         printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), src);
@@ -564,6 +682,60 @@ int cmd_cp(int argc, char **argv)
     out.close();
     printfnl(SOURCE_COMMANDS, F("Copied %u bytes: %s -> %s\n"), (unsigned)total, src, dst);
     return 0;
+}
+
+int cmd_cp(int argc, char **argv)
+{
+    if (argc != 3) {
+        printfnl(SOURCE_COMMANDS, F("Usage: cp <source> <dest>\n"));
+        return 1;
+    }
+    char src[64], dst[64];
+    normalize_path(src, sizeof(src), argv[1]);
+    normalize_path(dst, sizeof(dst), argv[2]);
+
+    if (has_glob_chars(dst)) {
+        printfnl(SOURCE_COMMANDS, F("Wildcards not allowed in destination\n"));
+        return 1;
+    }
+
+    if (has_glob_chars(src)) {
+        char (*matches)[64];
+        int count = glob_expand(src, &matches);
+        if (!count) {
+            printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[1]);
+            return 1;
+        }
+        // Dest must be a directory for wildcard copy
+        File d = LittleFS.open(dst);
+        bool isDir = d && d.isDirectory();
+        if (d) d.close();
+        if (!isDir) {
+            printfnl(SOURCE_COMMANDS, F("Destination must be a directory for wildcard copy\n"));
+            free(matches);
+            return 1;
+        }
+        int rc = 0;
+        for (int j = 0; j < count; j++) {
+            char destpath[64];
+            strlcpy(destpath, dst, sizeof(destpath));
+            resolve_dest(destpath, sizeof(destpath), matches[j]);
+            if (strcmp(matches[j], destpath) != 0)
+                if (copy_file(matches[j], destpath)) rc = 1;
+        }
+        free(matches);
+        return rc;
+    }
+
+    // Non-glob path
+    resolve_dest(dst, sizeof(dst), src);
+
+    if (strcmp(src, dst) == 0) {
+        printfnl(SOURCE_COMMANDS, F("Source and destination are the same file\n"));
+        return 1;
+    }
+
+    return copy_file(src, dst);
 }
 
 // Streaming write callback for LittleFS File
@@ -2696,15 +2868,8 @@ int cmd_clear( int argc, char **argv )
 }
 
 
-int cmd_md5(int argc, char **argv)
+static int md5_file(const char *path)
 {
-    if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: md5 <filename>\n"));
-        return 1;
-    }
-    char path[64];
-    normalize_path(path, sizeof(path), argv[1]);
-
     File f = LittleFS.open(path, "r");
     if (!f) {
         printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
@@ -2736,15 +2901,36 @@ int cmd_md5(int argc, char **argv)
     return 0;
 }
 
-int cmd_sha256(int argc, char **argv)
+int cmd_md5(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: sha256 <filename>\n"));
+        printfnl(SOURCE_COMMANDS, F("Usage: md5 <file ...>\n"));
         return 1;
     }
-    char path[64];
-    normalize_path(path, sizeof(path), argv[1]);
+    int rc = 0;
+    for (int i = 1; i < argc; i++) {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[i]);
+        if (has_glob_chars(path)) {
+            char (*matches)[64];
+            int count = glob_expand(path, &matches);
+            if (!count) {
+                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                rc = 1;
+                continue;
+            }
+            for (int j = 0; j < count; j++)
+                if (md5_file(matches[j])) rc = 1;
+            free(matches);
+        } else {
+            if (md5_file(path)) rc = 1;
+        }
+    }
+    return rc;
+}
 
+static int sha256_file(const char *path)
+{
     File f = LittleFS.open(path, "r");
     if (!f) {
         printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
@@ -2776,6 +2962,34 @@ int cmd_sha256(int argc, char **argv)
     return 0;
 }
 
+int cmd_sha256(int argc, char **argv)
+{
+    if (argc < 2) {
+        printfnl(SOURCE_COMMANDS, F("Usage: sha256 <file ...>\n"));
+        return 1;
+    }
+    int rc = 0;
+    for (int i = 1; i < argc; i++) {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[i]);
+        if (has_glob_chars(path)) {
+            char (*matches)[64];
+            int count = glob_expand(path, &matches);
+            if (!count) {
+                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                rc = 1;
+                continue;
+            }
+            for (int j = 0; j < count; j++)
+                if (sha256_file(matches[j])) rc = 1;
+            free(matches);
+        } else {
+            if (sha256_file(path)) rc = 1;
+        }
+    }
+    return rc;
+}
+
 
 int cmd_help( int argc, char **argv )
 {
@@ -2792,7 +3006,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]       Cue timeline engine\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  debug [off|{source} [on|off]]      Show/set debug sources\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  deflate|gzip {file} [out] [level]  Compress to gzip\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  del|rm {file}                      Delete file\n" ) );
+    printfnl( SOURCE_COMMANDS, F( "  del|delete|rm {file}               Delete file\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  df                                 Show filesystem usage\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  dir|ls [path]                      List files\n" ) );
     printfnl( SOURCE_COMMANDS, F( "  edit {file}                        Edit file (nano-like)\n" ) );
@@ -3275,6 +3489,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("cue"), cmd_cue, NULL, NULL, tc_cue);
     shell.addCommand(F("debug"), cmd_debug, NULL, NULL, tc_debug);
     shell.addCommand(F("del"), delFile, "*");
+    shell.addCommand(F("delete"), delFile, "*");
     shell.addCommand(F("df"), cmd_df);
     shell.addCommand(F("deflate"), cmd_deflate, "*");
     shell.addCommand(F("dir"), listDir, "/");

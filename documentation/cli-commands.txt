@@ -98,43 +98,57 @@ Tab completion: pressing Tab auto-completes the current word.
   - No match: nothing happens.
 
 
+Wildcards
+---------
+File commands support * and ? wildcards for matching multiple files:
+  * matches any sequence of characters, ? matches a single character.
+Pattern is matched against one directory level (no recursive **).
+Commands that support wildcards: cat, cp, del, dir, grep, md5, mv, ren,
+sha256. For cp and mv, wildcards are only allowed in the source —
+the destination must be an existing directory.
+  Examples: del *.bas            Delete all .bas files in /
+            cp *.c /scripts/     Copy all .c files to /scripts/
+            dir /scripts/*.wasm  List .wasm files in /scripts/
+            md5 *.bas            Hash all .bas files
+
+
 Quick Reference
 ---------------
 Aliases are shown with |. Tab completion works for all commands,
 filenames, and subcommands.
 
   art                                Display ANSI traffic cone art (ANSI)
-  cat|list {file}                    Show file contents
+  cat|list {file ...}                Show file contents (wildcards OK)
   clear|cls                          Clear screen (ANSI)
   color [on|off]                     Show or toggle ANSI color output
   compile {file} [run]               Compile .bas or .c to .wasm on-device
   config [set|unset|reset]           Show or change settings
-  copy|cp {src} {dst}                Copy file
+  copy|cp {src} {dst}                Copy file (wildcards OK in src)
   cue [load|start|stop|status]       Cue timeline engine control
   debug [off|{source} [on|off]]      Show or set debug message types
   deflate|gzip {file} [out] [level]  Compress file to gzip format
-  del|rm {file}                      Delete file
+  del|delete|rm {file ...}            Delete file (wildcards OK)
   df                                 Show filesystem usage
-  dir|ls [path]                      List files
+  dir|ls [path|pattern]              List files (wildcards OK)
   edit {file}                        Text editor (line editor if ANSI off)
   game                               Conway's Game of Life (ANSI)
   gpio [set|out|in|read]             Show or control GPIO pins
   gps [info|set|save|restart|send]   Show GPS status or configure module
-  grep {pattern} [file]              Search file contents (case-insensitive)
+  grep {pattern} [file]              Search file contents (wildcards OK)
   help|?                             Show help
   hexdump {file} [count]             Hex+ASCII dump of file (default 256 bytes)
   history                            Show command history
   inflate|gunzip {file} [output]     Decompress gzip/zlib/deflate file
   led [set|clear|count]              Show/set LED configuration and colors
-  list {file}                        Alias for cat
+  list {file ...}                    Alias for cat
   load {file}                        Receive file via serial (CTRL+Z to end)
   log [to|save|close|stop]            Show debug log or manage file logging
   lora|radio [freq|power|bw|sf|...]  Show LoRa status or set radio params
-  md5|md5sum {file}                  Compute MD5 hash
+  md5|md5sum {file ...}              Compute MD5 hash (wildcards OK)
   mem|free                           Show heap memory stats
   mkdir {path}                       Create directory
   mqtt [enable|disable|connect|...]  Show MQTT status or manage connection
-  move|mv|ren {old} {new}            Rename/move file
+  move|mv|ren {old} {new}            Rename/move file (wildcards OK in src)
   param {id} {value}                 Set script parameter
   ps                                 Show task list and stack watermarks
   psram [test|freq|cache]            Show PSRAM status or run diagnostics
@@ -142,7 +156,7 @@ filenames, and subcommands.
   rmdir {path}                       Remove empty directory
   run {file}                         Run script (.bas or .wasm)
   sensors                            Show sensor readings
-  sha256|sha256sum {file}            Compute SHA-256 hash
+  sha256|sha256sum {file ...}        Compute SHA-256 hash (wildcards OK)
   status                             Show one-screen system overview
   stop                               Stop running script
   tc                                 Show thread count per core
@@ -164,9 +178,12 @@ art
   Display an ANSI art traffic cone. Uses 256-color escapes.
   Requires ANSI mode (color on).
 
-cat {filename}
-  Print the contents of a file to the console. Alias: list.
-  Example: cat /startup.bas
+cat {file ...}
+  Print the contents of one or more files to the console. Alias: list.
+  Supports wildcards (* and ?) and multiple file arguments.
+  Examples: cat /startup.bas
+            cat *.bas
+            cat /scripts/*.c
 
 clear / cls
   Clear the terminal screen. Requires ANSI mode (color on).
@@ -200,8 +217,12 @@ compile {file.bas|file.c} [run]
 
 copy {src} {dst}
 cp {src} {dst}
-  Copy a file on LittleFS.
-  Example: cp /startup.bas /startup_backup.bas
+  Copy a file on LittleFS. If the destination is a directory, the source
+  filename is preserved. Supports wildcards (* and ?) in the source —
+  destination must be a directory when using wildcards.
+  Examples: cp /startup.bas /startup_backup.bas
+            cp /startup.bas /backups/
+            cp *.bas /backups/
 
 config
   Show all current configuration settings. See documentation/config.txt
@@ -263,18 +284,26 @@ game
   coloring. Runs at ~10 FPS. Press any key to exit.
   Requires ANSI mode (color on).
 
-del {filename}
-  Delete a file from LittleFS.
-  Example: del /old_script.bas
+del {file ...}
+delete {file ...}
+  Delete one or more files from LittleFS. Supports wildcards (* and ?)
+  and multiple file arguments.
+  Examples: del /old_script.bas
+            del *.bas
+            del /scripts/*.wasm
+            del file1.bas file2.bas
 
 df
   Show LittleFS filesystem usage: total, used, and free space.
 
-dir [path]
+dir [path|pattern]
   List all files and directories on LittleFS with sizes. Optionally
-  specify a subdirectory to list only its contents. Alias: ls.
+  specify a subdirectory to list only its contents, or a wildcard
+  pattern to filter the listing. Alias: ls.
   Examples: dir
             dir /scripts
+            dir *.bas
+            dir /scripts/*.c
 
 edit {filename}
   Open the text editor for on-device script editing. Creates the file
@@ -314,9 +343,11 @@ grep {pattern} [file]
   Case-insensitive substring search in file contents. With a filename,
   searches that file and shows matching lines with line numbers. Without
   a filename, searches all files on LittleFS recursively and prefixes
-  matches with the file path.
+  matches with the file path. The file argument supports wildcards
+  (* and ?) to search multiple files.
   Examples: grep PRINT /test.bas
             grep TODO
+            grep TODO *.bas
 
 gps
   With no arguments, shows GPS status: fix type, satellites, HDOP/VDOP/
@@ -448,8 +479,9 @@ log
   feedback loops), the ring buffer and file sinks include SOURCE_MQTT
   messages — useful for debugging MQTT itself.
 
-list {filename}
-  Alias for cat. Print the contents of a file to the console.
+list {file ...}
+  Alias for cat. Print the contents of one or more files to the console.
+  Supports wildcards (* and ?) and multiple file arguments.
   Example: list /startup.bas
 
 load {filename}
@@ -493,6 +525,15 @@ lora (alias: radio)
   All subcommands update the in-memory config but do NOT save to flash.
   Use "config set lora.*" to persist changes across reboots.
 
+md5 {file ...}
+md5sum {file ...}
+  Compute the MD5 hash of one or more files. Supports wildcards (* and ?)
+  and multiple file arguments. Output format: hex digest followed by
+  the filename.
+  Examples: md5 /startup.bas
+            md5 *.wasm
+            md5 file1.bas file2.bas
+
 mem
   Show heap memory: free bytes, minimum since boot, largest allocatable
   block. Also shows PSRAM summary if available.
@@ -534,10 +575,15 @@ mkdir {path}
   Create a directory on LittleFS.
   Example: mkdir /scripts
 
-move {oldname} {newname}
-mv {oldname} {newname}
-  Alias for ren. Rename or move a file on LittleFS.
-  Example: mv /old.bas /new.bas
+move {src} {dst}
+mv {src} {dst}
+  Alias for ren. Rename or move a file on LittleFS. If the destination
+  is a directory, the source filename is preserved. Supports wildcards
+  (* and ?) in the source — destination must be a directory when using
+  wildcards.
+  Examples: mv /old.bas /new.bas
+            mv /old.bas /scripts/
+            mv *.bas /scripts/
 
 param {id} {value}
   Set a script parameter. Parameters are a 16-slot integer array shared
@@ -581,9 +627,12 @@ psram
 reboot
   Reboot the ESP32.
 
-ren {oldname} {newname}
-  Rename a file on LittleFS.
-  Example: ren /old.bas /new.bas
+ren {src} {dst}
+  Rename or move a file on LittleFS. If the destination is a directory,
+  the source filename is preserved. Supports wildcards (* and ?) in the
+  source — destination must be a directory when using wildcards.
+  Examples: ren /old.bas /new.bas
+            ren *.bas /scripts/
 
 rmdir {path}
   Remove an empty directory from LittleFS.
@@ -601,6 +650,14 @@ run {filename}
 sensors
   Show sensor readings: IMU (roll/pitch/yaw/acceleration), temperature,
   battery voltage, solar voltage. Available sensors depend on the board.
+
+sha256 {file ...}
+sha256sum {file ...}
+  Compute the SHA-256 hash of one or more files. Supports wildcards
+  (* and ?) and multiple file arguments. Output format: hex digest
+  followed by the filename.
+  Examples: sha256 /startup.bas
+            sha256 *.wasm
 
 status
   Show a compact one-screen system overview. Each subsystem gets one line:
