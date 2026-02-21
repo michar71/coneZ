@@ -5,6 +5,7 @@
 #include "led.h"
 #include <sys/stat.h>
 #include <stdio.h>
+#include <string.h>
 #include "esp_timer.h"
 
 // Monotonic millisecond timer (replaces Arduino millis())

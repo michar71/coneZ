@@ -1,10 +1,12 @@
-#include <Arduino.h>
+#include <stdint.h>
+#include <string.h>
 #include <RadioLib.h>
 #include "main.h"
 #include "util.h"
 #include "printManager.h"
 #include "config.h"
 #include "lora_hal.h"
+#include "conez_usb.h"
 
 static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
 
@@ -61,7 +63,7 @@ static int parse_hex_syncword(const char *hex, uint8_t *out, int maxlen)
 
 int lora_setup( void )
 {
-  Serial.println("Init LoRa... ");
+  usb_printf("Init LoRa...\n");
 
   radio.setTCXO( 1.8, 5000 );
   radio.setDio2AsRfSwitch();
@@ -72,7 +74,7 @@ int lora_setup( void )
 
   if (fsk_mode)
   {
-    Serial.println("Mode: FSK");
+    usb_printf("Mode: FSK\n");
     status = radio.beginFSK(
         config.lora_frequency,
         config.fsk_bitrate,
@@ -86,18 +88,17 @@ int lora_setup( void )
   }
   else
   {
-    Serial.println("Mode: LoRa");
+    usb_printf("Mode: LoRa\n");
     status = radio.begin( config.lora_frequency );
   }
 
   if( status != RADIOLIB_ERR_NONE )
   {
-     Serial.print( "Failed, status=" );
-     Serial.println( status );
+     usb_printf("Failed, status=%d\n", status);
     blinkloop( 3 );
   }
 
-  Serial.println( "OK" );
+  usb_printf("OK\n");
 
   if (fsk_mode)
   {
@@ -143,11 +144,11 @@ int lora_setup( void )
 
   if( status == RADIOLIB_ERR_NONE )
   {
-     Serial.println( "LoRa set to receive mode." );
+     usb_printf("LoRa set to receive mode.\n");
   }
   else
   {
-     Serial.printf( "Failed to set LoRa to receive mode, status=%d", status );
+     usb_printf("Failed to set LoRa to receive mode, status=%d\n", status);
   }
 
   return 0;

@@ -1,7 +1,9 @@
 #ifndef _conez_config_h
 #define _conez_config_h
 
-#include <Arduino.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
 
 // ---------- String-length limits ----------
 #define CONFIG_MAX_SSID         33

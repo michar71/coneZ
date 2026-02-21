@@ -328,7 +328,7 @@ static long long pp_parse_char_escape(void) {
         src_pos++;
         int hex_digits = 0;
         int xval = 0;
-        while (src_pos < src_len && isxdigit(source[src_pos]) && hex_digits < 2) {
+        while (src_pos < src_len && isxdigit((unsigned char)source[src_pos]) && hex_digits < 2) {
             int d = source[src_pos];
             if (d >= '0' && d <= '9') xval = xval * 16 + d - '0';
             else if (d >= 'a' && d <= 'f') xval = xval * 16 + d - 'a' + 10;
@@ -450,7 +450,7 @@ static PPVal pp_primary(void) {
     }
 
     /* Integer literal (decimal, hex, octal) */
-    if (isdigit(source[src_pos])) {
+    if (isdigit((unsigned char)source[src_pos])) {
         char nbuf[64];
         int len = 0;
         int has_hex_digit = 0;
@@ -458,12 +458,12 @@ static PPVal pp_primary(void) {
             (source[src_pos + 1] == 'x' || source[src_pos + 1] == 'X')) {
             nbuf[len++] = source[src_pos++];
             nbuf[len++] = source[src_pos++];
-            while (src_pos < src_len && isxdigit(source[src_pos]) && len < 62) {
+            while (src_pos < src_len && isxdigit((unsigned char)source[src_pos]) && len < 62) {
                 nbuf[len++] = source[src_pos++];
                 has_hex_digit = 1;
             }
         } else {
-            while (src_pos < src_len && isdigit(source[src_pos]) && len < 62)
+            while (src_pos < src_len && isdigit((unsigned char)source[src_pos]) && len < 62)
                 nbuf[len++] = source[src_pos++];
         }
         nbuf[len] = 0;
@@ -504,7 +504,7 @@ static PPVal pp_primary(void) {
     }
 
     /* Identifier: defined(), macro name, or unknown (→ 0) */
-    if (isalpha(source[src_pos]) || source[src_pos] == '_') {
+    if (isalpha((unsigned char)source[src_pos]) || source[src_pos] == '_') {
         char name[64];
         int ni = 0;
         while (src_pos < src_len && is_ident_char(source[src_pos]) && ni < 63)

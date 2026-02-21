@@ -1,5 +1,5 @@
 #include "inflate.h"
-#include <rom/miniz.h>
+#include <miniz.h>
 #include <stdlib.h>
 #include <string.h>
 

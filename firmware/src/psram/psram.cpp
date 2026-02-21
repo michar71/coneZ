@@ -1,4 +1,6 @@
-#include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <stdint.h>
 #include <string.h>
 #include <soc/spi_struct.h>
 #include <soc/spi_reg.h>
@@ -14,6 +16,7 @@
 #endif
 #include "psram.h"
 #include "printManager.h"
+#include "conez_usb.h"
 
 // ---- Thread safety ----
 // Recursive mutex protects SPI bus, cache, allocator, and fallback tracking.
@@ -255,9 +258,9 @@ static void psram_cmd(uint8_t cmd) {
 
 static void psram_reset() {
     psram_cmd(PSRAM_CMD_RESET_EN);
-    ets_delay_us(1);
+    esp_rom_delay_us(1);
     psram_cmd(PSRAM_CMD_RESET);
-    ets_delay_us(200);  // wait for reset + init
+    esp_rom_delay_us(200);  // wait for reset + init
 }
 
 // Flush the SPI bus to recover from a stuck PSRAM state machine.
@@ -269,7 +272,7 @@ static void psram_reset() {
 static void psram_bus_recovery() {
     // 1. CS# high — terminate any in-progress operation
     cs_high();
-    ets_delay_us(50);
+    esp_rom_delay_us(50);
 
     // 2. CS# low → clock out dummy bytes → CS# high
     //    Completes any partial byte the chip was expecting.
@@ -277,11 +280,11 @@ static void psram_bus_recovery() {
     //    as an opcode it will ignore it.  The CS# rising edge at the end
     //    resets the state machine to idle.
     cs_low();
-    ets_delay_us(1);
+    esp_rom_delay_us(1);
     for (int i = 0; i < 8; i++)
         spi2_transfer(0xFF);
     cs_high();
-    ets_delay_us(50);
+    esp_rom_delay_us(50);
 }
 
 static uint16_t psram_read_id() {
@@ -749,14 +752,14 @@ int psram_alloc_entries_max(void) { return PSRAM_ALLOC_ENTRIES; }
 int psram_setup(void) {
     psram_mutex_init();
 
-    Serial.print("Init PSRAM... ");
+    usb_printf("Init PSRAM... ");
 
     // Immediately claim CE# and drive high — if the previous session was
     // interrupted mid-SPI-transaction (e.g. reflash during psram test),
     // this terminates the stuck operation.
     gpio_set_direction((gpio_num_t)PSR_CE, GPIO_MODE_OUTPUT);
     cs_high();
-    ets_delay_us(100);
+    esp_rom_delay_us(100);
 
     // We own the FSPI bus exclusively — no other peripheral shares it.
     // Direct register access via GPSPI2 — no Arduino SPI locks involved.
@@ -778,17 +781,17 @@ int psram_setup(void) {
         kgd  = id & 0xFF;
 
         if (mfid == 0x0D) break;  // valid manufacturer ID
-        Serial.printf("MF=0x%02X (retry %d)... ", mfid, attempt + 1);
+        usb_printf("MF=0x%02X (retry %d)... ", mfid, attempt + 1);
     }
 
-    Serial.printf("MF=0x%02X KGD=0x%02X ", mfid, kgd);
+    usb_printf("MF=0x%02X KGD=0x%02X ", mfid, kgd);
 
     if (mfid != 0x0D) {
-        Serial.println("FAIL — unexpected manufacturer ID");
+        usb_printf("FAIL — unexpected manufacturer ID\n");
         return -1;
     }
     if (kgd != 0x5D) {
-        Serial.printf("WARNING — KGD=0x%02X (expected 0x5D for PASS die)\n", kgd);
+        usb_printf("WARNING — KGD=0x%02X (expected 0x5D for PASS die)\n", kgd);
     }
 
     // Quick sanity test: write/read a few raw addresses
@@ -797,7 +800,7 @@ int psram_setup(void) {
     psram_raw_write(0x000000, pat, 4);
     psram_raw_read(0x000000, rbuf, 4);
     if (memcmp(pat, rbuf, 4) != 0) {
-        Serial.println("FAIL — read-back mismatch");
+        usb_printf("FAIL — read-back mismatch\n");
         return -2;
     }
 
@@ -805,14 +808,14 @@ int psram_setup(void) {
     psram_raw_write(0x7FFFFC, pat, 4);
     psram_raw_read(0x7FFFFC, rbuf, 4);
     if (memcmp(pat, rbuf, 4) != 0) {
-        Serial.println("FAIL — high-address read-back mismatch");
+        usb_printf("FAIL — high-address read-back mismatch\n");
         return -3;
     }
 
     psram_alloc_init();
     psram_cache_init();
     psram_ok = true;
-    Serial.println("OK (8 MB)");
+    usb_printf("OK (8 MB)\n");
     return 0;
 }
 
@@ -835,7 +838,7 @@ int psram_test(bool forever) {
 
     if (forever) {
         printfnl(SOURCE_COMMANDS, "PSRAM test forever: %u bytes, press any key to stop\n", size);
-        while (Serial.available()) Serial.read();  // Drain stale input
+        while (usb_available()) usb_read();  // Drain stale input
     }
 
     do {
@@ -899,8 +902,8 @@ int psram_test(bool forever) {
         pass++;
 
         // Check for user abort between passes
-        if (forever && Serial.available()) {
-            while (Serial.available()) Serial.read();  // Drain input
+        if (forever && usb_available()) {
+            while (usb_available()) usb_read();  // Drain input
             printfnl(SOURCE_COMMANDS, "PSRAM test stopped by user after %u passes\n", pass);
             return 0;
         }
@@ -1152,16 +1155,16 @@ int psram_alloc_entries_max(void) { return PSRAM_ALLOC_ENTRIES; }
 int psram_setup(void) {
     psram_mutex_init();
 
-    Serial.print("Init PSRAM... ");
+    usb_printf("Init PSRAM... ");
 
     if (!psramFound()) {
-        Serial.println("not detected");
+        usb_printf("not detected\n");
         return -1;
     }
 
     psram_alloc_num = 0;
     psram_ok = true;
-    Serial.printf("OK (%u KB native)\n", (unsigned)(esp_spiram_get_size() / 1024));
+    usb_printf("OK (%u KB native)\n", (unsigned)(esp_spiram_get_size() / 1024));
     return 0;
 }
 
@@ -1194,7 +1197,7 @@ int psram_test(bool forever) {
 
     if (forever) {
         printfnl(SOURCE_COMMANDS, "PSRAM test forever: %u bytes, press any key to stop\n", avail);
-        while (Serial.available()) Serial.read();  // Drain stale input
+        while (usb_available()) usb_read();  // Drain stale input
     }
 
     int result = 0;
@@ -1246,8 +1249,8 @@ int psram_test(bool forever) {
         pass++;
 
         // Check for user abort between passes
-        if (forever && Serial.available()) {
-            while (Serial.available()) Serial.read();
+        if (forever && usb_available()) {
+            while (usb_available()) usb_read();
             printfnl(SOURCE_COMMANDS, "PSRAM test stopped by user after %u passes\n", pass);
             break;
         }

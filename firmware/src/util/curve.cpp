@@ -1,6 +1,7 @@
 #include "curve.h"
+#include "compat.h"
 
-float lerp(float a, float b, float t)
+float conez_lerp(float a, float b, float t)
 {
   return a + t * (b - a);
 }
@@ -39,7 +40,7 @@ int larp(int x_pos, int x_min, int x_max, int min_val, int max_val,
       int active_max = x_max - offset_int;
       float t = (float)(i - active_min) / (active_max - active_min);
       t = constrain(t, 0.0f, 1.0f);
-      sum += lerp(min_val, max_val, t);
+      sum += conez_lerp(min_val, max_val, t);
     }
     count++;
   }
@@ -86,7 +87,7 @@ float larpf(float x_pos, float x_min, float x_max, float min_val, float max_val,
       float active_max = x_max - offset_f;
       float t = (s - active_min) / (active_max - active_min);
       t = constrain(t, 0.0f, 1.0f);
-      sum += lerp(min_val, max_val, t);
+      sum += conez_lerp(min_val, max_val, t);
     }
     count++;
   }

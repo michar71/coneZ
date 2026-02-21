@@ -1,7 +1,8 @@
 #ifndef _conez_sun_h
 #define _conez_sun_h
 
-#include "Arduino.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 bool is_us_dst(int year, int month, int day);
 bool sunSetPosition(float latitude, float longitude);

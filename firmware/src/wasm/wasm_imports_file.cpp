@@ -2,6 +2,7 @@
 
 #include "wasm_internal.h"
 #include "main.h"
+#include <unistd.h>
 
 // ---------- File I/O state ----------
 

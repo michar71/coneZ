@@ -8,7 +8,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
-Stream* OutputStream = &Serial;
+ConezStream* OutputStream = NULL;
 SemaphoreHandle_t print_mutex;
 uint32_t debug = 0;
 bool ts = false;
@@ -25,7 +25,7 @@ static int      log_ring_head = 0;   // next write slot
 static int      log_ring_count = 0;  // entries written (clamped to log_ring_slots)
 static FILE    *log_file = NULL;      // file sink (open when non-NULL)
 
-void printManagerInit(Stream* defaultStream)
+void printManagerInit(ConezStream* defaultStream)
 {
     OutputStream = defaultStream;
     print_mutex = xSemaphoreCreateMutex();
@@ -227,7 +227,7 @@ void printfl(source_e source, const char *format, ...)
 }
 */
 
-void setStream(Stream *stream)
+void setStream(ConezStream *stream)
 {
     getLock();
     if (stream != NULL) 
@@ -235,7 +235,7 @@ void setStream(Stream *stream)
     releaseLock();    
 }
 
-Stream* getStream(void)
+ConezStream* getStream(void)
 {
     return OutputStream;
 }

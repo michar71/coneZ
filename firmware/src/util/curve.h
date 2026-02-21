@@ -1,10 +1,10 @@
 #ifndef _conez_curve_h
 #define _conez_curve_h
 
-#include <Arduino.h>
+#include <stdint.h>
 
 // Linear interpolation: returns a + t * (b - a).
-float lerp(float a, float b, float t);
+float conez_lerp(float a, float b, float t);
 
 // Smoothed clamped linear interpolation.
 // Maps x_pos from [x_min, x_max] to [min_val, max_val] with optional

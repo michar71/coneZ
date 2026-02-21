@@ -1,40 +1,41 @@
 #ifndef DUALSTREAM_H
 #define DUALSTREAM_H
 
-#include <Arduino.h>
+#include "conez_stream.h"
+#include "conez_usb.h"
 #include "telnet.h"
 
-// Multiplexes Serial + TelnetServer into a single Stream.
-// Writes go to both (Serial skipped if no USB host connected).
-// Reads drain Serial first, then Telnet.
+// Multiplexes USB Serial/JTAG + TelnetServer into a single ConezStream.
+// Writes go to both USB and Telnet.
+// Reads drain USB first, then Telnet.
 
-class DualStream : public Stream {
+class DualStream : public ConezStream {
 public:
     size_t write(uint8_t b) override {
-        if (Serial) Serial.write(b);
+        usb_write_byte(b);
         telnet.write(b);
         return 1;
     }
     size_t write(const uint8_t *buffer, size_t size) override {
-        if (Serial) Serial.write(buffer, size);
+        usb_write(buffer, size);
         telnet.write(buffer, size);
         return size;
     }
     int available() override {
-        return Serial.available() + telnet.available();
+        return usb_available() + telnet.available();
     }
     int read() override {
-        if (Serial.available()) return Serial.read();
+        if (usb_available()) return usb_read();
         if (telnet.available()) return telnet.read();
         return -1;
     }
     int peek() override {
-        if (Serial.available()) return Serial.peek();
+        int b = usb_peek();
+        if (b >= 0) return b;
         if (telnet.available()) return telnet.peek();
         return -1;
     }
     void flush() override {
-        if (Serial) Serial.flush();
         telnet.flush();
     }
 };

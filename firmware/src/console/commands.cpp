@@ -1,3 +1,4 @@
+#include "freertos/FreeRTOS.h"
 #include "commands.h"
 #include "esp_littlefs.h"
 #include <dirent.h>
@@ -9,6 +10,7 @@
 #include "driver/gpio.h"
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_reg.h"
+#include "soc/gpio_periph.h"
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
 #include <esp_app_format.h>
@@ -18,7 +20,7 @@
 #endif
 #include "main.h"
 #include "freertos/task.h"
-#include "freertos/task_snapshot.h"
+// task_snapshot.h removed (deprecated in ESP-IDF 5.x)
 #include "printManager.h"
 #include "gps.h"
 #include "sensors.h"
@@ -28,6 +30,7 @@
 #include "cue.h"
 #include "sun.h"
 #include "editor.h"
+#include "adc.h"
 #include "psram.h"
 #include "conez_mqtt.h"
 #include "inflate.h"
@@ -80,7 +83,7 @@ const char *c2wasm_version_string(void);
 // Parse an integer from a string, supporting decimal and 0x hex prefix.
 static inline int parse_int(const char *s) { return (int)strtol(s, NULL, 0); }
 
-//Serial/Telnet Shell comamnds
+//USB/Telnet Shell commands
 
 void renameFile(const char *path1, const char *path2) 
 {
@@ -131,7 +134,7 @@ static const char *tz_label(int tz_hours);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 static void dir_list(const char *dirname, int indent,
-                     Stream *out, bool showTime, int nameWidth,
+                     ConezStream *out, bool showTime, int nameWidth,
                      int *fileCount, int *dirCount, uint32_t *totalSize,
                      const char *filter = NULL)
 {
@@ -189,13 +192,13 @@ static void dir_list(const char *dirname, int indent,
                 int utc_y = get_year(), utc_m = get_month(), utc_d = get_day();
                 time_t local_t = e->mtime + effective_tz_offset(utc_y, utc_m, utc_d) * 3600;
                 gmtime_r(&local_t, &tm);
-                out->printf("%*s%-*s  %6u  %s %02d %02d:%02d\n",
+                out->printf("%*s%-*s  %6lu  %s %02d %02d:%02d\n",
                     indent, "", nameWidth, e->name, e->size,
                     (const char *[]){"Jan","Feb","Mar","Apr","May","Jun",
                      "Jul","Aug","Sep","Oct","Nov","Dec"}[tm.tm_mon],
                     tm.tm_mday, tm.tm_hour, tm.tm_min);
             } else {
-                out->printf("%*s%-*s  %6u\n",
+                out->printf("%*s%-*s  %6lu\n",
                     indent, "", nameWidth, e->name, e->size);
             }
         }
@@ -573,10 +576,10 @@ int listDir(int argc, char **argv)
     uint32_t totalSize = 0;
 
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     dir_list(path, 0, out, showTime, nameWidth,
              &fileCount, &dirCount, &totalSize, filter);
-    out->printf("%d file%s, %d dir%s, %u bytes\n",
+    out->printf("%d file%s, %d dir%s, %lu bytes\n",
         fileCount, fileCount == 1 ? "" : "s",
         dirCount, dirCount == 1 ? "" : "s",
         totalSize);
@@ -970,7 +973,7 @@ int cmd_hexdump(int argc, char **argv)
 
         // Address
         getLock();
-        Stream *out = getStream();
+        ConezStream *out = getStream();
         out->printf("%04x  ", offset);
 
         // Hex bytes
@@ -1220,16 +1223,13 @@ int cmd_ps(int argc, char **argv)
             default:         state = "?";     break;
         }
 
-        BaseType_t coreId = xTaskGetAffinity(taskList[i].xHandle);
+        BaseType_t coreId = xTaskGetCoreID(taskList[i].xHandle);
         uint32_t freeBytes = (uint32_t)taskList[i].usStackHighWaterMark * sizeof(StackType_t);
 
-        // Compute total stack size from TCB stack bounds.
-        // pxEndOfStack is 16-byte aligned (Xtensa ABI), so round up
-        // to recover the nominal size passed to xTaskCreate.
-        StackType_t *stkStart = pxTCBGetStartOfStack(taskList[i].xHandle);
-        StackType_t *stkEnd   = pxTCBGetEndOfStack(taskList[i].xHandle);
-        uint32_t totalBytes = ((uint32_t)(stkEnd - stkStart) + portBYTE_ALIGNMENT) & ~(portBYTE_ALIGNMENT - 1);
+        // Stack high-water mark in bytes
+        uint32_t totalBytes = 0;  // not easily available without TCB internals
 
+#if configGENERATE_RUN_TIME_STATS
         // CPU % — runtime counters are cumulative across both cores,
         // so divide by totalRunTime (which sums both cores' time)
         char cpuBuf[16];
@@ -1252,6 +1252,10 @@ int cmd_ps(int argc, char **argv)
         else
             snprintf(timeBuf, sizeof(timeBuf), "%u:%02u",
                      (unsigned)(secs / 60), (unsigned)(secs % 60));
+#else
+        const char *cpuBuf = "    -";
+        const char *timeBuf = "-";
+#endif
 
         if (coreId == tskNO_AFFINITY)
             printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u     -  %s  %8s  %6u  %u\n",
@@ -1324,7 +1328,7 @@ int cmd_status(int argc, char **argv)
 #endif
 
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
 
     // Version + uptime
     out->printf("ConeZ %s  %s  up %ud %02uh %02um\n", ver, board_name, days, hours, mins);
@@ -1656,7 +1660,7 @@ int cmd_wifi(int argc, char **argv)
 
     // wifi (no args) — show status
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     out->println("WiFi Status:");
     out->printf("  Enabled:     %s\n", config.wifi_enabled ? "yes" : "no");
     out->printf("  Config SSID: %s\n", config.wifi_ssid);
@@ -2423,10 +2427,11 @@ int cmd_sensors(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, "  Solar:       %.2f V\n", solar_voltage());
 #endif
 
-    // ADC1 channels (GPIO 1-10 on ESP32-S3)
-    printfnl(SOURCE_COMMANDS, "\nADC1 (GPIO 1-10):\n");
-    for (int pin = 1; pin <= 10; pin++) {
-        int mv = analogReadMilliVolts(pin);
+    // ADC1 channels 0-2 (GPIO 1-3). GPIO 4+ overlap with PSRAM/LoRa SPI —
+    // configuring those as ADC would switch the pin to analog mode and break SPI.
+    printfnl(SOURCE_COMMANDS, "\nADC1 (GPIO 1-3):\n");
+    for (int pin = 1; pin <= 3; pin++) {
+        int mv = adc_read_mv(pin);
         const char *name = pin_name_lookup(pin);
         if (name[0])
             printfnl(SOURCE_COMMANDS, "  GPIO %2d: %4d mV  (%s)\n", pin, mv, name);
@@ -2598,7 +2603,7 @@ int cmd_led(int argc, char **argv)
         if (!bufs[ch] || counts[ch] == 0) continue;
         if (getAnsiEnabled()) {
             getLock();
-            Stream *out = getStream();
+            ConezStream *out = getStream();
             out->printf("\nCh%d: [", ch + 1);
             uint8_t pr = 0, pg = 0, pb = 0;
             bool first = true;
@@ -2640,7 +2645,7 @@ int cmd_art( int argc, char **argv )
         return 1;
     }
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     out->print(
         "\n"
         "\033[38;5;208m"
@@ -2672,7 +2677,7 @@ int cmd_art( int argc, char **argv )
 
 
 // Helper: draw N copies of a UTF-8 character
-static void wa_repeat(Stream *out, const char *ch, int n)
+static void wa_repeat(ConezStream *out, const char *ch, int n)
 {
     for (int i = 0; i < n; i++) out->print(ch);
 }
@@ -2715,7 +2720,7 @@ int cmd_winamp(int argc, char **argv)
     unsigned long last_sec = uptime_ms();
 
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     out->print("\033[2J\033[?25l");
     releaseLock();
 
@@ -2881,7 +2886,7 @@ int cmd_game(int argc, char **argv)
     while (getStream()->available()) getStream()->read();
 
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     out->print("\033[2J\033[?25l");   // clear screen + hide cursor
     releaseLock();
 
@@ -2978,7 +2983,7 @@ int cmd_clear( int argc, char **argv )
         return 1;
     }
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     out->print("\033[2J\033[H");  // clear screen + cursor home
     releaseLock();
     return 0;
@@ -2997,21 +3002,21 @@ static int md5_file(const char *path)
 
     mbedtls_md5_context ctx;
     mbedtls_md5_init(&ctx);
-    mbedtls_md5_starts_ret(&ctx);
+    mbedtls_md5_starts(&ctx);
 
     uint8_t buf[256];
     int n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-        mbedtls_md5_update_ret(&ctx, buf, n);
+        mbedtls_md5_update(&ctx, buf, n);
     }
     fclose(f);
 
     uint8_t digest[16];
-    mbedtls_md5_finish_ret(&ctx, digest);
+    mbedtls_md5_finish(&ctx, digest);
     mbedtls_md5_free(&ctx);
 
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     for (int i = 0; i < 16; i++)
         out->printf("%02x", digest[i]);
     out->printf("  %s\n", path);
@@ -3059,21 +3064,21 @@ static int sha256_file(const char *path)
 
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts_ret(&ctx, 0);
+    mbedtls_sha256_starts(&ctx, 0);
 
     uint8_t buf[256];
     int n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-        mbedtls_sha256_update_ret(&ctx, buf, n);
+        mbedtls_sha256_update(&ctx, buf, n);
     }
     fclose(f);
 
     uint8_t digest[32];
-    mbedtls_sha256_finish_ret(&ctx, digest);
+    mbedtls_sha256_finish(&ctx, digest);
     mbedtls_sha256_free(&ctx);
 
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     for (int i = 0; i < 32; i++)
         out->printf("%02x", digest[i]);
     out->printf("  %s\n", path);
@@ -3590,7 +3595,7 @@ static const char * const * tc_param(int wordIndex, const char **words, int nWor
     return NULL;
 }
 
-void init_commands(Stream *dev)
+void init_commands(ConezStream *dev)
 {
     shell.attach(*dev);
     shell.historyInit();

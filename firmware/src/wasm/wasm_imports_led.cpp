@@ -3,6 +3,7 @@
 #include "wasm_internal.h"
 #include "led.h"
 #include "config.h"
+#include <string.h>
 
 // ---------- Auto-gamma state ----------
 static bool wasm_use_gamma = false;

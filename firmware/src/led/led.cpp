@@ -1,4 +1,9 @@
-#include <Arduino.h>
+#include <stdint.h>
+#include <string.h>
+#include <new>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "main.h"
 #include "led.h"
 #include "config.h"
@@ -9,15 +14,11 @@ CRGB *leds2 = nullptr;
 CRGB *leds3 = nullptr;
 CRGB *leds4 = nullptr;
 
-// Dirty flag -- set by led_show(), cleared by the render task after FastLED.show().
+// Dirty flag -- set by led_show(), cleared by the render task.
 // volatile is sufficient: single writer (render task clears), multiple setters (any task sets).
 static volatile bool led_dirty = false;
 
-// Mutex protects buffer pointer/count swaps in led_resize_channel() against
-// the led_render task calling FastLED.show() on a half-updated controller.
-// Must be a FreeRTOS mutex (not a portMUX spinlock) because FastLED.show()
-// uses the RMT peripheral which needs its ISR to fire to complete the transfer.
-// A spinlock disables interrupts → RMT ISR can't fire → deadlock.
+// Mutex protects buffer pointer/count swaps in led_resize_channel().
 static SemaphoreHandle_t led_mutex = nullptr;
 
 
@@ -30,10 +31,8 @@ void led_setup( void )
     leds3 = new CRGB[config.led_count3]();
     leds4 = new CRGB[config.led_count4]();
 
-    FastLED.addLeds<WS2811, RGB1_PIN, BRG>(leds1, config.led_count1);
-    FastLED.addLeds<WS2811, RGB2_PIN, BRG>(leds2, config.led_count2);
-    FastLED.addLeds<WS2811, RGB3_PIN, BRG>(leds3, config.led_count3);
-    FastLED.addLeds<WS2811, RGB4_PIN, BRG>(leds4, config.led_count4);
+    // NOTE: Hardware output (RMT driver) not yet implemented.
+    // Color buffers are functional; led_show_now() is a no-op.
 #endif
 }
 
@@ -46,9 +45,8 @@ void led_show( void )
 
 void led_show_now( void )
 {
-#ifdef BOARD_HAS_RGB_LEDS
-    FastLED.show();
-#endif
+    // No-op until RMT driver is implemented.
+    // Color buffers are still valid — commands like 'led' can inspect them.
 }
 
 
@@ -111,11 +109,8 @@ int led_resize_channel( int ch, int count )
             memcpy(new_buf, old_buf, copy_count * sizeof(CRGB));
     }
 
-    // Swap controller, pointer, and count under mutex.
-    // Prevents led_render (priority 2) from calling FastLED.show()
-    // while the controller references a freed or mismatched buffer.
+    // Swap pointer and count under mutex.
     xSemaphoreTake(led_mutex, portMAX_DELAY);
-    FastLED[ch - 1].setLeds(new_buf, count);
     *buf_ptr = new_buf;
     *count_ptr = count;
     xSemaphoreGive(led_mutex);
@@ -140,9 +135,8 @@ static void led_task_fun( void *param )
         if (led_dirty || uptime_ms() - last_show >= 1000)
         {
             led_dirty = false;
-            xSemaphoreTake(led_mutex, portMAX_DELAY);
-            FastLED.show();
-            xSemaphoreGive(led_mutex);
+            // Hardware output placeholder — buffers are up-to-date,
+            // RMT driver will push data here once implemented.
             last_show = uptime_ms();
         }
     }

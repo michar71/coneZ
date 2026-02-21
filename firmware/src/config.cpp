@@ -1,8 +1,11 @@
-#include <Arduino.h>
+#include <stdint.h>
+#include <string.h>
 #include <esp_http_server.h>
+#include <unistd.h>
 #include "config.h"
 #include "main.h"
 #include "printManager.h"
+#include "conez_usb.h"
 
 // ---------- Global config instance ----------
 conez_config_t config;
@@ -292,7 +295,7 @@ static void config_parse_ini(void)
     if (!f)
         return;
 
-    Serial.println("Loading /config.ini...");
+    usb_printf("Loading /config.ini...\n");
 
     char line[128];
     char section[16] = "";
@@ -334,16 +337,16 @@ static void config_parse_ini(void)
         if (d)
         {
             config_set_field(d, value);
-            Serial.printf("  %s.%s = %s\n", section, key, value);
+            usb_printf("  %s.%s = %s\n", section, key, value);
         }
         else
         {
-            Serial.printf("  Unknown key: %s.%s (ignored)\n", section, key);
+            usb_printf("  Unknown key: %s.%s (ignored)\n", section, key);
         }
     }
 
     fclose(f);
-    Serial.println("Config loaded.");
+    usb_printf("Config loaded.\n");
 }
 
 
@@ -355,7 +358,7 @@ void config_init(void)
     if (littlefs_mounted && file_exists(CONFIG_PATH))
         config_parse_ini();
     else
-        Serial.println("No /config.ini — using compiled defaults.");
+        usb_printf("No /config.ini — using compiled defaults.\n");
 }
 
 

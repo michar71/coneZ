@@ -1,4 +1,5 @@
 #include "basic_wrapper.h"
+#include <cstring>
 #include "printManager.h"
 
 #ifdef INCLUDE_WASM

@@ -116,16 +116,16 @@ static void mqtt_create_and_start(void)
     snprintf(uri, sizeof(uri), "mqtt://%s:%d", config.mqtt_broker, config.mqtt_port);
 
     esp_mqtt_client_config_t cfg = {};
-    cfg.uri = uri;
-    cfg.client_id = client_id;
-    cfg.keepalive = MQTT_KEEPALIVE_SEC;
-    cfg.disable_auto_reconnect = false;
-    cfg.network_timeout_ms = 3000;       // default 10s — shorter reduces stop() blocking
-    cfg.reconnect_timeout_ms = 10000;    // retry after 10s on disconnect
-    cfg.buffer_size = 512;
-    cfg.out_buffer_size = 512;
-    cfg.task_stack = 4096;
-    cfg.task_prio = 5;
+    cfg.broker.address.uri = uri;
+    cfg.credentials.client_id = client_id;
+    cfg.session.keepalive = MQTT_KEEPALIVE_SEC;
+    cfg.network.disable_auto_reconnect = false;
+    cfg.network.timeout_ms = 3000;       // default 10s — shorter reduces stop() blocking
+    cfg.network.reconnect_timeout_ms = 10000;    // retry after 10s on disconnect
+    cfg.buffer.size = 512;
+    cfg.buffer.out_size = 512;
+    cfg.task.stack_size = 4096;
+    cfg.task.priority = 5;
 
     s_client = esp_mqtt_client_init(&cfg);
     if (!s_client) {

@@ -1,7 +1,8 @@
 #ifdef INCLUDE_WASM
 
 #include "wasm_internal.h"
-#include <Arduino.h>
+#include <stdint.h>
+#include "adc.h"
 #include "driver/gpio.h"
 
 // --- GPIO ---
@@ -41,7 +42,7 @@ m3ApiRawFunction(m3_pin_read) {
 m3ApiRawFunction(m3_analog_read) {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, pin);
-    m3ApiReturn(analogRead(pin));
+    m3ApiReturn(adc_read_raw(pin));
 }
 
 

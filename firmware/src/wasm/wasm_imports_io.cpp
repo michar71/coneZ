@@ -3,6 +3,7 @@
 #include "wasm_internal.h"
 #include "printManager.h"
 #include "lut.h"
+#include <string.h>
 
 // --- Output ---
 

@@ -359,7 +359,8 @@ static ENVResult fetch_env() {
 //-------------------------------------
 #ifdef REAL_ESP32_HW
 
-#include "FastLED.h"
+#include "crgb.h"
+#include "compat.h"
 #include "config.h"
 #include "lut.h"
 #include "board.h"

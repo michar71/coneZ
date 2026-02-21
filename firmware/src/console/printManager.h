@@ -1,9 +1,9 @@
-//Printmanager manages all printout to serial or telnet consoles and is thread-safe.
+//Printmanager manages all printout to USB and telnet consoles and is thread-safe.
 //ALL text output outside of Setup() needs to go through the printManager functions !!!
 //This is to ensure that all text output is thread-safe and does not collide with other threads.
 
 //All printing should happen through printfl which makes sure all lines are terminated with /n
-#include <Arduino.h>
+#include "conez_stream.h"
 
 #ifndef PRINTMANAGER_H
 #define PRINTMANAGER_H
@@ -51,8 +51,8 @@ typedef enum {
 // Print wirthout carriage return
 void printfnl(source_e source, const char *format, ...);
 
-// Set the output stream (e.g., Serial or Telnet)
-void setStream(Stream *stream);
+// Set the output stream (e.g., DualStream or Telnet)
+void setStream(ConezStream *stream);
 
 // Set debug level for a specific system
 void setDebugLevel(source_e system, bool enable);
@@ -64,9 +64,9 @@ void setDebugOff( void );
 void showTimestamps(bool enable);
 
 //Initalize printManager
-void printManagerInit(Stream* defaultStream);
+void printManagerInit(ConezStream* defaultStream);
 
-Stream* getStream(void);
+ConezStream* getStream(void);
 
 void getLock(void);
 void releaseLock(void);

@@ -1,7 +1,7 @@
 #ifndef TELNET_H
 #define TELNET_H
 
-#include <Arduino.h>
+#include "conez_stream.h"
 #include "lwip/sockets.h"
 
 #define TELNET_MAX_CLIENTS 3
@@ -17,13 +17,13 @@ struct TelnetClientSlot {
 // Supports multiple simultaneous clients — input from any client
 // feeds the shell, output goes to all connected clients.
 
-class TelnetServer : public Stream {
+class TelnetServer : public ConezStream {
 public:
     TelnetServer(uint16_t port = 23);
 
     void begin();
 
-    // Stream interface
+    // ConezStream interface
     size_t write(uint8_t b) override;
     size_t write(const uint8_t *buffer, size_t size) override;
     int    available() override;

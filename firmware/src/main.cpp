@@ -1,4 +1,5 @@
-#include <Arduino.h>
+#include <stdint.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_task_wdt.h"
@@ -9,10 +10,13 @@
 #include "main.h"
 #include "conez_wifi.h"
 #include "esp_system.h"
+#include "esp_chip_info.h"
+#include "esp_mac.h"
+#include "esp_flash.h"
 #include "esp_log.h"
-#include "esp_spi_flash.h"
+#include "spi_flash_mmap.h"
 #include "esp_heap_caps.h"
-#include "esp_clk.h"
+#include "esp_private/esp_clk.h"
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
 #include <esp_app_format.h>
@@ -20,6 +24,7 @@
 #include <nvs.h>
 #include "esp_littlefs.h"
 #include <RadioLib.h>
+#include "conez_usb.h"
 #include "dualstream.h"
 #include "shell.h"
 #include "basic_wrapper.h"
@@ -37,11 +42,9 @@
 #include "config.h"
 #include "cue.h"
 #include "lut.h"
+#include "adc.h"
 #include "psram.h"
 #include "conez_mqtt.h"
-
-#define WAIT_FOR_USB_SERIAL
-#define WAIT_FOR_USB_SERIAL_TIMEOUT 15    // Seconds
 
 #define WIFI_TIMEOUT                5     // Seconds
 
@@ -71,7 +74,7 @@ bool littlefs_mounted = false;
 
 void init_LittleFS()
 {
-  Serial.println("---- LittleFS ----");
+  usb_printf("---- LittleFS ----\n");
 
   esp_vfs_littlefs_conf_t conf = {};
   conf.base_path = LFS_PREFIX;
@@ -81,21 +84,21 @@ void init_LittleFS()
 
   esp_err_t err = esp_vfs_littlefs_register(&conf);
   if (err != ESP_OK) {
-    Serial.printf("Failed to mount LittleFS: %s\n", esp_err_to_name(err));
+    usb_printf("Failed to mount LittleFS: %s\n", esp_err_to_name(err));
     return;
   }
 
   littlefs_mounted = true;
-  Serial.println("LittleFS mounted successfully.");
+  usb_printf("LittleFS mounted successfully.\n");
 
   size_t total = 0, used = 0;
   esp_littlefs_info("spiffs", &total, &used);
 
-  Serial.println("LittleFS Stats:");
-  Serial.printf("  Total bytes : %u\n", (unsigned)total);
-  Serial.printf("  Used bytes  : %u\n", (unsigned)used);
-  Serial.printf("  Free bytes  : %u\n", (unsigned)(total - used));
-  Serial.println( "" );
+  usb_printf("LittleFS Stats:\n");
+  usb_printf("  Total bytes : %u\n", (unsigned)total);
+  usb_printf("  Used bytes  : %u\n", (unsigned)used);
+  usb_printf("  Free bytes  : %u\n", (unsigned)(total - used));
+  usb_printf("\n");
 }
 
 
@@ -104,7 +107,7 @@ void dump_i2c(void)
 {
   int found = 0;
 
-  Serial.print( "\nEnumerating I2C devices:\n" );
+  usb_printf("\nEnumerating I2C devices:\n");
   for( uint8_t addr = 1; addr < 0x7F; ++addr )
   {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -116,17 +119,17 @@ void dump_i2c(void)
 
     if( err == ESP_OK )
     {
-      Serial.printf( "  I2C device @ 0x%02X\n", addr );
+      usb_printf("  I2C device @ 0x%02X\n", addr);
       ++found;
     }
   }
 
   if ( !found )
-    Serial.println( "  No I2C devices found" );
+    usb_printf("  No I2C devices found\n");
 }
 
 
-//LED Stuff -- led.cpp owns FastLED now; helpers here are setup-time only
+//LED Stuff -- led.cpp owns hardware output; helpers here are setup-time only
 #ifdef BOARD_HAS_RGB_LEDS
 static void blink_leds(CRGB col)
 {
@@ -267,40 +270,39 @@ void setup()
   gpio_set_level( (gpio_num_t)LED_PIN, 0 );
 
 
-  Serial.begin( 115200 );
+  usb_init();
 
-  //WAIT FOR SERIAL USB PORT TO CONNECXT BEOFRE CONTINUING
-  #ifdef WAIT_FOR_USB_SERIAL
-    unsigned long t_start = uptime_ms();
-
-    while (!Serial)
-    {
-      #ifdef WAIT_FOR_USB_SERIAL_TIMEOUT
-        if( uptime_ms() - t_start > WAIT_FOR_USB_SERIAL_TIMEOUT * 1000 )
-          break;
-      #endif
+  // Wait for USB host to connect (up to 5 s).
+  // After hard reset the device re-enumerates on the bus; the host terminal
+  // needs time to re-open the port.  Without this wait, boot output fills
+  // the TX ring buffer, times out (10 ms), and is silently dropped.
+  {
+    uint32_t t0 = uptime_ms();
+    while (uptime_ms() - t0 < 5000) {
+      if (usb_connected()) break;
+      vTaskDelay(pdMS_TO_TICKS(100));
     }
-  #endif
+    vTaskDelay(pdMS_TO_TICKS(200));   // extra settle for terminal app
+  }
 
-
-  Serial.println();
+  usb_printf("\n");
 
   // Reset ANSI state and clear any leftover bootloader color, then print banner
-  Serial.print("\033[0m\r");
+  usb_printf("\033[0m\r");
   {
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_app_desc_t desc;
     if (running && esp_ota_get_partition_description(running, &desc) == ESP_OK)
-      Serial.printf("%s firmware v%s (%s %s)\n", desc.project_name, desc.version, desc.date, desc.time);
+      usb_printf("%s firmware v%s (%s %s)\n", desc.project_name, desc.version, desc.date, desc.time);
     else
-      Serial.println("ConeZ");
+      usb_printf("ConeZ\n");
 
 #ifdef BOARD_CONEZ_V0_1
-    Serial.println("Board:  conez-v0-1");
+    usb_printf("Board:  conez-v0-1\n");
 #elif defined(BOARD_HELTEC_LORA32_V3)
-    Serial.println("Board:  heltec-lora32-v3");
+    usb_printf("Board:  heltec-lora32-v3\n");
 #else
-    Serial.println("Board:  unknown");
+    usb_printf("Board:  unknown\n");
 #endif
 
     {
@@ -314,36 +316,51 @@ void setup()
         case CHIP_ESP32C3: model = "ESP32-C3"; break;
         default: break;
       }
-      Serial.printf("CPU:    %s rev %d, %u MHz, %d cores\n",
+      usb_printf("CPU:    %s rev %d, %u MHz, %d cores\n",
           model, ci.revision,
           (unsigned)(esp_clk_cpu_freq() / 1000000), ci.cores);
     }
-    Serial.printf("Flash:  %u KB, SRAM: %u KB free / %u KB total\n",
-        (unsigned)spi_flash_get_chip_size() / 1024,
+    uint32_t flash_size = 0;
+    esp_flash_get_size(NULL, &flash_size);
+    usb_printf("Flash:  %u KB, SRAM: %u KB free / %u KB total\n",
+        (unsigned)flash_size / 1024,
         (unsigned)esp_get_free_heap_size() / 1024,
         (unsigned)heap_caps_get_total_size(MALLOC_CAP_8BIT) / 1024);
 #ifdef BOARD_HAS_IMPROVISED_PSRAM
-    Serial.println("PSRAM:  8 MB (external SPI)");
+    usb_printf("PSRAM:  8 MB (external SPI)\n");
 #elif defined(BOARD_HAS_NATIVE_PSRAM)
-    Serial.printf("PSRAM:  %u KB (native)\n", (unsigned)(esp_spiram_get_size() / 1024));
+    usb_printf("PSRAM:  %u KB (native)\n", (unsigned)(esp_spiram_get_size() / 1024));
 #else
-    Serial.println("PSRAM:  none");
+    usb_printf("PSRAM:  none\n");
 #endif
-    Serial.println();
+    usb_printf("\n");
   }
 
 #ifdef BOARD_HAS_BUZZER
   for (int ii = 1100; ii < 13100; ii += 1000)
   {
-    Serial.printf("\rSpeaker: %d Hz  ", ii);
+    usb_printf("\rSpeaker: %d Hz  ", ii);
     buzzer(ii, 128);
     vTaskDelay(pdMS_TO_TICKS(100));
   }
   buzzer(20000, 0);
-  Serial.println("\rSpeaker: OK          \n");
+  usb_printf("\rSpeaker: OK          \n\n");
 #endif
 
   dump_partitions();
+
+  // NVS — initArduino() used to handle this; now we do it explicitly.
+  {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      nvs_flash_erase();
+      err = nvs_flash_init();
+    }
+    if (err != ESP_OK) {
+      usb_printf("NVS init failed: %s\n", esp_err_to_name(err));
+    }
+  }
+
   //dump_nvs();
   print_nvs_stats();
   init_LittleFS();
@@ -395,7 +412,7 @@ void setup()
     led_show_now();
   }
 
-  //NOTE: After led_start_task(), only the LED render task calls FastLED.show().
+  //NOTE: After led_start_task(), only the LED render task pushes to hardware.
   //All other code writes to the LED buffers and calls led_show() to mark dirty.
 #endif
 
@@ -422,6 +439,9 @@ void setup()
   gps_setup();
 #endif
 
+  // Initialize ADC (for battery/solar voltage)
+  adc_setup();
+
   //Setup Sensors
   sensors_setup();
 
@@ -430,7 +450,7 @@ void setup()
   wifi_init();
 
   if (config.wifi_enabled) {
-    Serial.println( "\nConnecting to wifi..." );
+    usb_printf("\nConnecting to wifi...\n");
 
     // Generate DHCP hostname: use config.device_name if set, else ConeZ-nnnn from MAC.
     char hostname[CONFIG_MAX_DEVICE_NAME];
@@ -445,8 +465,7 @@ void setup()
       sprintf( hostname, "ConeZ-%02x%02x", mac[4], mac[5] );
     }
 
-    Serial.print( "Hostname: " );
-    Serial.println( hostname );
+    usb_printf("Hostname: %s\n", hostname);
 
     wifi_start( config.wifi_ssid, config.wifi_password, hostname );
 
@@ -455,36 +474,33 @@ void setup()
     while( !wifi_is_connected() && uptime_ms() - t_wifi_start < WIFI_TIMEOUT * 1000 )
     {
       vTaskDelay(pdMS_TO_TICKS(500));
-      Serial.print( "." );
+      usb_printf(".");
     }
 
     if( wifi_is_connected() )
     {
       char ip[16];
       wifi_get_ip_str(ip, sizeof(ip));
-      Serial.println( " Connected");
-      Serial.print( "IP address: " );
-      Serial.println( ip );
+      usb_printf(" Connected\nIP address: %s\n", ip);
 
       // Start NTP time sync (provides time on all boards, fills in before GPS lock)
       ntp_setup();
     }
     else
     {
-      Serial.println("");
-      Serial.println("WiFi timed out");
+      usb_printf("\nWiFi timed out\n");
     }
   } else {
-    Serial.println( "\nWiFi disabled" );
+    usb_printf("\nWiFi disabled\n");
   }
 
   http_setup();
 
   //Start telnet server and dual-stream CLI
   telnet.begin();
-  Serial.println( "Telnet server started");
+  usb_printf("Telnet server started\n");
 
-  //Init print manager (all output goes to both Serial + Telnet)
+  //Init print manager (all output goes to both USB + Telnet)
   printManagerInit(&dualStream);
   config_apply_debug();
   showTimestamps(true);
@@ -500,30 +516,29 @@ void setup()
   //Start scripting runtime tasks
 #ifdef INCLUDE_BASIC
   setup_basic();
-  Serial.println("BASIC task active");
+  usb_printf("BASIC task active\n");
 #endif
 #ifdef INCLUDE_WASM
   setup_wasm();
-  Serial.println("WASM task active");
+  usb_printf("WASM task active\n");
 #endif
 
   // ANSI color test — each letter in a different color
-  Serial.print("\nANSI color test: ");
+  usb_printf("\nANSI color test: ");
   const char *hello = "Hello World";
   const int colors[] = { 31, 32, 33, 34, 35, 36, 91, 92, 93, 94, 95 };
   for (int i = 0; hello[i]; i++) {
-    Serial.printf("\033[%dm%c", colors[i], hello[i]);
+    usb_printf("\033[%dm%c", colors[i], hello[i]);
   }
-  Serial.println("\033[0m");
+  usb_printf("\033[0m\n");
 
-  //Init command line interpreter (single DualStream for both Serial + Telnet)
+  //Init command line interpreter (single DualStream for both USB + Telnet)
   setCLIEcho(true);
   init_commands(&dualStream);
-  // Suppress ESP-IDF component logging — with ARDUINO_USB_CDC_ON_BOOT=1
-  // it shares the USB CDC with Serial, bypassing our print_mutex.
+  // Suppress ESP-IDF component logging — shares USB CDC, bypasses print_mutex.
   esp_log_level_set("*", ESP_LOG_NONE);
 
-  Serial.println("CLI active on Serial + Telnet\n");
+  usb_printf("CLI active on USB + Telnet\n\n");
   shell.showPrompt();
 
   xTaskCreatePinnedToCore(shell_task_fun, "ShellTask", 8192, NULL, 1, NULL, 1);
@@ -538,14 +553,6 @@ void loop()
 
   //HTTP Request Processor
   http_loop();
-
-  // put your main code here, to run repeatedly:
-  //Serial.print( "." );
-  //Serial.print( lora_rxdone_flag );
-  //delay( 1000 );
-  //digitalWrite( LED_PIN, HIGH );
-  //delay( 1000 );
-  //digitalWrite( LED_PIN, LOW );
 
   if( uptime_ms() % 500 > 250 )
     gpio_set_level( (gpio_num_t)LED_PIN, 1 );
@@ -589,9 +596,7 @@ void loop()
 
 }
 
-// --- ESP-IDF entry point (Arduino as IDF component) ---
-// Replaces CONFIG_AUTOSTART_ARDUINO — gives us full control over
-// loopTask stack size and core affinity.
+// --- ESP-IDF entry point ---
 static void loopTask(void *pvParameters)
 {
     setup();
@@ -602,6 +607,5 @@ static void loopTask(void *pvParameters)
 
 extern "C" void app_main()
 {
-    initArduino();
     xTaskCreatePinnedToCore(loopTask, "loopTask", 8192, NULL, 1, NULL, 1);
 }

@@ -193,7 +193,7 @@ m3ApiRawFunction(m3_lerp)
     m3ApiGetArg(float, a);
     m3ApiGetArg(float, b);
     m3ApiGetArg(float, t);
-    m3ApiReturn(lerp(a, b, t));
+    m3ApiReturn(conez_lerp(a, b, t));
 }
 
 m3ApiRawFunction(m3_larp)

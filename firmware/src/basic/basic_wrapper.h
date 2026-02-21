@@ -1,7 +1,8 @@
 #ifndef basic_wrapper_h
 #define basic_wrapper_h
 
-#include <Arduino.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 // Params are always available (shared between BASIC and WASM runtimes)
 void set_basic_param(uint8_t paramID, int val);

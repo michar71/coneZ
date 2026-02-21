@@ -1,9 +1,11 @@
 #include "sensors.h"
-#include <Arduino.h>
+#include <stdint.h>
 #include "driver/i2c.h"
+#include "adc.h"
 #include "board.h"
 #include "printManager.h"
 #include "mpu6500.h"
+#include "conez_usb.h"
 #include <math.h>
 
 #define TMP102_ADDR 0x48
@@ -48,15 +50,15 @@ bool IMU_available = false;
 
 void sensors_setup(void)
 {
-    Serial.println("TMP102 initialized");
+    usb_printf("TMP102 initialized\n");
 
     if(!mpu6500_init())
     {
-        Serial.println("MPU6500 does not respond");
+        usb_printf("MPU6500 does not respond\n");
     }
     else
     {
-        Serial.println("MPU6500 is connected");
+        usb_printf("MPU6500 is connected\n");
         IMU_available = true;
     }
 
@@ -64,14 +66,14 @@ void sensors_setup(void)
 
     sensors_loop();
 
-    Serial.printf("TMP102 Temperature: %.2f C\n", temperature);
-    Serial.printf("MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f\n", v_accX, v_accY, v_accZ);
+    usb_printf("TMP102 Temperature: %.2f C\n", temperature);
+    usb_printf("MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f\n", v_accX, v_accY, v_accZ);
     if (v_accZ < 0.5) {
-        Serial.println("Looks like we are in space, not on earth...");
+        usb_printf("Looks like we are in space, not on earth...\n");
     } else {
-        Serial.println("Seems we are on earth and upright, not in space...");
+        usb_printf("Seems we are on earth and upright, not in space...\n");
     }
-    Serial.printf("Batt: %.2f V   Solar: %.2f V\n", bat_voltage(), solar_voltage());
+    usb_printf("Batt: %.2f V   Solar: %.2f V\n", bat_voltage(), solar_voltage());
 }
 
 void sensors_loop(void)
@@ -93,9 +95,9 @@ void sensors_loop(void)
     }
 
     //Read ADC's
-    adc_bat_mv = analogReadMilliVolts(ADC_BAT_PIN);
+    adc_bat_mv = adc_read_mv(ADC_BAT_PIN);
 #ifdef ADC_SOLAR_PIN
-    adc_solar_mv = analogReadMilliVolts(ADC_SOLAR_PIN);
+    adc_solar_mv = adc_read_mv(ADC_SOLAR_PIN);
 #endif
 }
 

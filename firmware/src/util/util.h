@@ -1,7 +1,7 @@
 #ifndef _conez_util_h
 #define _conez_util_h
 
-#include <Arduino.h>
+#include <stdint.h>
 
 // Blink an error code on status LED forever.
 void blinkloop( int flashes );

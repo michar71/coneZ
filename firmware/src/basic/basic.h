@@ -15,7 +15,8 @@
 
 #ifdef REAL_ESP32_HW
 #include "main.h" //Include the main header with all the defines and includes
-#include <Arduino.h>
+#include <esp_attr.h>
+#include "printManager.h"
 #endif
 
 

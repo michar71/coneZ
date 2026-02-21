@@ -1,3 +1,5 @@
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "editor.h"
 #include "printManager.h"
 #include "shell.h"
@@ -259,7 +261,7 @@ static void editor_ensure_visible(EditorState *ed)
 // Drawing
 // ---------------------------------------------------------------------------
 
-static void editor_draw(EditorState *ed, Stream *out)
+static void editor_draw(EditorState *ed, ConezStream *out)
 {
     char buf[ED_COLS + 128];
     char line_buf[ED_LINE_MAX];
@@ -475,7 +477,7 @@ static void editor_paste_line(EditorState *ed)
 // ---------------------------------------------------------------------------
 
 // Returns length of input, -1 on cancel (ESC/^X).
-static int editor_prompt_input(EditorState *ed, Stream *out,
+static int editor_prompt_input(EditorState *ed, ConezStream *out,
                                const char *prompt, char *buf, int maxlen)
 {
     int pos = 0;
@@ -519,7 +521,7 @@ static int editor_prompt_input(EditorState *ed, Stream *out,
 // Go-to-line prompt
 // ---------------------------------------------------------------------------
 
-static void editor_goto_line(EditorState *ed, Stream *out)
+static void editor_goto_line(EditorState *ed, ConezStream *out)
 {
     char buf[16];
     int len = editor_prompt_input(ed, out, "Go to line:", buf, sizeof(buf));
@@ -576,7 +578,7 @@ static bool editor_find_next(EditorState *ed)
     return false;
 }
 
-static void editor_find_or_replace(EditorState *ed, Stream *out)
+static void editor_find_or_replace(EditorState *ed, ConezStream *out)
 {
     char input[ED_LINE_MAX];
     int len = editor_prompt_input(ed, out, "Find:", input, sizeof(input));
@@ -711,7 +713,7 @@ static void line_editor_list(EditorState *ed, int from, int to)
 
 // Read a line of input from the shell stream, blocking.
 // Returns length, or -1 if stream closes.
-static int line_editor_readline(Stream *s, char *buf, int maxlen)
+static int line_editor_readline(ConezStream *s, char *buf, int maxlen)
 {
     int pos = 0;
     for (;;) {
@@ -742,7 +744,7 @@ static int line_editor_readline(Stream *s, char *buf, int maxlen)
 
 static int line_editor(EditorState *ed)
 {
-    Stream *s = getStream();
+    ConezStream *s = getStream();
     bool modified = ed->modified;
     char cmd[ED_LINE_MAX];
 
@@ -1045,7 +1047,7 @@ int cmd_edit(int argc, char **argv)
     while (getStream()->available()) getStream()->read();
 
     getLock();
-    Stream *out = getStream();
+    ConezStream *out = getStream();
     out->print("\033[?25l\033[2J");
     releaseLock();
 

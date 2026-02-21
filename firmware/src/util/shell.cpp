@@ -1,4 +1,5 @@
-#include <Arduino.h>
+#include <stdint.h>
+#include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include "shell.h"
@@ -72,7 +73,7 @@ static char *quote_tokenizer(char *str, const char *delim, char **saveptr)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Serial command shell — based on ConezShell by Phil Jansen,
+// CLI command shell — based on ConezShell by Phil Jansen,
 // heavily modified for ConeZ (cursor editing, history, suspend/resume).
 
 // The static instance of the singleton
@@ -120,7 +121,7 @@ class ConezShell::Command {
             return strncasecmp(name, aName, cmpLen);
         };
 
-        void renderDocumentation(Stream& str) const
+        void renderDocumentation(ConezStream& str) const
         {
             getLock();
             str.print("  ");
@@ -245,7 +246,7 @@ bool ConezShell::executeIfInput(void)
 }
 
 //////////////////////////////////////////////////////////////////////////////
-void ConezShell::attach(Stream & requester)
+void ConezShell::attach(ConezStream & requester)
 {
     shellConnection = &requester;
 }
@@ -264,7 +265,7 @@ void ConezShell::showPrompt(void)
 //////////////////////////////////////////////////////////////////////////////
 // Process pending input characters.  The print_mutex is held around the
 // read, buffer modifications and echo writes so that (a) the underlying
-// Serial/Telnet objects are never accessed concurrently from two tasks,
+// USB/Telnet objects are never accessed concurrently from two tasks,
 // and (b) printfnl's suspendLine / resumeLine always see consistent
 // linebuffer/inptr/cursor state.
 bool ConezShell::prepInput(void)
@@ -637,7 +638,7 @@ void ConezShell::resetBuffer(void)
 
 //////////////////////////////////////////////////////////////////////////////
 // Called by printManager under mutex — erase the visible prompt+input line
-void ConezShell::suspendLine(Stream *out)
+void ConezShell::suspendLine(ConezStream *out)
 {
     if (!inputActive || !out) return;
     if (getAnsiEnabled()) {
@@ -651,7 +652,7 @@ void ConezShell::suspendLine(Stream *out)
 }
 
 // Called by printManager under mutex — redraw the prompt+input line
-void ConezShell::resumeLine(Stream *out)
+void ConezShell::resumeLine(ConezStream *out)
 {
     if (!inputActive || !out) return;
     out->print(sh_prompt());

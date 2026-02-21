@@ -1,4 +1,7 @@
-#include <Arduino.h>
+#include <cmath>
+#include <new>
+#include <stdint.h>
+#include <string.h>
 #include "cue.h"
 #include "main.h"
 #include "config.h"

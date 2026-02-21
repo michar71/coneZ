@@ -1,10 +1,11 @@
-#include <Arduino.h>
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "main.h"
 #include "util.h"
 #include "printManager.h"
+#include "conez_usb.h"
 
 
 // Blink an error code forever
@@ -26,7 +27,7 @@ void blinkloop( int flashes )
 
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    Serial.print( "." );
+    usb_printf(".");
   }
 }
 

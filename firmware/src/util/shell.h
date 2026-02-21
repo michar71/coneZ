@@ -2,6 +2,8 @@
 #ifndef SHELL_H
 #define SHELL_H
 
+#include "conez_stream.h"
+
 #ifndef SHELL_BUFSIZE
 #define SHELL_BUFSIZE 88
 #endif
@@ -24,10 +26,10 @@
 typedef const char * const * (*TabCompleteFunc)(int wordIndex, const char **words, int nWords);
 
 ////////////////////////////////////////////////////////////////////////////////
-// Serial command shell — based on ConezShell by Phil Jansen,
+// CLI command shell — based on ConezShell by Phil Jansen,
 // heavily modified for ConeZ (cursor editing, history, suspend/resume).
 
-class ConezShell : public Stream {
+class ConezShell : public ConezStream {
     public:
 
         // The singleton instance of the shell
@@ -55,7 +57,7 @@ class ConezShell : public Stream {
                         TabCompleteFunc tabCompleteFunc = NULL,
                         bool valArgs = false);
 
-        void attach(Stream & shellSource);
+        void attach(ConezStream & shellSource);
 
         // Print the initial prompt (call once after attach + addCommand)
         void showPrompt(void);
@@ -79,8 +81,8 @@ class ConezShell : public Stream {
 
         // Called by printManager (under mutex) to erase/redraw the input line
         // around background output. Caller must already hold print_mutex.
-        void suspendLine(Stream *out);
-        void resumeLine(Stream *out);
+        void suspendLine(ConezStream *out);
+        void resumeLine(ConezStream *out);
 
         // this shell delegates communication to/from the attached stream
         // (which sent the command)
@@ -105,7 +107,7 @@ class ConezShell : public Stream {
 
         ConezShell(void);
 
-        Stream * shellConnection;
+        ConezStream * shellConnection;
         int m_lastErrNo;
         int execute(void);
         int execute(int argc, char** argv);

@@ -1,7 +1,7 @@
 #ifndef _conez_cue_h
 #define _conez_cue_h
 
-#include <Arduino.h>
+#include <stdint.h>
 
 // ---------- File format constants ----------
 

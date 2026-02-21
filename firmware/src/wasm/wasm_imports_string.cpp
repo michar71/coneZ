@@ -351,7 +351,7 @@ m3ApiRawFunction(m3_str_from_int)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, val);
     char buf[16];
-    int n = snprintf(buf, sizeof(buf), "%d", val);
+    int n = snprintf(buf, sizeof(buf), "%ld", (long)val);
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
     uint32_t mem_size = m3_GetMemorySize(runtime);

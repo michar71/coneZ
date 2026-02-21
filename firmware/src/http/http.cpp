@@ -1,4 +1,5 @@
-#include <Arduino.h>
+#include <stdint.h>
+#include <string.h>
 #include <esp_http_server.h>
 #include "esp_system.h"
 #include "esp_partition.h"
@@ -13,6 +14,7 @@
 #include "config.h"
 #include "gps.h"
 #include "printManager.h"
+#include "conez_usb.h"
 
 #ifdef BOARD_HAS_GPS
 extern volatile float gps_lat;
@@ -95,7 +97,7 @@ static void page_cat_partitions()
         esp_app_desc_t desc;
         bool hasInfo = esp_ota_get_partition_description(part, &desc) == ESP_OK;
 
-        page_catf("%s @ 0x%x size 0x%x", part->label, part->address, part->size);
+        page_catf("%s @ 0x%lx size 0x%lx", part->label, part->address, part->size);
 
         if (part == running) page_cat(" [RUNNING]");
         if (part == boot)    page_cat(" [BOOT]");
@@ -444,10 +446,10 @@ int http_setup()
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 12;
     cfg.stack_size = 6144;
-    cfg.core_id = 1;          // HWCDC safety: printfnl() writes to Serial
+    cfg.core_id = 1;
 
     if (httpd_start(&server, &cfg) != ESP_OK) {
-        Serial.println("HTTP server failed to start");
+        usb_printf("HTTP server failed to start\n");
         return -1;
     }
 
@@ -465,7 +467,7 @@ int http_setup()
     for (int i = 0; i < (int)(sizeof(routes) / sizeof(routes[0])); i++)
         httpd_register_uri_handler(server, &routes[i]);
 
-    Serial.println("HTTP server started on port 80");
+    usb_printf("HTTP server started on port 80\n");
     return 0;
 }
 

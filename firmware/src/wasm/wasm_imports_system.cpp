@@ -8,6 +8,7 @@
 #include "basic_wrapper.h"   // get_basic_param / set_basic_param
 #include "gps.h"
 #include "cue.h"
+#include "esp_random.h"
 
 // --- Params (inter-task communication) ---
 
@@ -58,7 +59,7 @@ m3ApiRawFunction(m3_random_int)
     m3ApiGetArg(int32_t, min_val);
     m3ApiGetArg(int32_t, max_val);
     if (min_val >= max_val) m3ApiReturn(min_val);
-    m3ApiReturn((int32_t)random(min_val, max_val));
+    m3ApiReturn((int32_t)(min_val + (esp_random() % (max_val - min_val))));
 }
 
 // --- Event synchronization ---
