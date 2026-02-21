@@ -18,7 +18,7 @@ static bool ansi_enabled = true;   // runtime ANSI toggle (default on)
 volatile long threadLoopCount[4] = {0, 0, 0, 0}; // For debugging thread loops
 
 // ---- Debug log: PSRAM ring buffer + file sink ----
-#define LOG_ENTRY_SIZE  300     // bytes per slot (timestamp + tag + message)
+#define LOG_ENTRY_SIZE  256     // bytes per slot (page-aligned for PSRAM cache)
 static uint32_t log_ring_base = 0;   // PSRAM address (0 = not allocated)
 static int      log_ring_slots = 0;  // set at runtime by log_init()
 static int      log_ring_head = 0;   // next write slot
@@ -341,7 +341,7 @@ long get_thread_count(int thread)
 
 void log_init(void)
 {
-    log_ring_slots = psram_available() ? 256 : 32;
+    log_ring_slots = psram_available() ? 128 : 16;
     log_ring_base = psram_malloc(log_ring_slots * LOG_ENTRY_SIZE);
     if (log_ring_base) {
         // Zero first byte of each slot (marks empty)
