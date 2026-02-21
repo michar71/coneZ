@@ -20,7 +20,7 @@
 #endif
 #include "main.h"
 #include "freertos/task.h"
-// task_snapshot.h removed (deprecated in ESP-IDF 5.x)
+#include "esp_private/freertos_debug.h"
 #include "printManager.h"
 #include "gps.h"
 #include "sensors.h"
@@ -1224,10 +1224,16 @@ int cmd_ps(int argc, char **argv)
         }
 
         BaseType_t coreId = xTaskGetCoreID(taskList[i].xHandle);
-        uint32_t freeBytes = (uint32_t)taskList[i].usStackHighWaterMark * sizeof(StackType_t);
+        // Xtensa StackType_t is uint8_t — pointer math and watermark are already in bytes
+        uint32_t freeBytes = (uint32_t)taskList[i].usStackHighWaterMark;
 
-        // Stack high-water mark in bytes
-        uint32_t totalBytes = 0;  // not easily available without TCB internals
+        // Get stack bounds via task snapshot (pxStackBase=low, pxEndOfStack=high on Xtensa)
+        // Round up to 16 to recover creation size (Xtensa 16-byte stack alignment trims top)
+        TaskSnapshot_t snap = {};
+        vTaskGetSnapshot(taskList[i].xHandle, &snap);
+        uint32_t totalBytes = (snap.pxEndOfStack > taskList[i].pxStackBase)
+            ? ((uint32_t)(snap.pxEndOfStack - taskList[i].pxStackBase + 1) + 15U) & ~15U
+            : 0;
 
 #if configGENERATE_RUN_TIME_STATS
         // CPU % — runtime counters are cumulative across both cores,

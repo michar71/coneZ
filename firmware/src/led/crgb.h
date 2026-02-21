@@ -1,5 +1,5 @@
 // Minimal CRGB/CHSV types — replaces FastLED.h for color math.
-// LED hardware output is temporarily disabled (no RMT driver yet).
+// Hardware output driven by RMT in led.cpp.
 
 #ifndef CONEZ_CRGB_H
 #define CONEZ_CRGB_H

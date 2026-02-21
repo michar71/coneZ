@@ -325,7 +325,7 @@ long get_thread_count(int thread)
 
 void log_init(void)
 {
-    log_ring_slots = psram_available() ? 128 : 16;
+    log_ring_slots = psram_available() ? 64 : 16;
     log_ring_base = psram_malloc(log_ring_slots * LOG_ENTRY_SIZE);
     log_ring_head = 0;
     log_ring_count = 0;

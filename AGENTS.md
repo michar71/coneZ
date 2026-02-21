@@ -153,7 +153,7 @@ External libraries in `platformio.ini` `lib_deps`:
 | sunset | ^1.1.7 | Pure C++ math (`<cmath>`, `<ctime>`). Zero platform dependency. |
 | Wasm3 | ^0.5.0 | Pure C interpreter. Zero platform dependency. |
 
-**FastLED removed.** LED color types (`CRGB`, `CHSV`, `hsv2rgb_rainbow`, `rgb2hsv_approximate`) are now custom implementations in `led/crgb.h`/`crgb.cpp`. Hardware LED output (RMT driver) is not yet reimplemented — LED buffers work for color computation but don't drive physical LEDs. This will be addressed with a custom ESP-IDF RMT driver.
+**FastLED removed.** LED color types (`CRGB`, `CHSV`, `hsv2rgb_rainbow`, `rgb2hsv_approximate`) are now custom implementations in `led/crgb.h`/`crgb.cpp`. Hardware LED output uses a custom WS2812B RMT driver in `led/led.cpp` — 4 RMT TX channels at 10 MHz, one per strip GPIO, with a custom encoder (bytes + reset pulse) following the standard ESP-IDF 5.x encoder pattern.
 
 **Custom base classes replacing Arduino:**
 - `ConezStream` (`console/conez_stream.h/cpp`) — replaces Arduino `Stream`/`Print`. Base class for `ConezShell`, `DualStream`, `TelnetServer`.
@@ -178,7 +178,7 @@ uses ESP-IDF APIs directly. Key replacements:
 | String class | `snprintf()` + static `char` buffers |
 | millis / delay | `uptime_ms()` / `uptime_us()` in `main.h`, `vTaskDelay(pdMS_TO_TICKS())` |
 | Stream / Print | `ConezStream` base class (`console/conez_stream.h/cpp`) |
-| FastLED (CRGB/CHSV) | Custom `crgb.h/cpp` in `led/` — color types + HSV conversion (RMT driver TBD) |
+| FastLED (CRGB/CHSV) | Custom `crgb.h/cpp` + RMT driver in `led/led.cpp` — color types, HSV conversion, WS2812B output via 4 RMT TX channels |
 | analogRead | ESP-IDF oneshot ADC + curve-fitting calibration (`sensors/adc.h/cpp`) |
 | constrain / map | `compat.h` templates (`util/compat.h`) |
 
@@ -201,7 +201,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 **Core 1 tasks (pinned):**
 - **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
 - **httpd** — ESP-IDF `esp_http_server` task. Handles all HTTP requests autonomously (no polling needed). Pinned to core 1. Stack 6144 for HTML generation and OTA streaming.
-- **led_render** — Calls `led_show_now()` at ~30 FPS when dirty, at least 1/sec unconditionally. Priority 2 preempts both loopTask and ShellTask. (Hardware LED output currently stubbed — RMT driver TBD.)
+- **led_render** — Pushes LED data to hardware via RMT at ~30 FPS when dirty, at least 2/sec unconditionally. Priority 2 preempts both loopTask and ShellTask.
 
 **Floating tasks (`tskNO_AFFINITY` — scheduler places on whichever core has bandwidth):**
 - **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
@@ -230,7 +230,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 
 ### Thread Communication
 
-- **printManager** (`console/printManager.cpp/h`): Mutex-protected logging. All text output outside of `setup()` must go through `printfnl()`. Each message has a `source_e` tag (SOURCE_BASIC, SOURCE_WASM, SOURCE_GPS, SOURCE_LORA, etc.) for filtering. The mutex also protects shell suspend/resume (erasing and redrawing the input line around background output). Tagged debug messages are sent to three sinks (payload built once, ANSI stripped once): (1) **PSRAM ring buffer** — always active, 256 entries × 300 bytes on ConeZ PCB / 32 entries on Heltec, viewable with `log` command; (2) **file sink** — optional, opened with `log to <path>`, appends to LittleFS file; (3) **MQTT** — published to `conez/{id}/debug` when connected. The ring buffer and file sinks include SOURCE_MQTT messages (useful for debugging MQTT); the MQTT sink excludes SOURCE_MQTT to prevent feedback loops. `SOURCE_COMMANDS_PROMPT` is a sink-only source (no console output) used to log CLI command prompts without echoing. Timestamps use decimal seconds format (`[100.123]`). `log_init()` is called in `setup()` after `psram_setup()` to allocate the ring buffer.
+- **printManager** (`console/printManager.cpp/h`): Mutex-protected logging. All text output outside of `setup()` must go through `printfnl()`. Each message has a `source_e` tag (SOURCE_BASIC, SOURCE_WASM, SOURCE_GPS, SOURCE_LORA, etc.) for filtering. The mutex also protects shell suspend/resume (erasing and redrawing the input line around background output). Tagged debug messages are sent to three sinks (payload built once, ANSI stripped once): (1) **PSRAM ring buffer** — always active, 64 entries × 256 bytes on ConeZ PCB / 16 entries on Heltec, viewable with `log` command; (2) **file sink** — optional, opened with `log to <path>`, appends to LittleFS file; (3) **MQTT** — published to `conez/{id}/debug` when connected. The ring buffer and file sinks include SOURCE_MQTT messages (useful for debugging MQTT); the MQTT sink excludes SOURCE_MQTT to prevent feedback loops. `SOURCE_COMMANDS_PROMPT` is a sink-only source (no console output) used to log CLI command prompts without echoing. Timestamps use decimal seconds format (`[100.123]`). `log_init()` is called in `setup()` after `psram_setup()` to allocate the ring buffer.
 - **Shell** (`util/shell.cpp/h`): Command-line processor with cursor editing, history, and tab completion. Quote-aware tokenizer handles `"..."` grouping and `\"` / `\\` escapes. Commands are registered via `addCommand(name, func, fileSpec, subcommands, tabCompleteFunc, valArgs)`. See "Adding CLI Commands" section below for the complete guide.
 - **Params** (`set_basic_param` / `get_basic_param`): 16-slot integer array for passing values between main loop and scripting runtimes. Accessed via `GETPARAM(id)` in BASIC or `get_param(id)`/`set_param(id,val)` in WASM.
 - **Script loading** (`set_script_program`): Auto-detects `.bas` vs `.wasm` by extension, routes to the appropriate runtime's mutex-protected queue. Creates the interpreter task on first use (lazy initialization).
@@ -573,7 +573,7 @@ See `c_sharp/mayhem/readme.md` for quick-start instructions.
 |---------|-----|-------|-------|---------|
 | v0.01.x (Arduino framework) | 225,572 | 68.8% | 1,224,281 | 58.4% |
 | v0.02.x (ESP-IDF + Arduino, `-Os`) | 127,260 | 38.8% | 1,105,237 | 52.7% |
-| v0.02.x (pure ESP-IDF, `-Os`) | 136,020 | 41.5% | 1,220,347 | 58.2% |
+| v0.02.x (pure ESP-IDF, `-Os`) | 102,424 | 31.3% | 1,178,459 | 56.2% |
 
 Both compilers use dynamic allocation — large arrays are heap-allocated during compilation and freed afterward, so their permanent RAM cost is minimal (bas2wasm ~3.9KB, c2wasm ~5.8KB). Import tables are `const` (flash-mapped). On boards with PSRAM, bas2wasm's `data_buf` (4KB) and `data_items` (4KB) are allocated via `psram_malloc()` instead of the DRAM heap, reducing transient DRAM usage from ~26KB to ~18KB during compilation. Access goes through `bw_psram_read()`/`bw_psram_write()` (page-cache-friendly sequential patterns). Controlled by `BAS2WASM_USE_PSRAM`, auto-set in the firmware embed wrapper when `BOARD_HAS_IMPROVISED_PSRAM` or `BOARD_HAS_NATIVE_PSRAM` is defined. On boards without PSRAM (Heltec), `psram_malloc()` falls back to the system heap transparently.
 
@@ -589,7 +589,7 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 
 - **LoRa:** RadioLib, SX1262/SX1268 via SPI (custom `EspHal` HAL in `lora/lora_hal.h` — raw GPSPI3 registers, ESP-IDF GPIO/timers, no Arduino dependency). Two modes selectable via `lora.rf_mode` config key. **LoRa mode** (default): configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW). **FSK mode**: configurable bit rate, frequency deviation, RX bandwidth, data shaping, whitening, sync word (hex string), CRC. Shared params (frequency, TX power, preamble) work in both modes. CLI `lora` subcommands (`freq`, `power`, `bw`, `sf`, `cr`, `mode`) hot-apply changes without saving to config; `config set lora.*` persists but requires reboot.
 - **GPS:** ATGM336H (AT6558 chipset) via UART0 (9600 baud, ESP-IDF `driver/uart.h`), parsed by inline NMEA parser (`sensors/nmea.h`/`nmea.cpp` — pure C, no Arduino dependency), with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`). Parser handles RMC, GGA, and GSA sentences from any GNSS talker ID. Dead reckoning detection: GGA quality 6-8 rejected as non-fix; RMC mode indicator field 12 rejects E (estimated), N (not valid), S (simulator).
-- **LEDs:** WS2811 on 4 GPIO pins, BRG color order. Custom `CRGB`/`CHSV` color types in `led/crgb.h/cpp` (replaced FastLED). Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. Default boot color per channel configurable via `led.color1`–`color4` (hex 0xRRGGBB, default 0x000000/off). CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is mutex-protected against the render task. **Hardware LED output (RMT driver) not yet reimplemented** — LED buffers work for color computation but don't drive physical LEDs. All LED logic is in `led/led.cpp`/`led.h`.
+- **LEDs:** WS2812B on 4 GPIO pins (38/37/36/35), GRB color order. Custom `CRGB`/`CHSV` color types in `led/crgb.h/cpp` (replaced FastLED). Hardware output via ESP-IDF RMT driver — 4 TX channels at 10 MHz with a custom WS2812B encoder (bytes encoder for pixel data + copy encoder for reset pulse). Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. Default boot color per channel configurable via `led.color1`–`color4` (hex 0xRRGGBB, default 0x000000/off). CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is mutex-protected against the render task. The render task converts RGB→GRB and transmits channels sequentially using a shared conversion buffer. All LED logic is in `led/led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `sensors/mpu6500.cpp`/`.h` using `driver/i2c_master.h` handle-based API)
 - **Temp:** TMP102 on I2C 0x48 (inline driver in `sensors/sensors.cpp` — reads register 0x00 via `driver/i2c_master.h`)
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
@@ -636,7 +636,7 @@ Unified memory API in `psram/psram.h`/`psram.cpp` that works across all board co
 
 **Read/write:** Typed accessors (`psram_read8`/`16`/`32`/`64`, `psram_write8`/`16`/`32`/`64`) and bulk (`psram_read`, `psram_write`). On improvised PSRAM, bulk transfers are chunked to respect the chip's 8µs tCEM limit and routed through the DRAM page cache. Bounds-checked against `BOARD_PSRAM_SIZE`. Memory operations (`psram_memset`, `psram_memcpy`, `psram_memcmp`) accept mixed address types.
 
-**DRAM page cache:** Write-back LRU cache for improvised SPI PSRAM (no-op on native/stubs). Default 128 pages × 512 bytes = ~65KB DRAM. Configurable at compile time via `PSRAM_CACHE_PAGES` and `PSRAM_CACHE_PAGE_SIZE`. Set `PSRAM_CACHE_PAGES` to 0 to disable.
+**DRAM page cache:** Write-back LRU cache for improvised SPI PSRAM (no-op on native/stubs). Default 64 pages × 512 bytes = ~32KB DRAM. Configurable at compile time via `PSRAM_CACHE_PAGES` and `PSRAM_CACHE_PAGE_SIZE`. Set `PSRAM_CACHE_PAGES` to 0 to disable.
 
 **Bus recovery:** `psram_bus_recovery()` handles the case where a soft reset (reflash) interrupts a SPI transaction mid-flight, leaving the PSRAM state machine stuck. It de-asserts CE#, then clocks out 8 dummy bytes to flush any partial command the chip was waiting on. `psram_setup()` retries init up to 3 times with bus recovery + reset between attempts. If the chip remains stuck (MF=0x00), a full power cycle (unplug USB) is required.
 

@@ -100,10 +100,20 @@ static void wasm_run(const char *path)
         return;
     }
 
+    // Pre-allocate WASM linear memory while heap has a large contiguous block.
+    // The subsequent env/runtime/module allocations fragment the heap; grabbing
+    // the big block first ensures it succeeds.  We inject it into the runtime
+    // before m3_LoadModule so ResizeMemory() finds it already allocated
+    // (same-size realloc is a no-op in wasm3).
+    const u32 prealloc_pages = 1;  // ConeZ modules use -Wl,-z,stack-size=256 → 1 page
+    size_t prealloc_bytes = prealloc_pages * d_m3MemPageSize + sizeof(M3MemoryHeader);
+    M3MemoryHeader *prealloc_mem = (M3MemoryHeader *)calloc(1, prealloc_bytes);
+
     // Allocate buffer for .wasm binary (must persist during module lifetime)
     uint8_t *wasm_buf = (uint8_t *)malloc(wasm_size);
     if (!wasm_buf) {
         printfnl(SOURCE_WASM, "wasm: alloc failed (%u bytes)\n", (unsigned)wasm_size);
+        free(prealloc_mem);
         fclose(f);
         wasm_running = false;
         return;
@@ -114,6 +124,7 @@ static void wasm_run(const char *path)
 
     if (bytes_read != wasm_size) {
         printfnl(SOURCE_WASM, "wasm: read error (%u/%u)\n", (unsigned)bytes_read, (unsigned)wasm_size);
+        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
@@ -123,6 +134,7 @@ static void wasm_run(const char *path)
     IM3Environment env = m3_NewEnvironment();
     if (!env) {
         printfnl(SOURCE_WASM, "wasm: env alloc failed\n");
+        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
@@ -132,6 +144,7 @@ static void wasm_run(const char *path)
     if (!runtime) {
         printfnl(SOURCE_WASM, "wasm: runtime alloc failed\n");
         m3_FreeEnvironment(env);
+        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
@@ -144,9 +157,22 @@ static void wasm_run(const char *path)
         printfnl(SOURCE_WASM, "wasm: parse error: %s\n", result);
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
+        free(prealloc_mem);
         free(wasm_buf);
         wasm_running = false;
         return;
+    }
+
+    // Inject pre-allocated linear memory into the runtime.  When m3_LoadModule
+    // calls ResizeMemory(initPages), it sees numPages already == initPages, so
+    // m3_Realloc(ptr, size, size) returns the same pointer (no-op fast path).
+    if (prealloc_mem && module->memoryInfo.initPages == prealloc_pages) {
+        runtime->memory.mallocated = prealloc_mem;
+        runtime->memory.numPages = prealloc_pages;
+        prealloc_mem = NULL;  // runtime owns it now
+    } else {
+        free(prealloc_mem);
+        prealloc_mem = NULL;
     }
 
     // Load module into runtime (runtime takes ownership)

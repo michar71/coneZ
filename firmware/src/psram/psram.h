@@ -167,13 +167,13 @@ int      psram_alloc_entries_max(void); // Max allocation slots (PSRAM_ALLOC_ENT
 // written back on eviction or explicit flush.
 //
 // Total DRAM cost: PSRAM_CACHE_PAGES * (PSRAM_CACHE_PAGE_SIZE + 12) bytes.
-// Default: 128 * 524 = ~65 KB.
+// Default: 64 * 512 = 32 KB.
 //
 // No-op on native PSRAM (already memory-mapped) and stub builds.
 // Set PSRAM_CACHE_PAGES to 0 at compile time to disable.
 
 #ifndef PSRAM_CACHE_PAGES
-#define PSRAM_CACHE_PAGES      128  // Number of cached pages (0 = disabled)
+#define PSRAM_CACHE_PAGES       64  // Number of cached pages (0 = disabled)
 #endif
 #ifndef PSRAM_CACHE_PAGE_SIZE
 #define PSRAM_CACHE_PAGE_SIZE  512  // Bytes per page (must be power of 2)

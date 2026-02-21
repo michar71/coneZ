@@ -10,8 +10,7 @@ extern CRGB *leds2;
 extern CRGB *leds3;
 extern CRGB *leds4;
 
-// Initialize LED buffers. Call from setup() before led_start_task().
-// NOTE: Hardware output (RMT driver) not yet implemented — buffers only.
+// Initialize LED buffers and RMT channels. Call from setup() before led_start_task().
 void led_setup( void );
 
 // Start the LED render task (~30 FPS). Call from setup() after led_setup().
@@ -22,7 +21,7 @@ void led_start_task( void );
 void led_show( void );
 
 // Push to hardware immediately. ONLY safe during setup() before
-// led_start_task() has been called. Currently a no-op.
+// led_start_task() has been called.
 void led_show_now( void );
 
 // Set `cnt` LEDs on channel `ch` (1-4) to `col`. Does NOT trigger show.

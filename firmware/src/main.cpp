@@ -491,7 +491,7 @@ void setup()
 
   sunSetTZOffset(config.timezone);
 
-  //Start the LED render task (owns FastLED.show() from here on)
+  //Start the LED render task (owns RMT output from here on)
   led_start_task();
 
   //Start scripting runtime tasks
@@ -535,7 +535,7 @@ void loop()
   //HTTP Request Processor
   http_loop();
 
-  if( uptime_ms() % 500 > 250 )
+  if( uptime_ms() % 1000 < 250 )
     gpio_set_level( (gpio_num_t)LED_PIN, 1 );
   else
     gpio_set_level( (gpio_num_t)LED_PIN, 0 );

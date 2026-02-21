@@ -392,7 +392,7 @@ void setLEDb(int pos, int val)
 
 void updateLEDs()
 {
-    led_show(); //Mark LED buffers dirty; render task will call FastLED.show()
+    led_show(); //Mark LED buffers dirty; render task will push via RMT
 }
 
 unsigned long getTimestamp()
