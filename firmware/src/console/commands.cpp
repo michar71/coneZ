@@ -18,6 +18,7 @@
 #endif
 #include "main.h"
 #include "freertos/task.h"
+#include "freertos/task_snapshot.h"
 #include "printManager.h"
 #include "gps.h"
 #include "sensors.h"
@@ -1202,7 +1203,7 @@ int cmd_ps(int argc, char **argv)
     UBaseType_t got = uxTaskGetSystemState(taskList, numTasks, NULL);
 
     printfnl(SOURCE_COMMANDS, "Task List (%u tasks):\n", (unsigned int)got);
-    printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4s  %4s  %s\n", "Name", "State", "Prio", "Core", "Min Free Stack");
+    printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4s  %4s  %6s  %s\n", "Name", "State", "Prio", "Core", "Stack", "Free");
 
     for (UBaseType_t i = 0; i < got; i++)
     {
@@ -1218,19 +1219,26 @@ int cmd_ps(int argc, char **argv)
         }
 
         BaseType_t coreId = xTaskGetAffinity(taskList[i].xHandle);
-        uint32_t freeStackBytes = (uint32_t)taskList[i].usStackHighWaterMark * 4;
+        uint32_t freeBytes = (uint32_t)taskList[i].usStackHighWaterMark * sizeof(StackType_t);
+
+        // Compute total stack size from TCB stack bounds
+        StackType_t *stkStart = pxTCBGetStartOfStack(taskList[i].xHandle);
+        StackType_t *stkEnd   = pxTCBGetEndOfStack(taskList[i].xHandle);
+        uint32_t totalBytes = (uint32_t)((stkEnd - stkStart) + 1) * sizeof(StackType_t);
 
         if (coreId == tskNO_AFFINITY)
-            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u     -  %u\n",
+            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u     -  %6u  %u\n",
                 taskList[i].pcTaskName, state,
                 (unsigned int)taskList[i].uxCurrentPriority,
-                (unsigned int)freeStackBytes);
+                (unsigned int)totalBytes,
+                (unsigned int)freeBytes);
         else
-            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u  %4d  %u\n",
+            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u  %4d  %6u  %u\n",
                 taskList[i].pcTaskName, state,
                 (unsigned int)taskList[i].uxCurrentPriority,
                 (int)coreId,
-                (unsigned int)freeStackBytes);
+                (unsigned int)totalBytes,
+                (unsigned int)freeBytes);
     }
 
     free(taskList);

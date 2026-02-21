@@ -65,7 +65,7 @@ void time_seed_compile(void)
 
 #ifdef BOARD_HAS_GPS
 
-#include <HardwareSerial.h>
+#include "driver/uart.h"
 #include "nmea.h"
 
 // Origin coordinates — set from config in gps_setup()
@@ -100,8 +100,8 @@ static nmea_data_t nmea;
 static uint32_t nmea_last_update_ms = 0;     // uptime_ms() at last location commit
 static uint32_t nmea_last_update_count = 0;  // tracks nmea.update_count
 
-// Serial
-HardwareSerial GPSSerial(0);
+#define GPS_UART     UART_NUM_0
+#define GPS_UART_BUF 256
 
 
 // --- PPS interrupt handler ---
@@ -167,7 +167,7 @@ void gps_send_nmea(const char *body)
         cs ^= (uint8_t)*p;
     char msg[128];
     snprintf(msg, sizeof(msg), "$%s*%02X\r\n", body, cs);
-    GPSSerial.print(msg);
+    uart_write_bytes(GPS_UART, msg, strlen(msg));
     printfnl(SOURCE_GPS, "Sent: %s", msg);
 }
 
@@ -185,8 +185,17 @@ int gps_setup()
     // Setup PPS pin and attach interrupt for sub-ms timing
     pps_isr_init();
 
-    GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin
-                     GPS_RX_PIN, GPS_TX_PIN );
+    uart_config_t uart_cfg = {};
+    uart_cfg.baud_rate  = 9600;
+    uart_cfg.data_bits  = UART_DATA_8_BITS;
+    uart_cfg.parity     = UART_PARITY_DISABLE;
+    uart_cfg.stop_bits  = UART_STOP_BITS_1;
+    uart_cfg.flow_ctrl  = UART_HW_FLOWCTRL_DISABLE;
+    uart_cfg.source_clk = UART_SCLK_APB;
+    uart_param_config(GPS_UART, &uart_cfg);
+    uart_set_pin(GPS_UART, GPS_TX_PIN, GPS_RX_PIN,
+                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(GPS_UART, GPS_UART_BUF, 0, 0, NULL, 0);
 
     return 0;
 }
@@ -199,68 +208,71 @@ int gps_loop()
     static char raw_buf[96];
     static int  raw_pos = 0;
 
-    // Any characters from the GPS waiting for us?
-    while( GPSSerial.available() )
-    {
-        unsigned char ch = GPSSerial.read();
+    // Read available bytes from GPS UART in bulk
+    uint8_t rxbuf[64];
+    int rxlen;
+    while ((rxlen = uart_read_bytes(GPS_UART, rxbuf, sizeof(rxbuf), 0)) > 0) {
+        for (int i = 0; i < rxlen; i++) {
+            unsigned char ch = rxbuf[i];
 
-        if( getDebug( SOURCE_GPS_RAW ) )
-        {
-            if (raw_pos < (int)sizeof(raw_buf) - 1)
-                raw_buf[raw_pos++] = ch;
-            if (ch == '\n' || raw_pos >= (int)sizeof(raw_buf) - 1) {
-                raw_buf[raw_pos] = '\0';
-                printfnl(SOURCE_GPS_RAW, "%s", raw_buf);
-                raw_pos = 0;
-            }
-        }
-
-        nmea_encode(&nmea, ch);
-
-        // Check for new location update (update_count incremented by parser)
-        if (nmea.update_count != nmea_last_update_count)
-        {
-            nmea_last_update_count = nmea.update_count;
-            nmea_last_update_ms = uptime_ms();
-
-            gps_lat = nmea.lat;
-            gps_lon = nmea.lon;
-            gps_pos_valid = nmea.location_valid;
-
-            gps_alt = nmea.alt;
-            gps_alt_valid = nmea.altitude_valid;
-            gps_speed = nmea.speed;
-            gps_dir = nmea.course;
-
-            gps_day = nmea.day;
-            gps_month = nmea.month;
-            gps_year = nmea.year;
-            gps_hour = nmea.hour;
-            gps_minute = nmea.minute;
-            gps_second = nmea.second;
-
-            // Compute epoch from NMEA time and anchor to last PPS edge
-            if (pps_count > 0 && nmea.date_valid && nmea.time_valid) {
-                uint64_t ep = datetime_to_epoch_ms(gps_year, gps_month, gps_day,
-                                                    gps_hour, gps_minute, gps_second);
-                uint32_t pm = pps_millis;  // snapshot atomic 32-bit read
-                portENTER_CRITICAL(&time_mux);
-                epoch_at_pps = ep;
-                millis_at_pps = pm;
-                epoch_valid = true;
-                time_source = 2;  // GPS+PPS — highest priority
-                portEXIT_CRITICAL(&time_mux);
+            if( getDebug( SOURCE_GPS_RAW ) )
+            {
+                if (raw_pos < (int)sizeof(raw_buf) - 1)
+                    raw_buf[raw_pos++] = ch;
+                if (ch == '\n' || raw_pos >= (int)sizeof(raw_buf) - 1) {
+                    raw_buf[raw_pos] = '\0';
+                    printfnl(SOURCE_GPS_RAW, "%s", raw_buf);
+                    raw_pos = 0;
+                }
             }
 
-            int date_raw = nmea.date_valid ? nmea.day * 10000 + nmea.month * 100 + (nmea.year % 100) : -1;
-            int time_raw = nmea.time_valid ? nmea.hour * 10000 + nmea.minute * 100 + nmea.second : -1;
-            printfnl( SOURCE_GPS, "GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n",
-                (int) gps_pos_valid,
-                gps_lat,
-                gps_lon,
-                (int)gps_alt,
-                date_raw,
-                time_raw );
+            nmea_encode(&nmea, ch);
+
+            // Check for new location update (update_count incremented by parser)
+            if (nmea.update_count != nmea_last_update_count)
+            {
+                nmea_last_update_count = nmea.update_count;
+                nmea_last_update_ms = uptime_ms();
+
+                gps_lat = nmea.lat;
+                gps_lon = nmea.lon;
+                gps_pos_valid = nmea.location_valid;
+
+                gps_alt = nmea.alt;
+                gps_alt_valid = nmea.altitude_valid;
+                gps_speed = nmea.speed;
+                gps_dir = nmea.course;
+
+                gps_day = nmea.day;
+                gps_month = nmea.month;
+                gps_year = nmea.year;
+                gps_hour = nmea.hour;
+                gps_minute = nmea.minute;
+                gps_second = nmea.second;
+
+                // Compute epoch from NMEA time and anchor to last PPS edge
+                if (pps_count > 0 && nmea.date_valid && nmea.time_valid) {
+                    uint64_t ep = datetime_to_epoch_ms(gps_year, gps_month, gps_day,
+                                                        gps_hour, gps_minute, gps_second);
+                    uint32_t pm = pps_millis;  // snapshot atomic 32-bit read
+                    portENTER_CRITICAL(&time_mux);
+                    epoch_at_pps = ep;
+                    millis_at_pps = pm;
+                    epoch_valid = true;
+                    time_source = 2;  // GPS+PPS — highest priority
+                    portEXIT_CRITICAL(&time_mux);
+                }
+
+                int date_raw = nmea.date_valid ? nmea.day * 10000 + nmea.month * 100 + (nmea.year % 100) : -1;
+                int time_raw = nmea.time_valid ? nmea.hour * 10000 + nmea.minute * 100 + nmea.second : -1;
+                printfnl( SOURCE_GPS, "GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n",
+                    (int) gps_pos_valid,
+                    gps_lat,
+                    gps_lon,
+                    (int)gps_alt,
+                    date_raw,
+                    time_raw );
+            }
         }
     }
 
