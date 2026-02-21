@@ -73,6 +73,9 @@ Tab completion: pressing Tab auto-completes the current word.
       led set 1 <TAB>              → <val>     (index/range/all)
       led set 1 0 <TAB>            → <hex>     (#RRGGBB)
       led count <TAB>              → <int>     (channel)
+      log <TAB>                    → to  save  close  stop
+      log to <TAB>                 → filename completion
+      log save <TAB>               → filename completion
       mqtt broker <TAB>            → <string>
       mqtt port <TAB>              → <int>
       psram freq <TAB>             → <int>
@@ -123,7 +126,9 @@ filenames, and subcommands.
   history                            Show command history
   inflate|gunzip {file} [output]     Decompress gzip/zlib/deflate file
   led [set|clear|count]              Show/set LED configuration and colors
+  list {file}                        Alias for cat
   load {file}                        Receive file via serial (CTRL+Z to end)
+  log [to|save|close|stop]            Show debug log or manage file logging
   lora|radio [freq|power|bw|sf|...]  Show LoRa status or set radio params
   md5|md5sum {file}                  Compute MD5 hash
   mem|free                           Show heap memory stats
@@ -248,7 +253,9 @@ debug
 
   When MQTT is connected, enabled debug messages are also published to
   the MQTT topic conez/{cone_id}/debug (except SOURCE_MQTT, to prevent
-  feedback loops). See documentation/mqtt.txt for payload format.
+  feedback loops). When COMMANDS is enabled, CLI commands and their
+  output are logged with the "CMD" tag, including the prompt line
+  (e.g. "> dir"). See documentation/mqtt.txt for payload format.
 
 game
   Conway's Game of Life on a 30x20 toroidal grid with RGB age-based
@@ -410,6 +417,35 @@ led
 
   led clear
       Set all LEDs on all channels to black (#000000).
+
+log
+  Show recent debug messages from the PSRAM ring buffer (256 entries on
+  ConeZ PCB, 32 on Heltec). The ring buffer always captures tagged debug
+  messages (same payload as MQTT debug: timestamp + source tag + message,
+  ANSI stripped). No configuration needed — the buffer is allocated at
+  boot and fills silently. If PSRAM allocation fails, the buffer is
+  unavailable and "log" reports empty.
+
+  log to <path>
+      Open a file on LittleFS and start appending debug messages to it.
+      Each message is written as a line with timestamp, tag, and text.
+      The file is opened in append mode. Only one log file can be open
+      at a time; opening a new one closes the previous.
+      Example: log to /debug.txt
+
+  log save <path>
+      Save the current ring buffer contents to a file and close it.
+      Unlike "log to", this is a one-shot dump — the file is not kept
+      open for ongoing logging.
+      Example: log save /snapshot.txt
+
+  log close
+  log stop
+      Close the open log file (from "log to").
+
+  Unlike the MQTT debug sink (which excludes SOURCE_MQTT to prevent
+  feedback loops), the ring buffer and file sinks include SOURCE_MQTT
+  messages — useful for debugging MQTT itself.
 
 list {filename}
   Alias for cat. Print the contents of a file to the console.

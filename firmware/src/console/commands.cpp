@@ -1259,6 +1259,45 @@ int cmd_version(int argc, char **argv)
 }
 
 
+int cmd_log(int argc, char **argv)
+{
+    // log to <path> — open file sink
+    if (argc >= 3 && !strcasecmp(argv[1], "to")) {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[2]);
+        if (log_open(path)) {
+            printfnl(SOURCE_COMMANDS, "Logging to %s\n", path);
+        } else {
+            printfnl(SOURCE_COMMANDS, "Failed to open %s\n", path);
+        }
+        return 0;
+    }
+
+    // log save <path> — dump ring buffer to file
+    if (argc >= 3 && !strcasecmp(argv[1], "save")) {
+        char path[64];
+        normalize_path(path, sizeof(path), argv[2]);
+        if (log_save(path)) {
+            printfnl(SOURCE_COMMANDS, "Log saved to %s\n", path);
+        } else {
+            printfnl(SOURCE_COMMANDS, "Failed to save log to %s\n", path);
+        }
+        return 0;
+    }
+
+    // log close / log stop — close file sink
+    if (argc >= 2 && (!strcasecmp(argv[1], "close") || !strcasecmp(argv[1], "stop"))) {
+        log_close();
+        printfnl(SOURCE_COMMANDS, "Log file closed\n");
+        return 0;
+    }
+
+    // log (no args) — show ring buffer
+    log_show();
+    return 0;
+}
+
+
 int cmd_mqtt(int argc, char **argv)
 {
     // mqtt broker <hostname>
@@ -3087,6 +3126,17 @@ static const char * const subs_led[]    = { "set", "clear", "count", NULL };
 static const char * const subs_lora[]   = { "freq", "power", "bw", "sf", "cr", "mode",
                                             "save", "restart", "send", NULL };
 static const char * const subs_lora_mode[] = { "lora", "fsk", NULL };
+static const char * const subs_log[]    = { "to", "save", "close", "stop", NULL };
+
+static const char * const * tc_log(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_log;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "to") == 0)   return TAB_COMPLETE_FILES;
+        if (strcasecmp(words[1], "save") == 0) return TAB_COMPLETE_FILES;
+    }
+    return NULL;
+}
+
 static const char * const subs_mqtt[]   = { "broker", "port", "enable", "disable",
                                             "connect", "disconnect", "pub", NULL };
 static const char * const subs_psram[]  = { "test", "freq", "cache", NULL };
@@ -3237,6 +3287,7 @@ void init_commands(Stream *dev)
     shell.addCommand(F("led"), cmd_led, NULL, NULL, tc_led);
     shell.addCommand(F("list"), listFile, "*");
     shell.addCommand(F("load"), loadFile, "*.bas;*.c;*.wasm");
+    shell.addCommand(F("log"), cmd_log, NULL, NULL, tc_log);
     shell.addCommand(F("lora"), cmd_lora, NULL, NULL, tc_lora);
     shell.addCommand(F("ls"), listDir, "/");
     shell.addCommand(F("md5"), cmd_md5, "*");

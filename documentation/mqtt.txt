@@ -43,16 +43,27 @@ flag is enabled.
 
 Payload: plain text with uptime timestamp, source tag, and message.
 
+    [100.123] [CMD] > dir
+    [100.125] [CMD] /startup.bas  1234
     [100.123] [GPS] Fix acquired: 37.786971500, -122.419415300
     [205.400] [LORA] RX 32 bytes from cone 7
     [1800.050] [SYSTEM] WiFi reconnected
 
 The timestamp is decimal seconds since boot (millis / 1000). The tag
 matches the debug source name (SYSTEM, GPS, LORA, WASM, BASIC, etc.).
+CLI commands and their output use the "CMD" tag — the command prompt
+line (e.g. "> dir") is logged before the command's output.
 
 Messages from SOURCE_MQTT are excluded to prevent infinite feedback
-loops. CLI output (SOURCE_NONE, SOURCE_COMMANDS) is also excluded —
-only tagged debug messages are forwarded.
+loops. SOURCE_NONE is excluded (raw output with no context).
+SOURCE_COMMANDS and SOURCE_COMMANDS_PROMPT (CLI output and prompt) are
+forwarded with the tag "CMD" when the COMMANDS debug flag is enabled.
+ANSI escape sequences are stripped from all payloads.
+
+The same payload format (timestamp + tag + message, ANSI stripped) is
+shared by all three debug sinks: MQTT, PSRAM ring buffer, and file.
+The PSRAM ring buffer and file sink include SOURCE_MQTT messages
+(useful for debugging MQTT itself). See "log" in cli-commands.txt.
 
 Use cases:
   - Remote log monitoring without serial/telnet connection

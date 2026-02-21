@@ -20,8 +20,8 @@ typedef enum {
                                         // Available: 0x00000080
     SOURCE_SHELL        = 0x00000100,
     SOURCE_COMMANDS     = 0x00000200,
+    SOURCE_COMMANDS_PROMPT = 0x00000800,  // sinks only (MQTT, file log), no console output
     SOURCE_SYSTEM       = 0x00000400,
-                                        // Available: 0x00000800
     SOURCE_GPS          = 0x00001000,
     SOURCE_GPS_RAW      = 0x00002000,
                                         // Available: 0x00004000
@@ -83,5 +83,12 @@ bool getAnsiEnabled(void);
 bool getDebug(source_e source);
 void inc_thread_count(int thread);
 long get_thread_count(int thread);
+
+// Debug log system — PSRAM ring buffer + optional file sink
+void log_init(void);
+bool log_open(const char *path);
+void log_close(void);
+void log_show(void);
+bool log_save(const char *path);
 
 #endif

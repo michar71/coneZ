@@ -2,6 +2,8 @@
 #include "shell.h"
 #include "mqtt_client.h"
 #include "config.h"
+#include "psram.h"
+#include <LittleFS.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -14,6 +16,14 @@ volatile bool interactive_mode = false;
 static bool ansi_enabled = true;   // runtime ANSI toggle (default on)
 
 volatile long threadLoopCount[4] = {0, 0, 0, 0}; // For debugging thread loops
+
+// ---- Debug log: PSRAM ring buffer + file sink ----
+#define LOG_ENTRY_SIZE  300     // bytes per slot (timestamp + tag + message)
+static uint32_t log_ring_base = 0;   // PSRAM address (0 = not allocated)
+static int      log_ring_slots = 0;  // set at runtime by log_init()
+static int      log_ring_head = 0;   // next write slot
+static int      log_ring_count = 0;  // entries written (clamped to log_ring_slots)
+static File     log_file;            // file sink (open when truthy)
 
 void printManagerInit(Stream* defaultStream)
 {
@@ -64,17 +74,24 @@ void vprintfnl( source_e source, const char *format, va_list args )
     }
 
     // Early out if source is disabled (COMMANDS always prints — it's CLI output)
-    if (source != SOURCE_NONE && source != SOURCE_COMMANDS && !(debug & source)) {
+    // COMMANDS_PROMPT uses COMMANDS debug flag for gating
+    if (source != SOURCE_NONE && source != SOURCE_COMMANDS
+        && source != SOURCE_COMMANDS_PROMPT && !(debug & source)) {
         xSemaphoreGive(print_mutex);
         return;
     }
 
-    // Erase the in-progress command line before printing
-    shell.suspendLine(OutputStream);
+    vsnprintf(buf, max_txt, format, args);
 
-    // Print source tag (SOURCE_NONE prints with no prefix)
+    // SOURCE_COMMANDS_PROMPT skips console output — sinks only (MQTT, file log)
     const char *tag = NULL;
-    {
+    bool console_output = (source != SOURCE_COMMANDS_PROMPT);
+
+    if (console_output) {
+        // Erase the in-progress command line before printing
+        shell.suspendLine(OutputStream);
+
+        // Print source tag (SOURCE_NONE prints with no prefix)
         switch (source) {
             case SOURCE_BASIC:     tag = "BASIC";    break;
             case SOURCE_WASM:      tag = "WASM";     break;
@@ -91,6 +108,7 @@ void vprintfnl( source_e source, const char *format, va_list args )
             case SOURCE_SENSORS:   tag = "SENSORS";   break;
             case SOURCE_MQTT:      tag = "MQTT";      break;
             case SOURCE_NONE:      break;
+            case SOURCE_COMMANDS_PROMPT: break;
         }
         if (tag) {
             print_ts();
@@ -106,44 +124,68 @@ void vprintfnl( source_e source, const char *format, va_list args )
                 OutputStream->print("] ");
             }
         }
+        OutputStream->print(buf);
     }
-    vsnprintf(buf, max_txt, format, args);
-    OutputStream->print(buf);
 
-    // Publish debug messages to MQTT for remote monitoring
-    // Skip: SOURCE_NONE (raw output) and SOURCE_MQTT (prevents infinite loop)
-    // SOURCE_COMMANDS forwarded only if its debug flag is enabled
-    const char *mqtt_tag = tag ? tag : (source == SOURCE_COMMANDS ? "CMD" : NULL);
-    if (mqtt_tag && source != SOURCE_MQTT && mqtt_connected()
-        && (source != SOURCE_COMMANDS || (debug & SOURCE_COMMANDS))) {
-        static bool in_mqtt_debug = false;
-        if (!in_mqtt_debug) {
-            in_mqtt_debug = true;
-            char topic[48];
-            snprintf(topic, sizeof(topic), "conez/%d/debug", config.cone_id);
-            char payload[max_txt + 32];
-            unsigned long ms = millis();
-            snprintf(payload, sizeof(payload), "[%lu.%03lu] [%s] %s", ms / 1000, ms % 1000, mqtt_tag, buf);
-            // Strip any ANSI escape sequences from payload
-            char *r = payload, *w = payload;
-            while (*r) {
-                if (*r == '\033' && *(r+1) == '[') {
-                    r += 2;
-                    while (*r && !(*r >= 'A' && *r <= 'Z') && !(*r >= 'a' && *r <= 'z'))
-                        r++;
-                    if (*r) r++; // skip terminating letter
-                } else {
-                    *w++ = *r++;
-                }
+    // ---- Sinks: ring buffer, file, MQTT ----
+    // Build sink payload once, strip ANSI once, send to all sinks.
+    // Skip SOURCE_NONE (raw output).
+    // SOURCE_COMMANDS/PROMPT forwarded only if COMMANDS debug flag is enabled.
+    const char *sink_tag = tag;
+    if (!sink_tag && (source == SOURCE_COMMANDS || source == SOURCE_COMMANDS_PROMPT))
+        sink_tag = "CMD";
+    bool commands_gated = (source == SOURCE_COMMANDS || source == SOURCE_COMMANDS_PROMPT)
+                          && !(debug & SOURCE_COMMANDS);
+    if (sink_tag && !commands_gated) {
+        char sink_buf[max_txt + 32];
+        unsigned long ms = millis();
+        snprintf(sink_buf, sizeof(sink_buf), "[%lu.%03lu] [%s] %s", ms / 1000, ms % 1000, sink_tag, buf);
+        // Strip ANSI escape sequences in-place
+        char *r = sink_buf, *w = sink_buf;
+        while (*r) {
+            if (*r == '\033' && *(r+1) == '[') {
+                r += 2;
+                while (*r && !(*r >= 'A' && *r <= 'Z') && !(*r >= 'a' && *r <= 'z'))
+                    r++;
+                if (*r) r++;
+            } else {
+                *w++ = *r++;
             }
-            *w = '\0';
-            mqtt_publish(topic, payload);
-            in_mqtt_debug = false;
+        }
+        *w = '\0';
+
+        // Ring buffer sink (always, including SOURCE_MQTT)
+        if (log_ring_base) {
+            uint32_t slot_addr = log_ring_base + (uint32_t)log_ring_head * LOG_ENTRY_SIZE;
+            int slen = strlen(sink_buf);
+            if (slen >= LOG_ENTRY_SIZE) slen = LOG_ENTRY_SIZE - 1;
+            psram_write(slot_addr, (const uint8_t *)sink_buf, slen);
+            psram_write8(slot_addr + slen, 0);  // null terminator
+            log_ring_head = (log_ring_head + 1) % log_ring_slots;
+            if (log_ring_count < log_ring_slots) log_ring_count++;
+        }
+
+        // File sink (always, including SOURCE_MQTT)
+        if (log_file) {
+            log_file.println(sink_buf);
+        }
+
+        // MQTT sink (skip SOURCE_MQTT to prevent infinite feedback loop)
+        if (source != SOURCE_MQTT && mqtt_connected()) {
+            static bool in_mqtt_debug = false;
+            if (!in_mqtt_debug) {
+                in_mqtt_debug = true;
+                char topic[48];
+                snprintf(topic, sizeof(topic), "conez/%d/debug", config.cone_id);
+                mqtt_publish(topic, sink_buf);
+                in_mqtt_debug = false;
+            }
         }
     }
 
     // Redraw the command line after our output
-    shell.resumeLine(OutputStream);
+    if (console_output)
+        shell.resumeLine(OutputStream);
 
     //return mutex
     xSemaphoreGive(print_mutex);
@@ -292,4 +334,86 @@ long get_thread_count(int thread)
         return 0; // Invalid thread index
     }
     return threadLoopCount[thread];
+}
+
+
+// ---- Debug log functions ----
+
+void log_init(void)
+{
+    log_ring_slots = psram_available() ? 256 : 32;
+    log_ring_base = psram_malloc(log_ring_slots * LOG_ENTRY_SIZE);
+    if (log_ring_base) {
+        // Zero first byte of each slot (marks empty)
+        for (int i = 0; i < log_ring_slots; i++) {
+            psram_write8(log_ring_base + (uint32_t)i * LOG_ENTRY_SIZE, 0);
+        }
+    }
+}
+
+bool log_open(const char *path)
+{
+    if (log_file) {
+        log_file.close();
+    }
+    log_file = LittleFS.open(path, FILE_APPEND);
+    return (bool)log_file;
+}
+
+void log_close(void)
+{
+    if (log_file) {
+        log_file.close();
+    }
+}
+
+bool log_save(const char *path)
+{
+    if (!log_ring_base || log_ring_count == 0) return false;
+
+    File f = LittleFS.open(path, FILE_WRITE);
+    if (!f) return false;
+
+    int start = (log_ring_count < log_ring_slots) ? 0 : log_ring_head;
+    char entry[LOG_ENTRY_SIZE];
+
+    for (int i = 0; i < log_ring_count; i++) {
+        int idx = (start + i) % log_ring_slots;
+        uint32_t addr = log_ring_base + (uint32_t)idx * LOG_ENTRY_SIZE;
+        psram_read(addr, (uint8_t *)entry, LOG_ENTRY_SIZE);
+        entry[LOG_ENTRY_SIZE - 1] = '\0';
+        if (entry[0]) {
+            int len = strlen(entry);
+            if (len > 0 && entry[len - 1] == '\n') entry[len - 1] = '\0';
+            f.println(entry);
+        }
+    }
+    f.close();
+    return true;
+}
+
+void log_show(void)
+{
+    if (!log_ring_base || log_ring_count == 0) {
+        printfnl(SOURCE_COMMANDS, "Log buffer empty\n");
+        return;
+    }
+
+    // Start from oldest entry
+    // Use SOURCE_NONE so displayed entries don't get re-captured by sinks
+    int start = (log_ring_count < log_ring_slots) ? 0 : log_ring_head;
+    char entry[LOG_ENTRY_SIZE];
+
+    for (int i = 0; i < log_ring_count; i++) {
+        int idx = (start + i) % log_ring_slots;
+        uint32_t addr = log_ring_base + (uint32_t)idx * LOG_ENTRY_SIZE;
+        psram_read(addr, (uint8_t *)entry, LOG_ENTRY_SIZE);
+        entry[LOG_ENTRY_SIZE - 1] = '\0';
+        if (entry[0]) {
+            // Strip trailing newline if present (callers' format strings include \n)
+            int len = strlen(entry);
+            if (len > 0 && entry[len - 1] == '\n') entry[len - 1] = '\0';
+            printfnl(SOURCE_NONE, "%s\n", entry);
+        }
+    }
 }

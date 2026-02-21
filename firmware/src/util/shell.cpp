@@ -215,6 +215,9 @@ bool ConezShell::executeIfInput(void)
         pending[0] = '\0';
         if (linebuffer[0] != '\0')
             strncpy(pending, linebuffer, SHELL_BUFSIZE);
+        // Log the command to debug sinks (MQTT, file log) — not to console
+        if (pending[0] != '\0')
+            printfnl(SOURCE_COMMANDS_PROMPT, "> %s\n", pending);
         getLock();
         inputActive = false;
         releaseLock();

@@ -351,6 +351,9 @@ void setup()
   // Initialize external PSRAM (ConeZ PCB only)
   psram_setup();
 
+  // Initialize debug log ring buffer (uses PSRAM when available)
+  log_init();
+
 #ifdef BOARD_HAS_RGB_LEDS
   //Setup RGB leds (buffers sized from config)
   led_setup();
