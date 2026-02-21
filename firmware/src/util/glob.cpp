@@ -31,7 +31,7 @@ bool glob_match(const char *pat, const char *str)
     return *str == '\0';
 }
 
-int glob_expand(const char *pattern, char (**results)[64])
+int glob_expand(const char *pattern, char (**results)[128])
 {
     *results = NULL;
 
@@ -57,14 +57,14 @@ int glob_expand(const char *pattern, char (**results)[64])
         return 0;
     }
 
-    char (*buf)[64] = (char (*)[64])malloc(MAX_GLOB_MATCHES * 64);
+    char (*buf)[128] = (char (*)[128])malloc(MAX_GLOB_MATCHES * 128);
     if (!buf) { root.close(); return 0; }
 
     int count = 0;
     File f = root.openNextFile();
     while (f && count < MAX_GLOB_MATCHES) {
         if (!f.isDirectory() && glob_match(filepart, f.name())) {
-            snprintf(buf[count], 64, "%s%s%s",
+            snprintf(buf[count], 128, "%s%s%s",
                      dir, (dir[strlen(dir) - 1] == '/') ? "" : "/",
                      f.name());
             count++;
@@ -79,7 +79,7 @@ int glob_expand(const char *pattern, char (**results)[64])
     }
 
     // Sort results alphabetically
-    qsort(buf, count, 64, [](const void *a, const void *b) -> int {
+    qsort(buf, count, 128, [](const void *a, const void *b) -> int {
         return strcmp((const char *)a, (const char *)b);
     });
 

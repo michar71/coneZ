@@ -13,7 +13,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include "mqtt_client.h"
+#include "conez_mqtt.h"
 #include "config.h"
 #include "printManager.h"
 #include "sensors.h"

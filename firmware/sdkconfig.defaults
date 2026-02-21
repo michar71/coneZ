@@ -1,0 +1,9 @@
+# LWIP statistics (disabled in stock Arduino-ESP32 SDK)
+CONFIG_LWIP_STATS=y
+
+# FreeRTOS tick rate — Arduino requires 1000 Hz
+CONFIG_FREERTOS_HZ=1000
+
+# Partition table — use custom CSV
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

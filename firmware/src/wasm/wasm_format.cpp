@@ -95,42 +95,48 @@ static int wasm_vformat(IM3Runtime runtime,
 
         switch (conv) {
         case 'd': case 'i':
-            if (sp < 30) spec[sp++] = conv; spec[sp] = '\0';
+            if (sp < 30) spec[sp++] = conv;
+            spec[sp] = '\0';
             if (aoff + 4 > mem_size) { err = 1; break; }
             { int32_t v; memcpy(&v, mem + aoff, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), spec, (int)v); }
             break;
 
         case 'u': case 'x': case 'X':
-            if (sp < 30) spec[sp++] = conv; spec[sp] = '\0';
+            if (sp < 30) spec[sp++] = conv;
+            spec[sp] = '\0';
             if (aoff + 4 > mem_size) { err = 1; break; }
             { uint32_t v; memcpy(&v, mem + aoff, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), spec, (unsigned)v); }
             break;
 
         case 'c':
-            if (sp < 30) spec[sp++] = 'c'; spec[sp] = '\0';
+            if (sp < 30) spec[sp++] = 'c';
+            spec[sp] = '\0';
             if (aoff + 4 > mem_size) { err = 1; break; }
             { int32_t v; memcpy(&v, mem + aoff, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), spec, (char)v); }
             break;
 
         case 'f':
-            if (sp < 30) spec[sp++] = 'f'; spec[sp] = '\0';
+            if (sp < 30) spec[sp++] = 'f';
+            spec[sp] = '\0';
             if (aoff + 8 > mem_size) { err = 1; break; }
             { double v; memcpy(&v, mem + aoff, 8); aoff += 8;
               n = snprintf(tmp, sizeof(tmp), spec, v); }
             break;
 
         case 'e': case 'g':
-            if (sp < 30) spec[sp++] = conv; spec[sp] = '\0';
+            if (sp < 30) spec[sp++] = conv;
+            spec[sp] = '\0';
             if (aoff + 8 > mem_size) { err = 1; break; }
             { double v; memcpy(&v, mem + aoff, 8); aoff += 8;
               n = snprintf(tmp, sizeof(tmp), spec, v); }
             break;
 
         case 's':
-            if (sp < 30) spec[sp++] = 's'; spec[sp] = '\0';
+            if (sp < 30) spec[sp++] = 's';
+            spec[sp] = '\0';
             if (aoff + 4 > mem_size) { err = 1; break; }
             { uint32_t sptr; memcpy(&sptr, mem + aoff, 4); aoff += 4;
               // Copy string from WASM memory with bounds check

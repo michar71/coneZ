@@ -9,7 +9,7 @@
 // which internally calls open() and triggers VFS error logs for missing files.
 static inline bool file_exists(const char *path)
 {
-    char fullpath[64];
+    char fullpath[256];
     snprintf(fullpath, sizeof(fullpath), "/littlefs%s", path);
     struct stat st;
     return (stat(fullpath, &st) == 0);

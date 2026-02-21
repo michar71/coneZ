@@ -15,10 +15,17 @@
 
 #define C2WASM_EMBEDDED
 
+// In embedded mode, symbol names are intentionally truncated to 32 bytes.
+// Suppress -Wformat-truncation which warns about this safe, intended behavior.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+
 // Platform implementation (callbacks, memory wrappers)
 #include "c2wasm_platform.c"
 
 // All compiler sources via directory-anchored wrapper
 #include "c2wasm_all.c"
+
+#pragma GCC diagnostic pop
 
 #endif /* INCLUDE_C_COMPILER */

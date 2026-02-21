@@ -106,13 +106,13 @@ void dump_nvs()
       case NVS_TYPE_I32: {
         int32_t val;
         nvs_get_i32(handle, info.key, &val);
-        Serial.printf("int32_t   = %ld\n", val);
+        Serial.printf("int32_t   = %d\n", (int)val);
         break;
       }
       case NVS_TYPE_U32: {
         uint32_t val;
         nvs_get_u32(handle, info.key, &val);
-        Serial.printf("uint32_t  = %lu\n", val);
+        Serial.printf("uint32_t  = %u\n", (unsigned)val);
         break;
       }
       case NVS_TYPE_I64: {

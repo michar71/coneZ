@@ -160,8 +160,7 @@ filenames, and subcommands.
   status                             Show one-screen system overview
   stop                               Stop running script
   tc                                 Show thread count per core
-  time|date                          Show current date/time and source
-  uptime                             Show system uptime
+  time|date|uptime                   Show current date/time, source, uptime
   version|ver                        Show firmware version and board info
   wasm [status|info <file>]          WASM runtime status/info
   wifi [enable|disable|ssid|password] Show WiFi status or control
@@ -675,19 +674,16 @@ tc
   Show the thread loop counter for each CPU core. Useful for checking
   that tasks are running.
 
-time / date
+time / date / uptime
   Show current local date, time, day of week, timezone, time source
-  (GPS+PPS, NTP, or compile-time), and epoch milliseconds. Time is
-  displayed in the local timezone (config system.timezone + auto DST).
-  Available on all boards — GPS boards use PPS-disciplined time,
-  others fall back to NTP when WiFi is connected. NTP auto-initializes
-  whenever WiFi connects (including via CLI commands) and re-syncs
-  periodically (config system.ntp_interval, default 3600s). If neither
-  GPS nor NTP is available, time starts from the firmware's compile
-  timestamp.
-
-uptime
-  Show time since boot in days, hours, minutes, seconds.
+  (GPS+PPS, NTP, or build/compile-time), NTP server and sync age,
+  epoch milliseconds, and system uptime. Time is displayed in the local
+  timezone (config system.timezone + auto DST). Available on all boards —
+  GPS boards use PPS-disciplined time, others fall back to NTP when WiFi
+  is connected. NTP auto-initializes whenever WiFi connects (including
+  via CLI commands) and re-syncs periodically (config system.ntp_interval,
+  default 3600s). If neither GPS nor NTP is available, time starts from
+  the firmware's compile timestamp (shown as source "build").
 
 ver
   Alias for version.
@@ -709,8 +705,9 @@ wasm
 
 wifi
   Show WiFi status: enabled, configured SSID, connection state, connected
-  SSID, BSSID, channel, RSSI, IP/gateway/subnet/DNS, hostname, MAC, TX
-  power.
+  SSID, BSSID, channel, RSSI, IP/gateway/subnet/DNS, hostname, connection
+  uptime, IP/TCP/UDP packet counts (TX/RX), byte counts (TX/RX), MAC,
+  TX power.
 
   wifi enable
       Enable WiFi and connect using the configured SSID/password.

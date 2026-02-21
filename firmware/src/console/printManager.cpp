@@ -1,6 +1,6 @@
 #include "printManager.h"
 #include "shell.h"
-#include "mqtt_client.h"
+#include "conez_mqtt.h"
 #include "config.h"
 #include "psram.h"
 #include <LittleFS.h>

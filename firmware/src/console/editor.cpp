@@ -258,7 +258,7 @@ static void editor_ensure_visible(EditorState *ed)
 
 static void editor_draw(EditorState *ed, Stream *out)
 {
-    char buf[ED_COLS + 32];
+    char buf[ED_COLS + 128];
     char line_buf[ED_LINE_MAX];
 
     out->printf("\033[%d;1H", ED_TOP_ROW);   // skip row 1

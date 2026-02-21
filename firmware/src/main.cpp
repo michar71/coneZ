@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_task_wdt.h"
 #include <Wire.h>
 #include "main.h"
 #include <WiFi.h>
@@ -33,7 +36,7 @@
 #include "cue.h"
 #include "lut.h"
 #include "psram.h"
-#include "mqtt_client.h"
+#include "conez_mqtt.h"
 
 #define WAIT_FOR_USB_SERIAL
 #define WAIT_FOR_USB_SERIAL_TIMEOUT 15    // Seconds
@@ -305,10 +308,10 @@ void setup()
     Serial.printf("CPU:    %s rev %d, %d MHz, %d cores\n",
         ESP.getChipModel(), ESP.getChipRevision(),
         ESP.getCpuFreqMHz(), ESP.getChipCores());
-    Serial.printf("Flash:  %lu KB, SRAM: %lu KB free / %lu KB total\n",
-        ESP.getFlashChipSize() / 1024,
-        ESP.getFreeHeap() / 1024,
-        ESP.getHeapSize() / 1024);
+    Serial.printf("Flash:  %u KB, SRAM: %u KB free / %u KB total\n",
+        (unsigned)ESP.getFlashChipSize() / 1024,
+        (unsigned)ESP.getFreeHeap() / 1024,
+        (unsigned)ESP.getHeapSize() / 1024);
 #ifdef BOARD_HAS_IMPROVISED_PSRAM
     Serial.println("PSRAM:  8 MB (external SPI)");
 #elif defined(BOARD_HAS_NATIVE_PSRAM)
@@ -562,4 +565,21 @@ void loop()
   //SOS_effect2();
 #endif
 
+}
+
+// --- ESP-IDF entry point (Arduino as IDF component) ---
+// Replaces CONFIG_AUTOSTART_ARDUINO — gives us full control over
+// loopTask stack size and core affinity.
+static void loopTask(void *pvParameters)
+{
+    setup();
+    for (;;) {
+        loop();
+    }
+}
+
+extern "C" void app_main()
+{
+    initArduino();
+    xTaskCreatePinnedToCore(loopTask, "loopTask", 8192, NULL, 1, NULL, 1);
 }

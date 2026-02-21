@@ -8,7 +8,11 @@ ConeZ is an ESP32-S3 embedded system that powers networked LED light displays on
 
 ## Build Commands
 
-All commands run from the `firmware/` directory. The build system is PlatformIO with Arduino framework.
+All commands run from the `firmware/` directory. The build system is PlatformIO
+with ESP-IDF framework and Arduino as an IDF component (`framework = espidf, arduino`).
+This gives us full ESP-IDF SDK source compilation (with `sdkconfig.defaults` for
+menuconfig overrides like `CONFIG_LWIP_STATS`) while keeping Arduino APIs (Serial,
+WiFi, Wire, FastLED, etc.).
 
 If `pio` is not on `PATH`, use the local PlatformIO virtualenv binary:
 
@@ -62,6 +66,49 @@ src/
 ```
 
 PlatformIO's `-I src/<dir>` flags in `platformio.ini` make all headers includable by basename (e.g. `#include "gps.h"`).
+
+### ESP-IDF + Arduino Build System
+
+The project uses `framework = espidf, arduino` in `platformio.ini`, which builds
+ESP-IDF from source with Arduino as an IDF component. This replaces the stock
+pre-compiled Arduino SDK, giving us full control over ESP-IDF configuration.
+
+**Key files:**
+- `platformio.ini` — pinned to `espressif32@6.12.0` (ESP-IDF 4.4.7)
+- `sdkconfig.defaults` — ESP-IDF config overrides applied at build time
+- `components/esp_littlefs/` — LittleFS filesystem component (v1.14.8 for IDF 4.4 compat)
+- `main.cpp` — provides `app_main()` entry point (calls `initArduino()`, creates loopTask)
+
+**sdkconfig.defaults** currently enables:
+- `CONFIG_LWIP_STATS=y` — LWIP protocol statistics (IP/TCP/UDP packet counters)
+- `CONFIG_FREERTOS_HZ=1000` — required by Arduino framework
+- `CONFIG_PARTITION_TABLE_CUSTOM=y` — uses our `partitions.csv`
+
+**ESP-IDF component: esp_littlefs.** LittleFS is not built into ESP-IDF 4.4 — it's
+provided via `components/esp_littlefs/` (git submodule of joltwallet/esp_littlefs,
+checked out at v1.14.8). The CMakeLists.txt was modified to use explicit source
+file lists instead of `file(GLOB)` which PlatformIO's builder doesn't process
+correctly.
+
+**Entry point:** We provide our own `extern "C" void app_main()` in `main.cpp`
+instead of using `CONFIG_AUTOSTART_ARDUINO`. This gives us direct control over
+loopTask stack size, priority, and core affinity. `app_main()` calls
+`initArduino()` then creates loopTask pinned to core 1.
+
+**Name collisions to watch for:**
+- `mqtt_client.h` — ESP-IDF has its own; ours is named `conez_mqtt.h`
+- `task.h` — use `#include "freertos/task.h"`, never bare `#include "task.h"`
+- Stricter warnings: ESP-IDF enables `-Werror=format-truncation`,
+  `-Werror=misleading-indentation`, `-Werror=class-memaccess`. Use `snprintf`
+  with adequately sized buffers, put statements on separate lines after `if`,
+  and avoid `memset` on C++ classes.
+
+**First build** compiles the entire ESP-IDF from source (~3-5 minutes).
+Subsequent incremental builds are fast (~5-20 seconds).
+
+**For contributors:** The build is still `pio run` — no extra setup. PlatformIO
+handles the ESP-IDF toolchain installation automatically. The `sdkconfig.defaults`
+file is picked up without any manual `menuconfig` step.
 
 There are standalone test projects under `tests/` (psram_test, thread_test) — each is a separate PlatformIO project built/flashed independently from its own directory.
 
@@ -478,7 +525,7 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 - **Temp:** TMP102 on I2C 0x48
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
 - **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`. CLI `wifi ssid`/`wifi psk` hot-apply (disconnect + reconnect) without saving to config; `config set wifi.*` persists but requires reboot.
-- **MQTT:** Minimal MQTT 3.1.1 client in `mqtt/mqtt_client.cpp/h`. Connects to the sewerpipe broker over WiFi using Arduino `WiFiClient`. State machine: DISCONNECTED → WAIT_CONNACK → CONNECTED. Auto-reconnects with exponential backoff (1s → 30s cap). Publishes JSON heartbeats every 30s to `conez/{id}/status` with uptime, heap, temp, RSSI. Debug messages are forwarded to `conez/{id}/debug` by printManager (SOURCE_MQTT excluded to prevent loops). Subscribes to `conez/{id}/cmd/#` for per-cone commands. PINGREQ at keepalive/2 (30s). Config section `[mqtt]` with `broker` (default: `sewerpipe.local`), `port` (default: 1883), and `enabled` (default: on) keys. CLI: `mqtt` (status), `mqtt enable`/`disable`, `mqtt connect`/`disconnect`, `mqtt broker <host>` (hot-apply), `mqtt pub <topic> <payload>`. Debug output via `SOURCE_MQTT` (default on). Runs on loopTask (core 1); ShellTask can safely call `mqtt_publish()` and force flags (same core, time-sliced). See `documentation/mqtt.txt` for topic hierarchy and protocol details.
+- **MQTT:** Minimal MQTT 3.1.1 client in `mqtt/conez_mqtt.cpp/h`. Connects to the sewerpipe broker over WiFi using Arduino `WiFiClient`. State machine: DISCONNECTED → WAIT_CONNACK → CONNECTED. Auto-reconnects with exponential backoff (1s → 30s cap). Publishes JSON heartbeats every 30s to `conez/{id}/status` with uptime, heap, temp, RSSI. Debug messages are forwarded to `conez/{id}/debug` by printManager (SOURCE_MQTT excluded to prevent loops). Subscribes to `conez/{id}/cmd/#` for per-cone commands. PINGREQ at keepalive/2 (30s). Config section `[mqtt]` with `broker` (default: `sewerpipe.local`), `port` (default: 1883), and `enabled` (default: on) keys. CLI: `mqtt` (status), `mqtt enable`/`disable`, `mqtt connect`/`disconnect`, `mqtt broker <host>` (hot-apply), `mqtt pub <topic> <payload>`. Debug output via `SOURCE_MQTT` (default on). Runs on loopTask (core 1); ShellTask can safely call `mqtt_publish()` and force flags (same core, time-sliced). See `documentation/mqtt.txt` for topic hierarchy and protocol details.
 - **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) supports up to 3 simultaneous clients with per-slot IAC state, bare `\n` → `\r\n` translation on output, prompt delivery on connect, and Ctrl+D per-session disconnect. Arrow keys, Home/End/Delete, Ctrl-A/E/U, 32-entry command history (PSRAM-backed ring buffer on ConeZ PCB, single-entry DRAM fallback on Heltec). ANSI color output on by default, toggleable at runtime via `color on`/`color off` CLI command (`setAnsiEnabled()`/`getAnsiEnabled()` in `printManager.h`). Commands requiring ANSI (art, clear, game, winamp) error out when color is off; editor falls back to a line-based mode. `CORE_DEBUG_LEVEL=0` in `platformio.ini` suppresses Arduino library log macros (`log_e`/`log_w`/etc.) at compile time — these bypass `esp_log_level_set()` and would corrupt HWCDC output. File commands auto-normalize paths (prepend `/` if missing) via `normalize_path()` in `main.h`. Full-screen text editor (`console/editor.cpp/h`) for on-device script editing, with line-editor fallback when ANSI is disabled. See `documentation/cli-commands.txt` for the full command reference.
 
 ### Time System
@@ -553,7 +600,12 @@ LittleFS on 4MB flash partition. Stores BASIC scripts (`.bas`), WASM modules (`.
 
 ### Versioning
 
-All components use the format **`MAJOR.MINOR.BUILD`** with 2-digit minor and 4-digit build number: `0.01.0866`. The format string is `"%d.%02d.%04d"`. Each component has its own `buildnum.txt` that auto-increments on build:
+All components use the format **`MAJOR.MINOR.BUILD`** with 2-digit minor and 4-digit build number: `0.02.0001`. The format string is `"%d.%02d.%04d"`. Each component has its own `buildnum.txt` that auto-increments on build.
+
+**Firmware version history:**
+- **v0.01.x** — Arduino framework (pre-compiled SDK)
+- **v0.02.x** — ESP-IDF + Arduino component (SDK built from source, `sdkconfig.defaults`)
+
 
 | Component | Version defines | buildnum.txt location |
 |---|---|---|

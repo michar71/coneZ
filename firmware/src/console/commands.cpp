@@ -15,7 +15,7 @@
 #include "wasm_wrapper.h"
 #endif
 #include "main.h"
-#include "task.h"
+#include "freertos/task.h"
 #include "printManager.h"
 #include "gps.h"
 #include "sensors.h"
@@ -26,12 +26,14 @@
 #include "sun.h"
 #include "editor.h"
 #include "psram.h"
-#include "mqtt_client.h"
+#include "conez_mqtt.h"
 #include "inflate.h"
 #include "deflate.h"
 #include "glob.h"
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
+#include "lwip/stats.h"
+#include "lwip/netif.h"
 #include <csetjmp>
 /*
  * Forward-declare only the embedded compiler APIs we need.
@@ -383,7 +385,7 @@ int delFile(int argc, char **argv)
         char path[64];
         normalize_path(path, sizeof(path), argv[i]);
         if (has_glob_chars(path)) {
-            char (*matches)[64];
+            char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
                 printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
@@ -436,7 +438,7 @@ int renFile(int argc, char **argv)
     }
 
     if (has_glob_chars(path1)) {
-        char (*matches)[64];
+        char (*matches)[128];
         int count = glob_expand(path1, &matches);
         if (!count) {
             printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[1]);
@@ -486,7 +488,7 @@ int listFile(int argc, char **argv)
         char path[64];
         normalize_path(path, sizeof(path), argv[i]);
         if (has_glob_chars(path)) {
-            char (*matches)[64];
+            char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
                 printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
@@ -637,7 +639,7 @@ int cmd_grep(int argc, char **argv)
         char path[64];
         normalize_path(path, sizeof(path), argv[2]);
         if (has_glob_chars(path)) {
-            char (*matches)[64];
+            char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
                 printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[2]);
@@ -700,7 +702,7 @@ int cmd_cp(int argc, char **argv)
     }
 
     if (has_glob_chars(src)) {
-        char (*matches)[64];
+        char (*matches)[128];
         int count = glob_expand(src, &matches);
         if (!count) {
             printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[1]);
@@ -1616,6 +1618,27 @@ int cmd_wifi(int argc, char **argv)
             out->printf("  Connected:   %lud %02luh %02lum %02lus\n",
                 sec / 86400, (sec % 86400) / 3600, (sec % 3600) / 60, sec % 60);
         }
+#if LWIP_STATS
+        out->printf("  IP  TX/RX:   %u / %u packets\n",
+            (unsigned)lwip_stats.ip.xmit, (unsigned)lwip_stats.ip.recv);
+        out->printf("  TCP TX/RX:   %u / %u segments\n",
+            (unsigned)lwip_stats.tcp.xmit, (unsigned)lwip_stats.tcp.recv);
+        out->printf("  UDP TX/RX:   %u / %u datagrams\n",
+            (unsigned)lwip_stats.udp.xmit, (unsigned)lwip_stats.udp.recv);
+#endif
+#if MIB2_STATS
+        struct netif *sta_nif = netif_find("st0");
+        if (sta_nif) {
+            uint32_t tx = sta_nif->mib2_counters.ifoutoctets;
+            uint32_t rx = sta_nif->mib2_counters.ifinoctets;
+            if (tx < 1024 && rx < 1024)
+                out->printf("  Bytes TX/RX: %u / %u\n", (unsigned)tx, (unsigned)rx);
+            else if (tx < 1048576 && rx < 1048576)
+                out->printf("  Bytes TX/RX: %.1f KB / %.1f KB\n", tx / 1024.0f, rx / 1024.0f);
+            else
+                out->printf("  Bytes TX/RX: %.1f MB / %.1f MB\n", tx / 1048576.0f, rx / 1048576.0f);
+        }
+#endif
     }
 
     uint8_t mac[6];
@@ -1887,7 +1910,7 @@ static int effective_tz_offset(int year, int month, int day)
 // Format a timezone label like "UTC-7" or "UTC+0"
 static const char *tz_label(int tz_hours)
 {
-    static char buf[12];
+    static char buf[16];
     if (tz_hours >= 0)
         snprintf(buf, sizeof(buf), "UTC+%d", tz_hours);
     else
@@ -2452,7 +2475,7 @@ int cmd_led(int argc, char **argv)
     // led clear — all channels to black
     if (argc >= 2 && !strcasecmp(argv[1], "clear")) {
         for (int ch = 0; ch < 4; ch++)
-            if (bufs[ch]) memset(bufs[ch], 0, counts[ch] * sizeof(CRGB));
+            if (bufs[ch]) { for (int j = 0; j < counts[ch]; j++) bufs[ch][j] = CRGB::Black; }
         led_show();
         printfnl(SOURCE_COMMANDS, F("All LEDs cleared\n"));
         return 0;
@@ -2936,7 +2959,7 @@ int cmd_md5(int argc, char **argv)
         char path[64];
         normalize_path(path, sizeof(path), argv[i]);
         if (has_glob_chars(path)) {
-            char (*matches)[64];
+            char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
                 printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
@@ -2997,7 +3020,7 @@ int cmd_sha256(int argc, char **argv)
         char path[64];
         normalize_path(path, sizeof(path), argv[i]);
         if (has_glob_chars(path)) {
-            char (*matches)[64];
+            char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
                 printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
