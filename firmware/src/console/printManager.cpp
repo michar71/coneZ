@@ -308,7 +308,7 @@ void inc_thread_count(int thread)
     if (thread < 0 || thread >= 4) {
         return; // Invalid thread index
     }
-    threadLoopCount[thread]++;
+    threadLoopCount[thread] = threadLoopCount[thread] + 1;
 }
 
 

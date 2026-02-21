@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_timer.h"
+#include "driver/i2c_master.h"
 
 // Monotonic millisecond timer (replaces Arduino millis())
 // Wraps at ~49 days, same as Arduino. ISR-safe on ESP32.
@@ -82,5 +83,6 @@ void latlon_to_meters(float latitude_deg, float longitude_deg,
                       float *x_offset_meters, float *y_offset_meters);
 
 extern bool littlefs_mounted;
+extern i2c_master_bus_handle_t i2c_bus;
 
 #endif

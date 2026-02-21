@@ -110,7 +110,7 @@ static void IRAM_ATTR pps_isr(void *arg)
 {
     (void)arg;
     pps_millis = uptime_ms();
-    pps_count++;
+    pps_count = pps_count + 1;
     portENTER_CRITICAL_ISR(&time_mux);
     pps_edge_flag = true;
     portEXIT_CRITICAL_ISR(&time_mux);
@@ -525,8 +525,8 @@ uint32_t get_ntp_last_sync_ms(void)
 // NTP on GPS boards: provides time before GPS lock, NTP only wins if GPS+PPS hasn't set epoch yet
 void ntp_setup(void)
 {
-    sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
-    sntp_set_time_sync_notification_cb(ntp_sync_cb);
+    esp_sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
+    esp_sntp_set_time_sync_notification_cb(ntp_sync_cb);
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, config.ntp_server);
     esp_sntp_setservername(1, "time.nist.gov");
@@ -715,8 +715,8 @@ uint32_t get_ntp_last_sync_ms(void)
 
 void ntp_setup(void)
 {
-    sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
-    sntp_set_time_sync_notification_cb(ntp_sync_cb);
+    esp_sntp_set_sync_interval((uint32_t)config.ntp_interval * 1000);
+    esp_sntp_set_time_sync_notification_cb(ntp_sync_cb);
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, config.ntp_server);
     esp_sntp_setservername(1, "time.nist.gov");

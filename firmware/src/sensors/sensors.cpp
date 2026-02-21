@@ -1,33 +1,30 @@
 #include "sensors.h"
 #include <stdint.h>
-#include "driver/i2c.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/i2c_master.h"
 #include "adc.h"
 #include "board.h"
 #include "printManager.h"
 #include "mpu6500.h"
 #include "conez_usb.h"
+#include "main.h"
 #include <math.h>
 
 #define TMP102_ADDR 0x48
+
+static i2c_master_dev_handle_t tmp102_dev = NULL;
 
 // TMP102 temperature read — inlined from abandoned yannicked/Sensor_TMP102 library.
 // Datasheet: http://www.ti.com/lit/ds/symlink/tmp102.pdf
 // Register 0x00 returns 12-bit signed temperature, 0.0625°C per LSB.
 static float tmp102_read(void) {
+    if (!tmp102_dev) return -500.0f;
+
     uint8_t reg = 0x00;
     uint8_t data[2];
 
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (TMP102_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_start(cmd);  // repeated start
-    i2c_master_write_byte(cmd, (TMP102_ADDR << 1) | I2C_MASTER_READ, true);
-    i2c_master_read(cmd, data, 2, I2C_MASTER_LAST_NACK);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(50));
-    i2c_cmd_link_delete(cmd);
-
+    esp_err_t err = i2c_master_transmit_receive(tmp102_dev, &reg, 1, data, 2, pdMS_TO_TICKS(50));
     if (err != ESP_OK) return -500.0f;
 
     int16_t raw = (data[0] << 4) | (data[1] >> 4);
@@ -50,6 +47,13 @@ bool IMU_available = false;
 
 void sensors_setup(void)
 {
+    // Add TMP102 device to the I2C bus
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address = TMP102_ADDR;
+    dev_cfg.scl_speed_hz = 100000;
+    i2c_master_bus_add_device(i2c_bus, &dev_cfg, &tmp102_dev);
+
     usb_printf("TMP102 initialized\n");
 
     if(!mpu6500_init())

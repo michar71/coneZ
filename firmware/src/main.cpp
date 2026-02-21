@@ -6,7 +6,7 @@
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "main.h"
 #include "conez_wifi.h"
 #include "esp_system.h"
@@ -55,7 +55,10 @@
 //uint32_t debug = DEBUG_MSG_LORA | DEBUG_MSG_LORA_RAW |
 //                 DEBUG_MSG_GPS | DEBUG_MSG_GPS_RAW;
 
-//I2C speed
+// I2C bus handle — shared with sensors.cpp, mpu6500.cpp
+i2c_master_bus_handle_t i2c_bus = NULL;
+
+// I2C speed
 #define I2C_FREQ      100000 // 100 kHz standard-mode
 
 
@@ -102,22 +105,15 @@ void init_LittleFS()
 }
 
 
-// Enumerate all I2C devices
+// Enumerate all I2C devices using probe
 void dump_i2c(void)
 {
   int found = 0;
 
   usb_printf("\nEnumerating I2C devices:\n");
-  for( uint8_t addr = 1; addr < 0x7F; ++addr )
+  for( uint16_t addr = 1; addr < 0x7F; ++addr )
   {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(50));
-    i2c_cmd_link_delete(cmd);
-
-    if( err == ESP_OK )
+    if (i2c_master_probe(i2c_bus, addr, pdMS_TO_TICKS(50)) == ESP_OK)
     {
       usb_printf("  I2C device @ 0x%02X\n", addr);
       ++found;
@@ -416,17 +412,16 @@ void setup()
   //All other code writes to the LED buffers and calls led_show() to mark dirty.
 #endif
 
-  // I2C
+  // I2C — new handle-based driver (IDF 5.x)
   {
-    i2c_config_t i2c_conf = {};
-    i2c_conf.mode = I2C_MODE_MASTER;
-    i2c_conf.sda_io_num = I2C_SDA_PIN;
-    i2c_conf.scl_io_num = I2C_SCL_PIN;
-    i2c_conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    i2c_conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    i2c_conf.master.clk_speed = I2C_FREQ;
-    i2c_param_config(I2C_NUM_0, &i2c_conf);
-    i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
+    i2c_master_bus_config_t bus_cfg = {};
+    bus_cfg.i2c_port = I2C_NUM_0;
+    bus_cfg.sda_io_num = (gpio_num_t)I2C_SDA_PIN;
+    bus_cfg.scl_io_num = (gpio_num_t)I2C_SCL_PIN;
+    bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_cfg.glitch_ignore_cnt = 7;
+    bus_cfg.flags.enable_internal_pullup = true;
+    i2c_new_master_bus(&bus_cfg, &i2c_bus);
   }
   dump_i2c();
 

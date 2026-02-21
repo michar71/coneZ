@@ -1,5 +1,6 @@
 #include "mpu6500.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
+#include "main.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <math.h>
@@ -29,40 +30,33 @@ static mpu_vec3_t last_accel;
 static mpu_vec3_t last_gyro;
 static float      last_temp;
 
-// ---- I2C helpers (same pattern as tmp102_read in sensors.cpp) ----
+// I2C device handle
+static i2c_master_dev_handle_t mpu_dev = NULL;
+
+// ---- I2C helpers (new handle-based API) ----
 
 static esp_err_t mpu_write_reg(uint8_t reg, uint8_t val)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (MPU6500_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_write_byte(cmd, val, true);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(50));
-    i2c_cmd_link_delete(cmd);
-    return err;
+    uint8_t buf[2] = { reg, val };
+    return i2c_master_transmit(mpu_dev, buf, 2, pdMS_TO_TICKS(50));
 }
 
 static esp_err_t mpu_read_regs(uint8_t reg, uint8_t *buf, size_t len)
 {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (MPU6500_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_start(cmd);  // repeated start
-    i2c_master_write_byte(cmd, (MPU6500_ADDR << 1) | I2C_MASTER_READ, true);
-    i2c_master_read(cmd, buf, len, I2C_MASTER_LAST_NACK);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(50));
-    i2c_cmd_link_delete(cmd);
-    return err;
+    return i2c_master_transmit_receive(mpu_dev, &reg, 1, buf, len, pdMS_TO_TICKS(50));
 }
 
 // ---- Public API ----
 
 bool mpu6500_init(void)
 {
+    // Add MPU6500 device to the I2C bus
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address = MPU6500_ADDR;
+    dev_cfg.scl_speed_hz = 100000;
+    i2c_master_bus_add_device(i2c_bus, &dev_cfg, &mpu_dev);
+
     // Reset device
     if (mpu_write_reg(REG_PWR_MGMT_1, 0x80) != ESP_OK)
         return false;

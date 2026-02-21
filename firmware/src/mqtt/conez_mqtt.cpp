@@ -67,7 +67,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
         break;
 
     case MQTT_EVENT_DATA: {
-        s_rx_count++;
+        s_rx_count = s_rx_count + 1;
         // Extract topic and payload (not null-terminated in event)
         char topic[128];
         int tlen = ev->topic_len < (int)sizeof(topic) - 1
@@ -169,7 +169,7 @@ static void send_heartbeat(void)
              (int)wifi_get_rssi());
 
     esp_mqtt_client_publish(s_client, topic_status, payload, 0, 0, 0);
-    s_tx_count++;
+    s_tx_count = s_tx_count + 1;
     last_heartbeat_ms = uptime_ms();
 }
 
@@ -247,7 +247,7 @@ int mqtt_publish(const char *topic, const char *payload)
     if (!s_connected || !s_client) return -1;
     int msg_id = esp_mqtt_client_publish(s_client, topic, payload, 0, 0, 0);
     if (msg_id >= 0) {
-        s_tx_count++;
+        s_tx_count = s_tx_count + 1;
         return 0;
     }
     return -1;

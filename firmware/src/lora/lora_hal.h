@@ -12,7 +12,7 @@
 #include "soc/spi_reg.h"
 #include "soc/gpio_sig_map.h"
 #include "driver/gpio.h"
-#include "driver/periph_ctrl.h"
+#include "esp_private/periph_ctrl.h"
 #include "esp_rom_gpio.h"
 #include "esp_timer.h"
 
