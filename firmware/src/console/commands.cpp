@@ -1533,6 +1533,16 @@ int cmd_mqtt(int argc, char **argv)
 }
 
 
+static volatile uint32_t wifi_connected_since = 0;
+
+static void wifi_event_cb(arduino_event_id_t event)
+{
+    if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED)
+        wifi_connected_since = millis();
+    else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+        wifi_connected_since = 0;
+}
+
 int cmd_wifi(int argc, char **argv)
 {
     // wifi enable
@@ -1600,6 +1610,12 @@ int cmd_wifi(int argc, char **argv)
         out->printf("  Subnet:      %s\n", WiFi.subnetMask().toString().c_str());
         out->printf("  DNS:         %s\n", WiFi.dnsIP().toString().c_str());
         out->printf("  Hostname:    %s\n", WiFi.getHostname());
+        uint32_t since = wifi_connected_since;
+        if (since) {
+            unsigned long sec = (millis() - since) / 1000;
+            out->printf("  Connected:   %lud %02luh %02lum %02lus\n",
+                sec / 86400, (sec % 86400) / 3600, (sec % 3600) / 60, sec % 60);
+        }
     }
 
     uint8_t mac[6];
@@ -3477,6 +3493,7 @@ void init_commands(Stream *dev)
 {
     shell.attach(*dev);
     shell.historyInit();
+    WiFi.onEvent(wifi_event_cb);
 
     //Test Commands
     shell.addCommand(F("test"), test);
