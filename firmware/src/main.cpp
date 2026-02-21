@@ -2,13 +2,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
+#include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "driver/i2c.h"
 #include <Wire.h>
 #include "main.h"
 #include <WiFi.h>
-#include <WebServer.h>
-#include <ElegantOTA.h>
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_spi_flash.h"
+#include "esp_heap_caps.h"
+#include "esp_clk.h"
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
 #include <esp_app_format.h>
@@ -117,25 +122,24 @@ void list_dir(fs::FS &fs, const char *dirname, uint8_t levels = 1)
 
 
 // Enumerate all I2C devices
-void dump_i2c( TwoWire &bus )
+void dump_i2c(void)
 {
   int found = 0;
 
   Serial.print( "\nEnumerating I2C devices:\n" );
-  bus.setTimeOut(50);
   for( uint8_t addr = 1; addr < 0x7F; ++addr )
   {
-    bus.beginTransmission( addr );
-    uint8_t err = bus.endTransmission();
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(50));
+    i2c_cmd_link_delete(cmd);
 
-    if( err == 0 )
+    if( err == ESP_OK )
     {
       Serial.printf( "  I2C device @ 0x%02X\n", addr );
       ++found;
-    }
-    else
-    {
-        //Serial.printf( "  I2C error %d @ 0x%02X\n", err,addr );
     }
   }
 
@@ -229,12 +233,25 @@ void script_autoexec(void)
 #ifdef BOARD_HAS_BUZZER
 void buzzer(int freq, int vol)
 {
-  //ledcSetup(0, freq, 8);
-  //ledcAttachPin(BUZZER_PIN, 0);
-  //ledcWrite(0, vol);
-  analogWriteResolution(8);
-  analogWriteFrequency(freq);
-  analogWrite(BUZZER_PIN,vol);
+  ledc_timer_config_t timer_conf = {};
+  timer_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+  timer_conf.duty_resolution = LEDC_TIMER_8_BIT;
+  timer_conf.timer_num = LEDC_TIMER_0;
+  timer_conf.freq_hz = (uint32_t)freq;
+  timer_conf.clk_cfg = LEDC_AUTO_CLK;
+  ledc_timer_config(&timer_conf);
+
+  ledc_channel_config_t ch_conf = {};
+  ch_conf.gpio_num = BUZZER_PIN;
+  ch_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+  ch_conf.channel = LEDC_CHANNEL_0;
+  ch_conf.timer_sel = LEDC_TIMER_0;
+  ch_conf.duty = (uint32_t)vol;
+  ch_conf.hpoint = 0;
+  ledc_channel_config(&ch_conf);
+
+  ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, (uint32_t)vol);
+  ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
 #endif
 
@@ -244,12 +261,12 @@ void setup()
 
 #ifdef BOARD_HAS_POWER_MGMT
   // Turn on LOAD FET
-  pinMode( LOAD_ON_PIN, OUTPUT );
-  digitalWrite( LOAD_ON_PIN, HIGH );
+  gpio_set_direction( (gpio_num_t)LOAD_ON_PIN, GPIO_MODE_OUTPUT );
+  gpio_set_level( (gpio_num_t)LOAD_ON_PIN, 1 );
 
   // Turn on solar FET
-  pinMode( SOLAR_PWM_PIN, OUTPUT );
-  digitalWrite( SOLAR_PWM_PIN, HIGH );
+  gpio_set_direction( (gpio_num_t)SOLAR_PWM_PIN, GPIO_MODE_OUTPUT );
+  gpio_set_level( (gpio_num_t)SOLAR_PWM_PIN, 1 );
 #endif
 
   delay( 250 );
@@ -258,16 +275,16 @@ void setup()
 
 #ifdef BOARD_HAS_BUZZER
   //Buzzer Setup
-  pinMode( BUZZER_PIN, OUTPUT );
+  gpio_set_direction( (gpio_num_t)BUZZER_PIN, GPIO_MODE_OUTPUT );
 #endif
 
   // LED pin
-  pinMode( LED_PIN, OUTPUT );
-  digitalWrite( LED_PIN, LOW );
+  gpio_set_direction( (gpio_num_t)LED_PIN, GPIO_MODE_OUTPUT );
+  gpio_set_level( (gpio_num_t)LED_PIN, 0 );
   delay( 500 );
-  digitalWrite( LED_PIN, HIGH );
+  gpio_set_level( (gpio_num_t)LED_PIN, 1 );
   delay( 500 );
-  digitalWrite( LED_PIN, LOW );
+  gpio_set_level( (gpio_num_t)LED_PIN, 0 );
 
 
   Serial.begin( 115200 );
@@ -306,17 +323,29 @@ void setup()
     Serial.println("Board:  unknown");
 #endif
 
-    Serial.printf("CPU:    %s rev %d, %d MHz, %d cores\n",
-        ESP.getChipModel(), ESP.getChipRevision(),
-        ESP.getCpuFreqMHz(), ESP.getChipCores());
+    {
+      esp_chip_info_t ci;
+      esp_chip_info(&ci);
+      const char *model = "ESP32";
+      switch (ci.model) {
+        case CHIP_ESP32:   model = "ESP32";    break;
+        case CHIP_ESP32S2: model = "ESP32-S2"; break;
+        case CHIP_ESP32S3: model = "ESP32-S3"; break;
+        case CHIP_ESP32C3: model = "ESP32-C3"; break;
+        default: break;
+      }
+      Serial.printf("CPU:    %s rev %d, %u MHz, %d cores\n",
+          model, ci.revision,
+          (unsigned)(esp_clk_cpu_freq() / 1000000), ci.cores);
+    }
     Serial.printf("Flash:  %u KB, SRAM: %u KB free / %u KB total\n",
-        (unsigned)ESP.getFlashChipSize() / 1024,
-        (unsigned)ESP.getFreeHeap() / 1024,
-        (unsigned)ESP.getHeapSize() / 1024);
+        (unsigned)spi_flash_get_chip_size() / 1024,
+        (unsigned)esp_get_free_heap_size() / 1024,
+        (unsigned)heap_caps_get_total_size(MALLOC_CAP_8BIT) / 1024);
 #ifdef BOARD_HAS_IMPROVISED_PSRAM
     Serial.println("PSRAM:  8 MB (external SPI)");
 #elif defined(BOARD_HAS_NATIVE_PSRAM)
-    Serial.printf("PSRAM:  %lu KB (native)\n", ESP.getPsramSize() / 1024);
+    Serial.printf("PSRAM:  %u KB (native)\n", (unsigned)(esp_spiram_get_size() / 1024));
 #else
     Serial.println("PSRAM:  none");
 #endif
@@ -393,7 +422,7 @@ void setup()
 
   // I2C
   Wire.begin( I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQ );
-  dump_i2c( Wire );
+  dump_i2c();
 
 
   // Fire up the LoRa radio.
@@ -530,9 +559,9 @@ void loop()
   //digitalWrite( LED_PIN, LOW );
 
   if( millis() % 500 > 250 )
-    digitalWrite( LED_PIN, HIGH );
+    gpio_set_level( (gpio_num_t)LED_PIN, 1 );
   else
-    digitalWrite( LED_PIN, LOW );
+    gpio_set_level( (gpio_num_t)LED_PIN, 0 );
 
   // Check for LoRa packets
   lora_rx();
@@ -541,10 +570,13 @@ void loop()
   // Process GPS messages
   gps_loop();
 
-  EVERY_N_SECONDS( 60 )
   {
-    // Update the sun position every minute
-    sunUpdateViaGPS();
+    static int64_t last_sun_update = 0;
+    int64_t now_us = esp_timer_get_time();
+    if (now_us - last_sun_update >= 60000000LL) {
+        last_sun_update = now_us;
+        sunUpdateViaGPS();
+    }
   }
 #endif
 

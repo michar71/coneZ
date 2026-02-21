@@ -25,6 +25,9 @@ int get_hour(void);
 int get_minute(void);
 int get_second(void);
 
+int get_date_raw(void);    // DDMMYY or -1 if invalid
+int get_time_raw(void);    // HHMMSS or -1 if invalid
+
 int get_satellites(void);
 int get_hdop(void);
 int get_fix_type(void);    // 0=unknown, 1=no fix, 2=2D, 3=3D

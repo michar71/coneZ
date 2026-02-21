@@ -128,6 +128,67 @@ file is picked up without any manual `menuconfig` step.
 
 There are standalone test projects under `tests/` (psram_test, thread_test) — each is a separate PlatformIO project built/flashed independently from its own directory.
 
+### Library Dependencies
+
+External libraries in `platformio.ini` `lib_deps`:
+
+| Library | Version | Arduino required? | Notes |
+|---------|---------|-------------------|-------|
+| RadioLib | ^7.6.0 | No (HAL-based) | Uses `RadioLibHal` abstraction. Ships a reference ESP-IDF HAL in `examples/NonArduino/ESP-IDF/`. Currently uses Arduino SPI/GPIO via `RADIOLIB_BUILD_ARDUINO`. |
+| FastLED | ^3.10.1 | No (optional) | `#ifdef ARDUINO` guards around `Arduino.h`. LED output uses direct ESP32 RMT registers (`platforms/esp/32/`), not Arduino GPIO. On IDF 4.4 uses RMT4 driver; I2S parallel driver requires IDF 5 (harmless warning at compile time). |
+| sunset | ^1.1.7 | No | Pure C++ math (`<cmath>`, `<ctime>`). Zero platform dependency. |
+| Wasm3 | ^0.5.0 | No | Pure C interpreter. Zero platform dependency. |
+
+Local library in `lib/`:
+
+| Library | Arduino required? | Notes |
+|---------|-------------------|-------|
+| MPU9250_WE | Yes | Library supports both I2C and SPI, but ConeZ only uses I2C (`MPU6500_WE mpu(0x68)` — `TwoWire` constructor). Depends on Arduino `Wire`. Small enough to rewrite with `driver/i2c.h`. |
+
+**No library is a hard blocker for dropping Arduino.** RadioLib and FastLED have IDF-native code paths. Wasm3 and sunset are pure C/C++. MPU9250_WE is the only library that unconditionally requires Arduino, but it's small and local.
+
+### Arduino Migration Path
+
+The project currently uses `framework = espidf, arduino`. Arduino could be dropped
+entirely (`framework = espidf` only) — all Arduino APIs have direct ESP-IDF
+equivalents. This section documents the migration surface.
+
+**Remaining Arduino API usage across firmware (~370 call sites):**
+
+| Arduino API | ~Count | Files | ESP-IDF Replacement | Status |
+|-------------|--------|-------|---------------------|--------|
+| Serial (print/read/write) | 135 | 9 | UART driver or USB CDC (`tinyusb`). HWCDC core-1 constraint remains. | Pending |
+| millis/delay/micros | 105 | 15 | `esp_timer_get_time()/1000`, `vTaskDelay(pdMS_TO_TICKS(ms))`, `esp_timer_get_time()` | Pending |
+| LittleFS / File | 77 | 15 | Already an IDF component (`esp_littlefs`). Switch to POSIX `open()`/`read()`/`write()`/`stat()`. | Pending |
+| SPI (SPIClass) | 56 | 2 | `driver/spi_master.h`. PSRAM code already uses direct `GPSPI2` register writes. | Pending |
+| GPIO (pinMode/digitalWrite) | 40 | 6 | `driver/gpio.h`, `gpio_set_level()`, `gpio_set_direction()` | Pending |
+| WiFi (WiFi.begin/status) | 39 | 6 | `esp_wifi.h` (already included alongside Arduino WiFi) | Pending |
+| ~~WebServer~~ | ~~37~~ | — | `esp_http_server.h` (IDF built-in). URI-matching handlers with `httpd_req_t*`, runs in own FreeRTOS task (no polling). OTA uses raw binary POST via JavaScript `fetch()`. | **Done** |
+| Wire (I2C) | 10 | 2 | `driver/i2c.h` | Pending |
+| Update (OTA) | 8 | 1 | `esp_ota_ops.h` (already used for partition inspection) | Pending |
+| EVERY_N_SECONDS | 1 | 1 | Simple `millis()` check or `esp_timer` periodic | Pending |
+| ~~String class~~ | ~~26~~ | — | `snprintf()` + static char buffers with `page_cat`/`page_catf` helpers | **Done** |
+| ~~ESP.* helpers~~ | ~~13~~ | — | `esp_chip_info()`, `esp_get_free_heap_size()`, `heap_caps_get_total_size()`, `spi_flash_get_chip_size()`, `esp_clk_cpu_freq()`, `esp_spiram_get_size()`, `esp_restart()` | **Done** |
+
+**Migration difficulty by subsystem:**
+
+| Subsystem | Difficulty | Status |
+|-----------|------------|--------|
+| String class | Easy | **Done** — static buffers with `page_cat`/`page_catf` in http.cpp, `cfg_cat`/`cfg_catf` in config.cpp, `snprintf` in lut.cpp, C string ops in shell.cpp, byte-array `readData` in lora.cpp |
+| ESP.* helpers | Easy | **Done** — direct IDF API calls |
+| GPIO, timing | Easy | Pending — 1:1 replacements, mechanical |
+| I2C (Wire) | Easy | Pending — only 2 files, `driver/i2c.h` is straightforward |
+| LittleFS | Easy | Pending — already an IDF component; swap `File` class for POSIX calls |
+| OTA (Update) | Easy | Pending — already wraps `esp_ota_*` which we already include |
+| WiFi | Medium | Pending — thin wrapper over `esp_wifi.h`, but event model differs |
+| SPI (PSRAM/LoRa) | Medium | Pending — PSRAM already uses direct registers; RadioLib needs custom HAL |
+| Serial/HWCDC | Medium | Pending — core debug path, must preserve core-1 pinning. Need `tinyusb` CDC or UART driver. |
+| WebServer | Hard | **Done** — `esp_http_server` with URI handlers, raw binary OTA upload, JS-driven form |
+
+**In progress.** String class, ESP.* helpers, and WebServer are complete. All
+remaining replacements are mechanical (no architectural changes needed), but
+touching ~370 call sites across ~25 files makes it a multi-day effort.
+
 ## Architecture
 
 ### Dual-Core Threading Model
@@ -138,12 +199,14 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 |------|------|----------|-------|--------|-----------|
 | loopTask | 1 | 1 | 8192 | Arduino `loop()` in `main.cpp` | Always running |
 | ShellTask | 1 | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
+| httpd | 1 | 6 | 6144 | `esp_http_server` in `http/http.cpp` | Always running |
 | led_render | 1 | 2 | 4096 | `led_task_fun` in `led/led.cpp` | Always running |
 | BasicTask | any | 1 | 16384 | `basic_task_fun` in `basic/basic_wrapper.cpp` | Created on first script |
 | WasmTask | 1 | 1 | 16384 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Created on first script |
 
 **Core 1 tasks:**
-- **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi/HTTP, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration.
+- **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
+- **httpd** — ESP-IDF `esp_http_server` task. Handles all HTTP requests autonomously (no polling needed). Pinned to core 1 for HWCDC safety (handlers call `printfnl()`). Stack 6144 for HTML generation and OTA streaming.
 - **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
 - **led_render** — Calls `FastLED.show()` at ~30 FPS when dirty, at least 1/sec unconditionally. Priority 2 preempts both loopTask and ShellTask.
 
@@ -533,12 +596,18 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 ### Key Hardware Interfaces
 
 - **LoRa:** RadioLib, SX1262/SX1268 via SPI, two modes selectable via `lora.rf_mode` config key. **LoRa mode** (default): configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW). **FSK mode**: configurable bit rate, frequency deviation, RX bandwidth, data shaping, whitening, sync word (hex string), CRC. Shared params (frequency, TX power, preamble) work in both modes. CLI `lora` subcommands (`freq`, `power`, `bw`, `sf`, `cr`, `mode`) hot-apply changes without saving to config; `config set lora.*` persists but requires reboot.
-- **GPS:** ATGM336H (AT6558 chipset) via UART (9600 baud), parsed by TinyGPSPlus, with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`).
+- **GPS:** ATGM336H (AT6558 chipset) via UART (9600 baud), parsed by inline NMEA parser (`sensors/nmea.h`/`nmea.cpp` — pure C, no Arduino dependency), with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`). Parser handles RMC, GGA, and GSA sentences from any GNSS talker ID.
 - **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. Default boot color per channel configurable via `led.color1`–`color4` (hex 0xRRGGBB, default 0x000000/off). CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is mutex-protected against the render task. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `lib/MPU9250_WE/`)
-- **Temp:** TMP102 on I2C 0x48
+- **Temp:** TMP102 on I2C 0x48 (inline driver in `sensors/sensors.cpp` — reads register 0x00 via Wire)
 - **PSRAM:** 8MB external SPI PSRAM on ConeZ PCB. See PSRAM Subsystem section below.
-- **WiFi:** STA mode, SSID/password from config system, with ElegantOTA at `/update`. CLI `wifi ssid`/`wifi psk` hot-apply (disconnect + reconnect) without saving to config; `config set wifi.*` persists but requires reboot.
+- **WiFi:** STA mode, SSID/password from config system. CLI `wifi ssid`/`wifi psk` hot-apply (disconnect + reconnect) without saving to config; `config set wifi.*` persists but requires reboot.
+- **HTTP/OTA:** ESP-IDF `esp_http_server` on port 80 (`http/http.cpp`). Runs in its own FreeRTOS task (pinned to core 1, stack 6144) — no polling needed. Root page shows GPS, partition info, and links to `/config`, `/dir`, `/nvs`, `/update`, `/reboot`. Config form submits URL-encoded POST body, parsed with `httpd_query_key_value()` + `url_decode()`. OTA firmware/filesystem upload at `/update` — HTML form uses JavaScript `fetch()` for raw binary POST (no multipart parsing), `type` passed as query param. CLI-friendly via curl:
+  ```
+  curl -X POST --data-binary @firmware.bin http://<ip>/update?type=firmware
+  curl -X POST --data-binary @littlefs.bin http://<ip>/update?type=filesystem
+  ```
+  Uses Arduino `Update` library (wraps ESP-IDF `esp_ota_*`). Filesystem upload calls `LittleFS.end()` before writing. Auto-reboots on success. Progress logged via `printfnl(SOURCE_SYSTEM, ...)`.
 - **MQTT:** Minimal MQTT 3.1.1 client in `mqtt/conez_mqtt.cpp/h`. Connects to the sewerpipe broker over WiFi using Arduino `WiFiClient`. State machine: DISCONNECTED → WAIT_CONNACK → CONNECTED. Auto-reconnects with exponential backoff (1s → 30s cap). Publishes JSON heartbeats every 30s to `conez/{id}/status` with uptime, heap, temp, RSSI. Debug messages are forwarded to `conez/{id}/debug` by printManager (SOURCE_MQTT excluded to prevent loops). Subscribes to `conez/{id}/cmd/#` for per-cone commands. PINGREQ at keepalive/2 (30s). Config section `[mqtt]` with `broker` (default: `sewerpipe.local`), `port` (default: 1883), and `enabled` (default: on) keys. CLI: `mqtt` (status), `mqtt enable`/`disable`, `mqtt connect`/`disconnect`, `mqtt broker <host>` (hot-apply), `mqtt pub <topic> <payload>`. Debug output via `SOURCE_MQTT` (default on). Runs on loopTask (core 1); ShellTask can safely call `mqtt_publish()` and force flags (same core, time-sliced). See `documentation/mqtt.txt` for topic hierarchy and protocol details.
 - **CLI:** ConezShell (`util/shell.cpp/h`) on DualStream — both USB Serial and Telnet (port 23) active simultaneously, all output to both. TelnetServer (`console/telnet.cpp/h`) supports up to 3 simultaneous clients with per-slot IAC state, bare `\n` → `\r\n` translation on output, prompt delivery on connect, and Ctrl+D per-session disconnect. Arrow keys, Home/End/Delete, Ctrl-A/E/U, 32-entry command history (PSRAM-backed ring buffer on ConeZ PCB, single-entry DRAM fallback on Heltec). ANSI color output on by default, toggleable at runtime via `color on`/`color off` CLI command (`setAnsiEnabled()`/`getAnsiEnabled()` in `printManager.h`). Commands requiring ANSI (art, clear, game, winamp) error out when color is off; editor falls back to a line-based mode. `CORE_DEBUG_LEVEL=0` in `platformio.ini` suppresses Arduino library log macros (`log_e`/`log_w`/etc.) at compile time — these bypass `esp_log_level_set()` and would corrupt HWCDC output. File commands auto-normalize paths (prepend `/` if missing) via `normalize_path()` in `main.h`. Full-screen text editor (`console/editor.cpp/h`) for on-device script editing, with line-editor fallback when ANSI is disabled. See `documentation/cli-commands.txt` for the full command reference.
 
@@ -619,6 +688,7 @@ All components use the format **`MAJOR.MINOR.BUILD`** with 2-digit minor and 4-d
 **Firmware version history:**
 - **v0.01.x** — Arduino framework (pre-compiled SDK)
 - **v0.02.x** — ESP-IDF + Arduino component (SDK built from source, `sdkconfig.defaults`)
+- **v0.03.x** — (planned) Pure ESP-IDF, no Arduino component. See "Arduino Migration Path" section.
 
 
 | Component | Version defines | buildnum.txt location |

@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <FS.h>
-#include <WebServer.h>
+#include <esp_http_server.h>
 #include "config.h"
 #include "main.h"
 #include "printManager.h"
@@ -446,42 +446,68 @@ void config_apply_debug(void)
 
 // ---------- Web interface ----------
 
-static String html_attr_escape(const char *str)
+// ---- Config page buffer ----
+static char cfg_page[6144];
+static int cfg_pos;
+
+static void cfg_reset() { cfg_pos = 0; cfg_page[0] = '\0'; }
+
+static void cfg_cat(const char *s)
 {
-    String out;
-    while (*str)
+    int n = strlen(s);
+    if (cfg_pos + n < (int)sizeof(cfg_page)) {
+        memcpy(cfg_page + cfg_pos, s, n + 1);
+        cfg_pos += n;
+    }
+}
+
+__attribute__((format(printf, 1, 2)))
+static void cfg_catf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(cfg_page + cfg_pos, sizeof(cfg_page) - cfg_pos, fmt, ap);
+    va_end(ap);
+    if (n > 0 && cfg_pos + n < (int)sizeof(cfg_page))
+        cfg_pos += n;
+}
+
+static void cfg_cat_attr_escaped(const char *str)
+{
+    while (*str && cfg_pos < (int)sizeof(cfg_page) - 7)
     {
-        if (*str == '<')       out += "&lt;";
-        else if (*str == '>')  out += "&gt;";
-        else if (*str == '&')  out += "&amp;";
-        else if (*str == '"')  out += "&quot;";
-        else                   out += *str;
+        if (*str == '<')       { memcpy(cfg_page + cfg_pos, "&lt;", 4); cfg_pos += 4; }
+        else if (*str == '>')  { memcpy(cfg_page + cfg_pos, "&gt;", 4); cfg_pos += 4; }
+        else if (*str == '&')  { memcpy(cfg_page + cfg_pos, "&amp;", 5); cfg_pos += 5; }
+        else if (*str == '"')  { memcpy(cfg_page + cfg_pos, "&quot;", 6); cfg_pos += 6; }
+        else                   { cfg_page[cfg_pos++] = *str; }
         str++;
     }
-    return out;
+    cfg_page[cfg_pos] = '\0';
 }
 
 
-String config_get_html(const char *msg)
+const char* config_get_html(const char *msg)
 {
-    String page = "<html><head><style>"
+    cfg_reset();
+    cfg_cat("<html><head><style>"
         "body{font-family:sans-serif;max-width:700px;margin:auto;padding:10px}"
         "fieldset{margin-bottom:12px} legend{font-weight:bold}"
         "label{display:inline-block;width:140px} input[type=text],input[type=password]{width:200px}"
         ".msg{padding:8px;margin-bottom:10px;background:#d4edda;border:1px solid #c3e6cb}"
         ".btn{margin-top:10px;padding:6px 16px}"
-        "</style></head><body>\n";
+        "</style></head><body>\n");
 
-    page += "<h2>ConeZ Configuration</h2>\n";
+    cfg_cat("<h2>ConeZ Configuration</h2>\n");
 
     if (msg && msg[0])
     {
-        page += "<div class='msg'>";
-        page += msg;
-        page += "</div>\n";
+        cfg_cat("<div class='msg'>");
+        cfg_cat(msg);
+        cfg_cat("</div>\n");
     }
 
-    page += "<form method='POST' action='/config'>\n";
+    cfg_cat("<form method='POST' action='/config'>\n");
 
     const char *prev_section = "";
     uint8_t *base = (uint8_t *)&config;
@@ -495,79 +521,51 @@ String config_get_html(const char *msg)
         if (strcmp(d->section, prev_section) != 0)
         {
             if (i > 0)
-                page += "</fieldset>\n";
-            page += "<fieldset><legend>";
-            page += d->section;
-            page += "</legend>\n";
+                cfg_cat("</fieldset>\n");
+            cfg_catf("<fieldset><legend>%s</legend>\n", d->section);
             prev_section = d->section;
         }
 
         // Build the form field name: section.key
         snprintf(buf, sizeof(buf), "%s.%s", d->section, d->key);
 
-        page += "<label>";
-        page += d->key;
-        page += "</label> ";
+        cfg_catf("<label>%s</label> ", d->key);
 
         switch (d->type)
         {
         case CFG_BOOL:
         {
             bool val = *(bool *)(base + d->offset);
-            page += "<input type='checkbox' name='";
-            page += buf;
-            page += "' value='1'";
-            if (val) page += " checked";
-            page += "><br>\n";
+            cfg_catf("<input type='checkbox' name='%s' value='1'%s><br>\n",
+                buf, val ? " checked" : "");
             break;
         }
         case CFG_STR:
         {
             const char *val = (const char *)(base + d->offset);
             bool is_password = (strcmp(d->section, "wifi") == 0 && strcmp(d->key, "password") == 0);
-            page += "<input type='";
-            page += is_password ? "password" : "text";
-            page += "' name='";
-            page += buf;
-            page += "' value='";
-            page += html_attr_escape(val);
-            page += "'><br>\n";
+            cfg_catf("<input type='%s' name='%s' value='",
+                is_password ? "password" : "text", buf);
+            cfg_cat_attr_escaped(val);
+            cfg_cat("'><br>\n");
             break;
         }
         case CFG_HEX:
         {
             int val = *(int *)(base + d->offset);
-            char hexbuf[16];
-            snprintf(hexbuf, sizeof(hexbuf), "0x%04X", val);
-            page += "<input type='text' name='";
-            page += buf;
-            page += "' value='";
-            page += hexbuf;
-            page += "'><br>\n";
+            cfg_catf("<input type='text' name='%s' value='0x%04X'><br>\n", buf, val);
             break;
         }
         case CFG_FLOAT:
         {
             float val = *(float *)(base + d->offset);
-            char fbuf[32];
-            snprintf(fbuf, sizeof(fbuf), "%.9g", val);
-            page += "<input type='text' name='";
-            page += buf;
-            page += "' value='";
-            page += fbuf;
-            page += "'><br>\n";
+            cfg_catf("<input type='text' name='%s' value='%.9g'><br>\n", buf, val);
             break;
         }
         case CFG_INT:
         {
             int val = *(int *)(base + d->offset);
-            char ibuf[16];
-            snprintf(ibuf, sizeof(ibuf), "%d", val);
-            page += "<input type='text' name='";
-            page += buf;
-            page += "' value='";
-            page += ibuf;
-            page += "'><br>\n";
+            cfg_catf("<input type='text' name='%s' value='%d'><br>\n", buf, val);
             break;
         }
         }
@@ -575,26 +573,57 @@ String config_get_html(const char *msg)
 
     // Close last fieldset
     if (CFG_TABLE_SIZE > 0)
-        page += "</fieldset>\n";
+        cfg_cat("</fieldset>\n");
 
-    page += "<input type='submit' value='Save' class='btn'>\n";
-    page += "</form>\n";
+    cfg_cat("<input type='submit' value='Save' class='btn'>\n");
+    cfg_cat("</form>\n");
 
-    page += "<form method='POST' action='/config/reset' "
-            "onsubmit=\"return confirm('Reset all settings to defaults?')\">\n";
-    page += "<input type='submit' value='Reset to Defaults' class='btn'>\n";
-    page += "</form>\n";
+    cfg_cat("<form method='POST' action='/config/reset' "
+            "onsubmit=\"return confirm('Reset all settings to defaults?')\">\n");
+    cfg_cat("<input type='submit' value='Reset to Defaults' class='btn'>\n");
+    cfg_cat("</form>\n");
 
-    page += "<br><a href='/'>Back to Home</a>\n";
-    page += "</body></html>\n";
+    cfg_cat("<br><a href='/'>Back to Home</a>\n");
+    cfg_cat("</body></html>\n");
 
-    return page;
+    return cfg_page;
 }
 
 
-void config_set_from_web(WebServer &srv)
+// URL-decode in place (+ -> space, %XX -> byte)
+static int hex_val(char c)
 {
-    char buf[64];
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static void url_decode(char *str)
+{
+    char *dst = str;
+    while (*str) {
+        if (*str == '+') {
+            *dst++ = ' ';
+            str++;
+        } else if (*str == '%' && str[1] && str[2]) {
+            int h = hex_val(str[1]), l = hex_val(str[2]);
+            if (h >= 0 && l >= 0) {
+                *dst++ = (h << 4) | l;
+                str += 3;
+            } else {
+                *dst++ = *str++;
+            }
+        } else {
+            *dst++ = *str++;
+        }
+    }
+    *dst = '\0';
+}
+
+void config_set_from_web(const char *body)
+{
+    char buf[64], val[128];
     uint8_t *base = (uint8_t *)&config;
 
     for (int i = 0; i < CFG_TABLE_SIZE; i++)
@@ -605,14 +634,16 @@ void config_set_from_web(WebServer &srv)
         if (d->type == CFG_BOOL)
         {
             // Checkbox: absent means off, present means on
-            bool checked = srv.hasArg(buf);
+            bool checked = (httpd_query_key_value(body, buf, val, sizeof(val)) == ESP_OK);
             *(bool *)(base + d->offset) = checked;
         }
         else
         {
-            String val = srv.arg(buf);
-            if (val.length() > 0)
-                config_set_field(d, val.c_str());
+            if (httpd_query_key_value(body, buf, val, sizeof(val)) == ESP_OK) {
+                url_decode(val);
+                if (val[0])
+                    config_set_field(d, val);
+            }
         }
     }
 

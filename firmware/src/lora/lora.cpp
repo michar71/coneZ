@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <Wire.h>
 #include <RadioLib.h>
 #include "main.h"
 #include "util.h"
@@ -179,15 +178,17 @@ void lora_rx( void )
     printfnl(SOURCE_LORA,  "radio.getPacketLength = %d\n" ,radio.getPacketLength() );
 
         
-    String str;
-    int16_t state = radio.readData( str );
+    uint8_t rxbuf[256];
+    size_t rxlen = radio.getPacketLength();
+    if (rxlen > sizeof(rxbuf) - 1)
+        rxlen = sizeof(rxbuf) - 1;
+    int16_t state = radio.readData( rxbuf, rxlen );
+    rxbuf[rxlen] = '\0';
 
-    
     if( state == RADIOLIB_ERR_NONE )
     {
             rx_count++;
-            printfnl(SOURCE_LORA, "Packet: %s\n",str.c_str() );
-            //hexdump( (uint8_t*)str.c_str(), str.length() );
+            printfnl(SOURCE_LORA, "Packet: %s\n", (const char *)rxbuf );
     }
 
     // Re-enter receive mode for the next packet

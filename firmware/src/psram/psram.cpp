@@ -2,7 +2,11 @@
 #include <SPI.h>
 #include <soc/spi_struct.h>
 #include <freertos/semphr.h>
+#include "driver/gpio.h"
 #include "board.h"
+#ifdef BOARD_HAS_NATIVE_PSRAM
+#include "esp_spiram.h"
+#endif
 #include "psram.h"
 #include "printManager.h"
 
@@ -119,8 +123,8 @@ static void psram_set_freq(uint32_t freq_hz) {
 
 // ---- Low-level helpers ----
 
-static inline void cs_low()  { digitalWrite(PSR_CE, LOW); }
-static inline void cs_high() { digitalWrite(PSR_CE, HIGH); }
+static inline void cs_low()  { gpio_set_level((gpio_num_t)PSR_CE, 0); }
+static inline void cs_high() { gpio_set_level((gpio_num_t)PSR_CE, 1); }
 
 static void psram_cmd(uint8_t cmd) {
     cs_low();
@@ -546,7 +550,7 @@ int psram_setup(void) {
 
     Serial.print("Init PSRAM... ");
 
-    pinMode(PSR_CE, OUTPUT);
+    gpio_set_direction((gpio_num_t)PSR_CE, GPIO_MODE_OUTPUT);
     cs_high();
 
     // We own the FSPI bus exclusively — no other peripheral shares it.
@@ -945,7 +949,7 @@ int psram_setup(void) {
 
     psram_alloc_num = 0;
     psram_ok = true;
-    Serial.printf("OK (%u KB native)\n", ESP.getPsramSize() / 1024);
+    Serial.printf("OK (%u KB native)\n", (unsigned)(esp_spiram_get_size() / 1024));
     return 0;
 }
 
@@ -1051,7 +1055,7 @@ void psram_print_map(void) {}           // No block table for native PSRAM
 void psram_print_cache_map(void) {}
 void psram_print_cache_detail(void) {}
 
-uint32_t psram_size(void) { return ESP.getPsramSize(); }
+uint32_t psram_size(void) { return esp_spiram_get_size(); }
 bool psram_available(void) { return psram_ok; }
 uint32_t psram_get_freq(void) { return 0; }
 int psram_change_freq(uint32_t) { return -1; }

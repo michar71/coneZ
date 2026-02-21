@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <sys/time.h>
 #include "esp_sntp.h"
+#include "driver/gpio.h"
 #include "main.h"
 #include "gps.h"
 #include "printManager.h"
@@ -65,7 +66,7 @@ void time_seed_compile(void)
 #ifdef BOARD_HAS_GPS
 
 #include <HardwareSerial.h>
-#include <TinyGPSPlus.h>
+#include "nmea.h"
 
 // Origin coordinates — set from config in gps_setup()
 float origin_lat;
@@ -95,32 +96,18 @@ static volatile uint32_t pps_millis = 0;     // millis() captured in ISR
 static volatile uint32_t pps_count = 0;      // increments each PPS edge
 static volatile bool     pps_edge_flag = false; // rising-edge flag, clear-on-read
 
-TinyGPSPlus gps;
-
-// Custom GSA fields (fix type, DOP values)
-// GSA: $G?GSA,mode,fixtype,sv1..sv12,PDOP,HDOP,VDOP*cs
-//       field: 1    2      3..14     15   16   17
-// Register for both GPGSA and GNGSA prefixes
-static TinyGPSCustom gsaFixType_GP(gps, "GPGSA", 2);   // 1=no fix, 2=2D, 3=3D
-static TinyGPSCustom gsaPDOP_GP(gps, "GPGSA", 15);
-static TinyGPSCustom gsaHDOP_GP(gps, "GPGSA", 16);
-static TinyGPSCustom gsaVDOP_GP(gps, "GPGSA", 17);
-static TinyGPSCustom gsaFixType_GN(gps, "GNGSA", 2);
-static TinyGPSCustom gsaPDOP_GN(gps, "GNGSA", 15);
-static TinyGPSCustom gsaHDOP_GN(gps, "GNGSA", 16);
-static TinyGPSCustom gsaVDOP_GN(gps, "GNGSA", 17);
-
-volatile int gps_fix_type = 0;      // 0=unknown, 1=no fix, 2=2D, 3=3D
-volatile float gps_pdop = 0;
-volatile float gps_vdop = 0;
+static nmea_data_t nmea;
+static uint32_t nmea_last_update_ms = 0;     // millis() at last location commit
+static uint32_t nmea_last_update_count = 0;  // tracks nmea.update_count
 
 // Serial
 HardwareSerial GPSSerial(0);
 
 
 // --- PPS interrupt handler ---
-static void IRAM_ATTR pps_isr(void)
+static void IRAM_ATTR pps_isr(void *arg)
 {
+    (void)arg;
     pps_millis = millis();
     pps_count++;
     portENTER_CRITICAL_ISR(&time_mux);
@@ -159,7 +146,16 @@ static uint64_t datetime_to_epoch_ms(int year, int month, int day,
 
 void pps_isr_init(void)
 {
-    attachInterrupt(digitalPinToInterrupt(GPS_PPS_PIN), pps_isr, RISING);
+    gpio_config_t io_conf = {};
+    io_conf.pin_bit_mask = (1ULL << GPS_PPS_PIN);
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    gpio_config(&io_conf);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add((gpio_num_t)GPS_PPS_PIN, pps_isr, NULL);
 }
 
 
@@ -184,10 +180,9 @@ int gps_setup()
     gps_lat    = origin_lat;
     gps_lon    = origin_lon;
 
-    //Setup PPS Pin
-    pinMode(GPS_PPS_PIN, INPUT_PULLUP);
+    nmea_init(&nmea);
 
-    // Attach PPS interrupt for sub-ms timing
+    // Setup PPS pin and attach interrupt for sub-ms timing
     pps_isr_init();
 
     GPSSerial.begin( 9600, SERIAL_8N1,     // baud, mode, RX-pin, TX-pin
@@ -220,36 +215,32 @@ int gps_loop()
             }
         }
 
-        gps.encode( ch );
+        nmea_encode(&nmea, ch);
 
-        // Capture GSA fields (fix type, DOP values) from whichever prefix is active
-        if (gsaFixType_GP.isUpdated()) gps_fix_type = atoi(gsaFixType_GP.value());
-        if (gsaFixType_GN.isUpdated()) gps_fix_type = atoi(gsaFixType_GN.value());
-        if (gsaPDOP_GP.isUpdated()) gps_pdop = atof(gsaPDOP_GP.value());
-        if (gsaPDOP_GN.isUpdated()) gps_pdop = atof(gsaPDOP_GN.value());
-        if (gsaVDOP_GP.isUpdated()) gps_vdop = atof(gsaVDOP_GP.value());
-        if (gsaVDOP_GN.isUpdated()) gps_vdop = atof(gsaVDOP_GN.value());
-
-        if( gps.location.isUpdated() )
+        // Check for new location update (update_count incremented by parser)
+        if (nmea.update_count != nmea_last_update_count)
         {
-            gps_lat = gps.location.lat();
-            gps_lon = gps.location.lng();
-            gps_pos_valid = gps.location.isValid() && gps.location.age() < 10000;
+            nmea_last_update_count = nmea.update_count;
+            nmea_last_update_ms = millis();
 
-            gps_alt = gps.altitude.meters();
-            gps_alt_valid = gps.altitude.isValid();
-            gps_speed = gps.speed.mps();
-            gps_dir = gps.course.deg();
+            gps_lat = nmea.lat;
+            gps_lon = nmea.lon;
+            gps_pos_valid = nmea.location_valid;
 
-            gps_day = gps.date.day();
-            gps_month = gps.date.month();
-            gps_year = gps.date.year();
-            gps_hour = gps.time.hour();
-            gps_minute = gps.time.minute();
-            gps_second = gps.time.second();
+            gps_alt = nmea.alt;
+            gps_alt_valid = nmea.altitude_valid;
+            gps_speed = nmea.speed;
+            gps_dir = nmea.course;
+
+            gps_day = nmea.day;
+            gps_month = nmea.month;
+            gps_year = nmea.year;
+            gps_hour = nmea.hour;
+            gps_minute = nmea.minute;
+            gps_second = nmea.second;
 
             // Compute epoch from NMEA time and anchor to last PPS edge
-            if (pps_count > 0 && gps.date.isValid() && gps.time.isValid()) {
+            if (pps_count > 0 && nmea.date_valid && nmea.time_valid) {
                 uint64_t ep = datetime_to_epoch_ms(gps_year, gps_month, gps_day,
                                                     gps_hour, gps_minute, gps_second);
                 uint32_t pm = pps_millis;  // snapshot atomic 32-bit read
@@ -261,18 +252,20 @@ int gps_loop()
                 portEXIT_CRITICAL(&time_mux);
             }
 
+            int date_raw = nmea.date_valid ? nmea.day * 10000 + nmea.month * 100 + (nmea.year % 100) : -1;
+            int time_raw = nmea.time_valid ? nmea.hour * 10000 + nmea.minute * 100 + nmea.second : -1;
             printfnl( SOURCE_GPS, F("GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n"),
                 (int) gps_pos_valid,
                 gps_lat,
                 gps_lon,
                 (int)gps_alt,
-                gps.date.isValid() ? gps.date.value() : -1,
-                gps.time.isValid() ? gps.time.value() : -1 );
+                date_raw,
+                time_raw );
         }
     }
 
     // Clear fix validity when GPS data goes stale (>10s without update)
-    if (gps_pos_valid && gps.location.age() > 10000) {
+    if (gps_pos_valid && (millis() - nmea_last_update_ms) > 10000) {
         gps_pos_valid = false;
     }
 
@@ -418,39 +411,44 @@ int get_dayofyear(void)
 
 int get_satellites(void)
 {
-    return gps.satellites.value();
+    return nmea.satellites;
 }
 
 int get_hdop(void)
 {
-    return gps.hdop.value();
+    return nmea.hdop;
 }
 
 int get_fix_type(void)
 {
-    return gps_fix_type;
+    return nmea.fix_type;
 }
 
 float get_pdop(void)
 {
-    return gps_pdop;
+    return nmea.pdop;
 }
 
 float get_vdop(void)
 {
-    return gps_vdop;
+    return nmea.vdop;
+}
+
+int get_date_raw(void)
+{
+    if (!nmea.date_valid) return -1;
+    return gps_day * 10000 + gps_month * 100 + (gps_year % 100);
+}
+
+int get_time_raw(void)
+{
+    if (!nmea.time_valid) return -1;
+    return gps_hour * 10000 + gps_minute * 100 + gps_second;
 }
 
 bool get_pps(void)
 {
-    if (digitalRead(GPS_PPS_PIN) == HIGH)
-    {
-        return true;
-    }
-    else
-    {
-        return false;
-    }
+    return gpio_get_level((gpio_num_t)GPS_PPS_PIN) == 1;
 }
 
 
@@ -648,6 +646,8 @@ bool get_isleapyear(void)
     return (gps_year % 4 == 0 && gps_year % 100 != 0) || (gps_year % 400 == 0);
 }
 
+int get_date_raw(void) { return -1; }
+int get_time_raw(void) { return -1; }
 int get_satellites(void) { return 0; }
 int get_hdop(void) { return 0; }
 int get_fix_type(void) { return 0; }

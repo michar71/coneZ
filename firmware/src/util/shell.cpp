@@ -102,18 +102,20 @@ class ConezShell::Command {
         // Comparison used for sort commands
         int compare(const Command * other) const
         {
-            const String otherNameString(other->nameAndDocs);
-            return compareName(otherNameString.c_str());
+            return compareName((const char *)other->nameAndDocs);
         };
 
         int compareName(const char * aName) const
         {
-            String work(nameAndDocs);
-            int delim = work.indexOf(' ');
-            if (delim >= 0) {
-                work.remove(delim);
-            }
-            return strncasecmp(work.c_str(), aName, SHELL_BUFSIZE);
+            // Find length of command name (up to first space)
+            const char *name = (const char *)nameAndDocs;
+            const char *sp = strchr(name, ' ');
+            int nameLen = sp ? (int)(sp - name) : (int)strlen(name);
+            // Compare only the name portion
+            const char *asp = strchr(aName, ' ');
+            int aLen = asp ? (int)(asp - aName) : (int)strlen(aName);
+            int cmpLen = nameLen > aLen ? nameLen : aLen;
+            return strncasecmp(name, aName, cmpLen);
         };
 
         void renderDocumentation(Stream& str) const
@@ -604,7 +606,7 @@ int ConezShell::report(const __FlashStringHelper * constMsg, int errorCode)
 {
     if (errorCode != EXIT_SUCCESS)
     {
-        String message(constMsg);
+        const char *message = (const char *)constMsg;
         if (shellConnection)
         {
             getLock();

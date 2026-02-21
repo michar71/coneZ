@@ -163,8 +163,7 @@ const char * const * config_get_section_list(void); // unique "section." strings
 int config_get_key_type(const char *dotkey);        // returns cfg type (0=str,1=float,2=int,3=hex,4=bool), -1 if not found
 
 // ---------- Web interface ----------
-class WebServer;   // forward-declare
-String config_get_html(const char *msg);
-void   config_set_from_web(WebServer &server);
+const char* config_get_html(const char *msg);
+void   config_set_from_web(const char *body);
 
 #endif

@@ -30,8 +30,9 @@ int checkLut(uint8_t index)
     if (!lut_lock()) return -1;
 
     //Try to open the file
-    String filename = String("/LUT_") + String(index) + ".csv";
-    File file = LittleFS.open(filename.c_str(), FILE_READ);
+    char filename[16];
+    snprintf(filename, sizeof(filename), "/LUT_%d.csv", index);
+    File file = LittleFS.open(filename, FILE_READ);
     if (!file)
     {
         lut_unlock();
@@ -90,8 +91,9 @@ int loadLut(uint8_t index)
     }
 
     //Open the file and read the values into the LUT
-    String filename = String("/LUT_") + String(index) + ".csv";
-    File file = LittleFS.open(filename.c_str(), FILE_READ);
+    char filename[16];
+    snprintf(filename, sizeof(filename), "/LUT_%d.csv", index);
+    File file = LittleFS.open(filename, FILE_READ);
     if (!file)
     {
         free(pLUT);
@@ -101,24 +103,28 @@ int loadLut(uint8_t index)
     }
 
     int i = 0;
-    String value;
+    char valbuf[16];
+    int vi = 0;
     while (file.available())
     {
         char c = file.read();
         if (c == ',')
         {
-            pLUT[i++] = value.toInt();
-            value = ""; //Reset value for next read
+            valbuf[vi] = '\0';
+            pLUT[i++] = atoi(valbuf);
+            vi = 0;
         }
-        else
+        else if (vi < (int)sizeof(valbuf) - 1)
         {
-            value += c; //Append character to value
+            valbuf[vi++] = c;
         }
     }
 
     //Read last value (after last comma)
-    if (value.length() > 0 && i < size)
-        pLUT[i++] = value.toInt();
+    if (vi > 0 && i < size) {
+        valbuf[vi] = '\0';
+        pLUT[i++] = atoi(valbuf);
+    }
 
     file.close();
 
@@ -140,8 +146,9 @@ int saveLut(uint8_t index)
     }
 
     //Open the file for writing
-    String filename = String("/LUT_") + String(index) + ".csv";
-    File file = LittleFS.open(filename.c_str(), FILE_WRITE);
+    char filename[16];
+    snprintf(filename, sizeof(filename), "/LUT_%d.csv", index);
+    File file = LittleFS.open(filename, FILE_WRITE);
     if (!file)
     {
         lut_unlock();

@@ -1,15 +1,39 @@
 #include "sensors.h"
 #include <Arduino.h>
 #include <Wire.h>
-#include <Sensor_TMP102.h>
 #include <MPU6500_WE.h>
+#include "driver/i2c.h"
 #include "board.h"
 #include "printManager.h"
 
 #define MPU6500_ADDR 0x68
 #define TMP102_ADDR 0x48
 MPU6500_WE mpu(MPU6500_ADDR);
-Sensor_TMP102 tmp;
+
+// TMP102 temperature read — inlined from abandoned yannicked/Sensor_TMP102 library.
+// Datasheet: http://www.ti.com/lit/ds/symlink/tmp102.pdf
+// Register 0x00 returns 12-bit signed temperature, 0.0625°C per LSB.
+static float tmp102_read(void) {
+    uint8_t reg = 0x00;
+    uint8_t data[2];
+
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (TMP102_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(cmd, reg, true);
+    i2c_master_start(cmd);  // repeated start
+    i2c_master_write_byte(cmd, (TMP102_ADDR << 1) | I2C_MASTER_READ, true);
+    i2c_master_read(cmd, data, 2, I2C_MASTER_LAST_NACK);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(50));
+    i2c_cmd_link_delete(cmd);
+
+    if (err != ESP_OK) return -500.0f;
+
+    int16_t raw = (data[0] << 4) | (data[1] >> 4);
+    if (raw > 0x7FF) raw |= 0xF000;  // sign-extend 12-bit
+    return raw * 0.0625f;
+}
 
 // Marked volatile for cross-core visibility (Core 1 writes, Core 0 reads).
 volatile float temperature = -500;
@@ -29,7 +53,6 @@ bool IMU_available = false;
 
 void sensors_setup(void)
 {
-    tmp.begin(TMP102_ADDR);
     Serial.println("TMP102 initialized");
 
     if(!mpu.init())
@@ -66,7 +89,7 @@ void sensors_setup(void)
 void sensors_loop(void)
 {
     // Read temperature from TMP102
-    temperature = tmp.readTemperature();
+    temperature = tmp102_read();
     //printfnl(SOURCE_SENSORS, "TMP102 Temperature: %.2f C", temperature);
 
     // Read accelerometer data from MPU6500

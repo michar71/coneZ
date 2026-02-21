@@ -1,6 +1,5 @@
 #include <Arduino.h>
-#include <WebServer.h>
-#include <ElegantOTA.h>
+#include <esp_http_server.h>
 #include "esp_system.h"
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
@@ -13,10 +12,9 @@
 #include "http.h"
 #include "config.h"
 #include "gps.h"
+#include "printManager.h"
 
 #ifdef BOARD_HAS_GPS
-#include <TinyGPSPlus.h>
-extern TinyGPSPlus gps;
 extern volatile float gps_lat;
 extern volatile float gps_lon;
 extern volatile bool gps_pos_valid;
@@ -24,52 +22,68 @@ extern volatile float gps_alt;
 extern volatile bool gps_alt_valid;
 #endif
 
-WebServer server(80);
+static httpd_handle_t server = NULL;
 
 
+// ---- Page buffer for HTML generation ----
+// ESP-IDF httpd processes requests serially in its task,
+// so a single static buffer is safe.
+static char page_buf[4096];
+static int page_pos;
 
-String html_escape( const char* str )
+static void page_reset() { page_pos = 0; page_buf[0] = '\0'; }
+
+static void page_cat(const char *s)
 {
-    String escaped;
-    while (*str)
+    int n = strlen(s);
+    if (page_pos + n < (int)sizeof(page_buf)) {
+        memcpy(page_buf + page_pos, s, n + 1);
+        page_pos += n;
+    }
+}
+
+__attribute__((format(printf, 1, 2)))
+static void page_catf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(page_buf + page_pos, sizeof(page_buf) - page_pos, fmt, ap);
+    va_end(ap);
+    if (n > 0 && page_pos + n < (int)sizeof(page_buf))
+        page_pos += n;
+}
+
+static void page_cat_escaped(const char *str)
+{
+    while (*str && page_pos < (int)sizeof(page_buf) - 6)
     {
-        if (*str == '<') escaped += "&lt;";
-        else if (*str == '>') escaped += "&gt;";
-        else if (*str == '&') escaped += "&amp;";
-        else escaped += *str;
+        if (*str == '<')      { memcpy(page_buf + page_pos, "&lt;", 4); page_pos += 4; }
+        else if (*str == '>') { memcpy(page_buf + page_pos, "&gt;", 4); page_pos += 4; }
+        else if (*str == '&') { memcpy(page_buf + page_pos, "&amp;", 5); page_pos += 5; }
+        else                  { page_buf[page_pos++] = *str; }
         str++;
     }
- 
-    return escaped;
+    page_buf[page_pos] = '\0';
 }
 
 
-String http_get_gps()
+static void page_cat_gps()
 {
 #ifdef BOARD_HAS_GPS
-    char buf[128];
-
-    String out = "<h3>GPS</h3><pre>";
-
-    snprintf( buf, sizeof( buf ), "gps_valid=%u\n", (int) gps_pos_valid );
-    out += buf;
-    snprintf( buf, sizeof( buf ), "date=%d  time=%d\n", gps.date.isValid() ? gps.date.value() : -1, gps.time.isValid() ? gps.time.value() : -1 );
-    out += buf;
-    snprintf( buf, sizeof( buf ), "lat=%0.6f  lon=%0.6f  alt=%dm\n", gps_lat, gps_lon, (int) gps_alt  );
-    out += buf;
-
-    out += "</pre><br>\n";
-
-    return out;
+    page_cat("<h3>GPS</h3><pre>");
+    page_catf("gps_valid=%u\n", (int) gps_pos_valid);
+    page_catf("date=%d  time=%d\n", get_date_raw(), get_time_raw());
+    page_catf("lat=%0.6f  lon=%0.6f  alt=%dm\n", gps_lat, gps_lon, (int) gps_alt);
+    page_cat("</pre><br>\n");
 #else
-    return "<h3>GPS</h3><pre>No GPS hardware</pre><br>\n";
+    page_cat("<h3>GPS</h3><pre>No GPS hardware</pre><br>\n");
 #endif
 }
 
 
-String getPartitionInfoHTML()
+static void page_cat_partitions()
 {
-    String out = "<h3>Firmware Versions in Partitions</h3><pre>";
+    page_cat("<h3>Firmware Versions in Partitions</h3><pre>");
 
     const esp_partition_t* running = esp_ota_get_running_partition();
     const esp_partition_t* boot = esp_ota_get_boot_partition();
@@ -81,81 +95,73 @@ String getPartitionInfoHTML()
         esp_app_desc_t desc;
         bool hasInfo = esp_ota_get_partition_description(part, &desc) == ESP_OK;
 
-        out += String(part->label) + " @ 0x" + String(part->address, HEX);
-        out += " size 0x" + String(part->size, HEX);
+        page_catf("%s @ 0x%x size 0x%x", part->label, part->address, part->size);
 
-        if (part == running) out += " [RUNNING]";
-        if (part == boot)    out += " [BOOT]";
+        if (part == running) page_cat(" [RUNNING]");
+        if (part == boot)    page_cat(" [BOOT]");
 
         if (hasInfo)
         {
-            out += "\n  Version: ";
-            out += html_escape(desc.version);
-            out += "\n  Project: ";
-            out += html_escape(desc.project_name);
-            out += "\n  Built: ";
-            out += String(desc.date) + " " + desc.time;
+            page_cat("\n  Version: ");
+            page_cat_escaped(desc.version);
+            page_cat("\n  Project: ");
+            page_cat_escaped(desc.project_name);
+            page_catf("\n  Built: %s %s", desc.date, desc.time);
         }
         else
         {
-            out += "\n  <i>No descriptor info</i>";
+            page_cat("\n  <i>No descriptor info</i>");
         }
 
-        out += "\n\n";
+        page_cat("\n\n");
         it = esp_partition_next(it);
     }
     esp_partition_iterator_release(it);
-    out += "</pre>";
-    return out;
+    page_cat("</pre>");
 }
 
 
-void http_root()
+static esp_err_t http_root(httpd_req_t *req)
 {
-    String page = "<html><body>";
-
-    page += http_get_gps();
-
-    page += "<hr><br>\n";
-
-    page += getPartitionInfoHTML();
-
-    page += "<hr><br>\n";
-    page += "<a href='/config'>Configuration</a><br>\n";
-    page += "<a href='/dir'>List Files</a><br>\n";
-    page += "<a href='/nvs'>List NVS Parameters</a><br><br>\n";
-    page += "<a href='/update'>Update Firmware</a><br>\n";
-    //page += "<form method='POST' action='/reboot'><input type='submit' value='Reboot'></form>";
-    page += "<a href='/reboot'>Reboot</a><br>\n";
-    page += "</body></html>\n";
-    server.send(200, "text/html", page);
+    page_reset();
+    page_cat("<html><body>");
+    page_cat_gps();
+    page_cat("<hr><br>\n");
+    page_cat_partitions();
+    page_cat("<hr><br>\n");
+    page_cat("<a href='/config'>Configuration</a><br>\n");
+    page_cat("<a href='/dir'>List Files</a><br>\n");
+    page_cat("<a href='/nvs'>List NVS Parameters</a><br><br>\n");
+    page_cat("<a href='/update'>Update Firmware</a><br>\n");
+    page_cat("<a href='/reboot'>Reboot</a><br>\n");
+    page_cat("</body></html>\n");
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req, page_buf);
+    return ESP_OK;
 }
 
 
-void http_reboot()
+static esp_err_t http_reboot(httpd_req_t *req)
 {
-    server.send(200, "text/plain", "Rebooting...");
-    delay(1000);
-    ESP.restart();
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "Rebooting...\n");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    return ESP_OK;
 }
 
 
-// Show LittleFS directory listing.
-String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 3 )
+// Show LittleFS directory listing (appends to page_buf).
+static void page_cat_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 3 )
 {
-    String out = "Directory: ";
-    out += dirname;
-    if( strcmp( dirname, "/" ) )
-        out += "/";
-
-    out += "\n";
+    page_catf("Directory: %s%s\n", dirname, strcmp(dirname, "/") ? "/" : "");
 
     File root = fs.open( dirname );
 
     if( !root || !root.isDirectory() )
     {
-        out += " - failed to open directory\n";
-        return out;
+        page_cat(" - failed to open directory\n");
+        return;
     }
 
     File file = root.openNextFile();
@@ -163,22 +169,14 @@ String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 3 )
     {
         if( !file.isDirectory() )
         {
-            out += "  ";
-            out += dirname;
-            if( strcmp( dirname, "/" ) )
-                out += "/";
-            out += file.name();
-            out += "   ";
-            out += file.size();
-            out += " bytes";
-            out += "\n";
-
+            page_catf("  %s%s%s   %u bytes\n",
+                dirname, strcmp(dirname, "/") ? "/" : "", file.name(), (unsigned)file.size());
         }
 
         file = root.openNextFile();
     }
- 
-    out += "\n";
+
+    page_cat("\n");
 
     // Now list subdirectories
     bool any_dirs_listed = false;
@@ -188,16 +186,9 @@ String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 3 )
     {
         if (file.isDirectory())
         {
-            //out += "  [DIR]   ";
-            //out += dirname;
-            //if( strcmp( dirname, "/" ) )
-            //    out += "/";
-            //out += file.name();
-            //out += "/\n";
-
             if (levels)
             {
-                out += http_dir_list( fs, file.path(), levels - 1 );
+                page_cat_dir_list( fs, file.path(), levels - 1 );
                 any_dirs_listed = true;
             }
         }
@@ -206,114 +197,278 @@ String http_dir_list( fs::FS &fs, const char *dirname, uint8_t levels = 3 )
     }
 
     if( any_dirs_listed )
-        out += "\n";
-
-    return out;
+        page_cat("\n");
 }
 
 
-void http_dir()
+static esp_err_t http_dir(httpd_req_t *req)
 {
-    char buf[16];
-    String out = "<html><body>\n";
-    
-    out += "<h3>LittleFS directory listing:</h3><hr>\n<pre>";
+    page_reset();
+    page_cat("<html><body>\n");
+    page_cat("<h3>LittleFS directory listing:</h3><hr>\n<pre>");
 
     if (!littlefs_mounted) {
-        out += "LittleFS not mounted.</pre>";
-        server.send( 200, "text/html", out );
-        return;
+        page_cat("LittleFS not mounted.</pre>");
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_sendstr(req, page_buf);
+        return ESP_OK;
     }
 
     // Start from the root directory.
-    out += http_dir_list( LittleFS, "/" );
+    page_cat_dir_list( LittleFS, "/" );
 
-    out += "<br><hr>";
+    page_cat("<br><hr>");
 
     // Filesystem space stats:
     size_t total = LittleFS.totalBytes();
     size_t used = LittleFS.usedBytes();
 
-    out += "<pre>Total bytes: ";
-    out += total;
-    out += "\nUsed bytes:  ";
-    out += used;
-
-    // Calculate used space %
-    if( total < 1 )     // Avoid divide by 0 if no filesystem.
+    // Avoid divide by 0 if no filesystem.
+    if( total < 1 )
         total = 1;
 
-    snprintf( buf, sizeof( buf ), "   (%0.1f%%)", ( (float) used / (float) total ) * 100.0 );
-    out += buf;
+    page_catf("<pre>Total bytes: %u\n", (unsigned)total);
+    page_catf("Used bytes:  %u   (%0.1f%%)\n", (unsigned)used,
+        ((float)used / (float)total) * 100.0f);
+    page_catf("Free bytes:  %u   (%0.1f%%)\n", (unsigned)(total - used),
+        ((float)(total - used) / (float)total) * 100.0f);
+    page_cat("</pre>");
 
-    out += "\nFree bytes:  ";
-    out += ( total - used );
-
-    snprintf( buf, sizeof( buf ), "   (%0.1f%%)", ( (float) ( total - used ) / ( float) total ) * 100.0 );
-    out += buf;
-
-    out += "\n</pre>";
-
-    server.send( 200, "text/html", out );
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req, page_buf);
+    return ESP_OK;
 }
 
 
-// Show NVS key/value config contents.
-void http_nvs()
+static esp_err_t http_nvs(httpd_req_t *req)
 {
-    String out = "<html><body>\n";
-
-    server.send( 200, "text/plain", "FIXME..." );
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "FIXME...");
+    return ESP_OK;
 }
 
 
-void http_config_get()
+static esp_err_t http_config_get(httpd_req_t *req)
 {
     const char *msg = "";
-    if (server.hasArg("saved"))
-        msg = "Settings saved. Reboot to apply non-debug changes.";
-    else if (server.hasArg("reset"))
-        msg = "Settings reset to defaults. Reboot to apply non-debug changes.";
+    char qbuf[32];
+    size_t qlen = httpd_req_get_url_query_len(req);
+    if (qlen > 0 && qlen < sizeof(qbuf)) {
+        httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf));
+        char val[2];
+        if (httpd_query_key_value(qbuf, "saved", val, sizeof(val)) == ESP_OK)
+            msg = "Settings saved. Reboot to apply non-debug changes.";
+        else if (httpd_query_key_value(qbuf, "reset", val, sizeof(val)) == ESP_OK)
+            msg = "Settings reset to defaults. Reboot to apply non-debug changes.";
+    }
 
-    server.send(200, "text/html", config_get_html(msg));
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req, config_get_html(msg));
+    return ESP_OK;
 }
 
 
-void http_config_post()
+static esp_err_t http_config_post(httpd_req_t *req)
 {
-    config_set_from_web(server);
-    server.sendHeader("Location", "/config?saved=1");
-    server.send(303);
+    int body_len = req->content_len;
+    if (body_len <= 0 || body_len >= (int)sizeof(page_buf)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad form data");
+        return ESP_FAIL;
+    }
+
+    int received = 0;
+    while (received < body_len) {
+        int ret = httpd_req_recv(req, page_buf + received, body_len - received);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            return ESP_FAIL;
+        }
+        received += ret;
+    }
+    page_buf[received] = '\0';
+
+    config_set_from_web(page_buf);
+
+    httpd_resp_set_status(req, "303 See Other");
+    httpd_resp_set_hdr(req, "Location", "/config?saved=1");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
 }
 
 
-void http_config_reset()
+static esp_err_t http_config_reset(httpd_req_t *req)
 {
     config_reset();
     config_apply_debug();
-    server.sendHeader("Location", "/config?reset=1");
-    server.send(303);
+
+    httpd_resp_set_status(req, "303 See Other");
+    httpd_resp_set_hdr(req, "Location", "/config?reset=1");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+
+static esp_err_t http_update_page(httpd_req_t *req)
+{
+    page_reset();
+    page_cat("<html><body>");
+    page_cat("<h2>Firmware Update</h2>");
+    page_cat("<script>"
+        "function doUpload(){"
+            "var f=document.getElementById('file').files[0];"
+            "if(!f){alert('No file selected');return;}"
+            "var t=document.querySelector('input[name=\"type\"]:checked').value;"
+            "var s=document.getElementById('status');"
+            "s.textContent='Uploading '+f.name+' ('+f.size+' bytes)...';"
+            "fetch('/update?type='+t,{method:'POST',body:f})"
+            ".then(r=>r.text())"
+            ".then(txt=>{s.textContent=txt;})"
+            ".catch(e=>{s.textContent='Error: '+e;});"
+        "}"
+    "</script>");
+    page_cat("<form onsubmit='doUpload();return false;'>");
+    page_cat("<input type='radio' name='type' value='firmware' checked> Firmware ");
+    page_cat("<input type='radio' name='type' value='filesystem'> Filesystem<br><br>");
+    page_cat("<input type='file' id='file'><br><br>");
+    page_cat("<input type='submit' value='Upload'>");
+    page_cat("</form>");
+    page_cat("<div id='status'></div><hr>");
+    page_cat_partitions();
+    page_cat("</body></html>");
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req, page_buf);
+    return ESP_OK;
+}
+
+
+static esp_err_t http_update_post(httpd_req_t *req)
+{
+    // Read query param "type"
+    char qbuf[32], typeval[16] = "firmware";
+    size_t qlen = httpd_req_get_url_query_len(req);
+    if (qlen > 0 && qlen < sizeof(qbuf)) {
+        httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf));
+        httpd_query_key_value(qbuf, "type", typeval, sizeof(typeval));
+    }
+
+    bool is_firmware = (strcmp(typeval, "filesystem") != 0);
+    const char *label = is_firmware ? "firmware" : "filesystem";
+
+    printfnl(SOURCE_SYSTEM, "OTA %s upload: %d bytes", label, req->content_len);
+
+    const esp_partition_t *part;
+    esp_ota_handle_t ota_handle = 0;
+
+    if (is_firmware) {
+        part = esp_ota_get_next_update_partition(NULL);
+        if (!part) {
+            httpd_resp_sendstr(req, "FAIL: no OTA partition");
+            return ESP_FAIL;
+        }
+        esp_err_t err = esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
+        if (err != ESP_OK) {
+            printfnl(SOURCE_SYSTEM, "OTA begin failed: %s", esp_err_to_name(err));
+            httpd_resp_sendstr(req, "FAIL: begin error");
+            return ESP_FAIL;
+        }
+    } else {
+        // Filesystem: find partition labeled "spiffs" in partition table
+        LittleFS.end();
+        part = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+        if (!part) {
+            httpd_resp_sendstr(req, "FAIL: no filesystem partition");
+            return ESP_FAIL;
+        }
+        esp_err_t err = esp_partition_erase_range(part, 0, part->size);
+        if (err != ESP_OK) {
+            printfnl(SOURCE_SYSTEM, "OTA erase failed: %s", esp_err_to_name(err));
+            httpd_resp_sendstr(req, "FAIL: erase error");
+            return ESP_FAIL;
+        }
+    }
+
+    // Stream body chunks
+    char buf[1024];
+    int remaining = req->content_len;
+    size_t offset = 0;
+    while (remaining > 0) {
+        int toread = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
+        int recv_len = httpd_req_recv(req, buf, toread);
+        if (recv_len <= 0) {
+            if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            if (is_firmware) esp_ota_abort(ota_handle);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
+            return ESP_FAIL;
+        }
+
+        esp_err_t err;
+        if (is_firmware) {
+            err = esp_ota_write(ota_handle, buf, recv_len);
+        } else {
+            err = esp_partition_write(part, offset, buf, recv_len);
+            offset += recv_len;
+        }
+        if (err != ESP_OK) {
+            printfnl(SOURCE_SYSTEM, "OTA write failed: %s", esp_err_to_name(err));
+            if (is_firmware) esp_ota_abort(ota_handle);
+            httpd_resp_sendstr(req, "FAIL: write error");
+            return ESP_FAIL;
+        }
+        remaining -= recv_len;
+    }
+
+    if (is_firmware) {
+        esp_err_t err = esp_ota_end(ota_handle);
+        if (err != ESP_OK) {
+            printfnl(SOURCE_SYSTEM, "OTA end failed: %s", esp_err_to_name(err));
+            httpd_resp_sendstr(req, "FAIL: verify error");
+            return ESP_FAIL;
+        }
+        esp_ota_set_boot_partition(part);
+    }
+
+    printfnl(SOURCE_SYSTEM, "OTA success: %d bytes", req->content_len);
+    httpd_resp_sendstr(req, "OK — rebooting...");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+    return ESP_OK;
 }
 
 
 int http_setup()
 {
-    server.on( "/", http_root );
-    server.on( "/reboot", http_reboot );
-    server.on( "/dir", http_dir );
-    server.on( "/nvs", http_nvs );
-    server.on( "/config", HTTP_GET,  http_config_get );
-    server.on( "/config", HTTP_POST, http_config_post );
-    server.on( "/config/reset", HTTP_POST, http_config_reset );
-    ElegantOTA.begin( &server );
-    server.begin();
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.max_uri_handlers = 12;
+    cfg.stack_size = 6144;
+    cfg.core_id = 1;          // HWCDC safety: printfnl() writes to Serial
 
+    if (httpd_start(&server, &cfg) != ESP_OK) {
+        Serial.println("HTTP server failed to start");
+        return -1;
+    }
+
+    static const httpd_uri_t routes[] = {
+        { "/",             HTTP_GET,  http_root,         NULL },
+        { "/reboot",       HTTP_GET,  http_reboot,       NULL },
+        { "/dir",          HTTP_GET,  http_dir,          NULL },
+        { "/nvs",          HTTP_GET,  http_nvs,          NULL },
+        { "/config",       HTTP_GET,  http_config_get,   NULL },
+        { "/config",       HTTP_POST, http_config_post,  NULL },
+        { "/config/reset", HTTP_POST, http_config_reset, NULL },
+        { "/update",       HTTP_GET,  http_update_page,  NULL },
+        { "/update",       HTTP_POST, http_update_post,  NULL },
+    };
+    for (int i = 0; i < (int)(sizeof(routes) / sizeof(routes[0])); i++)
+        httpd_register_uri_handler(server, &routes[i]);
+
+    Serial.println("HTTP server started on port 80");
     return 0;
 }
 
 
 int http_loop()
 {
-    server.handleClient();
+    // esp_http_server runs in its own FreeRTOS task — no polling needed
     return 0;
 }

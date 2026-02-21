@@ -2,15 +2,16 @@
 
 #include "wasm_internal.h"
 #include <Arduino.h>
+#include "driver/gpio.h"
 
 // --- GPIO ---
 
 // void pin_set(i32 gpio)
 m3ApiRawFunction(m3_pin_set) {
     m3ApiGetArg(int32_t, gpio);
-    if (gpio >= 0 && gpio < NUM_DIGITAL_PINS) {
-        pinMode(gpio, OUTPUT);
-        digitalWrite(gpio, HIGH);
+    if (gpio >= 0 && gpio < GPIO_NUM_MAX) {
+        gpio_set_direction((gpio_num_t)gpio, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)gpio, 1);
     }
     m3ApiSuccess();
 }
@@ -18,9 +19,9 @@ m3ApiRawFunction(m3_pin_set) {
 // void pin_clear(i32 gpio)
 m3ApiRawFunction(m3_pin_clear) {
     m3ApiGetArg(int32_t, gpio);
-    if (gpio >= 0 && gpio < NUM_DIGITAL_PINS) {
-        pinMode(gpio, OUTPUT);
-        digitalWrite(gpio, LOW);
+    if (gpio >= 0 && gpio < GPIO_NUM_MAX) {
+        gpio_set_direction((gpio_num_t)gpio, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)gpio, 0);
     }
     m3ApiSuccess();
 }
@@ -29,9 +30,9 @@ m3ApiRawFunction(m3_pin_clear) {
 m3ApiRawFunction(m3_pin_read) {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, gpio);
-    if (gpio >= 0 && gpio < NUM_DIGITAL_PINS) {
-        pinMode(gpio, INPUT);
-        m3ApiReturn(digitalRead(gpio));
+    if (gpio >= 0 && gpio < GPIO_NUM_MAX) {
+        gpio_set_direction((gpio_num_t)gpio, GPIO_MODE_INPUT);
+        m3ApiReturn(gpio_get_level((gpio_num_t)gpio));
     }
     m3ApiReturn(0);
 }

@@ -23,6 +23,9 @@ CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y
 # FreeRTOS tick rate — Arduino requires 1000 Hz
 CONFIG_FREERTOS_HZ=1000
 
+# FreeRTOS trace — enables uxTaskGetSystemState() for dynamic `ps` enumeration
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
 # Watchdog timers — longer timeouts for PSRAM SPI transfers and WASM compiles
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=800
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10

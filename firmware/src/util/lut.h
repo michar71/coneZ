@@ -1,7 +1,7 @@
 #ifndef lut_h
 #define lut_h
 
-#include <Arduino.h>
+#include <stdint.h>
 
 extern int* pLUT;
 extern int lutSize;

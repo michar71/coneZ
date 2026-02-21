@@ -85,7 +85,7 @@ int      psram_setup(void);
 // Returns 0 on pass, -1 on failure or if blocked.
 int      psram_test(bool forever = false);
 
-// Total PSRAM capacity in bytes (8388608 for improvised, ESP.getPsramSize()
+// Total PSRAM capacity in bytes (8388608 for improvised, esp_spiram_get_size()
 // for native, 0 for no-PSRAM boards).
 uint32_t psram_size(void);
 

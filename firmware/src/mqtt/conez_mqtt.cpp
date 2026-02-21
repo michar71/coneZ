@@ -13,6 +13,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include "esp_system.h"
 #include "conez_mqtt.h"
 #include "config.h"
 #include "printManager.h"
@@ -376,7 +377,7 @@ static void send_heartbeat(void)
     snprintf(payload, sizeof(payload),
              "{\"uptime\":%lu,\"heap\":%lu,\"temp\":%.1f,\"rssi\":%d}",
              (unsigned long)(millis() / 1000),
-             (unsigned long)ESP.getFreeHeap(),
+             (unsigned long)esp_get_free_heap_size(),
              getTemp(),
              WiFi.RSSI());
 

@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include "esp_system.h"
 #include "esp_heap_caps.h"
+#include "driver/gpio.h"
 #include "soc/io_mux_reg.h"
 #include "soc/gpio_reg.h"
 #include "esp_partition.h"
@@ -273,7 +274,7 @@ int cmd_reboot( int argc, char **argv )
 {
     printfnl( SOURCE_SYSTEM, F("Rebooting...\n") );
     delay( 1000 );
-    ESP.restart();
+    esp_restart();
 
     return 0;
 }
@@ -1132,37 +1133,22 @@ int cmd_mem(int argc, char **argv)
 
 int cmd_ps(int argc, char **argv)
 {
-    // Known task names (application + typical Arduino/ESP-IDF system tasks)
-    static const char *taskNames[] = {
-        "loopTask",     // Arduino main loop
-        "ShellTask",    // Shell / CLI
-#ifdef INCLUDE_BASIC
-        "BasicTask",    // BASIC interpreter
-#endif
-        "WasmTask",     // WASM runtime
-        "led_render",   // LED render task
-        "IDLE0",        // Idle task core 0
-        "IDLE1",        // Idle task core 1
-        "Tmr Svc",      // FreeRTOS timer service
-        "async_tcp",    // Async TCP (if WiFi active)
-        "wifi",         // WiFi task
-        "tiT",          // TCP/IP task
-        "sys_evt",      // System event task
-        "arduino_events", // Arduino event loop
-    };
-    static const int numNames = sizeof(taskNames) / sizeof(taskNames[0]);
+    UBaseType_t numTasks = uxTaskGetNumberOfTasks();
+    TaskStatus_t *taskList = (TaskStatus_t *)malloc(numTasks * sizeof(TaskStatus_t));
+    if (!taskList) {
+        printfnl(SOURCE_COMMANDS, F("Out of memory\n"));
+        return -1;
+    }
 
-    printfnl(SOURCE_COMMANDS, F("Task List (%u total tasks):\n"), (unsigned int)uxTaskGetNumberOfTasks() );
-    printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4s  %4s  %s\n"), "Name", "State", "Prio", "Core", "Min Free Stack" );
+    UBaseType_t got = uxTaskGetSystemState(taskList, numTasks, NULL);
 
-    for (int i = 0; i < numNames; i++)
+    printfnl(SOURCE_COMMANDS, F("Task List (%u tasks):\n"), (unsigned int)got);
+    printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4s  %4s  %s\n"), "Name", "State", "Prio", "Core", "Min Free Stack");
+
+    for (UBaseType_t i = 0; i < got; i++)
     {
-        TaskHandle_t handle = xTaskGetHandle(taskNames[i]);
-        if (handle == NULL)
-            continue;
-
         const char *state;
-        switch (eTaskGetState(handle))
+        switch (taskList[i].eCurrentState)
         {
             case eRunning:   state = "Run";   break;
             case eReady:     state = "Ready"; break;
@@ -1172,23 +1158,23 @@ int cmd_ps(int argc, char **argv)
             default:         state = "?";     break;
         }
 
-        UBaseType_t prio = uxTaskPriorityGet(handle);
-        BaseType_t coreId = xTaskGetAffinity(handle);
-        uint32_t freeStackBytes = (uint32_t)uxTaskGetStackHighWaterMark(handle) * 4;
+        BaseType_t coreId = xTaskGetAffinity(taskList[i].xHandle);
+        uint32_t freeStackBytes = (uint32_t)taskList[i].usStackHighWaterMark * 4;
 
         if (coreId == tskNO_AFFINITY)
             printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4u     -  %u\n"),
-                taskNames[i], state,
-                (unsigned int)prio,
-                (unsigned int)freeStackBytes );
+                taskList[i].pcTaskName, state,
+                (unsigned int)taskList[i].uxCurrentPriority,
+                (unsigned int)freeStackBytes);
         else
             printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4u  %4d  %u\n"),
-                taskNames[i], state,
-                (unsigned int)prio,
+                taskList[i].pcTaskName, state,
+                (unsigned int)taskList[i].uxCurrentPriority,
                 (int)coreId,
-                (unsigned int)freeStackBytes );
+                (unsigned int)freeStackBytes);
     }
 
+    free(taskList);
     return 0;
 }
 
@@ -1765,7 +1751,7 @@ static void gpio_show_all(void)
         // ESP32-S3 has no GPIO 22-32
         if (i >= 22 && i <= 32) continue;
 
-        int level = digitalRead(i);
+        int level = gpio_get_level((gpio_num_t)i);
 
         bool is_output;
         if (i < 32)
@@ -1816,7 +1802,7 @@ int cmd_gpio(int argc, char **argv)
             printfnl(SOURCE_COMMANDS, F("Value must be 0 or 1\n"));
             return -1;
         }
-        digitalWrite(pin, val);
+        gpio_set_level((gpio_num_t)pin, val);
         printfnl(SOURCE_COMMANDS, F("GPIO %d -> %d\n"), pin, val);
         return 0;
     }
@@ -1837,8 +1823,8 @@ int cmd_gpio(int argc, char **argv)
             printfnl(SOURCE_COMMANDS, F("Value must be 0 or 1\n"));
             return -1;
         }
-        pinMode(pin, OUTPUT);
-        digitalWrite(pin, val);
+        gpio_set_direction((gpio_num_t)pin, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)pin, val);
         printfnl(SOURCE_COMMANDS, F("GPIO %d -> OUTPUT %d\n"), pin, val);
         return 0;
     }
@@ -1855,24 +1841,25 @@ int cmd_gpio(int argc, char **argv)
             printfnl(SOURCE_COMMANDS, F("GPIO %d is reserved (use 'gpio' to see pin assignments)\n"), pin);
             return -1;
         }
-        int mode = INPUT;
+        gpio_pull_mode_t pull = GPIO_FLOATING;
         const char *pull_name = "none";
         if (argc == 4) {
             if (strcasecmp(argv[3], "up") == 0) {
-                mode = INPUT_PULLUP;
+                pull = GPIO_PULLUP_ONLY;
                 pull_name = "pull-up";
             } else if (strcasecmp(argv[3], "down") == 0) {
-                mode = INPUT_PULLDOWN;
+                pull = GPIO_PULLDOWN_ONLY;
                 pull_name = "pull-down";
             } else if (strcasecmp(argv[3], "none") == 0) {
-                mode = INPUT;
+                pull = GPIO_FLOATING;
                 pull_name = "none";
             } else {
                 printfnl(SOURCE_COMMANDS, F("Pull mode must be: up, down, or none\n"));
                 return -1;
             }
         }
-        pinMode(pin, mode);
+        gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT);
+        gpio_set_pull_mode((gpio_num_t)pin, pull);
         printfnl(SOURCE_COMMANDS, F("GPIO %d -> INPUT (%s)\n"), pin, pull_name);
         return 0;
     }
@@ -1884,7 +1871,7 @@ int cmd_gpio(int argc, char **argv)
             printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
             return -1;
         }
-        printfnl(SOURCE_COMMANDS, F("GPIO %d = %d\n"), pin, digitalRead(pin));
+        printfnl(SOURCE_COMMANDS, F("GPIO %d = %d\n"), pin, gpio_get_level((gpio_num_t)pin));
         return 0;
     }
 

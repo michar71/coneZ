@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "driver/gpio.h"
 #include "main.h"
 #include "util.h"
 #include "printManager.h"
@@ -13,13 +14,13 @@ void blinkloop( int flashes )
   {
     for( i = 0; i < flashes; ++i )
     {
-      digitalWrite( LED_PIN, HIGH );
+      gpio_set_level( (gpio_num_t)LED_PIN, 1 );
       delay( 250 );
-      digitalWrite( LED_PIN, LOW );
+      gpio_set_level( (gpio_num_t)LED_PIN, 0 );
       delay( 250 );
     }
 
-    digitalWrite( LED_PIN, LOW );
+    gpio_set_level( (gpio_num_t)LED_PIN, 0 );
 
     delay( 1000 );
 
