@@ -88,7 +88,7 @@ ConezShell::Command * ConezShell::firstCommand = NULL;
  */
 class ConezShell::Command {
     public:
-        Command(const __FlashStringHelper * n, CommandFunction f,
+        Command(const char * n, CommandFunction f,
                 const char *fs = NULL, const char * const *sc = NULL,
                 TabCompleteFunc tcf = NULL, bool va = false):
             nameAndDocs(n), myFunc(f), fileSpec(fs), subcommands(sc),
@@ -102,13 +102,13 @@ class ConezShell::Command {
         // Comparison used for sort commands
         int compare(const Command * other) const
         {
-            return compareName((const char *)other->nameAndDocs);
+            return compareName(other->nameAndDocs);
         };
 
         int compareName(const char * aName) const
         {
             // Find length of command name (up to first space)
-            const char *name = (const char *)nameAndDocs;
+            const char *name = nameAndDocs;
             const char *sp = strchr(name, ' ');
             int nameLen = sp ? (int)(sp - name) : (int)strlen(name);
             // Compare only the name portion
@@ -121,7 +121,7 @@ class ConezShell::Command {
         void renderDocumentation(Stream& str) const
         {
             getLock();
-            str.print(F("  "));
+            str.print("  ");
             str.print(nameAndDocs);
             str.println();
             releaseLock();
@@ -131,10 +131,10 @@ class ConezShell::Command {
         // Returns length of name (truncated to bufsz-1).
         int getName(char *buf, int bufsz) const
         {
-            const char *p = (const char *)nameAndDocs;
+            const char *p = nameAndDocs;
             int i = 0;
             while (i < bufsz - 1) {
-                char ch = pgm_read_byte(p + i);
+                char ch = p[i];
                 if (ch == '\0' || ch == ' ') break;
                 buf[i++] = ch;
             }
@@ -146,7 +146,7 @@ class ConezShell::Command {
 
     private:
 
-        const __FlashStringHelper * const nameAndDocs;
+        const char * const nameAndDocs;
         const CommandFunction myFunc;
     public:
         const char * const fileSpec;           // NULL = no files, "*" = all, "*.bas;*.c" = filtered
@@ -170,12 +170,12 @@ ConezShell::ConezShell()
     inputActive = false;
 
 
-    addCommand(F("history"), ConezShell::printHistory);
+    addCommand("history", ConezShell::printHistory);
 };
 
 //////////////////////////////////////////////////////////////////////////////
 void ConezShell::addCommand(
-    const __FlashStringHelper * name, CommandFunction f,
+    const char * name, CommandFunction f,
     const char *fileSpec, const char * const *subcommands,
     TabCompleteFunc tabCompleteFunc, bool valArgs)
 {
@@ -332,7 +332,7 @@ bool ConezShell::prepInput(void)
                     if (cursor < inptr && shellConnection) {
                         cursor++;
                         if (getAnsiEnabled())
-                            shellConnection->print(F("\033[C"));
+                            shellConnection->print("\033[C");
                         else {
                             shellConnection->print(sh_prompt_cr());
                             shellConnection->write((const uint8_t*)linebuffer, cursor);
@@ -343,7 +343,7 @@ bool ConezShell::prepInput(void)
                     if (cursor > 0 && shellConnection) {
                         cursor--;
                         if (getAnsiEnabled())
-                            shellConnection->print(F("\033[D"));
+                            shellConnection->print("\033[D");
                         else {
                             shellConnection->print(sh_prompt_cr());
                             shellConnection->write((const uint8_t*)linebuffer, cursor);
@@ -359,7 +359,7 @@ bool ConezShell::prepInput(void)
                     if (shellConnection) {
                         if (getAnsiEnabled())
                             for (int i = cursor; i < inptr; i++)
-                                shellConnection->print(F("\033[C"));
+                                shellConnection->print("\033[C");
                         else {
                             shellConnection->print(sh_prompt_cr());
                             shellConnection->write((const uint8_t*)linebuffer, inptr);
@@ -417,7 +417,7 @@ bool ConezShell::prepInput(void)
                     if (cursor == inptr) {
                         // simple backspace at end of line
                         if (shellConnection)
-                            shellConnection->print(F("\b \b"));
+                            shellConnection->print("\b \b");
                         linebuffer[--inptr] = '\0';
                         cursor--;
                     } else {
@@ -441,7 +441,7 @@ bool ConezShell::prepInput(void)
                 if (shellConnection) {
                     if (getAnsiEnabled())
                         for (int i = cursor; i < inptr; i++)
-                            shellConnection->print(F("\033[C"));
+                            shellConnection->print("\033[C");
                     else {
                         shellConnection->print(sh_prompt_cr());
                         shellConnection->write((const uint8_t*)linebuffer, inptr);
@@ -453,7 +453,7 @@ bool ConezShell::prepInput(void)
             case 0x12: //CTRL('R')
                 if (shellConnection)
                 {
-                    shellConnection->print(F("\r\n"));
+                    shellConnection->print("\r\n");
                     shellConnection->print(sh_prompt());
                     shellConnection->print(linebuffer);
                     cursor = inptr;
@@ -473,7 +473,7 @@ bool ConezShell::prepInput(void)
                 hist_nav = -1;
                 if (shellConnection) {
                     shellConnection->print(sh_reset());
-                    shellConnection->print(F("\n"));
+                    shellConnection->print("\n");
                 }
                 bufferReady = true;
                 break;
@@ -567,7 +567,7 @@ int ConezShell::execute(void)
         }
     }
 
-    return report(F("Too many arguments to parse"), -1);
+    return report("Too many arguments to parse", -1);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -586,13 +586,13 @@ int ConezShell::execute(int argc, char **argv)
     if (shellConnection )
     {
         getLock();
-        shellConnection->print(F("\""));
+        shellConnection->print("\"");
         shellConnection->print(argv[0]);
-        shellConnection->print(F("\": "));
+        shellConnection->print("\": ");
         releaseLock();
     }
 
-    return report(F("command not found"), -1);
+    return report("command not found", -1);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -602,7 +602,7 @@ int ConezShell::lastErrNo(void)
 }
 
 //////////////////////////////////////////////////////////////////////////////
-int ConezShell::report(const __FlashStringHelper * constMsg, int errorCode)
+int ConezShell::report(const char * constMsg, int errorCode)
 {
     if (errorCode != EXIT_SUCCESS)
     {
@@ -612,7 +612,7 @@ int ConezShell::report(const __FlashStringHelper * constMsg, int errorCode)
             getLock();
             shellConnection->print(errorCode);
             if (message[0] != '\0') {
-                shellConnection->print(F(": "));
+                shellConnection->print(": ");
                 shellConnection->println(message);
             } else {
                 shellConnection->println();
@@ -640,11 +640,11 @@ void ConezShell::suspendLine(Stream *out)
     if (!inputActive || !out) return;
     if (getAnsiEnabled()) {
         out->print(sh_reset());
-        out->print(F("\r\033[K"));
+        out->print("\r\033[K");
     } else {
-        out->print(F("\r"));
+        out->print("\r");
         for (int i = 0; i < inptr + 2; i++) out->write(' ');
-        out->print(F("\r"));
+        out->print("\r");
     }
 }
 
@@ -769,9 +769,9 @@ void ConezShell::tabComplete(void)
             } else if (val_sentinel_label(result)) {
                 getLock();
                 shellConnection->print(sh_reset());
-                shellConnection->print(F("\r\n"));
+                shellConnection->print("\r\n");
                 shellConnection->print(val_sentinel_label(result));
-                shellConnection->print(F("\r\n"));
+                shellConnection->print("\r\n");
                 shellConnection->print(sh_prompt());
                 shellConnection->write((const uint8_t*)linebuffer, inptr);
                 for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
@@ -785,7 +785,7 @@ void ConezShell::tabComplete(void)
                 // Callback says no completion — show <cr>
                 getLock();
                 shellConnection->print(sh_reset());
-                shellConnection->print(F("\r\n<cr>\r\n"));
+                shellConnection->print("\r\n<cr>\r\n");
                 shellConnection->print(sh_prompt());
                 shellConnection->write((const uint8_t*)linebuffer, inptr);
                 for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
@@ -807,7 +807,7 @@ void ConezShell::tabComplete(void)
                 getLock();
                 shellConnection->print(sh_reset());
                 // Show <val> if command expects typed values, otherwise <cr>
-                shellConnection->print(foundCmd->valArgs ? F("\r\n<val>\r\n") : F("\r\n<cr>\r\n"));
+                shellConnection->print(foundCmd->valArgs ? "\r\n<val>\r\n" : "\r\n<cr>\r\n");
                 shellConnection->print(sh_prompt());
                 shellConnection->write((const uint8_t*)linebuffer, inptr);
                 for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
@@ -924,7 +924,7 @@ void ConezShell::tabComplete(void)
         if (isSubcmdResult && prefixLen == 0) {
             getLock();
             shellConnection->print(sh_reset());
-            shellConnection->print(showValHint ? F("\r\n<val>\r\n") : F("\r\n<cr>\r\n"));
+            shellConnection->print(showValHint ? "\r\n<val>\r\n" : "\r\n<cr>\r\n");
             shellConnection->print(sh_prompt());
             shellConnection->write((const uint8_t*)linebuffer, inptr);
             for (int i = cursor; i < inptr; i++) shellConnection->write('\b');
@@ -1016,15 +1016,15 @@ void ConezShell::tabComplete(void)
         // List all matches immediately
         getLock();
         shellConnection->print(sh_reset());
-        shellConnection->print(F("\r\n"));
+        shellConnection->print("\r\n");
         // If completing subcommands, show [cr] to indicate bare command is also valid
-        if (isSubcmdResult) shellConnection->print(F("[cr]  "));
+        if (isSubcmdResult) shellConnection->print("[cr]  ");
         for (int i = 0; i < nMatches; i++) {
             shellConnection->print(matches[i].name);
             if (matches[i].isDir) shellConnection->write('/');
-            shellConnection->print(F("  "));
+            shellConnection->print("  ");
         }
-        shellConnection->print(F("\r\n"));
+        shellConnection->print("\r\n");
         // Re-display prompt + current line
         shellConnection->print(sh_prompt());
         shellConnection->write((const uint8_t*)linebuffer, inptr);
@@ -1154,12 +1154,12 @@ int ConezShell::printHistory(int /*argc*/, char ** /*argv*/)
         releaseLock();
     } else if (theShell.history[0] != '\0') {
         getLock();
-        shell.print(F("  1  "));
+        shell.print("  1  ");
         shell.println(theShell.history);
         releaseLock();
     } else {
         getLock();
-        shell.println(F("(no history)"));
+        shell.println("(no history)");
         releaseLock();
     }
     return 0;

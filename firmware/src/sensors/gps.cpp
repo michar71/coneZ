@@ -168,7 +168,7 @@ void gps_send_nmea(const char *body)
     char msg[128];
     snprintf(msg, sizeof(msg), "$%s*%02X\r\n", body, cs);
     GPSSerial.print(msg);
-    printfnl(SOURCE_GPS, F("Sent: %s"), msg);
+    printfnl(SOURCE_GPS, "Sent: %s", msg);
 }
 
 
@@ -254,7 +254,7 @@ int gps_loop()
 
             int date_raw = nmea.date_valid ? nmea.day * 10000 + nmea.month * 100 + (nmea.year % 100) : -1;
             int time_raw = nmea.time_valid ? nmea.hour * 10000 + nmea.minute * 100 + nmea.second : -1;
-            printfnl( SOURCE_GPS, F("GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n"),
+            printfnl( SOURCE_GPS, "GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n",
                 (int) gps_pos_valid,
                 gps_lat,
                 gps_lon,

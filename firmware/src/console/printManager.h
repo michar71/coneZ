@@ -50,7 +50,6 @@ typedef enum {
 
 // Print wirthout carriage return
 void printfnl(source_e source, const char *format, ...);
-void printfnl( source_e source, const __FlashStringHelper *format, ... );
 
 // Set the output stream (e.g., Serial or Telnet)
 void setStream(Stream *stream);

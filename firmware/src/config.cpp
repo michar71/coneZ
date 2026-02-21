@@ -364,14 +364,14 @@ void config_save(void)
 {
     if (!littlefs_mounted)
     {
-        printfnl(SOURCE_COMMANDS, F("Error: LittleFS not mounted\n"));
+        printfnl(SOURCE_COMMANDS, "Error: LittleFS not mounted\n");
         return;
     }
 
     File f = LittleFS.open(CONFIG_PATH, "w");
     if (!f)
     {
-        printfnl(SOURCE_COMMANDS, F("Error: cannot open %s for writing\n"), CONFIG_PATH);
+        printfnl(SOURCE_COMMANDS, "Error: cannot open %s for writing\n", CONFIG_PATH);
         return;
     }
 
@@ -412,7 +412,7 @@ void config_save(void)
     }
 
     f.close();
-    printfnl(SOURCE_COMMANDS, F("Config saved to %s\n"), CONFIG_PATH);
+    printfnl(SOURCE_COMMANDS, "Config saved to %s\n", CONFIG_PATH);
 }
 
 
@@ -422,7 +422,7 @@ void config_reset(void)
         LittleFS.remove(CONFIG_PATH);
 
     config_fill_defaults(&config);
-    printfnl(SOURCE_COMMANDS, F("Config reset to compiled defaults.\n"));
+    printfnl(SOURCE_COMMANDS, "Config reset to compiled defaults.\n");
 }
 
 
@@ -660,7 +660,7 @@ static void config_show(void)
     const char *prev_section = "";
     uint8_t *base = (uint8_t *)&config;
 
-    printfnl(SOURCE_COMMANDS, F("Current configuration:\n"));
+    printfnl(SOURCE_COMMANDS, "Current configuration:\n");
 
     for (int i = 0; i < CFG_TABLE_SIZE; i++)
     {
@@ -668,30 +668,30 @@ static void config_show(void)
 
         if (strcmp(d->section, prev_section) != 0)
         {
-            printfnl(SOURCE_COMMANDS, F("\n  [%s]\n"), d->section);
+            printfnl(SOURCE_COMMANDS, "\n  [%s]\n", d->section);
             prev_section = d->section;
         }
 
         switch (d->type)
         {
         case CFG_STR:
-            printfnl(SOURCE_COMMANDS, F("  %-16s = %s\n"), d->key, (const char *)(base + d->offset));
+            printfnl(SOURCE_COMMANDS, "  %-16s = %s\n", d->key, (const char *)(base + d->offset));
             break;
         case CFG_FLOAT:
-            printfnl(SOURCE_COMMANDS, F("  %-16s = %.9g\n"), d->key, *(float *)(base + d->offset));
+            printfnl(SOURCE_COMMANDS, "  %-16s = %.9g\n", d->key, *(float *)(base + d->offset));
             break;
         case CFG_INT:
-            printfnl(SOURCE_COMMANDS, F("  %-16s = %d\n"), d->key, *(int *)(base + d->offset));
+            printfnl(SOURCE_COMMANDS, "  %-16s = %d\n", d->key, *(int *)(base + d->offset));
             break;
         case CFG_HEX:
-            printfnl(SOURCE_COMMANDS, F("  %-16s = 0x%04X\n"), d->key, *(int *)(base + d->offset));
+            printfnl(SOURCE_COMMANDS, "  %-16s = 0x%04X\n", d->key, *(int *)(base + d->offset));
             break;
         case CFG_BOOL:
-            printfnl(SOURCE_COMMANDS, F("  %-16s = %s\n"), d->key, *(bool *)(base + d->offset) ? "on" : "off");
+            printfnl(SOURCE_COMMANDS, "  %-16s = %s\n", d->key, *(bool *)(base + d->offset) ? "on" : "off");
             break;
         }
     }
-    printfnl(SOURCE_COMMANDS, F("\n"));
+    printfnl(SOURCE_COMMANDS, "\n");
 }
 
 
@@ -709,7 +709,7 @@ int cmd_config(int argc, char **argv)
     {
         config_reset();
         config_apply_debug();
-        printfnl(SOURCE_COMMANDS, F("Reboot to apply non-debug settings.\n"));
+        printfnl(SOURCE_COMMANDS, "Reboot to apply non-debug settings.\n");
         return 0;
     }
 
@@ -722,7 +722,7 @@ int cmd_config(int argc, char **argv)
         char *dot = strchr(buf, '.');
         if (!dot)
         {
-            printfnl(SOURCE_COMMANDS, F("Usage: config unset section.key\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: config unset section.key\n");
             return 1;
         }
         *dot = '\0';
@@ -732,7 +732,7 @@ int cmd_config(int argc, char **argv)
         const cfg_descriptor_t *d = config_find(section, key);
         if (!d)
         {
-            printfnl(SOURCE_COMMANDS, F("Unknown key: %s.%s\n"), section, key);
+            printfnl(SOURCE_COMMANDS, "Unknown key: %s.%s\n", section, key);
             return 1;
         }
 
@@ -742,11 +742,11 @@ int cmd_config(int argc, char **argv)
         if (strcasecmp(section, "debug") == 0)
         {
             config_apply_debug();
-            printfnl(SOURCE_COMMANDS, F("Debug setting reverted to default.\n"));
+            printfnl(SOURCE_COMMANDS, "Debug setting reverted to default.\n");
         }
         else
         {
-            printfnl(SOURCE_COMMANDS, F("Reverted to default. Reboot to apply.\n"));
+            printfnl(SOURCE_COMMANDS, "Reverted to default. Reboot to apply.\n");
         }
 
         return 0;
@@ -763,7 +763,7 @@ int cmd_config(int argc, char **argv)
         char *dot = strchr(buf, '.');
         if (!dot)
         {
-            printfnl(SOURCE_COMMANDS, F("Usage: config set section.key value\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: config set section.key value\n");
             return 1;
         }
         *dot = '\0';
@@ -773,7 +773,7 @@ int cmd_config(int argc, char **argv)
         const cfg_descriptor_t *d = config_find(section, key);
         if (!d)
         {
-            printfnl(SOURCE_COMMANDS, F("Unknown key: %s.%s\n"), section, key);
+            printfnl(SOURCE_COMMANDS, "Unknown key: %s.%s\n", section, key);
             return 1;
         }
 
@@ -784,20 +784,20 @@ int cmd_config(int argc, char **argv)
         if (strcasecmp(section, "debug") == 0)
         {
             config_apply_debug();
-            printfnl(SOURCE_COMMANDS, F("Debug setting applied.\n"));
+            printfnl(SOURCE_COMMANDS, "Debug setting applied.\n");
         }
         else
         {
-            printfnl(SOURCE_COMMANDS, F("Reboot to apply.\n"));
+            printfnl(SOURCE_COMMANDS, "Reboot to apply.\n");
         }
 
         return 0;
     }
 
-    printfnl(SOURCE_COMMANDS, F("Usage:\n"));
-    printfnl(SOURCE_COMMANDS, F("  config                         Show all settings\n"));
-    printfnl(SOURCE_COMMANDS, F("  config set section.key value   Set a value\n"));
-    printfnl(SOURCE_COMMANDS, F("  config unset section.key       Revert one key to default\n"));
-    printfnl(SOURCE_COMMANDS, F("  config reset                   Revert all to defaults\n"));
+    printfnl(SOURCE_COMMANDS, "Usage:\n");
+    printfnl(SOURCE_COMMANDS, "  config                         Show all settings\n");
+    printfnl(SOURCE_COMMANDS, "  config set section.key value   Set a value\n");
+    printfnl(SOURCE_COMMANDS, "  config unset section.key       Revert one key to default\n");
+    printfnl(SOURCE_COMMANDS, "  config reset                   Revert all to defaults\n");
     return 1;
 }

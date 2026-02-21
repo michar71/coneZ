@@ -726,14 +726,14 @@ void psram_print_map(void) {
     PSRAM_UNLOCK();
     map[MAP_WIDTH] = '\0';
 
-    printfnl(SOURCE_COMMANDS, F("  Map:       [%s]\n"), map);
+    printfnl(SOURCE_COMMANDS, "  Map:       [%s]\n", map);
     if (getAnsiEnabled())
-        printfnl(SOURCE_COMMANDS, F("             \033[38;5;240m-\033[0m free  "
+        printfnl(SOURCE_COMMANDS, "             \033[38;5;240m-\033[0m free  "
                    "\033[33m+\033[0m partial  "
                    "\033[31m*\033[0m full   "
-                   "(128KB/char)\n"));
+                   "(128KB/char)\n");
     else
-        printfnl(SOURCE_COMMANDS, F("             - free  + partial  * full   (128KB/char)\n"));
+        printfnl(SOURCE_COMMANDS, "             - free  + partial  * full   (128KB/char)\n");
     #undef MAP_WIDTH
 }
 
@@ -748,13 +748,13 @@ void psram_print_cache_map(void) {
     }
     PSRAM_UNLOCK();
     map[PSRAM_CACHE_PAGES] = '\0';
-    printfnl(SOURCE_COMMANDS, F("  Cache map: [%s]\n"), map);
+    printfnl(SOURCE_COMMANDS, "  Cache map: [%s]\n", map);
     if (getAnsiEnabled())
-        printfnl(SOURCE_COMMANDS, F("             \033[38;5;240m-\033[0m empty  "
+        printfnl(SOURCE_COMMANDS, "             \033[38;5;240m-\033[0m empty  "
                    "\033[32mC\033[0m clean  "
-                   "\033[31mD\033[0m dirty\n"));
+                   "\033[31mD\033[0m dirty\n");
     else
-        printfnl(SOURCE_COMMANDS, F("             - empty  C clean  D dirty\n"));
+        printfnl(SOURCE_COMMANDS, "             - empty  C clean  D dirty\n");
 #endif
 }
 
@@ -762,10 +762,10 @@ void psram_print_cache_detail(void) {
 #if PSRAM_CACHE_PAGES > 0
     uint32_t hits = psram_cache_hits(), misses = psram_cache_misses();
     uint32_t total = hits + misses;
-    printfnl(SOURCE_COMMANDS, F("Cache: %d pages x %d bytes (%u KB DRAM)\n"),
+    printfnl(SOURCE_COMMANDS, "Cache: %d pages x %d bytes (%u KB DRAM)\n",
              PSRAM_CACHE_PAGES, PSRAM_CACHE_PAGE_SIZE,
              (PSRAM_CACHE_PAGES * PSRAM_CACHE_PAGE_SIZE) / 1024);
-    printfnl(SOURCE_COMMANDS, F("Hits:  %u / %u (%u%%)\n"),
+    printfnl(SOURCE_COMMANDS, "Hits:  %u / %u (%u%%)\n",
              hits, total, total ? (hits * 100 / total) : 0);
 
     PSRAM_LOCK();
@@ -778,15 +778,15 @@ void psram_print_cache_detail(void) {
             if (psram_cache[i].last_used > max_used) max_used = psram_cache[i].last_used;
         }
     }
-    printfnl(SOURCE_COMMANDS, F("Used:  %d / %d  (dirty: %d)\n"), used, PSRAM_CACHE_PAGES, dirty);
-    printfnl(SOURCE_COMMANDS, F("Clock: %u\n\n"), cache_clock);
+    printfnl(SOURCE_COMMANDS, "Used:  %d / %d  (dirty: %d)\n", used, PSRAM_CACHE_PAGES, dirty);
+    printfnl(SOURCE_COMMANDS, "Clock: %u\n\n", cache_clock);
 
     if (used > 0) {
-        printfnl(SOURCE_COMMANDS, F("Page  Address     Dirty  Age\n"));
-        printfnl(SOURCE_COMMANDS, F("----  ----------  -----  --------\n"));
+        printfnl(SOURCE_COMMANDS, "Page  Address     Dirty  Age\n");
+        printfnl(SOURCE_COMMANDS, "----  ----------  -----  --------\n");
         for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
             if (psram_cache[i].tag == CACHE_TAG_EMPTY) continue;
-            printfnl(SOURCE_COMMANDS, F("%3d   0x%08X  %-5s  %u\n"),
+            printfnl(SOURCE_COMMANDS, "%3d   0x%08X  %-5s  %u\n",
                      i, psram_cache[i].tag,
                      psram_cache[i].dirty ? "yes" : "no",
                      psram_cache[i].last_used);
@@ -794,7 +794,7 @@ void psram_print_cache_detail(void) {
     }
     PSRAM_UNLOCK();
 #else
-    printfnl(SOURCE_COMMANDS, F("Cache disabled (PSRAM_CACHE_PAGES=0)\n"));
+    printfnl(SOURCE_COMMANDS, "Cache disabled (PSRAM_CACHE_PAGES=0)\n");
 #endif
 }
 

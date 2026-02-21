@@ -126,15 +126,15 @@ static void dispatch_cue(const cue_entry *cue)
         break;
 
     case CUE_TYPE_EFFECT:
-        printfnl(SOURCE_SYSTEM, F("cue: effect dispatch not yet implemented (%s)\n"), cue->effect_file);
+        printfnl(SOURCE_SYSTEM, "cue: effect dispatch not yet implemented (%s)\n", cue->effect_file);
         break;
 
     case CUE_TYPE_GLOBAL:
-        printfnl(SOURCE_SYSTEM, F("cue: global cue type not yet implemented\n"));
+        printfnl(SOURCE_SYSTEM, "cue: global cue type not yet implemented\n");
         break;
 
     default:
-        printfnl(SOURCE_SYSTEM, F("cue: unknown cue type %d\n"), cue->cue_type);
+        printfnl(SOURCE_SYSTEM, "cue: unknown cue type %d\n", cue->cue_type);
         break;
     }
 }
@@ -184,7 +184,7 @@ void cue_loop(void)
     // If we've exhausted all cues, stop playback
     if (cue_cursor >= cue_count) {
         playing = false;
-        printfnl(SOURCE_SYSTEM, F("cue: playback complete (%d cues)\n"), cue_count);
+        printfnl(SOURCE_SYSTEM, "cue: playback complete (%d cues)\n", cue_count);
     }
 }
 
@@ -192,45 +192,45 @@ void cue_loop(void)
 bool cue_load(const char *path)
 {
     if (!littlefs_mounted) {
-        printfnl(SOURCE_SYSTEM, F("cue: LittleFS not mounted\n"));
+        printfnl(SOURCE_SYSTEM, "cue: LittleFS not mounted\n");
         return false;
     }
 
     File f = LittleFS.open(path, "r");
     if (!f) {
-        printfnl(SOURCE_SYSTEM, F("cue: cannot open %s\n"), path);
+        printfnl(SOURCE_SYSTEM, "cue: cannot open %s\n", path);
         return false;
     }
 
     // Read header
     cue_header hdr;
     if (f.read((uint8_t *)&hdr, sizeof(hdr)) != sizeof(hdr)) {
-        printfnl(SOURCE_SYSTEM, F("cue: header read failed\n"));
+        printfnl(SOURCE_SYSTEM, "cue: header read failed\n");
         f.close();
         return false;
     }
 
     // Validate header
     if (hdr.magic != CUE_MAGIC) {
-        printfnl(SOURCE_SYSTEM, F("cue: bad magic 0x%08X (expected 0x%08X)\n"), hdr.magic, CUE_MAGIC);
+        printfnl(SOURCE_SYSTEM, "cue: bad magic 0x%08X (expected 0x%08X)\n", hdr.magic, CUE_MAGIC);
         f.close();
         return false;
     }
 
     if (hdr.version != 0) {
-        printfnl(SOURCE_SYSTEM, F("cue: unsupported version %d\n"), hdr.version);
+        printfnl(SOURCE_SYSTEM, "cue: unsupported version %d\n", hdr.version);
         f.close();
         return false;
     }
 
     if (hdr.record_size < sizeof(cue_entry)) {
-        printfnl(SOURCE_SYSTEM, F("cue: record_size %d too small (need %d)\n"), hdr.record_size, sizeof(cue_entry));
+        printfnl(SOURCE_SYSTEM, "cue: record_size %d too small (need %d)\n", hdr.record_size, sizeof(cue_entry));
         f.close();
         return false;
     }
 
     if (hdr.num_cues == 0) {
-        printfnl(SOURCE_SYSTEM, F("cue: file has 0 cues\n"));
+        printfnl(SOURCE_SYSTEM, "cue: file has 0 cues\n");
         f.close();
         return false;
     }
@@ -238,7 +238,7 @@ bool cue_load(const char *path)
     // Allocate cue array
     cue_entry *new_list = new (std::nothrow) cue_entry[hdr.num_cues];
     if (!new_list) {
-        printfnl(SOURCE_SYSTEM, F("cue: alloc failed for %d cues\n"), hdr.num_cues);
+        printfnl(SOURCE_SYSTEM, "cue: alloc failed for %d cues\n", hdr.num_cues);
         f.close();
         return false;
     }
@@ -247,7 +247,7 @@ bool cue_load(const char *path)
     uint16_t skip = hdr.record_size - sizeof(cue_entry);
     for (int i = 0; i < hdr.num_cues; i++) {
         if (f.read((uint8_t *)&new_list[i], sizeof(cue_entry)) != sizeof(cue_entry)) {
-            printfnl(SOURCE_SYSTEM, F("cue: read failed at entry %d\n"), i);
+            printfnl(SOURCE_SYSTEM, "cue: read failed at entry %d\n", i);
             delete[] new_list;
             f.close();
             return false;
@@ -269,7 +269,7 @@ bool cue_load(const char *path)
     cue_cursor = 0;
     playing    = false;
 
-    printfnl(SOURCE_SYSTEM, F("cue: loaded %d cues from %s\n"), cue_count, path);
+    printfnl(SOURCE_SYSTEM, "cue: loaded %d cues from %s\n", cue_count, path);
     return true;
 }
 
@@ -277,7 +277,7 @@ bool cue_load(const char *path)
 void cue_start(uint64_t epoch_start_ms)
 {
     if (!cue_list || cue_count == 0) {
-        printfnl(SOURCE_SYSTEM, F("cue: no cue file loaded\n"));
+        printfnl(SOURCE_SYSTEM, "cue: no cue file loaded\n");
         return;
     }
 
@@ -289,14 +289,14 @@ void cue_start(uint64_t epoch_start_ms)
     latlon_to_meters(get_lat(), get_lon(), &my_x, &my_y);
     latlon_to_meters(config.origin_lat, config.origin_lon, &origin_x, &origin_y);
 
-    printfnl(SOURCE_SYSTEM, F("cue: playback started (%d cues)\n"), cue_count);
+    printfnl(SOURCE_SYSTEM, "cue: playback started (%d cues)\n", cue_count);
 }
 
 
 void cue_stop(void)
 {
     playing = false;
-    printfnl(SOURCE_SYSTEM, F("cue: playback stopped\n"));
+    printfnl(SOURCE_SYSTEM, "cue: playback stopped\n");
 }
 
 
@@ -320,15 +320,15 @@ int cmd_cue(int argc, char **argv)
 {
     // No args or "status" — show status
     if (argc < 2 || !strcasecmp(argv[1], "status")) {
-        printfnl(SOURCE_COMMANDS, F("Cue Engine:\n"));
-        printfnl(SOURCE_COMMANDS, F("  Loaded:  %s\n"), cue_list ? "yes" : "no");
-        printfnl(SOURCE_COMMANDS, F("  Cues:    %d\n"), cue_count);
-        printfnl(SOURCE_COMMANDS, F("  Playing: %s\n"), playing ? "yes" : "no");
+        printfnl(SOURCE_COMMANDS, "Cue Engine:\n");
+        printfnl(SOURCE_COMMANDS, "  Loaded:  %s\n", cue_list ? "yes" : "no");
+        printfnl(SOURCE_COMMANDS, "  Cues:    %d\n", cue_count);
+        printfnl(SOURCE_COMMANDS, "  Playing: %s\n", playing ? "yes" : "no");
         if (playing) {
             uint64_t now_ms = get_epoch_ms();
             uint32_t elapsed = (now_ms > music_start_ms) ? (uint32_t)(now_ms - music_start_ms) : 0;
-            printfnl(SOURCE_COMMANDS, F("  Elapsed: %lu ms\n"), (unsigned long)elapsed);
-            printfnl(SOURCE_COMMANDS, F("  Cursor:  %d / %d\n"), cue_cursor, cue_count);
+            printfnl(SOURCE_COMMANDS, "  Elapsed: %lu ms\n", (unsigned long)elapsed);
+            printfnl(SOURCE_COMMANDS, "  Cursor:  %d / %d\n", cue_cursor, cue_count);
         }
         return 0;
     }
@@ -336,7 +336,7 @@ int cmd_cue(int argc, char **argv)
     // cue load <path>
     if (!strcasecmp(argv[1], "load")) {
         if (argc < 3) {
-            printfnl(SOURCE_COMMANDS, F("Usage: cue load <path>\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: cue load <path>\n");
             return 1;
         }
         return cue_load(argv[2]) ? 0 : 1;
@@ -347,7 +347,7 @@ int cmd_cue(int argc, char **argv)
     if (!strcasecmp(argv[1], "start")) {
         uint64_t now = get_epoch_ms();
         if (now == 0) {
-            printfnl(SOURCE_COMMANDS, F("cue: no time source available\n"));
+            printfnl(SOURCE_COMMANDS, "cue: no time source available\n");
             return 1;
         }
         uint64_t start_time = now;
@@ -365,6 +365,6 @@ int cmd_cue(int argc, char **argv)
         return 0;
     }
 
-    printfnl(SOURCE_COMMANDS, F("Usage: cue [load <path> | start [ms] | stop | status]\n"));
+    printfnl(SOURCE_COMMANDS, "Usage: cue [load <path> | start [ms] | stop | status]\n");
     return 1;
 }

@@ -281,9 +281,9 @@ static void editor_draw(EditorState *ed, Stream *out)
         } else {
             buf[ED_COLS] = '\0';
         }
-        out->print(F("\033[7m"));
+        out->print("\033[7m");
         out->print(buf);
-        out->print(F("\033[0m\033[K\r\n"));
+        out->print("\033[0m\033[K\r\n");
     }
 
     // --- Rows 2-23: content ---
@@ -299,16 +299,16 @@ static void editor_draw(EditorState *ed, Stream *out)
                 out->write((const uint8_t *)(line_buf + ed->scroll_x), show);
             }
         } else {
-            out->print(F("\033[38;5;240m~\033[0m"));
+            out->print("\033[38;5;240m~\033[0m");
         }
-        out->print(F("\033[K\r\n"));
+        out->print("\033[K\r\n");
     }
 
     // --- Row 24: help bar (reverse video) ---
-    out->print(F("\033[7m ^W Save  ^X Quit  ^K Cut  ^U Paste  ^F Find  ^G GoTo"));
+    out->print("\033[7m ^W Save  ^X Quit  ^K Cut  ^U Paste  ^F Find  ^G GoTo");
     int help_len = 55;
     for (int i = help_len; i < ED_COLS; i++) out->write(' ');
-    out->print(F("\033[0m\033[K"));
+    out->print("\033[0m\033[K");
 
     // --- Position cursor ---
     {
@@ -499,7 +499,7 @@ static int editor_prompt_input(EditorState *ed, Stream *out,
             if (pos > 0) {
                 buf[--pos] = '\0';
                 getLock();
-                out->print(F("\b \b"));
+                out->print("\b \b");
                 releaseLock();
             }
         } else if (c >= 32 && c < 127 && pos < maxlen - 1) {
@@ -718,14 +718,14 @@ static int line_editor_readline(Stream *s, char *buf, int maxlen)
             if (c == '\r' || c == '\n') {
                 buf[pos] = '\0';
                 getLock();
-                s->print(F("\n"));
+                s->print("\n");
                 releaseLock();
                 return pos;
             }
             if ((c == 127 || c == '\b') && pos > 0) {
                 pos--;
                 getLock();
-                s->print(F("\b \b"));
+                s->print("\b \b");
                 releaseLock();
             } else if (c >= 32 && c < 127 && pos < maxlen - 1) {
                 buf[pos++] = (char)c;
@@ -748,7 +748,7 @@ static int line_editor(EditorState *ed)
 
     for (;;) {
         getLock();
-        s->print(F("edit> "));
+        s->print("edit> ");
         releaseLock();
 
         int len = line_editor_readline(s, cmd, sizeof(cmd));
@@ -807,7 +807,7 @@ static int line_editor(EditorState *ed)
             int at = n - 1;
             for (;;) {
                 getLock();
-                s->print(F("  > "));
+                s->print("  > ");
                 releaseLock();
                 char line[ED_LINE_MAX];
                 int ll = line_editor_readline(s, line, sizeof(line));
@@ -839,7 +839,7 @@ static int line_editor(EditorState *ed)
             printfnl(SOURCE_NONE, "Append (empty line to stop):\n");
             for (;;) {
                 getLock();
-                s->print(F("  > "));
+                s->print("  > ");
                 releaseLock();
                 char line[ED_LINE_MAX];
                 int ll = line_editor_readline(s, line, sizeof(line));
@@ -893,7 +893,7 @@ static int line_editor(EditorState *ed)
             }
             printfnl(SOURCE_NONE, "Replace line %d:\n", n);
             getLock();
-            s->print(F("  > "));
+            s->print("  > ");
             releaseLock();
             char line[ED_LINE_MAX];
             line_editor_readline(s, line, sizeof(line));
@@ -1011,7 +1011,7 @@ static int line_editor(EditorState *ed)
 int cmd_edit(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: edit <filename>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: edit <filename>\n");
         return 1;
     }
 
@@ -1024,7 +1024,7 @@ int cmd_edit(int argc, char **argv)
     ed.work_line = -1;
 
     if (!editor_load(&ed, path)) {
-        printfnl(SOURCE_COMMANDS, F("Failed to allocate PSRAM for editor\n"));
+        printfnl(SOURCE_COMMANDS, "Failed to allocate PSRAM for editor\n");
         return 1;
     }
 
@@ -1043,7 +1043,7 @@ int cmd_edit(int argc, char **argv)
 
     getLock();
     Stream *out = getStream();
-    out->print(F("\033[?25l\033[2J"));
+    out->print("\033[?25l\033[2J");
     releaseLock();
 
     bool running = true;
@@ -1057,7 +1057,7 @@ int cmd_edit(int argc, char **argv)
             getLock();
             out = getStream();
             editor_draw(&ed, out);
-            out->print(F("\033[?25h"));
+            out->print("\033[?25h");
             releaseLock();
             dirty = false;
         }
@@ -1226,7 +1226,7 @@ int cmd_edit(int argc, char **argv)
 
     getLock();
     out = getStream();
-    out->print(F("\033[?25h\033[0m\033[2J\033[H"));
+    out->print("\033[?25h\033[0m\033[2J\033[H");
     releaseLock();
 
     return 0;

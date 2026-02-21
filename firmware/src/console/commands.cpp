@@ -83,21 +83,21 @@ static inline int parse_int(const char *s) { return (int)strtol(s, NULL, 0); }
 
 void renameFile(fs::FS &fs, const char *path1, const char *path2) 
 {
-    printfnl(SOURCE_COMMANDS, F("Renaming file %s to %s\r\n"), path1, path2);
+    printfnl(SOURCE_COMMANDS, "Renaming file %s to %s\r\n", path1, path2);
     if (fs.rename(path1, path2)) {
-      printfnl(SOURCE_COMMANDS, F("- file renamed\n") );
+      printfnl(SOURCE_COMMANDS, "- file renamed\n" );
     } else {
-      printfnl(SOURCE_COMMANDS, F("- rename failed\n") );
+      printfnl(SOURCE_COMMANDS, "- rename failed\n" );
     }
 }
   
 void deleteFile(fs::FS &fs, const char *path)
 {
-    printfnl(SOURCE_COMMANDS, F("Deleting file: %s\r\n"), path);
+    printfnl(SOURCE_COMMANDS, "Deleting file: %s\r\n", path);
     if (fs.remove(path)) {
-      printfnl(SOURCE_COMMANDS, F( "- file deleted\n") );
+      printfnl(SOURCE_COMMANDS, "- file deleted\n" );
     } else {
-      printfnl(SOURCE_COMMANDS, F( "- delete failed\n") );
+      printfnl(SOURCE_COMMANDS, "- delete failed\n" );
     }
 }
 
@@ -219,7 +219,7 @@ void readFile(fs::FS &fs, const char *path)
     File file = fs.open(path);
     if (!file || file.isDirectory()) 
     {
-      printfnl(SOURCE_COMMANDS, F("- failed to open file for reading\n") );
+      printfnl(SOURCE_COMMANDS, "- failed to open file for reading\n" );
       return;
     }
   
@@ -230,27 +230,27 @@ void readFile(fs::FS &fs, const char *path)
       buf[len] = '\0';
       printfnl(SOURCE_COMMANDS, "%s\n", buf);
     }
-    printfnl(SOURCE_COMMANDS, F("\n") );
-    printfnl(SOURCE_COMMANDS, F("- file read complete\n") );
+    printfnl(SOURCE_COMMANDS, "\n" );
+    printfnl(SOURCE_COMMANDS, "- file read complete\n" );
     file.close();
   }
   
   void writeFile(fs::FS &fs, const char *path, const char *message) 
   {
-    printfnl(SOURCE_COMMANDS, F("Writing file: %s\r\n"), path);
+    printfnl(SOURCE_COMMANDS, "Writing file: %s\r\n", path);
   
     File file = fs.open(path, FILE_WRITE);
     if (!file) {
-      printfnl(SOURCE_COMMANDS, F("- failed to open file for writing\n") );
+      printfnl(SOURCE_COMMANDS, "- failed to open file for writing\n" );
       return;
     }
     if (file.print(message)) 
     {
-      printfnl(SOURCE_COMMANDS, F("- file written\n") );
+      printfnl(SOURCE_COMMANDS, "- file written\n" );
     } 
     else 
     {
-      printfnl(SOURCE_COMMANDS, F("- write failed\n") );
+      printfnl(SOURCE_COMMANDS, "- write failed\n" );
     }
     file.close();
   }
@@ -260,11 +260,11 @@ Commands
 */
 int test(int argc, char **argv) 
 {
-  printfnl(SOURCE_COMMANDS, F("Test function called with %d Arguments\n"), argc);
-  printfnl(SOURCE_COMMANDS, F(" Arguments:\n") );
+  printfnl(SOURCE_COMMANDS, "Test function called with %d Arguments\n", argc);
+  printfnl(SOURCE_COMMANDS, " Arguments:\n" );
   for (int ii=0;ii<argc;ii++)
   {
-    printfnl(SOURCE_COMMANDS, F("Argument %d: %s\n"), ii, argv[ii]);
+    printfnl(SOURCE_COMMANDS, "Argument %d: %s\n", ii, argv[ii]);
   }  
   return 0;
 };
@@ -272,7 +272,7 @@ int test(int argc, char **argv)
 
 int cmd_reboot( int argc, char **argv )
 {
-    printfnl( SOURCE_SYSTEM, F("Rebooting...\n") );
+    printfnl( SOURCE_SYSTEM, "Rebooting...\n" );
     delay( 1000 );
     esp_restart();
 
@@ -285,22 +285,22 @@ int cmd_debug( int argc, char **argv )
     // If no args, show current debug message config.
     if( argc < 2 )
     {
-        printfnl(SOURCE_COMMANDS, F("Current Debug Settings:\n") );
+        printfnl(SOURCE_COMMANDS, "Current Debug Settings:\n" );
 
-        printfnl(SOURCE_COMMANDS, F(" - SYSTEM: \t%s\n"), getDebug(SOURCE_SYSTEM) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - BASIC: \t%s\n"), getDebug(SOURCE_BASIC) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - WASM: \t%s\n"), getDebug(SOURCE_WASM) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - COMMANDS: \t%s\n"), getDebug(SOURCE_COMMANDS) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - SHELL: \t%s\n"), getDebug(SOURCE_SHELL) ? "on" : "off" );        
-        printfnl(SOURCE_COMMANDS, F(" - GPS: \t%s\n"), getDebug(SOURCE_GPS) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - GPS_RAW: \t%s\n"), getDebug(SOURCE_GPS_RAW) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - LORA: \t%s\n"), getDebug(SOURCE_LORA) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - LORA_RAW: \t%s\n"), getDebug(SOURCE_LORA_RAW) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - FSYNC: \t%s\n"), getDebug(SOURCE_FSYNC) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - WIFI: \t%s\n"), getDebug(SOURCE_WIFI) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - SENSORS: \t%s\n"), getDebug(SOURCE_SENSORS) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - MQTT: \t%s\n"), getDebug(SOURCE_MQTT) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, F(" - OTHER: \t%s\n"), getDebug(SOURCE_OTHER) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - SYSTEM: \t%s\n", getDebug(SOURCE_SYSTEM) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - BASIC: \t%s\n", getDebug(SOURCE_BASIC) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - WASM: \t%s\n", getDebug(SOURCE_WASM) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - COMMANDS: \t%s\n", getDebug(SOURCE_COMMANDS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - SHELL: \t%s\n", getDebug(SOURCE_SHELL) ? "on" : "off" );        
+        printfnl(SOURCE_COMMANDS, " - GPS: \t%s\n", getDebug(SOURCE_GPS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - GPS_RAW: \t%s\n", getDebug(SOURCE_GPS_RAW) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - LORA: \t%s\n", getDebug(SOURCE_LORA) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - LORA_RAW: \t%s\n", getDebug(SOURCE_LORA_RAW) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - FSYNC: \t%s\n", getDebug(SOURCE_FSYNC) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - WIFI: \t%s\n", getDebug(SOURCE_WIFI) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - SENSORS: \t%s\n", getDebug(SOURCE_SENSORS) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - MQTT: \t%s\n", getDebug(SOURCE_MQTT) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - OTHER: \t%s\n", getDebug(SOURCE_OTHER) ? "on" : "off" );
 
         return 0;
     }
@@ -356,7 +356,7 @@ int cmd_debug( int argc, char **argv )
         mask_to_set = SOURCE_MQTT;
     else            
     {
-        printfnl(SOURCE_COMMANDS, F("Debug name \"%s\"not recognized.\n"), argv[1] );
+        printfnl(SOURCE_COMMANDS, "Debug name \"%s\"not recognized.\n", argv[1] );
         return 1;
     }
 
@@ -378,7 +378,7 @@ int cmd_debug( int argc, char **argv )
 int delFile(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: del <file ...>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: del <file ...>\n");
         return 1;
     }
     int rc = 0;
@@ -389,7 +389,7 @@ int delFile(int argc, char **argv)
             char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
-                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                printfnl(SOURCE_COMMANDS, "No match: %s\n", argv[i]);
                 rc = 1;
                 continue;
             }
@@ -426,7 +426,7 @@ static void resolve_dest(char *dst, size_t dstsz, const char *src)
 int renFile(int argc, char **argv)
 {
     if (argc != 3) {
-        printfnl(SOURCE_COMMANDS, F("Usage: mv <source> <dest>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: mv <source> <dest>\n");
         return 1;
     }
     char path1[64], path2[64];
@@ -434,7 +434,7 @@ int renFile(int argc, char **argv)
     normalize_path(path2, sizeof(path2), argv[2]);
 
     if (has_glob_chars(path2)) {
-        printfnl(SOURCE_COMMANDS, F("Wildcards not allowed in destination\n"));
+        printfnl(SOURCE_COMMANDS, "Wildcards not allowed in destination\n");
         return 1;
     }
 
@@ -442,7 +442,7 @@ int renFile(int argc, char **argv)
         char (*matches)[128];
         int count = glob_expand(path1, &matches);
         if (!count) {
-            printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[1]);
+            printfnl(SOURCE_COMMANDS, "No match: %s\n", argv[1]);
             return 1;
         }
         // Dest must be a directory for wildcard move
@@ -450,7 +450,7 @@ int renFile(int argc, char **argv)
         bool isDir = d && d.isDirectory();
         if (d) d.close();
         if (!isDir) {
-            printfnl(SOURCE_COMMANDS, F("Destination must be a directory for wildcard move\n"));
+            printfnl(SOURCE_COMMANDS, "Destination must be a directory for wildcard move\n");
             free(matches);
             return 1;
         }
@@ -470,7 +470,7 @@ int renFile(int argc, char **argv)
     resolve_dest(path2, sizeof(path2), path1);
 
     if (strcmp(path1, path2) == 0) {
-        printfnl(SOURCE_COMMANDS, F("Source and destination are the same file\n"));
+        printfnl(SOURCE_COMMANDS, "Source and destination are the same file\n");
         return 1;
     }
 
@@ -481,7 +481,7 @@ int renFile(int argc, char **argv)
 int listFile(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: cat <file ...>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: cat <file ...>\n");
         return 1;
     }
     int rc = 0;
@@ -492,18 +492,18 @@ int listFile(int argc, char **argv)
             char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
-                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                printfnl(SOURCE_COMMANDS, "No match: %s\n", argv[i]);
                 rc = 1;
                 continue;
             }
             for (int j = 0; j < count; j++) {
                 readFile(LittleFS, matches[j]);
-                printfnl(SOURCE_COMMANDS, F("\n"));
+                printfnl(SOURCE_COMMANDS, "\n");
             }
             free(matches);
         } else {
             readFile(LittleFS, path);
-            printfnl(SOURCE_COMMANDS, F("\n"));
+            printfnl(SOURCE_COMMANDS, "\n");
         }
     }
     return rc;
@@ -534,7 +534,7 @@ int listDir(int argc, char **argv)
 
     File root = LittleFS.open(path);
     if (!root || !root.isDirectory()) {
-        printfnl(SOURCE_COMMANDS, F("Not a directory: %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Not a directory: %s\n", path);
         return 1;
     }
     root.close();
@@ -563,10 +563,10 @@ int cmd_df(int argc, char **argv)
     size_t free  = total - used;
     unsigned pct = total ? (unsigned)(used * 100 / total) : 0;
 
-    printfnl(SOURCE_COMMANDS, F("Filesystem: LittleFS\n"));
-    printfnl(SOURCE_COMMANDS, F("  Total: %u bytes (%u KB)\n"), (unsigned)total, (unsigned)(total / 1024));
-    printfnl(SOURCE_COMMANDS, F("  Used:  %u bytes (%u KB)  %u%%\n"), (unsigned)used, (unsigned)(used / 1024), pct);
-    printfnl(SOURCE_COMMANDS, F("  Free:  %u bytes (%u KB)\n"), (unsigned)free, (unsigned)(free / 1024));
+    printfnl(SOURCE_COMMANDS, "Filesystem: LittleFS\n");
+    printfnl(SOURCE_COMMANDS, "  Total: %u bytes (%u KB)\n", (unsigned)total, (unsigned)(total / 1024));
+    printfnl(SOURCE_COMMANDS, "  Used:  %u bytes (%u KB)  %u%%\n", (unsigned)used, (unsigned)(used / 1024), pct);
+    printfnl(SOURCE_COMMANDS, "  Free:  %u bytes (%u KB)\n", (unsigned)free, (unsigned)(free / 1024));
     return 0;
 }
 
@@ -632,7 +632,7 @@ static void grep_dir(const char *pattern, const char *dirname)
 int cmd_grep(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: grep <pattern> [file]  (no file = search all)\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: grep <pattern> [file]  (no file = search all)\n");
         return 1;
     }
 
@@ -643,7 +643,7 @@ int cmd_grep(int argc, char **argv)
             char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
-                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[2]);
+                printfnl(SOURCE_COMMANDS, "No match: %s\n", argv[2]);
                 return 1;
             }
             for (int j = 0; j < count; j++)
@@ -664,13 +664,13 @@ static int copy_file(const char *src, const char *dst)
 {
     File in = LittleFS.open(src, "r");
     if (!in) {
-        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), src);
+        printfnl(SOURCE_COMMANDS, "Cannot open %s\n", src);
         return 1;
     }
     File out = LittleFS.open(dst, FILE_WRITE);
     if (!out) {
         in.close();
-        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), dst);
+        printfnl(SOURCE_COMMANDS, "Cannot create %s\n", dst);
         return 1;
     }
 
@@ -683,14 +683,14 @@ static int copy_file(const char *src, const char *dst)
     }
     in.close();
     out.close();
-    printfnl(SOURCE_COMMANDS, F("Copied %u bytes: %s -> %s\n"), (unsigned)total, src, dst);
+    printfnl(SOURCE_COMMANDS, "Copied %u bytes: %s -> %s\n", (unsigned)total, src, dst);
     return 0;
 }
 
 int cmd_cp(int argc, char **argv)
 {
     if (argc != 3) {
-        printfnl(SOURCE_COMMANDS, F("Usage: cp <source> <dest>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: cp <source> <dest>\n");
         return 1;
     }
     char src[64], dst[64];
@@ -698,7 +698,7 @@ int cmd_cp(int argc, char **argv)
     normalize_path(dst, sizeof(dst), argv[2]);
 
     if (has_glob_chars(dst)) {
-        printfnl(SOURCE_COMMANDS, F("Wildcards not allowed in destination\n"));
+        printfnl(SOURCE_COMMANDS, "Wildcards not allowed in destination\n");
         return 1;
     }
 
@@ -706,7 +706,7 @@ int cmd_cp(int argc, char **argv)
         char (*matches)[128];
         int count = glob_expand(src, &matches);
         if (!count) {
-            printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[1]);
+            printfnl(SOURCE_COMMANDS, "No match: %s\n", argv[1]);
             return 1;
         }
         // Dest must be a directory for wildcard copy
@@ -714,7 +714,7 @@ int cmd_cp(int argc, char **argv)
         bool isDir = d && d.isDirectory();
         if (d) d.close();
         if (!isDir) {
-            printfnl(SOURCE_COMMANDS, F("Destination must be a directory for wildcard copy\n"));
+            printfnl(SOURCE_COMMANDS, "Destination must be a directory for wildcard copy\n");
             free(matches);
             return 1;
         }
@@ -734,7 +734,7 @@ int cmd_cp(int argc, char **argv)
     resolve_dest(dst, sizeof(dst), src);
 
     if (strcmp(src, dst) == 0) {
-        printfnl(SOURCE_COMMANDS, F("Source and destination are the same file\n"));
+        printfnl(SOURCE_COMMANDS, "Source and destination are the same file\n");
         return 1;
     }
 
@@ -752,9 +752,9 @@ static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
 int cmd_inflate(int argc, char **argv)
 {
     if (argc < 2 || argc > 3) {
-        printfnl(SOURCE_COMMANDS, F("Usage: inflate <input> [output]\n"));
-        printfnl(SOURCE_COMMANDS, F("  Decompresses gzip (.gz), zlib, or raw deflate files.\n"));
-        printfnl(SOURCE_COMMANDS, F("  Output defaults to input with .gz stripped, or input.out\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: inflate <input> [output]\n");
+        printfnl(SOURCE_COMMANDS, "  Decompresses gzip (.gz), zlib, or raw deflate files.\n");
+        printfnl(SOURCE_COMMANDS, "  Output defaults to input with .gz stripped, or input.out\n");
         return 1;
     }
 
@@ -778,19 +778,19 @@ int cmd_inflate(int argc, char **argv)
     // Read entire compressed file into heap
     File in = LittleFS.open(src, "r");
     if (!in) {
-        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), src);
+        printfnl(SOURCE_COMMANDS, "Cannot open %s\n", src);
         return 1;
     }
     size_t in_size = in.size();
     if (in_size == 0) {
         in.close();
-        printfnl(SOURCE_COMMANDS, F("File is empty\n"));
+        printfnl(SOURCE_COMMANDS, "File is empty\n");
         return 1;
     }
     uint8_t *in_buf = (uint8_t *)malloc(in_size);
     if (!in_buf) {
         in.close();
-        printfnl(SOURCE_COMMANDS, F("Out of memory (%u bytes)\n"), (unsigned)in_size);
+        printfnl(SOURCE_COMMANDS, "Out of memory (%u bytes)\n", (unsigned)in_size);
         return 1;
     }
     in.read(in_buf, in_size);
@@ -800,7 +800,7 @@ int cmd_inflate(int argc, char **argv)
     File out = LittleFS.open(dst, FILE_WRITE);
     if (!out) {
         free(in_buf);
-        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), dst);
+        printfnl(SOURCE_COMMANDS, "Cannot create %s\n", dst);
         return 1;
     }
 
@@ -810,11 +810,11 @@ int cmd_inflate(int argc, char **argv)
 
     if (result < 0) {
         LittleFS.remove(dst);
-        printfnl(SOURCE_COMMANDS, F("Decompression error\n"));
+        printfnl(SOURCE_COMMANDS, "Decompression error\n");
         return 1;
     }
 
-    printfnl(SOURCE_COMMANDS, F("Inflated: %s (%u -> %u bytes)\n"),
+    printfnl(SOURCE_COMMANDS, "Inflated: %s (%u -> %u bytes)\n",
         dst, (unsigned)in_size, (unsigned)result);
     return 0;
 }
@@ -823,9 +823,9 @@ int cmd_inflate(int argc, char **argv)
 int cmd_deflate(int argc, char **argv)
 {
     if (argc < 2 || argc > 4) {
-        printfnl(SOURCE_COMMANDS, F("Usage: deflate <input> [output] [level]\n"));
-        printfnl(SOURCE_COMMANDS, F("  Compresses a file to gzip format.\n"));
-        printfnl(SOURCE_COMMANDS, F("  Output defaults to input.gz; level 0-10 (default 6)\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: deflate <input> [output] [level]\n");
+        printfnl(SOURCE_COMMANDS, "  Compresses a file to gzip format.\n");
+        printfnl(SOURCE_COMMANDS, "  Output defaults to input.gz; level 0-10 (default 6)\n");
         return 1;
     }
 
@@ -847,19 +847,19 @@ int cmd_deflate(int argc, char **argv)
 
     File in = LittleFS.open(src, "r");
     if (!in) {
-        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), src);
+        printfnl(SOURCE_COMMANDS, "Cannot open %s\n", src);
         return 1;
     }
     size_t in_size = in.size();
     if (in_size == 0) {
         in.close();
-        printfnl(SOURCE_COMMANDS, F("File is empty\n"));
+        printfnl(SOURCE_COMMANDS, "File is empty\n");
         return 1;
     }
     uint8_t *in_buf = (uint8_t *)malloc(in_size);
     if (!in_buf) {
         in.close();
-        printfnl(SOURCE_COMMANDS, F("Out of memory (%u bytes)\n"), (unsigned)in_size);
+        printfnl(SOURCE_COMMANDS, "Out of memory (%u bytes)\n", (unsigned)in_size);
         return 1;
     }
     in.read(in_buf, in_size);
@@ -868,7 +868,7 @@ int cmd_deflate(int argc, char **argv)
     File out = LittleFS.open(dst, FILE_WRITE);
     if (!out) {
         free(in_buf);
-        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), dst);
+        printfnl(SOURCE_COMMANDS, "Cannot create %s\n", dst);
         return 1;
     }
 
@@ -878,11 +878,11 @@ int cmd_deflate(int argc, char **argv)
 
     if (result < 0) {
         LittleFS.remove(dst);
-        printfnl(SOURCE_COMMANDS, F("Compression error\n"));
+        printfnl(SOURCE_COMMANDS, "Compression error\n");
         return 1;
     }
 
-    printfnl(SOURCE_COMMANDS, F("Deflated: %s (%u -> %u bytes)\n"),
+    printfnl(SOURCE_COMMANDS, "Deflated: %s (%u -> %u bytes)\n",
         dst, (unsigned)in_size, (unsigned)result);
     return 0;
 }
@@ -891,7 +891,7 @@ int cmd_deflate(int argc, char **argv)
 int cmd_hexdump(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: hexdump <filename> [count]\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: hexdump <filename> [count]\n");
         return 1;
     }
     char path[64];
@@ -899,7 +899,7 @@ int cmd_hexdump(int argc, char **argv)
 
     File f = LittleFS.open(path, "r");
     if (!f) {
-        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
     }
 
@@ -907,7 +907,7 @@ int cmd_hexdump(int argc, char **argv)
     if (limit <= 0) limit = 256;
 
     size_t fsize = f.size();
-    printfnl(SOURCE_COMMANDS, F("%s  (%u bytes)\n"), path, (unsigned)fsize);
+    printfnl(SOURCE_COMMANDS, "%s  (%u bytes)\n", path, (unsigned)fsize);
 
     uint8_t buf[16];
     int offset = 0;
@@ -941,37 +941,37 @@ int cmd_hexdump(int argc, char **argv)
     }
     f.close();
     if ((int)fsize > limit)
-        printfnl(SOURCE_COMMANDS, F("... (%u more bytes)\n"), (unsigned)(fsize - limit));
+        printfnl(SOURCE_COMMANDS, "... (%u more bytes)\n", (unsigned)(fsize - limit));
     return 0;
 }
 
 int cmd_mkdir(int argc, char **argv)
 {
     if (argc != 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: mkdir <dirname>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: mkdir <dirname>\n");
         return 1;
     }
     char path[64];
     normalize_path(path, sizeof(path), argv[1]);
     if (LittleFS.mkdir(path))
-        printfnl(SOURCE_COMMANDS, F("Created %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Created %s\n", path);
     else
-        printfnl(SOURCE_COMMANDS, F("Failed to create %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Failed to create %s\n", path);
     return 0;
 }
 
 int cmd_rmdir(int argc, char **argv)
 {
     if (argc != 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: rmdir <dirname>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: rmdir <dirname>\n");
         return 1;
     }
     char path[64];
     normalize_path(path, sizeof(path), argv[1]);
     if (LittleFS.rmdir(path))
-        printfnl(SOURCE_COMMANDS, F("Removed %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Removed %s\n", path);
     else
-        printfnl(SOURCE_COMMANDS, F("Failed to remove %s (not empty?)\n"), path);
+        printfnl(SOURCE_COMMANDS, "Failed to remove %s (not empty?)\n", path);
     return 0;
 }
 
@@ -979,7 +979,7 @@ int loadFile(int argc, char **argv)
 {
     if (argc != 2)
     {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
+        printfnl(SOURCE_COMMANDS, "Wrong argument count\n" );
         return 1;
     }
     else
@@ -991,7 +991,7 @@ int loadFile(int argc, char **argv)
         char line[256];
         char inchar;
         bool isDone = false;
-        printfnl(SOURCE_COMMANDS, F("Ready for file. Press CTRL+Z to end transmission and save file %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Ready for file. Press CTRL+Z to end transmission and save file %s\n", path);
         //Flush serial buffer
         getLock();
         getStream()->flush();
@@ -1000,7 +1000,7 @@ int loadFile(int argc, char **argv)
         if (!file)
         {
             releaseLock();
-            printfnl(SOURCE_COMMANDS, F("- failed to open file for writing\n") );
+            printfnl(SOURCE_COMMANDS, "- failed to open file for writing\n" );
             return 1;
         }
 
@@ -1054,7 +1054,7 @@ int loadFile(int argc, char **argv)
         //close file
         file.close();
         releaseLock();
-        printfnl(SOURCE_COMMANDS, F("%d Lines written to file\n"), linecount);
+        printfnl(SOURCE_COMMANDS, "%d Lines written to file\n", linecount);
         
         return 0;
     }
@@ -1065,7 +1065,7 @@ int runBasic(int argc, char **argv)
 {
     if (argc != 2)
     {
-        printfnl(SOURCE_COMMANDS, F("Usage: run <file.bas|file.wasm>\n") );
+        printfnl(SOURCE_COMMANDS, "Usage: run <file.bas|file.wasm>\n" );
         return 1;
     }
     else
@@ -1073,7 +1073,7 @@ int runBasic(int argc, char **argv)
         char path[64];
         normalize_path(path, sizeof(path), argv[1]);
         if (false == set_script_program(path))
-          printfnl(SOURCE_COMMANDS, F("Unknown script type (use .bas or .wasm)\n") );
+          printfnl(SOURCE_COMMANDS, "Unknown script type (use .bas or .wasm)\n" );
         return 0;
     }
 }
@@ -1082,7 +1082,7 @@ int stopBasic(int argc, char **argv)
 {
     if (argc != 1)
     {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
+        printfnl(SOURCE_COMMANDS, "Wrong argument count\n" );
         return 1;
     }
     else
@@ -1099,7 +1099,7 @@ int paramBasic(int argc, char **argv)
 {
     if (argc != 3)
     {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
+        printfnl(SOURCE_COMMANDS, "Wrong argument count\n" );
         return 1;       
     }
     else
@@ -1111,20 +1111,20 @@ int paramBasic(int argc, char **argv)
 
 int cmd_mem(int argc, char **argv)
 {
-    printfnl(SOURCE_COMMANDS, F("Heap:\n") );
-    printfnl(SOURCE_COMMANDS, F("  Free:    %u bytes\n"), esp_get_free_heap_size() );
-    printfnl(SOURCE_COMMANDS, F("  Min:     %u bytes  (lowest since boot)\n"), esp_get_minimum_free_heap_size() );
-    printfnl(SOURCE_COMMANDS, F("  Largest: %u bytes  (biggest allocatable block)\n"), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) );
+    printfnl(SOURCE_COMMANDS, "Heap:\n" );
+    printfnl(SOURCE_COMMANDS, "  Free:    %u bytes\n", esp_get_free_heap_size() );
+    printfnl(SOURCE_COMMANDS, "  Min:     %u bytes  (lowest since boot)\n", esp_get_minimum_free_heap_size() );
+    printfnl(SOURCE_COMMANDS, "  Largest: %u bytes  (biggest allocatable block)\n", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) );
 
-    printfnl(SOURCE_COMMANDS, F("\nPSRAM:\n") );
+    printfnl(SOURCE_COMMANDS, "\nPSRAM:\n" );
     if (psram_available()) {
-        printfnl(SOURCE_COMMANDS, F("  Size:       %u bytes (%u KB)\n"), psram_size(), psram_size()/1024);
-        printfnl(SOURCE_COMMANDS, F("  Used:       %u bytes\n"), psram_bytes_used());
-        printfnl(SOURCE_COMMANDS, F("  Free:       %u bytes\n"), psram_bytes_free());
-        printfnl(SOURCE_COMMANDS, F("  Contiguous: %u bytes\n"), psram_bytes_contiguous());
-        printfnl(SOURCE_COMMANDS, F("  Alloc slots: %d / %d\n"), psram_alloc_count(), psram_alloc_entries_max());
+        printfnl(SOURCE_COMMANDS, "  Size:       %u bytes (%u KB)\n", psram_size(), psram_size()/1024);
+        printfnl(SOURCE_COMMANDS, "  Used:       %u bytes\n", psram_bytes_used());
+        printfnl(SOURCE_COMMANDS, "  Free:       %u bytes\n", psram_bytes_free());
+        printfnl(SOURCE_COMMANDS, "  Contiguous: %u bytes\n", psram_bytes_contiguous());
+        printfnl(SOURCE_COMMANDS, "  Alloc slots: %d / %d\n", psram_alloc_count(), psram_alloc_entries_max());
     } else {
-        printfnl(SOURCE_COMMANDS, F("  Not available (using heap fallback)\n") );
+        printfnl(SOURCE_COMMANDS, "  Not available (using heap fallback)\n" );
     }
 
     return 0;
@@ -1136,14 +1136,14 @@ int cmd_ps(int argc, char **argv)
     UBaseType_t numTasks = uxTaskGetNumberOfTasks();
     TaskStatus_t *taskList = (TaskStatus_t *)malloc(numTasks * sizeof(TaskStatus_t));
     if (!taskList) {
-        printfnl(SOURCE_COMMANDS, F("Out of memory\n"));
+        printfnl(SOURCE_COMMANDS, "Out of memory\n");
         return -1;
     }
 
     UBaseType_t got = uxTaskGetSystemState(taskList, numTasks, NULL);
 
-    printfnl(SOURCE_COMMANDS, F("Task List (%u tasks):\n"), (unsigned int)got);
-    printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4s  %4s  %s\n"), "Name", "State", "Prio", "Core", "Min Free Stack");
+    printfnl(SOURCE_COMMANDS, "Task List (%u tasks):\n", (unsigned int)got);
+    printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4s  %4s  %s\n", "Name", "State", "Prio", "Core", "Min Free Stack");
 
     for (UBaseType_t i = 0; i < got; i++)
     {
@@ -1162,12 +1162,12 @@ int cmd_ps(int argc, char **argv)
         uint32_t freeStackBytes = (uint32_t)taskList[i].usStackHighWaterMark * 4;
 
         if (coreId == tskNO_AFFINITY)
-            printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4u     -  %u\n"),
+            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u     -  %u\n",
                 taskList[i].pcTaskName, state,
                 (unsigned int)taskList[i].uxCurrentPriority,
                 (unsigned int)freeStackBytes);
         else
-            printfnl(SOURCE_COMMANDS, F("  %-16s %-6s %4u  %4d  %u\n"),
+            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u  %4d  %u\n",
                 taskList[i].pcTaskName, state,
                 (unsigned int)taskList[i].uxCurrentPriority,
                 (int)coreId,
@@ -1183,15 +1183,15 @@ int tc(int argc, char **argv)
 {
     if (argc != 1)
     {
-        printfnl(SOURCE_COMMANDS, F("Wrong argument count\n") );
+        printfnl(SOURCE_COMMANDS, "Wrong argument count\n" );
         return 1;
     }
     else
     {
-        printfnl(SOURCE_COMMANDS,F("Thread Count:\n") );
+        printfnl(SOURCE_COMMANDS,"Thread Count:\n" );
         for (int ii=0;ii<4;ii++)
         {
-            printfnl( SOURCE_COMMANDS, F("Core %d: %d\n"), (uint8_t)ii, (unsigned int)get_thread_count(ii) );
+            printfnl( SOURCE_COMMANDS, "Core %d: %d\n", (uint8_t)ii, (unsigned int)get_thread_count(ii) );
         }
         return 0;
     }
@@ -1351,28 +1351,28 @@ int cmd_version(int argc, char **argv)
 
     if (running && esp_ota_get_partition_description(running, &desc) == ESP_OK)
     {
-        printfnl(SOURCE_COMMANDS, F("Firmware: %s\n"), desc.project_name);
-        printfnl(SOURCE_COMMANDS, F("Version: %s\n"), desc.version);
-        printfnl(SOURCE_COMMANDS, F("Built:   %s %s\n"), desc.date, desc.time);
+        printfnl(SOURCE_COMMANDS, "Firmware: %s\n", desc.project_name);
+        printfnl(SOURCE_COMMANDS, "Version: %s\n", desc.version);
+        printfnl(SOURCE_COMMANDS, "Built:   %s %s\n", desc.date, desc.time);
     }
     else
     {
-        printfnl(SOURCE_COMMANDS, F("Firmware info unavailable\n"));
+        printfnl(SOURCE_COMMANDS, "Firmware info unavailable\n");
     }
 
 #ifdef BOARD_CONEZ_V0_1
-    printfnl(SOURCE_COMMANDS, F("Board:   conez-v0-1\n"));
+    printfnl(SOURCE_COMMANDS, "Board:   conez-v0-1\n");
 #elif defined(BOARD_HELTEC_LORA32_V3)
-    printfnl(SOURCE_COMMANDS, F("Board:   heltec-lora32-v3\n"));
+    printfnl(SOURCE_COMMANDS, "Board:   heltec-lora32-v3\n");
 #else
-    printfnl(SOURCE_COMMANDS, F("Board:   unknown\n"));
+    printfnl(SOURCE_COMMANDS, "Board:   unknown\n");
 #endif
 
 #ifdef INCLUDE_BASIC_COMPILER
-    printfnl(SOURCE_COMMANDS, F("%s\n"), bas2wasm_version_string());
+    printfnl(SOURCE_COMMANDS, "%s\n", bas2wasm_version_string());
 #endif
 #ifdef INCLUDE_C_COMPILER
-    printfnl(SOURCE_COMMANDS, F("%s\n"), c2wasm_version_string());
+    printfnl(SOURCE_COMMANDS, "%s\n", c2wasm_version_string());
 #endif
 
     // List all app partitions with firmware versions
@@ -1380,7 +1380,7 @@ int cmd_version(int argc, char **argv)
     esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP,
                                                      ESP_PARTITION_SUBTYPE_ANY, NULL);
     if (it) {
-        printfnl(SOURCE_COMMANDS, F("\nPartitions:\n"));
+        printfnl(SOURCE_COMMANDS, "\nPartitions:\n");
         while (it != NULL) {
             const esp_partition_t* part = esp_partition_get(it);
             bool hasInfo = esp_ota_get_partition_description(part, &desc) == ESP_OK;
@@ -1389,14 +1389,14 @@ int cmd_version(int argc, char **argv)
             if (part == running) tag = " [RUNNING]";
             else if (part == boot) tag = " [BOOT]";
 
-            printfnl(SOURCE_COMMANDS, F("  %s @ 0x%06x  %4uKB%s\n"), part->label,
+            printfnl(SOURCE_COMMANDS, "  %s @ 0x%06x  %4uKB%s\n", part->label,
                      (unsigned)part->address, (unsigned)(part->size / 1024), tag);
 
             if (hasInfo)
-                printfnl(SOURCE_COMMANDS, F("    %s %s  built %s %s\n"),
+                printfnl(SOURCE_COMMANDS, "    %s %s  built %s %s\n",
                          desc.project_name, desc.version, desc.date, desc.time);
             else
-                printfnl(SOURCE_COMMANDS, F("    (empty)\n"));
+                printfnl(SOURCE_COMMANDS, "    (empty)\n");
 
             it = esp_partition_next(it);
         }
@@ -1451,7 +1451,7 @@ int cmd_mqtt(int argc, char **argv)
     // mqtt broker <hostname>
     if (argc >= 3 && !strcasecmp(argv[1], "broker")) {
         strlcpy(config.mqtt_broker, argv[2], CONFIG_MAX_MQTT_BROKER);
-        printfnl(SOURCE_COMMANDS, F("MQTT broker set to \"%s\"\n"), config.mqtt_broker);
+        printfnl(SOURCE_COMMANDS, "MQTT broker set to \"%s\"\n", config.mqtt_broker);
         mqtt_force_disconnect();  // triggers reconnect to new broker
         return 0;
     }
@@ -1459,7 +1459,7 @@ int cmd_mqtt(int argc, char **argv)
     // mqtt port <number>
     if (argc >= 3 && !strcasecmp(argv[1], "port")) {
         config.mqtt_port = parse_int(argv[2]);
-        printfnl(SOURCE_COMMANDS, F("MQTT port set to %d\n"), config.mqtt_port);
+        printfnl(SOURCE_COMMANDS, "MQTT port set to %d\n", config.mqtt_port);
         mqtt_force_disconnect();  // triggers reconnect on new port
         return 0;
     }
@@ -1467,7 +1467,7 @@ int cmd_mqtt(int argc, char **argv)
     // mqtt enable
     if (argc >= 2 && !strcasecmp(argv[1], "enable")) {
         config.mqtt_enabled = true;
-        printfnl(SOURCE_COMMANDS, F("MQTT enabled\n"));
+        printfnl(SOURCE_COMMANDS, "MQTT enabled\n");
         return 0;
     }
 
@@ -1475,7 +1475,7 @@ int cmd_mqtt(int argc, char **argv)
     if (argc >= 2 && !strcasecmp(argv[1], "disable")) {
         config.mqtt_enabled = false;
         mqtt_force_disconnect();
-        printfnl(SOURCE_COMMANDS, F("MQTT disabled\n"));
+        printfnl(SOURCE_COMMANDS, "MQTT disabled\n");
         return 0;
     }
 
@@ -1483,14 +1483,14 @@ int cmd_mqtt(int argc, char **argv)
     if (argc >= 2 && !strcasecmp(argv[1], "connect")) {
         config.mqtt_enabled = true;
         mqtt_force_connect();
-        printfnl(SOURCE_COMMANDS, F("MQTT connect requested\n"));
+        printfnl(SOURCE_COMMANDS, "MQTT connect requested\n");
         return 0;
     }
 
     // mqtt disconnect
     if (argc >= 2 && !strcasecmp(argv[1], "disconnect")) {
         mqtt_force_disconnect();
-        printfnl(SOURCE_COMMANDS, F("MQTT disconnect requested\n"));
+        printfnl(SOURCE_COMMANDS, "MQTT disconnect requested\n");
         return 0;
     }
 
@@ -1500,21 +1500,21 @@ int cmd_mqtt(int argc, char **argv)
         const char *payload = (argc >= 4) ? argv[3] : "";
         int rc = mqtt_publish(argv[2], payload);
         if (rc == 0)
-            printfnl(SOURCE_COMMANDS, F("Published to %s\n"), argv[2]);
+            printfnl(SOURCE_COMMANDS, "Published to %s\n", argv[2]);
         else
-            printfnl(SOURCE_COMMANDS, F("Publish failed (not connected?)\n"));
+            printfnl(SOURCE_COMMANDS, "Publish failed (not connected?)\n");
         return rc;
     }
 
     // mqtt (no args) — show status
-    printfnl(SOURCE_COMMANDS, F("MQTT Status:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Enabled:    %s\n"), config.mqtt_enabled ? "yes" : "no");
-    printfnl(SOURCE_COMMANDS, F("  Broker:     %s:%d\n"), config.mqtt_broker, config.mqtt_port);
-    printfnl(SOURCE_COMMANDS, F("  State:      %s\n"), mqtt_state_str());
+    printfnl(SOURCE_COMMANDS, "MQTT Status:\n");
+    printfnl(SOURCE_COMMANDS, "  Enabled:    %s\n", config.mqtt_enabled ? "yes" : "no");
+    printfnl(SOURCE_COMMANDS, "  Broker:     %s:%d\n", config.mqtt_broker, config.mqtt_port);
+    printfnl(SOURCE_COMMANDS, "  State:      %s\n", mqtt_state_str());
     if (mqtt_connected()) {
-        printfnl(SOURCE_COMMANDS, F("  Uptime:     %lus\n"), (unsigned long)mqtt_uptime_sec());
-        printfnl(SOURCE_COMMANDS, F("  TX packets: %lu\n"), (unsigned long)mqtt_tx_count());
-        printfnl(SOURCE_COMMANDS, F("  RX packets: %lu\n"), (unsigned long)mqtt_rx_count());
+        printfnl(SOURCE_COMMANDS, "  Uptime:     %lus\n", (unsigned long)mqtt_uptime_sec());
+        printfnl(SOURCE_COMMANDS, "  TX packets: %lu\n", (unsigned long)mqtt_tx_count());
+        printfnl(SOURCE_COMMANDS, "  RX packets: %lu\n", (unsigned long)mqtt_rx_count());
     }
 
     return 0;
@@ -1538,7 +1538,7 @@ int cmd_wifi(int argc, char **argv)
         config.wifi_enabled = true;
         WiFi.mode(WIFI_STA);
         WiFi.begin(config.wifi_ssid, config.wifi_password);
-        printfnl(SOURCE_COMMANDS, F("WiFi enabled — connecting to \"%s\"\n"), config.wifi_ssid);
+        printfnl(SOURCE_COMMANDS, "WiFi enabled — connecting to \"%s\"\n", config.wifi_ssid);
         return 0;
     }
 
@@ -1547,7 +1547,7 @@ int cmd_wifi(int argc, char **argv)
         config.wifi_enabled = false;
         WiFi.disconnect();
         WiFi.mode(WIFI_OFF);
-        printfnl(SOURCE_COMMANDS, F("WiFi disabled\n"));
+        printfnl(SOURCE_COMMANDS, "WiFi disabled\n");
         return 0;
     }
 
@@ -1556,7 +1556,7 @@ int cmd_wifi(int argc, char **argv)
         strlcpy(config.wifi_ssid, argv[2], CONFIG_MAX_SSID);
         WiFi.disconnect();
         WiFi.begin(config.wifi_ssid, config.wifi_password);
-        printfnl(SOURCE_COMMANDS, F("SSID set to \"%s\" — reconnecting\n"), config.wifi_ssid);
+        printfnl(SOURCE_COMMANDS, "SSID set to \"%s\" — reconnecting\n", config.wifi_ssid);
         return 0;
     }
 
@@ -1565,7 +1565,7 @@ int cmd_wifi(int argc, char **argv)
         strlcpy(config.wifi_password, argv[2], CONFIG_MAX_PASSWORD);
         WiFi.disconnect();
         WiFi.begin(config.wifi_ssid, config.wifi_password);
-        printfnl(SOURCE_COMMANDS, F("Password updated — reconnecting\n"));
+        printfnl(SOURCE_COMMANDS, "Password updated — reconnecting\n");
         return 0;
     }
 
@@ -1741,8 +1741,8 @@ static bool gpio_is_reserved(int pin)
 
 static void gpio_show_all(void)
 {
-    printfnl(SOURCE_COMMANDS, F("GPIO  Val  Dir  Pull      Function\n"));
-    printfnl(SOURCE_COMMANDS, F("----  ---  ---  --------  ----------\n"));
+    printfnl(SOURCE_COMMANDS, "GPIO  Val  Dir  Pull      Function\n");
+    printfnl(SOURCE_COMMANDS, "----  ---  ---  --------  ----------\n");
 
     uint32_t out_en_lo = REG_READ(GPIO_ENABLE_REG);
     uint32_t out_en_hi = REG_READ(GPIO_ENABLE1_REG);
@@ -1771,7 +1771,7 @@ static void gpio_show_all(void)
 
         const char *name = pin_name_lookup(i);
 
-        printfnl(SOURCE_COMMANDS, F(" %2d    %d   %s  %-8s  %s\n"),
+        printfnl(SOURCE_COMMANDS, " %2d    %d   %s  %-8s  %s\n",
             i, level,
             is_output ? "OUT" : "IN ",
             pull_str, name);
@@ -1791,19 +1791,19 @@ int cmd_gpio(int argc, char **argv)
         int pin = parse_int(argv[2]);
         int val = parse_int(argv[3]);
         if (!gpio_valid_pin(pin)) {
-            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            printfnl(SOURCE_COMMANDS, "Invalid GPIO pin %d\n", pin);
             return -1;
         }
         if (gpio_is_reserved(pin)) {
-            printfnl(SOURCE_COMMANDS, F("GPIO %d is reserved (use 'gpio' to see pin assignments)\n"), pin);
+            printfnl(SOURCE_COMMANDS, "GPIO %d is reserved (use 'gpio' to see pin assignments)\n", pin);
             return -1;
         }
         if (val != 0 && val != 1) {
-            printfnl(SOURCE_COMMANDS, F("Value must be 0 or 1\n"));
+            printfnl(SOURCE_COMMANDS, "Value must be 0 or 1\n");
             return -1;
         }
         gpio_set_level((gpio_num_t)pin, val);
-        printfnl(SOURCE_COMMANDS, F("GPIO %d -> %d\n"), pin, val);
+        printfnl(SOURCE_COMMANDS, "GPIO %d -> %d\n", pin, val);
         return 0;
     }
 
@@ -1812,20 +1812,20 @@ int cmd_gpio(int argc, char **argv)
         int pin = parse_int(argv[2]);
         int val = parse_int(argv[3]);
         if (!gpio_valid_pin(pin)) {
-            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            printfnl(SOURCE_COMMANDS, "Invalid GPIO pin %d\n", pin);
             return -1;
         }
         if (gpio_is_reserved(pin)) {
-            printfnl(SOURCE_COMMANDS, F("GPIO %d is reserved (use 'gpio' to see pin assignments)\n"), pin);
+            printfnl(SOURCE_COMMANDS, "GPIO %d is reserved (use 'gpio' to see pin assignments)\n", pin);
             return -1;
         }
         if (val != 0 && val != 1) {
-            printfnl(SOURCE_COMMANDS, F("Value must be 0 or 1\n"));
+            printfnl(SOURCE_COMMANDS, "Value must be 0 or 1\n");
             return -1;
         }
         gpio_set_direction((gpio_num_t)pin, GPIO_MODE_OUTPUT);
         gpio_set_level((gpio_num_t)pin, val);
-        printfnl(SOURCE_COMMANDS, F("GPIO %d -> OUTPUT %d\n"), pin, val);
+        printfnl(SOURCE_COMMANDS, "GPIO %d -> OUTPUT %d\n", pin, val);
         return 0;
     }
 
@@ -1834,11 +1834,11 @@ int cmd_gpio(int argc, char **argv)
     if ((argc == 3 || argc == 4) && strcasecmp(argv[1], "in") == 0) {
         int pin = parse_int(argv[2]);
         if (!gpio_valid_pin(pin)) {
-            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            printfnl(SOURCE_COMMANDS, "Invalid GPIO pin %d\n", pin);
             return -1;
         }
         if (gpio_is_reserved(pin)) {
-            printfnl(SOURCE_COMMANDS, F("GPIO %d is reserved (use 'gpio' to see pin assignments)\n"), pin);
+            printfnl(SOURCE_COMMANDS, "GPIO %d is reserved (use 'gpio' to see pin assignments)\n", pin);
             return -1;
         }
         gpio_pull_mode_t pull = GPIO_FLOATING;
@@ -1854,13 +1854,13 @@ int cmd_gpio(int argc, char **argv)
                 pull = GPIO_FLOATING;
                 pull_name = "none";
             } else {
-                printfnl(SOURCE_COMMANDS, F("Pull mode must be: up, down, or none\n"));
+                printfnl(SOURCE_COMMANDS, "Pull mode must be: up, down, or none\n");
                 return -1;
             }
         }
         gpio_set_direction((gpio_num_t)pin, GPIO_MODE_INPUT);
         gpio_set_pull_mode((gpio_num_t)pin, pull);
-        printfnl(SOURCE_COMMANDS, F("GPIO %d -> INPUT (%s)\n"), pin, pull_name);
+        printfnl(SOURCE_COMMANDS, "GPIO %d -> INPUT (%s)\n", pin, pull_name);
         return 0;
     }
 
@@ -1868,19 +1868,19 @@ int cmd_gpio(int argc, char **argv)
     if (argc == 3 && strcasecmp(argv[1], "read") == 0) {
         int pin = parse_int(argv[2]);
         if (!gpio_valid_pin(pin)) {
-            printfnl(SOURCE_COMMANDS, F("Invalid GPIO pin %d\n"), pin);
+            printfnl(SOURCE_COMMANDS, "Invalid GPIO pin %d\n", pin);
             return -1;
         }
-        printfnl(SOURCE_COMMANDS, F("GPIO %d = %d\n"), pin, gpio_get_level((gpio_num_t)pin));
+        printfnl(SOURCE_COMMANDS, "GPIO %d = %d\n", pin, gpio_get_level((gpio_num_t)pin));
         return 0;
     }
 
-    printfnl(SOURCE_COMMANDS, F("Usage:\n"));
-    printfnl(SOURCE_COMMANDS, F("  gpio              Show all pin states\n"));
-    printfnl(SOURCE_COMMANDS, F("  gpio set <pin> <0|1>      Set output level\n"));
-    printfnl(SOURCE_COMMANDS, F("  gpio out <pin> <0|1>      Set as output with value\n"));
-    printfnl(SOURCE_COMMANDS, F("  gpio in  <pin> [up|down|none]  Set as input\n"));
-    printfnl(SOURCE_COMMANDS, F("  gpio read <pin>           Read single pin\n"));
+    printfnl(SOURCE_COMMANDS, "Usage:\n");
+    printfnl(SOURCE_COMMANDS, "  gpio              Show all pin states\n");
+    printfnl(SOURCE_COMMANDS, "  gpio set <pin> <0|1>      Set output level\n");
+    printfnl(SOURCE_COMMANDS, "  gpio out <pin> <0|1>      Set as output with value\n");
+    printfnl(SOURCE_COMMANDS, "  gpio in  <pin> [up|down|none]  Set as input\n");
+    printfnl(SOURCE_COMMANDS, "  gpio read <pin>           Read single pin\n");
     return -1;
 }
 
@@ -1911,18 +1911,18 @@ static void gps_show_status(void)
     static const char *fix_names[] = { "Unknown", "No Fix", "2D", "3D" };
     int ft = get_fix_type();
     const char *fix_str = (ft >= 0 && ft <= 3) ? fix_names[ft] : "Unknown";
-    printfnl(SOURCE_COMMANDS, F("GPS Status:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Fix:        %s (%s)\n"), get_gpsstatus() ? "Yes" : "No", fix_str);
-    printfnl(SOURCE_COMMANDS, F("  Satellites: %d\n"), get_satellites());
-    printfnl(SOURCE_COMMANDS, F("  HDOP:       %.2f\n"), get_hdop() / 100.0);
-    printfnl(SOURCE_COMMANDS, F("  VDOP:       %.2f\n"), get_vdop());
-    printfnl(SOURCE_COMMANDS, F("  PDOP:       %.2f\n"), get_pdop());
-    printfnl(SOURCE_COMMANDS, F("  Position:   %.6f, %.6f\n"), get_lat(), get_lon());
+    printfnl(SOURCE_COMMANDS, "GPS Status:\n");
+    printfnl(SOURCE_COMMANDS, "  Fix:        %s (%s)\n", get_gpsstatus() ? "Yes" : "No", fix_str);
+    printfnl(SOURCE_COMMANDS, "  Satellites: %d\n", get_satellites());
+    printfnl(SOURCE_COMMANDS, "  HDOP:       %.2f\n", get_hdop() / 100.0);
+    printfnl(SOURCE_COMMANDS, "  VDOP:       %.2f\n", get_vdop());
+    printfnl(SOURCE_COMMANDS, "  PDOP:       %.2f\n", get_pdop());
+    printfnl(SOURCE_COMMANDS, "  Position:   %.6f, %.6f\n", get_lat(), get_lon());
     float alt_m = get_alt();
-    printfnl(SOURCE_COMMANDS, F("  Altitude:   %.0f m (%.0f ft)\n"), alt_m, alt_m * 3.28084f);
+    printfnl(SOURCE_COMMANDS, "  Altitude:   %.0f m (%.0f ft)\n", alt_m, alt_m * 3.28084f);
     float spd_mps = get_speed();
-    printfnl(SOURCE_COMMANDS, F("  Speed:      %.1f m/s (%.1f mph)\n"), spd_mps, spd_mps * 2.23694f);
-    printfnl(SOURCE_COMMANDS, F("  Direction:  %.1f deg\n"), get_dir());
+    printfnl(SOURCE_COMMANDS, "  Speed:      %.1f m/s (%.1f mph)\n", spd_mps, spd_mps * 2.23694f);
+    printfnl(SOURCE_COMMANDS, "  Direction:  %.1f deg\n", get_dir());
     // Show local time (UTC + timezone + DST)
     {
         int utc_y = get_year(), utc_m = get_month(), utc_d = get_day();
@@ -1931,7 +1931,7 @@ static void gps_show_status(void)
         time_t local_t = (time_t)(epoch / 1000) + tz * 3600;
         struct tm ltm;
         gmtime_r(&local_t, &ltm);
-        printfnl(SOURCE_COMMANDS, F("  Time:       %02d:%02d:%02d  %04d-%02d-%02d (%s)\n"),
+        printfnl(SOURCE_COMMANDS, "  Time:       %02d:%02d:%02d  %04d-%02d-%02d (%s)\n",
             ltm.tm_hour, ltm.tm_min, ltm.tm_sec,
             ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday,
             tz_label(tz));
@@ -1939,31 +1939,31 @@ static void gps_show_status(void)
     static const char *src_names[] = { "None", "NTP", "GPS+PPS" };
     uint8_t ts = get_time_source();
     const char *tsn = (ts == 0 && get_time_valid()) ? "Build" : src_names[ts < 3 ? ts : 0];
-    printfnl(SOURCE_COMMANDS, F("  Time src:   %s\n"), tsn);
+    printfnl(SOURCE_COMMANDS, "  Time src:   %s\n", tsn);
     uint32_t pps_age = get_pps_age_ms();
     if (pps_age == UINT32_MAX)
-        printfnl(SOURCE_COMMANDS, F("  PPS:        No (never received)\n"));
+        printfnl(SOURCE_COMMANDS, "  PPS:        No (never received)\n");
     else
-        printfnl(SOURCE_COMMANDS, F("  PPS:        %s (%lu ms ago, %lu pulses)\n"),
+        printfnl(SOURCE_COMMANDS, "  PPS:        %s (%lu ms ago, %lu pulses)\n",
             get_pps() ? "High" : "Low", (unsigned long)pps_age, (unsigned long)get_pps_count());
 #else
-    printfnl(SOURCE_COMMANDS, F("GPS not available on this board\n"));
+    printfnl(SOURCE_COMMANDS, "GPS not available on this board\n");
 #endif
 }
 
 
 static void gps_show_usage(void)
 {
-    printfnl(SOURCE_COMMANDS, F("Usage:\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps                        Show GPS status\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps info                   Query module firmware/hardware\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps set baud <rate>        Set baud (4800/9600/19200/38400/57600/115200)\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps set rate <hz>          Set update rate (1/2/4/5/10)\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps set mode <mode>        Set constellation (gps/bds/glonass or combos)\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps set nmea <sentences>   Enable NMEA sentences (e.g. gga,rmc,gsa)\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps save                   Save config to module flash\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps restart <type>         Restart (hot/warm/cold/factory)\n"));
-    printfnl(SOURCE_COMMANDS, F("  gps send <body>            Send raw NMEA (auto-checksum)\n"));
+    printfnl(SOURCE_COMMANDS, "Usage:\n");
+    printfnl(SOURCE_COMMANDS, "  gps                        Show GPS status\n");
+    printfnl(SOURCE_COMMANDS, "  gps info                   Query module firmware/hardware\n");
+    printfnl(SOURCE_COMMANDS, "  gps set baud <rate>        Set baud (4800/9600/19200/38400/57600/115200)\n");
+    printfnl(SOURCE_COMMANDS, "  gps set rate <hz>          Set update rate (1/2/4/5/10)\n");
+    printfnl(SOURCE_COMMANDS, "  gps set mode <mode>        Set constellation (gps/bds/glonass or combos)\n");
+    printfnl(SOURCE_COMMANDS, "  gps set nmea <sentences>   Enable NMEA sentences (e.g. gga,rmc,gsa)\n");
+    printfnl(SOURCE_COMMANDS, "  gps save                   Save config to module flash\n");
+    printfnl(SOURCE_COMMANDS, "  gps restart <type>         Restart (hot/warm/cold/factory)\n");
+    printfnl(SOURCE_COMMANDS, "  gps send <body>            Send raw NMEA (auto-checksum)\n");
 }
 
 
@@ -1976,13 +1976,13 @@ int cmd_gps(int argc, char **argv)
     }
 
 #ifndef BOARD_HAS_GPS
-    printfnl(SOURCE_COMMANDS, F("GPS not available on this board\n"));
+    printfnl(SOURCE_COMMANDS, "GPS not available on this board\n");
     return -1;
 #else
 
     // --- gps info: query module firmware and hardware ---
     if (strcasecmp(argv[1], "info") == 0) {
-        printfnl(SOURCE_COMMANDS, F("Querying GPS module info (enable 'debug gps_raw' to see response)...\n"));
+        printfnl(SOURCE_COMMANDS, "Querying GPS module info (enable 'debug gps_raw' to see response)...\n");
         gps_send_nmea("PCAS06,0");  // firmware version
         gps_send_nmea("PCAS06,1");  // hardware model
         return 0;
@@ -1998,7 +1998,7 @@ int cmd_gps(int argc, char **argv)
         // --- gps set baud <rate> ---
         if (strcasecmp(argv[2], "baud") == 0) {
             if (argc < 4) {
-                printfnl(SOURCE_COMMANDS, F("Usage: gps set baud <4800|9600|19200|38400|57600|115200>\n"));
+                printfnl(SOURCE_COMMANDS, "Usage: gps set baud <4800|9600|19200|38400|57600|115200>\n");
                 return -1;
             }
             int rate = parse_int(argv[3]);
@@ -2012,21 +2012,21 @@ int cmd_gps(int argc, char **argv)
                 case 115200: code = 5; break;
             }
             if (code < 0) {
-                printfnl(SOURCE_COMMANDS, F("Invalid baud rate. Use: 4800/9600/19200/38400/57600/115200\n"));
+                printfnl(SOURCE_COMMANDS, "Invalid baud rate. Use: 4800/9600/19200/38400/57600/115200\n");
                 return -1;
             }
             char buf[16];
             snprintf(buf, sizeof(buf), "PCAS01,%d", code);
             gps_send_nmea(buf);
-            printfnl(SOURCE_COMMANDS, F("Baud set to %d (use 'gps save' to persist)\n"), rate);
-            printfnl(SOURCE_COMMANDS, F("Note: firmware still expects 9600. Reboot to reconnect.\n"));
+            printfnl(SOURCE_COMMANDS, "Baud set to %d (use 'gps save' to persist)\n", rate);
+            printfnl(SOURCE_COMMANDS, "Note: firmware still expects 9600. Reboot to reconnect.\n");
             return 0;
         }
 
         // --- gps set rate <hz> ---
         if (strcasecmp(argv[2], "rate") == 0) {
             if (argc < 4) {
-                printfnl(SOURCE_COMMANDS, F("Usage: gps set rate <1|2|4|5|10>\n"));
+                printfnl(SOURCE_COMMANDS, "Usage: gps set rate <1|2|4|5|10>\n");
                 return -1;
             }
             int hz = parse_int(argv[3]);
@@ -2039,20 +2039,20 @@ int cmd_gps(int argc, char **argv)
                 case 10: ms = 100;  break;
             }
             if (ms < 0) {
-                printfnl(SOURCE_COMMANDS, F("Invalid rate. Use: 1, 2, 4, 5, or 10 Hz\n"));
+                printfnl(SOURCE_COMMANDS, "Invalid rate. Use: 1, 2, 4, 5, or 10 Hz\n");
                 return -1;
             }
             char buf[16];
             snprintf(buf, sizeof(buf), "PCAS02,%d", ms);
             gps_send_nmea(buf);
-            printfnl(SOURCE_COMMANDS, F("Update rate set to %d Hz (%d ms)\n"), hz, ms);
+            printfnl(SOURCE_COMMANDS, "Update rate set to %d Hz (%d ms)\n", hz, ms);
             return 0;
         }
 
         // --- gps set mode <constellation> ---
         if (strcasecmp(argv[2], "mode") == 0) {
             if (argc < 4) {
-                printfnl(SOURCE_COMMANDS, F("Usage: gps set mode <gps|bds|glonass|gps+bds|gps+glonass|bds+glonass|all>\n"));
+                printfnl(SOURCE_COMMANDS, "Usage: gps set mode <gps|bds|glonass|gps+bds|gps+glonass|bds+glonass|all>\n");
                 return -1;
             }
             int mode = -1;
@@ -2065,13 +2065,13 @@ int cmd_gps(int argc, char **argv)
             else if (strcasecmp(argv[3], "all") == 0)        mode = 7;
 
             if (mode < 0) {
-                printfnl(SOURCE_COMMANDS, F("Invalid mode. Use: gps, bds, glonass, gps+bds, gps+glonass, bds+glonass, all\n"));
+                printfnl(SOURCE_COMMANDS, "Invalid mode. Use: gps, bds, glonass, gps+bds, gps+glonass, bds+glonass, all\n");
                 return -1;
             }
             char buf[16];
             snprintf(buf, sizeof(buf), "PCAS04,%d", mode);
             gps_send_nmea(buf);
-            printfnl(SOURCE_COMMANDS, F("Constellation mode set to %d\n"), mode);
+            printfnl(SOURCE_COMMANDS, "Constellation mode set to %d\n", mode);
             return 0;
         }
 
@@ -2080,9 +2080,9 @@ int cmd_gps(int argc, char **argv)
         // e.g. "gps set nmea gga,rmc,gsa"
         if (strcasecmp(argv[2], "nmea") == 0) {
             if (argc < 4) {
-                printfnl(SOURCE_COMMANDS, F("Usage: gps set nmea <gga,gll,gsa,gsv,rmc,vtg,zda,...>\n"));
-                printfnl(SOURCE_COMMANDS, F("  Enables listed sentences at 1/fix, disables others\n"));
-                printfnl(SOURCE_COMMANDS, F("  Slots: gga,gll,gsa,gsv,rmc,vtg,zda,ant,dhv,lps,,,utc,gst\n"));
+                printfnl(SOURCE_COMMANDS, "Usage: gps set nmea <gga,gll,gsa,gsv,rmc,vtg,zda,...>\n");
+                printfnl(SOURCE_COMMANDS, "  Enables listed sentences at 1/fix, disables others\n");
+                printfnl(SOURCE_COMMANDS, "  Slots: gga,gll,gsa,gsv,rmc,vtg,zda,ant,dhv,lps,,,utc,gst\n");
                 return -1;
             }
             // PCAS03 field order: GGA,GLL,GSA,GSV,RMC,VTG,ZDA,ANT,DHV,LPS,res,res,UTC,GST,res,res,res,TIM
@@ -2108,7 +2108,7 @@ int cmd_gps(int argc, char **argv)
                     }
                 }
                 if (!found)
-                    printfnl(SOURCE_COMMANDS, F("  Unknown sentence: %s (ignored)\n"), tok);
+                    printfnl(SOURCE_COMMANDS, "  Unknown sentence: %s (ignored)\n", tok);
                 tok = strtok_r(NULL, ",", &saveptr);
             }
 
@@ -2129,14 +2129,14 @@ int cmd_gps(int argc, char **argv)
     // --- gps save ---
     if (strcasecmp(argv[1], "save") == 0) {
         gps_send_nmea("PCAS00");
-        printfnl(SOURCE_COMMANDS, F("Configuration saved to GPS module flash\n"));
+        printfnl(SOURCE_COMMANDS, "Configuration saved to GPS module flash\n");
         return 0;
     }
 
     // --- gps restart <type> ---
     if (strcasecmp(argv[1], "restart") == 0) {
         if (argc < 3) {
-            printfnl(SOURCE_COMMANDS, F("Usage: gps restart <hot|warm|cold|factory>\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: gps restart <hot|warm|cold|factory>\n");
             return -1;
         }
         int rs = -1;
@@ -2146,13 +2146,13 @@ int cmd_gps(int argc, char **argv)
         else if (strcasecmp(argv[2], "factory") == 0) rs = 3;
 
         if (rs < 0) {
-            printfnl(SOURCE_COMMANDS, F("Invalid restart type. Use: hot, warm, cold, factory\n"));
+            printfnl(SOURCE_COMMANDS, "Invalid restart type. Use: hot, warm, cold, factory\n");
             return -1;
         }
         char buf[16];
         snprintf(buf, sizeof(buf), "PCAS10,%d", rs);
         gps_send_nmea(buf);
-        printfnl(SOURCE_COMMANDS, F("GPS module restarting (%s)\n"), argv[2]);
+        printfnl(SOURCE_COMMANDS, "GPS module restarting (%s)\n", argv[2]);
         return 0;
     }
 
@@ -2160,7 +2160,7 @@ int cmd_gps(int argc, char **argv)
     // Send arbitrary NMEA body with auto-checksum, e.g. "gps send PCAS06,0"
     if (strcasecmp(argv[1], "send") == 0) {
         if (argc < 3) {
-            printfnl(SOURCE_COMMANDS, F("Usage: gps send <NMEA body>  (e.g. PCAS06,0)\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: gps send <NMEA body>  (e.g. PCAS06,0)\n");
             return -1;
         }
         // Rejoin remaining args with spaces (in case user typed spaces)
@@ -2194,9 +2194,9 @@ int cmd_lora(int argc, char **argv)
             config.lora_frequency = freq;
             int rc = lora_set_frequency(freq);
             if (rc != 0)
-                printfnl(SOURCE_COMMANDS, F("Error setting frequency (code %d)\n"), rc);
+                printfnl(SOURCE_COMMANDS, "Error setting frequency (code %d)\n", rc);
             else
-                printfnl(SOURCE_COMMANDS, F("Frequency set to %.3f MHz\n"), freq);
+                printfnl(SOURCE_COMMANDS, "Frequency set to %.3f MHz\n", freq);
             return 0;
         }
         else if (strcasecmp(sub, "power") == 0)
@@ -2205,117 +2205,117 @@ int cmd_lora(int argc, char **argv)
             config.lora_tx_power = power;
             int rc = lora_set_tx_power(power);
             if (rc != 0)
-                printfnl(SOURCE_COMMANDS, F("Error setting TX power (code %d)\n"), rc);
+                printfnl(SOURCE_COMMANDS, "Error setting TX power (code %d)\n", rc);
             else
-                printfnl(SOURCE_COMMANDS, F("TX power set to %d dBm\n"), power);
+                printfnl(SOURCE_COMMANDS, "TX power set to %d dBm\n", power);
             return 0;
         }
         else if (strcasecmp(sub, "bw") == 0)
         {
             if (lora_is_fsk()) {
-                printfnl(SOURCE_COMMANDS, F("Bandwidth not available in FSK mode\n"));
+                printfnl(SOURCE_COMMANDS, "Bandwidth not available in FSK mode\n");
                 return 0;
             }
             float bw = atof(val);
             config.lora_bandwidth = bw;
             int rc = lora_set_bandwidth(bw);
             if (rc != 0)
-                printfnl(SOURCE_COMMANDS, F("Error setting bandwidth (code %d)\n"), rc);
+                printfnl(SOURCE_COMMANDS, "Error setting bandwidth (code %d)\n", rc);
             else
-                printfnl(SOURCE_COMMANDS, F("Bandwidth set to %.1f kHz\n"), bw);
+                printfnl(SOURCE_COMMANDS, "Bandwidth set to %.1f kHz\n", bw);
             return 0;
         }
         else if (strcasecmp(sub, "sf") == 0)
         {
             if (lora_is_fsk()) {
-                printfnl(SOURCE_COMMANDS, F("SF not available in FSK mode\n"));
+                printfnl(SOURCE_COMMANDS, "SF not available in FSK mode\n");
                 return 0;
             }
             int sf = parse_int(val);
             config.lora_sf = sf;
             int rc = lora_set_sf(sf);
             if (rc != 0)
-                printfnl(SOURCE_COMMANDS, F("Error setting SF (code %d)\n"), rc);
+                printfnl(SOURCE_COMMANDS, "Error setting SF (code %d)\n", rc);
             else
-                printfnl(SOURCE_COMMANDS, F("SF set to %d\n"), sf);
+                printfnl(SOURCE_COMMANDS, "SF set to %d\n", sf);
             return 0;
         }
         else if (strcasecmp(sub, "cr") == 0)
         {
             if (lora_is_fsk()) {
-                printfnl(SOURCE_COMMANDS, F("CR not available in FSK mode\n"));
+                printfnl(SOURCE_COMMANDS, "CR not available in FSK mode\n");
                 return 0;
             }
             int cr = parse_int(val);
             config.lora_cr = cr;
             int rc = lora_set_cr(cr);
             if (rc != 0)
-                printfnl(SOURCE_COMMANDS, F("Error setting CR (code %d)\n"), rc);
+                printfnl(SOURCE_COMMANDS, "Error setting CR (code %d)\n", rc);
             else
-                printfnl(SOURCE_COMMANDS, F("CR set to 4/%d\n"), cr);
+                printfnl(SOURCE_COMMANDS, "CR set to 4/%d\n", cr);
             return 0;
         }
         else if (strcasecmp(sub, "mode") == 0)
         {
             if (strcasecmp(val, "lora") != 0 && strcasecmp(val, "fsk") != 0) {
-                printfnl(SOURCE_COMMANDS, F("Invalid mode '%s' (use lora or fsk)\n"), val);
+                printfnl(SOURCE_COMMANDS, "Invalid mode '%s' (use lora or fsk)\n", val);
                 return 0;
             }
             strncpy(config.lora_rf_mode, val, sizeof(config.lora_rf_mode) - 1);
             config.lora_rf_mode[sizeof(config.lora_rf_mode) - 1] = '\0';
             int rc = lora_reinit();
             if (rc != 0)
-                printfnl(SOURCE_COMMANDS, F("Error switching mode (code %d)\n"), rc);
+                printfnl(SOURCE_COMMANDS, "Error switching mode (code %d)\n", rc);
             else
-                printfnl(SOURCE_COMMANDS, F("Mode set to %s\n"), lora_get_mode());
+                printfnl(SOURCE_COMMANDS, "Mode set to %s\n", lora_get_mode());
             return 0;
         }
     }
 
-    printfnl(SOURCE_COMMANDS, F("LoRa Radio:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Mode:      %s\n"), lora_get_mode());
-    printfnl(SOURCE_COMMANDS, F("  Frequency: %.3f MHz\n"), lora_get_frequency());
-    printfnl(SOURCE_COMMANDS, F("  TX Power:  %d dBm\n"), config.lora_tx_power);
+    printfnl(SOURCE_COMMANDS, "LoRa Radio:\n");
+    printfnl(SOURCE_COMMANDS, "  Mode:      %s\n", lora_get_mode());
+    printfnl(SOURCE_COMMANDS, "  Frequency: %.3f MHz\n", lora_get_frequency());
+    printfnl(SOURCE_COMMANDS, "  TX Power:  %d dBm\n", config.lora_tx_power);
 
     if (lora_is_fsk())
     {
-        printfnl(SOURCE_COMMANDS, F("  Bit Rate:  %.1f kbps\n"), lora_get_bitrate());
-        printfnl(SOURCE_COMMANDS, F("  Freq Dev:  %.1f kHz\n"), lora_get_freqdev());
-        printfnl(SOURCE_COMMANDS, F("  RX BW:     %.1f kHz\n"), lora_get_rxbw());
-        printfnl(SOURCE_COMMANDS, F("  Preamble:  %d\n"), config.lora_preamble);
+        printfnl(SOURCE_COMMANDS, "  Bit Rate:  %.1f kbps\n", lora_get_bitrate());
+        printfnl(SOURCE_COMMANDS, "  Freq Dev:  %.1f kHz\n", lora_get_freqdev());
+        printfnl(SOURCE_COMMANDS, "  RX BW:     %.1f kHz\n", lora_get_rxbw());
+        printfnl(SOURCE_COMMANDS, "  Preamble:  %d\n", config.lora_preamble);
 
         static const char *shaping_names[] = { "None", "BT0.3", "BT0.5", "BT0.7", "BT1.0" };
         int si = config.fsk_shaping;
         if (si < 0 || si > 4) si = 0;
-        printfnl(SOURCE_COMMANDS, F("  Shaping:   %s\n"), shaping_names[si]);
-        printfnl(SOURCE_COMMANDS, F("  Whitening: %s\n"), config.fsk_whitening ? "on" : "off");
-        printfnl(SOURCE_COMMANDS, F("  Sync Word: %s\n"), config.fsk_syncword);
+        printfnl(SOURCE_COMMANDS, "  Shaping:   %s\n", shaping_names[si]);
+        printfnl(SOURCE_COMMANDS, "  Whitening: %s\n", config.fsk_whitening ? "on" : "off");
+        printfnl(SOURCE_COMMANDS, "  Sync Word: %s\n", config.fsk_syncword);
 
         const char *crc_names[] = { "off", "1-byte", "2-byte" };
         int ci = config.fsk_crc;
         if (ci < 0 || ci > 2) ci = 0;
-        printfnl(SOURCE_COMMANDS, F("  CRC:       %s\n"), crc_names[ci]);
+        printfnl(SOURCE_COMMANDS, "  CRC:       %s\n", crc_names[ci]);
     }
     else
     {
-        printfnl(SOURCE_COMMANDS, F("  Bandwidth: %.1f kHz\n"), lora_get_bandwidth());
-        printfnl(SOURCE_COMMANDS, F("  SF:        %d\n"), lora_get_sf());
-        printfnl(SOURCE_COMMANDS, F("  CR:        4/%d\n"), config.lora_cr);
-        printfnl(SOURCE_COMMANDS, F("  Preamble:  %d\n"), config.lora_preamble);
-        printfnl(SOURCE_COMMANDS, F("  Sync Word: 0x%02X\n"), config.lora_sync_word);
+        printfnl(SOURCE_COMMANDS, "  Bandwidth: %.1f kHz\n", lora_get_bandwidth());
+        printfnl(SOURCE_COMMANDS, "  SF:        %d\n", lora_get_sf());
+        printfnl(SOURCE_COMMANDS, "  CR:        4/%d\n", config.lora_cr);
+        printfnl(SOURCE_COMMANDS, "  Preamble:  %d\n", config.lora_preamble);
+        printfnl(SOURCE_COMMANDS, "  Sync Word: 0x%02X\n", config.lora_sync_word);
     }
 
     float dr = lora_get_datarate();
     if (dr >= 1000.0f)
-        printfnl(SOURCE_COMMANDS, F("  Data Rate: %.2f kbps\n"), dr / 1000.0f);
+        printfnl(SOURCE_COMMANDS, "  Data Rate: %.2f kbps\n", dr / 1000.0f);
     else
-        printfnl(SOURCE_COMMANDS, F("  Data Rate: %.0f bps\n"), dr);
-    printfnl(SOURCE_COMMANDS, F("  TX Pkts:   %lu\n"), (unsigned long)lora_get_tx_count());
-    printfnl(SOURCE_COMMANDS, F("  RX Pkts:   %lu\n"), (unsigned long)lora_get_rx_count());
-    printfnl(SOURCE_COMMANDS, F("  Last RSSI: %.1f dBm\n"), lora_get_rssi());
-    printfnl(SOURCE_COMMANDS, F("  Last SNR:  %.1f dB\n"), lora_get_snr());
+        printfnl(SOURCE_COMMANDS, "  Data Rate: %.0f bps\n", dr);
+    printfnl(SOURCE_COMMANDS, "  TX Pkts:   %lu\n", (unsigned long)lora_get_tx_count());
+    printfnl(SOURCE_COMMANDS, "  RX Pkts:   %lu\n", (unsigned long)lora_get_rx_count());
+    printfnl(SOURCE_COMMANDS, "  Last RSSI: %.1f dBm\n", lora_get_rssi());
+    printfnl(SOURCE_COMMANDS, "  Last SNR:  %.1f dB\n", lora_get_snr());
 #else
-    printfnl(SOURCE_COMMANDS, F("LoRa not available on this board\n"));
+    printfnl(SOURCE_COMMANDS, "LoRa not available on this board\n");
 #endif
     return 0;
 }
@@ -2323,37 +2323,37 @@ int cmd_lora(int argc, char **argv)
 
 int cmd_sensors(int argc, char **argv)
 {
-    printfnl(SOURCE_COMMANDS, F("Sensors:\n"));
+    printfnl(SOURCE_COMMANDS, "Sensors:\n");
 
 #ifdef BOARD_HAS_IMU
-    printfnl(SOURCE_COMMANDS, F("  IMU:         %s\n"), imuAvailable() ? "Available" : "Not detected");
+    printfnl(SOURCE_COMMANDS, "  IMU:         %s\n", imuAvailable() ? "Available" : "Not detected");
     if (imuAvailable())
     {
-        printfnl(SOURCE_COMMANDS, F("  Roll:        %.1f deg\n"), getRoll());
-        printfnl(SOURCE_COMMANDS, F("  Pitch:       %.1f deg\n"), getPitch());
-        printfnl(SOURCE_COMMANDS, F("  Yaw:         %.1f deg\n"), getYaw());
-        printfnl(SOURCE_COMMANDS, F("  Accel:       %.2f, %.2f, %.2f g\n"), getAccX(), getAccY(), getAccZ());
+        printfnl(SOURCE_COMMANDS, "  Roll:        %.1f deg\n", getRoll());
+        printfnl(SOURCE_COMMANDS, "  Pitch:       %.1f deg\n", getPitch());
+        printfnl(SOURCE_COMMANDS, "  Yaw:         %.1f deg\n", getYaw());
+        printfnl(SOURCE_COMMANDS, "  Accel:       %.2f, %.2f, %.2f g\n", getAccX(), getAccY(), getAccZ());
     }
 #else
-    printfnl(SOURCE_COMMANDS, F("  IMU:         Not available on this board\n"));
+    printfnl(SOURCE_COMMANDS, "  IMU:         Not available on this board\n");
 #endif
 
-    printfnl(SOURCE_COMMANDS, F("  Temperature: %.1f C\n"), getTemp());
-    printfnl(SOURCE_COMMANDS, F("  Battery:     %.2f V\n"), bat_voltage());
+    printfnl(SOURCE_COMMANDS, "  Temperature: %.1f C\n", getTemp());
+    printfnl(SOURCE_COMMANDS, "  Battery:     %.2f V\n", bat_voltage());
 
 #ifdef BOARD_HAS_POWER_MGMT
-    printfnl(SOURCE_COMMANDS, F("  Solar:       %.2f V\n"), solar_voltage());
+    printfnl(SOURCE_COMMANDS, "  Solar:       %.2f V\n", solar_voltage());
 #endif
 
     // ADC1 channels (GPIO 1-10 on ESP32-S3)
-    printfnl(SOURCE_COMMANDS, F("\nADC1 (GPIO 1-10):\n"));
+    printfnl(SOURCE_COMMANDS, "\nADC1 (GPIO 1-10):\n");
     for (int pin = 1; pin <= 10; pin++) {
         int mv = analogReadMilliVolts(pin);
         const char *name = pin_name_lookup(pin);
         if (name[0])
-            printfnl(SOURCE_COMMANDS, F("  GPIO %2d: %4d mV  (%s)\n"), pin, mv, name);
+            printfnl(SOURCE_COMMANDS, "  GPIO %2d: %4d mV  (%s)\n", pin, mv, name);
         else
-            printfnl(SOURCE_COMMANDS, F("  GPIO %2d: %4d mV\n"), pin, mv);
+            printfnl(SOURCE_COMMANDS, "  GPIO %2d: %4d mV\n", pin, mv);
     }
 
     return 0;
@@ -2376,15 +2376,15 @@ int cmd_time(int argc, char **argv)
         int dow = ltm.tm_wday;
         if (dow < 0 || dow > 6) dow = 0;
 
-        printfnl(SOURCE_COMMANDS, F("Time:   %04d-%02d-%02d %02d:%02d:%02d %s (%s)\n"),
+        printfnl(SOURCE_COMMANDS, "Time:   %04d-%02d-%02d %02d:%02d:%02d %s (%s)\n",
             ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday,
             ltm.tm_hour, ltm.tm_min, ltm.tm_sec,
             tz_label(tz), dayNames[dow]);
 
-        printfnl(SOURCE_COMMANDS, F("Epoch:  %lu%03lu ms\n"),
+        printfnl(SOURCE_COMMANDS, "Epoch:  %lu%03lu ms\n",
             (unsigned long)(epoch / 1000), (unsigned long)(epoch % 1000));
     } else {
-        printfnl(SOURCE_COMMANDS, F("Time:   not available\n"));
+        printfnl(SOURCE_COMMANDS, "Time:   not available\n");
     }
 
     // Show time source
@@ -2393,19 +2393,19 @@ int cmd_time(int argc, char **argv)
     if (ts == 2)      src = "GPS+PPS";
     else if (ts == 1) src = "NTP";
     else if (get_time_valid()) src = "build";
-    printfnl(SOURCE_COMMANDS, F("Source: %s\n"), src);
+    printfnl(SOURCE_COMMANDS, "Source: %s\n", src);
 
     // NTP line with sync age
     uint32_t ntp_sync = get_ntp_last_sync_ms();
     if (ntp_sync) {
         unsigned long ago = (millis() - ntp_sync) / 1000;
-        printfnl(SOURCE_COMMANDS, F("NTP:    %s  (synced %lus ago)\n"), config.ntp_server, ago);
+        printfnl(SOURCE_COMMANDS, "NTP:    %s  (synced %lus ago)\n", config.ntp_server, ago);
     } else {
-        printfnl(SOURCE_COMMANDS, F("NTP:    %s  (never synced)\n"), config.ntp_server);
+        printfnl(SOURCE_COMMANDS, "NTP:    %s  (never synced)\n", config.ntp_server);
     }
 
 #ifdef BOARD_HAS_GPS
-    printfnl(SOURCE_COMMANDS, F("GPS fix: %s  Sats: %d\n"), get_gpsstatus() ? "Yes" : "No", get_satellites());
+    printfnl(SOURCE_COMMANDS, "GPS fix: %s  Sats: %d\n", get_gpsstatus() ? "Yes" : "No", get_satellites());
 #endif
 
     // Uptime
@@ -2415,7 +2415,7 @@ int cmd_time(int argc, char **argv)
     unsigned int hours = (totalSec % 86400) / 3600;
     unsigned int mins  = (totalSec % 3600) / 60;
     unsigned int secs  = totalSec % 60;
-    printfnl(SOURCE_COMMANDS, F("Uptime: %ud %02uh %02um %02us\n"), days, hours, mins, secs);
+    printfnl(SOURCE_COMMANDS, "Uptime: %ud %02uh %02um %02us\n", days, hours, mins, secs);
 
     return 0;
 }
@@ -2444,18 +2444,18 @@ int cmd_led(int argc, char **argv)
         int ch = parse_int(argv[2]);
         int n  = parse_int(argv[3]);
         if (ch < 1 || ch > 4) {
-            printfnl(SOURCE_COMMANDS, F("Invalid channel %d (1-4)\n"), ch);
+            printfnl(SOURCE_COMMANDS, "Invalid channel %d (1-4)\n", ch);
             return 1;
         }
         if (n < 0) {
-            printfnl(SOURCE_COMMANDS, F("Count must be >= 0\n"));
+            printfnl(SOURCE_COMMANDS, "Count must be >= 0\n");
             return 1;
         }
         int rc = led_resize_channel(ch, n);
         if (rc != 0)
-            printfnl(SOURCE_COMMANDS, F("Failed to resize channel %d\n"), ch);
+            printfnl(SOURCE_COMMANDS, "Failed to resize channel %d\n", ch);
         else
-            printfnl(SOURCE_COMMANDS, F("Channel %d set to %d LEDs\n"), ch, n);
+            printfnl(SOURCE_COMMANDS, "Channel %d set to %d LEDs\n", ch, n);
         return 0;
     }
 
@@ -2464,24 +2464,24 @@ int cmd_led(int argc, char **argv)
         for (int ch = 0; ch < 4; ch++)
             if (bufs[ch]) { for (int j = 0; j < counts[ch]; j++) bufs[ch][j] = CRGB::Black; }
         led_show();
-        printfnl(SOURCE_COMMANDS, F("All LEDs cleared\n"));
+        printfnl(SOURCE_COMMANDS, "All LEDs cleared\n");
         return 0;
     }
 
     // led set <ch> <index|start-end|all> <#RRGGBB>
     if (argc >= 2 && !strcasecmp(argv[1], "set")) {
         if (argc < 5) {
-            printfnl(SOURCE_COMMANDS, F("Usage: led set <ch> <index|start-end|all> <#RRGGBB>\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: led set <ch> <index|start-end|all> <#RRGGBB>\n");
             return 1;
         }
         int ch = parse_int(argv[2]);
         if (ch < 1 || ch > 4 || !bufs[ch - 1]) {
-            printfnl(SOURCE_COMMANDS, F("Invalid channel %d\n"), ch);
+            printfnl(SOURCE_COMMANDS, "Invalid channel %d\n", ch);
             return 1;
         }
         CRGB color;
         if (!parse_color(argv[4], &color)) {
-            printfnl(SOURCE_COMMANDS, F("Invalid color: %s (use #RRGGBB)\n"), argv[4]);
+            printfnl(SOURCE_COMMANDS, "Invalid color: %s (use #RRGGBB)\n", argv[4]);
             return 1;
         }
         int n = counts[ch - 1];
@@ -2499,13 +2499,13 @@ int cmd_led(int argc, char **argv)
             }
         }
         if (start < 0 || end >= n || start > end) {
-            printfnl(SOURCE_COMMANDS, F("Index out of range (0-%d)\n"), n - 1);
+            printfnl(SOURCE_COMMANDS, "Index out of range (0-%d)\n", n - 1);
             return 1;
         }
         for (int i = start; i <= end; i++)
             bufs[ch - 1][i] = color;
         led_show();
-        printfnl(SOURCE_COMMANDS, F("Ch%d [%d-%d] = #%02X%02X%02X\n"),
+        printfnl(SOURCE_COMMANDS, "Ch%d [%d-%d] = #%02X%02X%02X\n",
                  ch, start, end, color.r, color.g, color.b);
         return 0;
     }
@@ -2547,7 +2547,7 @@ int cmd_led(int argc, char **argv)
         }
     }
 #else
-    printfnl(SOURCE_COMMANDS, F("RGB LEDs not available on this board\n"));
+    printfnl(SOURCE_COMMANDS, "RGB LEDs not available on this board\n");
 #endif
     return 0;
 }
@@ -2556,7 +2556,7 @@ int cmd_led(int argc, char **argv)
 int cmd_art( int argc, char **argv )
 {
     if (!getAnsiEnabled()) {
-        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
     }
     getLock();
@@ -2600,7 +2600,7 @@ static void wa_repeat(Stream *out, const char *ch, int n)
 int cmd_winamp(int argc, char **argv)
 {
     if (!getAnsiEnabled()) {
-        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
     }
     setInteractive(true);
@@ -2774,7 +2774,7 @@ int cmd_winamp(int argc, char **argv)
 int cmd_game(int argc, char **argv)
 {
     if (!getAnsiEnabled()) {
-        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
     }
     setInteractive(true);
@@ -2871,17 +2871,17 @@ int cmd_game(int argc, char **argv)
 int cmd_color(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("ANSI color: %s\n"), getAnsiEnabled() ? "on" : "off");
+        printfnl(SOURCE_COMMANDS, "ANSI color: %s\n", getAnsiEnabled() ? "on" : "off");
         return 0;
     }
     if (!strcasecmp(argv[1], "on")) {
         setAnsiEnabled(true);
-        printfnl(SOURCE_COMMANDS, F("ANSI color enabled\n"));
+        printfnl(SOURCE_COMMANDS, "ANSI color enabled\n");
     } else if (!strcasecmp(argv[1], "off")) {
         setAnsiEnabled(false);
-        printfnl(SOURCE_COMMANDS, F("ANSI color disabled\n"));
+        printfnl(SOURCE_COMMANDS, "ANSI color disabled\n");
     } else {
-        printfnl(SOURCE_COMMANDS, F("Usage: color [on|off]\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: color [on|off]\n");
         return 1;
     }
     return 0;
@@ -2891,12 +2891,12 @@ int cmd_color(int argc, char **argv)
 int cmd_clear( int argc, char **argv )
 {
     if (!getAnsiEnabled()) {
-        printfnl(SOURCE_COMMANDS, F("Requires ANSI mode (color on)\n"));
+        printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
         return 1;
     }
     getLock();
     Stream *out = getStream();
-    out->print(F("\033[2J\033[H"));  // clear screen + cursor home
+    out->print("\033[2J\033[H");  // clear screen + cursor home
     releaseLock();
     return 0;
 }
@@ -2906,7 +2906,7 @@ static int md5_file(const char *path)
 {
     File f = LittleFS.open(path, "r");
     if (!f) {
-        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
     }
 
@@ -2938,7 +2938,7 @@ static int md5_file(const char *path)
 int cmd_md5(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: md5 <file ...>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: md5 <file ...>\n");
         return 1;
     }
     int rc = 0;
@@ -2949,7 +2949,7 @@ int cmd_md5(int argc, char **argv)
             char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
-                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                printfnl(SOURCE_COMMANDS, "No match: %s\n", argv[i]);
                 rc = 1;
                 continue;
             }
@@ -2967,7 +2967,7 @@ static int sha256_file(const char *path)
 {
     File f = LittleFS.open(path, "r");
     if (!f) {
-        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
     }
 
@@ -2999,7 +2999,7 @@ static int sha256_file(const char *path)
 int cmd_sha256(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: sha256 <file ...>\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: sha256 <file ...>\n");
         return 1;
     }
     int rc = 0;
@@ -3010,7 +3010,7 @@ int cmd_sha256(int argc, char **argv)
             char (*matches)[128];
             int count = glob_expand(path, &matches);
             if (!count) {
-                printfnl(SOURCE_COMMANDS, F("No match: %s\n"), argv[i]);
+                printfnl(SOURCE_COMMANDS, "No match: %s\n", argv[i]);
                 rc = 1;
                 continue;
             }
@@ -3027,59 +3027,59 @@ int cmd_sha256(int argc, char **argv)
 
 int cmd_help( int argc, char **argv )
 {
-    printfnl( SOURCE_COMMANDS, F( "Available commands:\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  art                                Is it art? (ANSI)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  cat|list {file}                    Show file contents\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  clear|cls                          Clear screen (ANSI)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  color [on|off]                     Show/toggle ANSI color\n" ) );
+    printfnl( SOURCE_COMMANDS, "Available commands:\n" );
+    printfnl( SOURCE_COMMANDS, "  art                                Is it art? (ANSI)\n" );
+    printfnl( SOURCE_COMMANDS, "  cat|list {file}                    Show file contents\n" );
+    printfnl( SOURCE_COMMANDS, "  clear|cls                          Clear screen (ANSI)\n" );
+    printfnl( SOURCE_COMMANDS, "  color [on|off]                     Show/toggle ANSI color\n" );
 #if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
-    printfnl( SOURCE_COMMANDS, F( "  compile {file} [run]               Compile .bas/.c to .wasm\n" ) );
+    printfnl( SOURCE_COMMANDS, "  compile {file} [run]               Compile .bas/.c to .wasm\n" );
 #endif
-    printfnl( SOURCE_COMMANDS, F( "  config [set|unset|reset]           Show or change settings\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  copy|cp {src} {dst}                Copy file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  cue [load|start|stop|status]       Cue timeline engine\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  debug [off|{source} [on|off]]      Show/set debug sources\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  deflate|gzip {file} [out] [level]  Compress to gzip\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  del|delete|rm {file}               Delete file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  df                                 Show filesystem usage\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  dir|ls [path]                      List files\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  edit {file}                        Edit file (nano-like)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  game                               Waste time (ANSI)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  gpio [set|out|in|read]             Show/configure GPIO pins\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  gps [info|set|save|restart|send]   GPS status or configure\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  grep {pattern} [file]              Search file contents\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  help|?                             Show this help\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  hexdump {file} [count]             Hex dump (default 256)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  history                            Show command history\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  inflate|gunzip {file} [output]     Decompress gzip/zlib\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  led [set|clear|count]              Show/set LED config\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  load {file}                        Receive file via serial\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  log [to|save|close|stop]           Debug log buffer/file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  lora|radio [freq|power|bw|sf|...]  LoRa status or configure\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  md5|md5sum {file}                  Compute MD5 hash\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mem|free                           Show heap memory stats\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mkdir {dir}                        Create directory\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  mqtt [enable|disable|connect|...]  MQTT status or control\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  move|mv|ren {old} {new}            Rename/move file\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  param {id} {value}                 Set script parameter\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  ps                                 Show tasks and stack usage\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  psram [test|freq|cache]            PSRAM status/diagnostics\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  reboot                             Reboot the system\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  rmdir {dir}                        Remove empty directory\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  run {file}                         Run script (.bas/.wasm)\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  sensors                            Show sensor readings\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  sha256|sha256sum {file}            Compute SHA-256 hash\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  status                             System overview\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  stop                               Stop running script\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  tc                                 Show thread count\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  time|date                          Show current date/time\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  uptime                             Show system uptime\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  version|ver                        Show firmware version\n" ) );
+    printfnl( SOURCE_COMMANDS, "  config [set|unset|reset]           Show or change settings\n" );
+    printfnl( SOURCE_COMMANDS, "  copy|cp {src} {dst}                Copy file\n" );
+    printfnl( SOURCE_COMMANDS, "  cue [load|start|stop|status]       Cue timeline engine\n" );
+    printfnl( SOURCE_COMMANDS, "  debug [off|{source} [on|off]]      Show/set debug sources\n" );
+    printfnl( SOURCE_COMMANDS, "  deflate|gzip {file} [out] [level]  Compress to gzip\n" );
+    printfnl( SOURCE_COMMANDS, "  del|delete|rm {file}               Delete file\n" );
+    printfnl( SOURCE_COMMANDS, "  df                                 Show filesystem usage\n" );
+    printfnl( SOURCE_COMMANDS, "  dir|ls [path]                      List files\n" );
+    printfnl( SOURCE_COMMANDS, "  edit {file}                        Edit file (nano-like)\n" );
+    printfnl( SOURCE_COMMANDS, "  game                               Waste time (ANSI)\n" );
+    printfnl( SOURCE_COMMANDS, "  gpio [set|out|in|read]             Show/configure GPIO pins\n" );
+    printfnl( SOURCE_COMMANDS, "  gps [info|set|save|restart|send]   GPS status or configure\n" );
+    printfnl( SOURCE_COMMANDS, "  grep {pattern} [file]              Search file contents\n" );
+    printfnl( SOURCE_COMMANDS, "  help|?                             Show this help\n" );
+    printfnl( SOURCE_COMMANDS, "  hexdump {file} [count]             Hex dump (default 256)\n" );
+    printfnl( SOURCE_COMMANDS, "  history                            Show command history\n" );
+    printfnl( SOURCE_COMMANDS, "  inflate|gunzip {file} [output]     Decompress gzip/zlib\n" );
+    printfnl( SOURCE_COMMANDS, "  led [set|clear|count]              Show/set LED config\n" );
+    printfnl( SOURCE_COMMANDS, "  load {file}                        Receive file via serial\n" );
+    printfnl( SOURCE_COMMANDS, "  log [to|save|close|stop]           Debug log buffer/file\n" );
+    printfnl( SOURCE_COMMANDS, "  lora|radio [freq|power|bw|sf|...]  LoRa status or configure\n" );
+    printfnl( SOURCE_COMMANDS, "  md5|md5sum {file}                  Compute MD5 hash\n" );
+    printfnl( SOURCE_COMMANDS, "  mem|free                           Show heap memory stats\n" );
+    printfnl( SOURCE_COMMANDS, "  mkdir {dir}                        Create directory\n" );
+    printfnl( SOURCE_COMMANDS, "  mqtt [enable|disable|connect|...]  MQTT status or control\n" );
+    printfnl( SOURCE_COMMANDS, "  move|mv|ren {old} {new}            Rename/move file\n" );
+    printfnl( SOURCE_COMMANDS, "  param {id} {value}                 Set script parameter\n" );
+    printfnl( SOURCE_COMMANDS, "  ps                                 Show tasks and stack usage\n" );
+    printfnl( SOURCE_COMMANDS, "  psram [test|freq|cache]            PSRAM status/diagnostics\n" );
+    printfnl( SOURCE_COMMANDS, "  reboot                             Reboot the system\n" );
+    printfnl( SOURCE_COMMANDS, "  rmdir {dir}                        Remove empty directory\n" );
+    printfnl( SOURCE_COMMANDS, "  run {file}                         Run script (.bas/.wasm)\n" );
+    printfnl( SOURCE_COMMANDS, "  sensors                            Show sensor readings\n" );
+    printfnl( SOURCE_COMMANDS, "  sha256|sha256sum {file}            Compute SHA-256 hash\n" );
+    printfnl( SOURCE_COMMANDS, "  status                             System overview\n" );
+    printfnl( SOURCE_COMMANDS, "  stop                               Stop running script\n" );
+    printfnl( SOURCE_COMMANDS, "  tc                                 Show thread count\n" );
+    printfnl( SOURCE_COMMANDS, "  time|date                          Show current date/time\n" );
+    printfnl( SOURCE_COMMANDS, "  uptime                             Show system uptime\n" );
+    printfnl( SOURCE_COMMANDS, "  version|ver                        Show firmware version\n" );
 #ifdef INCLUDE_WASM
-    printfnl( SOURCE_COMMANDS, F( "  wasm [status|info <file>]          WASM runtime status/info\n" ) );
+    printfnl( SOURCE_COMMANDS, "  wasm [status|info <file>]          WASM runtime status/info\n" );
 #endif
-    printfnl( SOURCE_COMMANDS, F( "  wifi [enable|disable|ssid|pass]    WiFi status or control\n" ) );
-    printfnl( SOURCE_COMMANDS, F( "  winamp                             Audio visualizer (ANSI)\n" ) );
+    printfnl( SOURCE_COMMANDS, "  wifi [enable|disable|ssid|pass]    WiFi status or control\n" );
+    printfnl( SOURCE_COMMANDS, "  winamp                             Audio visualizer (ANSI)\n" );
     return 0;
 }
 
@@ -3088,34 +3088,34 @@ int cmd_help( int argc, char **argv )
 int cmd_wasm(int argc, char **argv)
 {
     if (argc < 2 || !strcasecmp(argv[1], "status")) {
-        printfnl(SOURCE_COMMANDS, F("WASM Runtime:\n"));
-        printfnl(SOURCE_COMMANDS, F("  Running: %s\n"), wasm_is_running() ? "yes" : "no");
+        printfnl(SOURCE_COMMANDS, "WASM Runtime:\n");
+        printfnl(SOURCE_COMMANDS, "  Running: %s\n", wasm_is_running() ? "yes" : "no");
         if (wasm_is_running()) {
             const char *p = wasm_get_current_path();
-            printfnl(SOURCE_COMMANDS, F("  Module:  %s\n"), (p && p[0]) ? p : "(unknown)");
+            printfnl(SOURCE_COMMANDS, "  Module:  %s\n", (p && p[0]) ? p : "(unknown)");
         }
         return 0;
     }
 
     if (!strcasecmp(argv[1], "info")) {
         if (argc < 3) {
-            printfnl(SOURCE_COMMANDS, F("Usage: wasm info <file.wasm>\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: wasm info <file.wasm>\n");
             return 1;
         }
         char path[64];
         normalize_path(path, sizeof(path), argv[2]);
         File f = LittleFS.open(path, "r");
         if (!f) {
-            printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+            printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
             return 1;
         }
-        printfnl(SOURCE_COMMANDS, F("WASM Module: %s\n"), path);
-        printfnl(SOURCE_COMMANDS, F("  Size: %u bytes\n"), (unsigned)f.size());
+        printfnl(SOURCE_COMMANDS, "WASM Module: %s\n", path);
+        printfnl(SOURCE_COMMANDS, "  Size: %u bytes\n", (unsigned)f.size());
         f.close();
         return 0;
     }
 
-    printfnl(SOURCE_COMMANDS, F("Usage: wasm [status | info <file>]\n"));
+    printfnl(SOURCE_COMMANDS, "Usage: wasm [status | info <file>]\n");
     return 1;
 }
 #endif
@@ -3138,40 +3138,40 @@ int cmd_psram(int argc, char **argv)
     if (argc >= 3 && !strcasecmp(argv[1], "freq")) {
         uint32_t mhz = strtol(argv[2], NULL, 10);
         if (mhz < 5 || mhz > 80) {
-            printfnl(SOURCE_COMMANDS, F("Usage: psram freq <5-80>  (MHz)\n"));
+            printfnl(SOURCE_COMMANDS, "Usage: psram freq <5-80>  (MHz)\n");
             return 1;
         }
         if (psram_change_freq(mhz * 1000000) < 0) {
-            printfnl(SOURCE_COMMANDS, F("Failed to change PSRAM frequency\n"));
+            printfnl(SOURCE_COMMANDS, "Failed to change PSRAM frequency\n");
             return 1;
         }
         uint32_t actual = psram_get_freq();
         if (actual != mhz * 1000000)
-            printfnl(SOURCE_COMMANDS, F("PSRAM SPI clock: requested %u MHz, actual %.2f MHz\n"),
+            printfnl(SOURCE_COMMANDS, "PSRAM SPI clock: requested %u MHz, actual %.2f MHz\n",
                      mhz, actual / 1000000.0f);
         else
-            printfnl(SOURCE_COMMANDS, F("PSRAM SPI clock set to %u MHz\n"), mhz);
+            printfnl(SOURCE_COMMANDS, "PSRAM SPI clock set to %u MHz\n", mhz);
         return 0;
     }
     // Default: show status
-    printfnl(SOURCE_COMMANDS, F("PSRAM:\n"));
-    printfnl(SOURCE_COMMANDS, F("  Available:   %s\n"), psram_available() ? "yes" : "no");
+    printfnl(SOURCE_COMMANDS, "PSRAM:\n");
+    printfnl(SOURCE_COMMANDS, "  Available:   %s\n", psram_available() ? "yes" : "no");
     if (psram_get_freq())
-        printfnl(SOURCE_COMMANDS, F("  SPI clock:   %.2f MHz\n"), psram_get_freq() / 1000000.0f);
-    printfnl(SOURCE_COMMANDS, F("  Size:        %u bytes (%u KB)\n"), psram_size(), psram_size()/1024);
-    printfnl(SOURCE_COMMANDS, F("  Used:        %u bytes\n"), psram_bytes_used());
-    printfnl(SOURCE_COMMANDS, F("  Free:        %u bytes\n"), psram_bytes_free());
-    printfnl(SOURCE_COMMANDS, F("  Contiguous:  %u bytes\n"), psram_bytes_contiguous());
-    printfnl(SOURCE_COMMANDS, F("  Alloc slots: %d / %d\n"), psram_alloc_count(), psram_alloc_entries_max());
+        printfnl(SOURCE_COMMANDS, "  SPI clock:   %.2f MHz\n", psram_get_freq() / 1000000.0f);
+    printfnl(SOURCE_COMMANDS, "  Size:        %u bytes (%u KB)\n", psram_size(), psram_size()/1024);
+    printfnl(SOURCE_COMMANDS, "  Used:        %u bytes\n", psram_bytes_used());
+    printfnl(SOURCE_COMMANDS, "  Free:        %u bytes\n", psram_bytes_free());
+    printfnl(SOURCE_COMMANDS, "  Contiguous:  %u bytes\n", psram_bytes_contiguous());
+    printfnl(SOURCE_COMMANDS, "  Alloc slots: %d / %d\n", psram_alloc_count(), psram_alloc_entries_max());
     psram_print_map();
     psram_print_cache_map();
 #if PSRAM_CACHE_PAGES > 0
     uint32_t hits = psram_cache_hits(), misses = psram_cache_misses();
     uint32_t total = hits + misses;
-    printfnl(SOURCE_COMMANDS, F("  Cache:       %d x %d bytes (%u KB DRAM)\n"),
+    printfnl(SOURCE_COMMANDS, "  Cache:       %d x %d bytes (%u KB DRAM)\n",
              PSRAM_CACHE_PAGES, PSRAM_CACHE_PAGE_SIZE,
              (PSRAM_CACHE_PAGES * PSRAM_CACHE_PAGE_SIZE) / 1024);
-    printfnl(SOURCE_COMMANDS, F("  Cache hits:  %u / %u (%u%%)\n"),
+    printfnl(SOURCE_COMMANDS, "  Cache hits:  %u / %u (%u%%)\n",
              hits, total, total ? (hits * 100 / total) : 0);
 #endif
     return 0;
@@ -3195,7 +3195,7 @@ static void cw_diag_cb(const char *msg, void *) {
 int cmd_compile(int argc, char **argv)
 {
     if (argc < 2) {
-        printfnl(SOURCE_COMMANDS, F("Usage: compile <file.bas|file.c> [run]\n"));
+        printfnl(SOURCE_COMMANDS, "Usage: compile <file.bas|file.c> [run]\n");
         return 1;
     }
 
@@ -3212,21 +3212,21 @@ int cmd_compile(int argc, char **argv)
     if (dot && strcmp(dot, ".c") == 0) is_c = 1;
 #endif
     if (!is_bas && !is_c) {
-        printfnl(SOURCE_COMMANDS, F("Unsupported file type (use .bas or .c)\n"));
+        printfnl(SOURCE_COMMANDS, "Unsupported file type (use .bas or .c)\n");
         return 1;
     }
 
     // Read source file
     File f = LittleFS.open(path, "r");
     if (!f) {
-        printfnl(SOURCE_COMMANDS, F("Cannot open %s\n"), path);
+        printfnl(SOURCE_COMMANDS, "Cannot open %s\n", path);
         return 1;
     }
     int slen = f.size();
     char *src = (char *)malloc(slen + 1);
     if (!src) {
         f.close();
-        printfnl(SOURCE_COMMANDS, F("Out of memory\n"));
+        printfnl(SOURCE_COMMANDS, "Out of memory\n");
         return 1;
     }
     f.readBytes(src, slen);
@@ -3253,7 +3253,7 @@ int cmd_compile(int argc, char **argv)
         free(src);
 
         if (result.len == 0) {
-            printfnl(SOURCE_COMMANDS, F("Compilation failed\n"));
+            printfnl(SOURCE_COMMANDS, "Compilation failed\n");
             bas2wasm_reset();
             return 1;
         }
@@ -3278,7 +3278,7 @@ int cmd_compile(int argc, char **argv)
         free(src);
 
         if (result.len == 0) {
-            printfnl(SOURCE_COMMANDS, F("Compilation failed\n"));
+            printfnl(SOURCE_COMMANDS, "Compilation failed\n");
             c2wasm_reset();
             return 1;
         }
@@ -3294,13 +3294,13 @@ int cmd_compile(int argc, char **argv)
 
     File out = LittleFS.open(out_path, FILE_WRITE);
     if (!out) {
-        printfnl(SOURCE_COMMANDS, F("Cannot create %s\n"), out_path);
+        printfnl(SOURCE_COMMANDS, "Cannot create %s\n", out_path);
         free(wasm_data);
         return 1;
     }
     out.write(wasm_data, wasm_len);
     out.close();
-    printfnl(SOURCE_COMMANDS, F("Wrote %d bytes to %s\n"), wasm_len, out_path);
+    printfnl(SOURCE_COMMANDS, "Wrote %d bytes to %s\n", wasm_len, out_path);
     free(wasm_data);
 
     // Optionally auto-run
@@ -3506,76 +3506,76 @@ void init_commands(Stream *dev)
     WiFi.onEvent(wifi_event_cb);
 
     //Test Commands
-    shell.addCommand(F("test"), test);
+    shell.addCommand("test", test);
 
     // Commands — fileArgs=true for filename completion, subcommands for subcommand completion
-    shell.addCommand(F("?"), cmd_help);
-    shell.addCommand(F("art"), cmd_art);
-    shell.addCommand(F("cat"), listFile, "*");
-    shell.addCommand(F("clear"), cmd_clear);
-    shell.addCommand(F("cls"), cmd_clear);
-    shell.addCommand(F("color"), cmd_color, NULL, subs_color);
+    shell.addCommand("?", cmd_help);
+    shell.addCommand("art", cmd_art);
+    shell.addCommand("cat", listFile, "*");
+    shell.addCommand("clear", cmd_clear);
+    shell.addCommand("cls", cmd_clear);
+    shell.addCommand("color", cmd_color, NULL, subs_color);
 #if defined(INCLUDE_BASIC_COMPILER) || defined(INCLUDE_C_COMPILER)
-    shell.addCommand(F("compile"), cmd_compile, "*.bas;*.c");
+    shell.addCommand("compile", cmd_compile, "*.bas;*.c");
 #endif
-    shell.addCommand(F("config"), cmd_config, NULL, NULL, tc_config);
-    shell.addCommand(F("copy"), cmd_cp, "*");
-    shell.addCommand(F("cp"), cmd_cp, "*");
-    shell.addCommand(F("cue"), cmd_cue, NULL, NULL, tc_cue);
-    shell.addCommand(F("debug"), cmd_debug, NULL, NULL, tc_debug);
-    shell.addCommand(F("del"), delFile, "*");
-    shell.addCommand(F("delete"), delFile, "*");
-    shell.addCommand(F("df"), cmd_df);
-    shell.addCommand(F("deflate"), cmd_deflate, "*");
-    shell.addCommand(F("dir"), listDir, "/");
-    shell.addCommand(F("edit"), cmd_edit, "*");
-    shell.addCommand(F("free"), cmd_mem);
-    shell.addCommand(F("game"), cmd_game);
-    shell.addCommand(F("gpio"), cmd_gpio, NULL, NULL, tc_gpio);
-    shell.addCommand(F("gps"), cmd_gps, NULL, NULL, tc_gps);
-    shell.addCommand(F("grep"), cmd_grep, "*");
-    shell.addCommand(F("gunzip"), cmd_inflate, "*.gz");
-    shell.addCommand(F("gzip"), cmd_deflate, "*");
-    shell.addCommand(F("help"), cmd_help);
-    shell.addCommand(F("hexdump"), cmd_hexdump, "*");
-    shell.addCommand(F("inflate"), cmd_inflate, "*.gz");
-    shell.addCommand(F("led"), cmd_led, NULL, NULL, tc_led);
-    shell.addCommand(F("list"), listFile, "*");
-    shell.addCommand(F("load"), loadFile, "*.bas;*.c;*.wasm");
-    shell.addCommand(F("log"), cmd_log, NULL, NULL, tc_log);
-    shell.addCommand(F("lora"), cmd_lora, NULL, NULL, tc_lora);
-    shell.addCommand(F("ls"), listDir, "/");
-    shell.addCommand(F("md5"), cmd_md5, "*");
-    shell.addCommand(F("md5sum"), cmd_md5, "*");
-    shell.addCommand(F("mem"), cmd_mem);
-    shell.addCommand(F("mkdir"), cmd_mkdir, "/");
-    shell.addCommand(F("move"), renFile, "*");
-    shell.addCommand(F("mqtt"), cmd_mqtt, NULL, NULL, tc_mqtt);
-    shell.addCommand(F("mv"), renFile, "*");
-    shell.addCommand(F("param"), paramBasic, NULL, NULL, tc_param);
-    shell.addCommand(F("ps"), cmd_ps);
-    shell.addCommand(F("psram"), cmd_psram, NULL, NULL, tc_psram);
-    shell.addCommand(F("radio"), cmd_lora, NULL, NULL, tc_lora);
-    shell.addCommand(F("reboot"), cmd_reboot);
-    shell.addCommand(F("ren"), renFile, "*");
-    shell.addCommand(F("rm"), delFile, "*");
-    shell.addCommand(F("rmdir"), cmd_rmdir, "/");
-    shell.addCommand(F("run"), runBasic, "*.bas;*.c;*.wasm");
-    shell.addCommand(F("sensors"), cmd_sensors);
-    shell.addCommand(F("sha256"), cmd_sha256, "*");
-    shell.addCommand(F("sha256sum"), cmd_sha256, "*");
-    shell.addCommand(F("status"), cmd_status);
-    shell.addCommand(F("stop"), stopBasic);
-    shell.addCommand(F("tc"), tc);
-    shell.addCommand(F("time"), cmd_time);
-    shell.addCommand(F("date"), cmd_time);
-    shell.addCommand(F("uptime"), cmd_time);
-    shell.addCommand(F("ver"), cmd_version);
-    shell.addCommand(F("version"), cmd_version);
-    shell.addCommand(F("wifi"), cmd_wifi, NULL, NULL, tc_wifi);
-    shell.addCommand(F("winamp"), cmd_winamp);
+    shell.addCommand("config", cmd_config, NULL, NULL, tc_config);
+    shell.addCommand("copy", cmd_cp, "*");
+    shell.addCommand("cp", cmd_cp, "*");
+    shell.addCommand("cue", cmd_cue, NULL, NULL, tc_cue);
+    shell.addCommand("debug", cmd_debug, NULL, NULL, tc_debug);
+    shell.addCommand("del", delFile, "*");
+    shell.addCommand("delete", delFile, "*");
+    shell.addCommand("df", cmd_df);
+    shell.addCommand("deflate", cmd_deflate, "*");
+    shell.addCommand("dir", listDir, "/");
+    shell.addCommand("edit", cmd_edit, "*");
+    shell.addCommand("free", cmd_mem);
+    shell.addCommand("game", cmd_game);
+    shell.addCommand("gpio", cmd_gpio, NULL, NULL, tc_gpio);
+    shell.addCommand("gps", cmd_gps, NULL, NULL, tc_gps);
+    shell.addCommand("grep", cmd_grep, "*");
+    shell.addCommand("gunzip", cmd_inflate, "*.gz");
+    shell.addCommand("gzip", cmd_deflate, "*");
+    shell.addCommand("help", cmd_help);
+    shell.addCommand("hexdump", cmd_hexdump, "*");
+    shell.addCommand("inflate", cmd_inflate, "*.gz");
+    shell.addCommand("led", cmd_led, NULL, NULL, tc_led);
+    shell.addCommand("list", listFile, "*");
+    shell.addCommand("load", loadFile, "*.bas;*.c;*.wasm");
+    shell.addCommand("log", cmd_log, NULL, NULL, tc_log);
+    shell.addCommand("lora", cmd_lora, NULL, NULL, tc_lora);
+    shell.addCommand("ls", listDir, "/");
+    shell.addCommand("md5", cmd_md5, "*");
+    shell.addCommand("md5sum", cmd_md5, "*");
+    shell.addCommand("mem", cmd_mem);
+    shell.addCommand("mkdir", cmd_mkdir, "/");
+    shell.addCommand("move", renFile, "*");
+    shell.addCommand("mqtt", cmd_mqtt, NULL, NULL, tc_mqtt);
+    shell.addCommand("mv", renFile, "*");
+    shell.addCommand("param", paramBasic, NULL, NULL, tc_param);
+    shell.addCommand("ps", cmd_ps);
+    shell.addCommand("psram", cmd_psram, NULL, NULL, tc_psram);
+    shell.addCommand("radio", cmd_lora, NULL, NULL, tc_lora);
+    shell.addCommand("reboot", cmd_reboot);
+    shell.addCommand("ren", renFile, "*");
+    shell.addCommand("rm", delFile, "*");
+    shell.addCommand("rmdir", cmd_rmdir, "/");
+    shell.addCommand("run", runBasic, "*.bas;*.c;*.wasm");
+    shell.addCommand("sensors", cmd_sensors);
+    shell.addCommand("sha256", cmd_sha256, "*");
+    shell.addCommand("sha256sum", cmd_sha256, "*");
+    shell.addCommand("status", cmd_status);
+    shell.addCommand("stop", stopBasic);
+    shell.addCommand("tc", tc);
+    shell.addCommand("time", cmd_time);
+    shell.addCommand("date", cmd_time);
+    shell.addCommand("uptime", cmd_time);
+    shell.addCommand("ver", cmd_version);
+    shell.addCommand("version", cmd_version);
+    shell.addCommand("wifi", cmd_wifi, NULL, NULL, tc_wifi);
+    shell.addCommand("winamp", cmd_winamp);
 #ifdef INCLUDE_WASM
-    shell.addCommand(F("wasm"), cmd_wasm, "*.wasm", subs_wasm);
+    shell.addCommand("wasm", cmd_wasm, "*.wasm", subs_wasm);
 #endif
 }
 

@@ -49,7 +49,7 @@ class ConezShell : public Stream {
          * @param f The command function that will be called when the command
          *   is entered into the shell.
          */
-        void addCommand(const __FlashStringHelper * name, CommandFunction f,
+        void addCommand(const char * name, CommandFunction f,
                         const char *fileSpec = NULL,
                         const char * const *subcommands = NULL,
                         TabCompleteFunc tabCompleteFunc = NULL,
@@ -112,7 +112,7 @@ class ConezShell : public Stream {
 
         bool prepInput(void);
 
-        int report(const __FlashStringHelper * message, int errorCode);
+        int report(const char * message, int errorCode);
         static const char MAXARGS = 10;
         char linebuffer[SHELL_BUFSIZE];
         int inptr;
