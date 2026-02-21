@@ -591,8 +591,9 @@ param {id} {value}
   Example: param 1 42
 
 ps
-  Show FreeRTOS task list with state, priority, core affinity, and
-  minimum free stack (high water mark) for each known task.
+  Show FreeRTOS task list with state, priority, core affinity, CPU %,
+  cumulative runtime (H:MM:SS or M:SS), total stack size, and minimum
+  free stack (high water mark) for each task.
 
 psram
   With no arguments, shows PSRAM status: availability, SPI clock speed,

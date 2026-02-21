@@ -1200,10 +1200,12 @@ int cmd_ps(int argc, char **argv)
         return -1;
     }
 
-    UBaseType_t got = uxTaskGetSystemState(taskList, numTasks, NULL);
+    uint32_t totalRunTime = 0;
+    UBaseType_t got = uxTaskGetSystemState(taskList, numTasks, &totalRunTime);
 
     printfnl(SOURCE_COMMANDS, "Task List (%u tasks):\n", (unsigned int)got);
-    printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4s  %4s  %6s  %s\n", "Name", "State", "Prio", "Core", "Stack", "Free");
+    printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4s  %4s  %5s  %8s  %6s  %s\n",
+             "Name", "State", "Prio", "Core", "CPU%", "Time", "Stack", "Free");
 
     for (UBaseType_t i = 0; i < got; i++)
     {
@@ -1221,22 +1223,49 @@ int cmd_ps(int argc, char **argv)
         BaseType_t coreId = xTaskGetAffinity(taskList[i].xHandle);
         uint32_t freeBytes = (uint32_t)taskList[i].usStackHighWaterMark * sizeof(StackType_t);
 
-        // Compute total stack size from TCB stack bounds
+        // Compute total stack size from TCB stack bounds.
+        // pxEndOfStack is 16-byte aligned (Xtensa ABI), so round up
+        // to recover the nominal size passed to xTaskCreate.
         StackType_t *stkStart = pxTCBGetStartOfStack(taskList[i].xHandle);
         StackType_t *stkEnd   = pxTCBGetEndOfStack(taskList[i].xHandle);
-        uint32_t totalBytes = (uint32_t)((stkEnd - stkStart) + 1) * sizeof(StackType_t);
+        uint32_t totalBytes = ((uint32_t)(stkEnd - stkStart) + portBYTE_ALIGNMENT) & ~(portBYTE_ALIGNMENT - 1);
+
+        // CPU % — runtime counters are cumulative across both cores,
+        // so divide by totalRunTime (which sums both cores' time)
+        char cpuBuf[16];
+        if (totalRunTime > 0) {
+            uint32_t pct_x10 = (uint32_t)((uint64_t)taskList[i].ulRunTimeCounter * 1000ULL / totalRunTime);
+            if (pct_x10 == 0 && taskList[i].ulRunTimeCounter > 0)
+                snprintf(cpuBuf, sizeof(cpuBuf), " <0.1");
+            else
+                snprintf(cpuBuf, sizeof(cpuBuf), "%3u.%u", (unsigned)(pct_x10 / 10), (unsigned)(pct_x10 % 10));
+        } else {
+            snprintf(cpuBuf, sizeof(cpuBuf), "    -");
+        }
+
+        // Cumulative runtime — counter is in esp_timer ticks (1 MHz = microseconds)
+        char timeBuf[16];
+        uint32_t secs = taskList[i].ulRunTimeCounter / 1000000;
+        if (secs >= 3600)
+            snprintf(timeBuf, sizeof(timeBuf), "%u:%02u:%02u",
+                     (unsigned)(secs / 3600), (unsigned)(secs % 3600 / 60), (unsigned)(secs % 60));
+        else
+            snprintf(timeBuf, sizeof(timeBuf), "%u:%02u",
+                     (unsigned)(secs / 60), (unsigned)(secs % 60));
 
         if (coreId == tskNO_AFFINITY)
-            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u     -  %6u  %u\n",
+            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u     -  %s  %8s  %6u  %u\n",
                 taskList[i].pcTaskName, state,
                 (unsigned int)taskList[i].uxCurrentPriority,
+                cpuBuf, timeBuf,
                 (unsigned int)totalBytes,
                 (unsigned int)freeBytes);
         else
-            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u  %4d  %6u  %u\n",
+            printfnl(SOURCE_COMMANDS, "  %-16s %-6s %4u  %4d  %s  %8s  %6u  %u\n",
                 taskList[i].pcTaskName, state,
                 (unsigned int)taskList[i].uxCurrentPriority,
                 (int)coreId,
+                cpuBuf, timeBuf,
                 (unsigned int)totalBytes,
                 (unsigned int)freeBytes);
     }

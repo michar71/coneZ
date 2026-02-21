@@ -93,7 +93,19 @@ pre-compiled Arduino SDK, giving us full control over ESP-IDF configuration.
 - `CONFIG_LWIP_STATS=y` — LWIP protocol statistics (IP/TCP/UDP packet counters)
 - `CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2920` — halved TCP send buffer (2x MSS vs 4x)
 - `CONFIG_LWIP_TCP_WND_DEFAULT=2920` — halved TCP receive window
+- `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y` — per-task CPU time via `ulRunTimeCounter`
+- `CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y` — uses esp_timer (1 MHz) as counter source
 - `CONFIG_PARTITION_TABLE_CUSTOM=y` — uses our `partitions.csv`
+
+**IMPORTANT: Kconfig changes must go in the per-environment sdkconfig files.**
+PlatformIO uses `sdkconfig.<env-name>` (e.g. `sdkconfig.conez-v0-1`,
+`sdkconfig.heltec_wifi_lora_32_V3`) as the primary ESP-IDF config for each build
+target. `sdkconfig.defaults` only seeds a **new** config when no per-env file
+exists — it does NOT override existing per-env files. When adding or changing a
+Kconfig option, you must update **both** `sdkconfig.defaults` (for future fresh
+builds) **and** the per-env sdkconfig files (for current builds). After editing
+any sdkconfig file, run `pio run -t clean` before rebuilding — the cached config
+in `.pio/build/` won't pick up changes otherwise.
 
 Additional build flag: `-DMIB2_STATS=1` (in `platformio.ini` **and** `CMakeLists.txt`
 via `target_compile_definitions(__idf_lwip PRIVATE MIB2_STATS=1)`) enables MIB2
@@ -162,6 +174,7 @@ equivalents. This section documents the migration surface.
 | Arduino API | ~Count | Files | ESP-IDF Replacement | Status |
 |-------------|--------|-------|---------------------|--------|
 | Serial (print/read/write) | 135 | 9 | UART driver or USB CDC (`tinyusb`). HWCDC core-1 constraint remains. | Pending |
+| ~~GPS UART (HardwareSerial)~~ | ~~4~~ | — | `driver/uart.h` — `uart_param_config()`, `uart_driver_install()`, `uart_read_bytes()`, `uart_write_bytes()` | **Done** |
 | ~~LittleFS / File~~ | ~~77~~ | — | POSIX `fopen()`/`fread()`/`fwrite()`/`stat()`/`opendir()` via `esp_vfs_littlefs` VFS mount at `/littlefs`. `lfs_path()` helper in `main.h`. | **Done** |
 | ~~WiFi (WiFi.begin/status)~~ | ~~39~~ | — | `conez_wifi.h` wrapping `esp_wifi.h`/`esp_netif.h`/`esp_event.h`. Telnet uses BSD sockets. MQTT uses `esp_mqtt_client`. NTP uses direct `esp_sntp`. | **Done** |
 | ~~EVERY_N_SECONDS~~ | ~~1~~ | — | Removed (was a FastLED macro) | **Done** |
@@ -187,6 +200,7 @@ equivalents. This section documents the migration surface.
 | WebServer | Hard | **Done** — `esp_http_server` with URI handlers, raw binary OTA upload, JS-driven form |
 | LittleFS | Easy | **Done** — POSIX `fopen`/`fread`/`fwrite`/`stat`/`opendir` via `esp_vfs_littlefs` VFS mount at `/littlefs`. `lfs_path()` prepends mount point. `file_exists()` uses `stat()`. |
 | WiFi | Medium | **Done** — `conez_wifi.h/cpp` wraps ESP-IDF WiFi init/events/state/queries. Telnet uses BSD sockets (`lwip/sockets.h`). MQTT uses ESP-IDF `esp_mqtt_client`. NTP uses direct `sntp_*()` API. |
+| GPS UART | Easy | **Done** — `driver/uart.h` in `sensors/gps.cpp`, bulk 64-byte reads |
 | Serial/HWCDC | Medium | Pending — core debug path, must preserve core-1 pinning. Need `tinyusb` CDC or UART driver. |
 
 **In progress.** One subsystem remains: Serial/HWCDC (~135 call sites).
@@ -600,7 +614,7 @@ Pin assignments for the ConeZ PCB are in `board.h`. LED buffer pointers and setu
 ### Key Hardware Interfaces
 
 - **LoRa:** RadioLib, SX1262/SX1268 via SPI (custom `EspHal` HAL in `lora/lora_hal.h` — raw GPSPI3 registers, ESP-IDF GPIO/timers, no Arduino dependency). Two modes selectable via `lora.rf_mode` config key. **LoRa mode** (default): configurable frequency/BW/SF/CR (defaults: 431.250 MHz, SF9, 500 kHz BW). **FSK mode**: configurable bit rate, frequency deviation, RX bandwidth, data shaping, whitening, sync word (hex string), CRC. Shared params (frequency, TX power, preamble) work in both modes. CLI `lora` subcommands (`freq`, `power`, `bw`, `sf`, `cr`, `mode`) hot-apply changes without saving to config; `config set lora.*` persists but requires reboot.
-- **GPS:** ATGM336H (AT6558 chipset) via UART (9600 baud), parsed by inline NMEA parser (`sensors/nmea.h`/`nmea.cpp` — pure C, no Arduino dependency), with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`). Parser handles RMC, GGA, and GSA sentences from any GNSS talker ID. Dead reckoning detection: GGA quality 6-8 rejected as non-fix; RMC mode indicator field 12 rejects E (estimated), N (not valid), S (simulator).
+- **GPS:** ATGM336H (AT6558 chipset) via UART0 (9600 baud, ESP-IDF `driver/uart.h`), parsed by inline NMEA parser (`sensors/nmea.h`/`nmea.cpp` — pure C, no Arduino dependency), with PPS pin for interrupt-driven timing (see Time System below). TX pin wired for PCAS configuration commands (`gps_send_nmea()` in `sensors/gps.cpp`). Parser handles RMC, GGA, and GSA sentences from any GNSS talker ID. Dead reckoning detection: GGA quality 6-8 rejected as non-fix; RMC mode indicator field 12 rejects E (estimated), N (not valid), S (simulator).
 - **LEDs:** FastLED WS2811 on 4 GPIO pins, BRG color order. Per-channel LED counts are configurable via `[led]` config section (default: 50 each). Buffers are dynamically allocated at boot. Default boot color per channel configurable via `led.color1`–`color4` (hex 0xRRGGBB, default 0x000000/off). CLI `led count <ch> <n>` hot-resizes a channel (0 to disable) without saving to config; `config set led.countN` persists but requires reboot. Resize is mutex-protected against the render task. All FastLED interaction is centralized in `led/led.cpp`/`led.h`.
 - **IMU:** MPU6500 on I2C 0x68 (custom driver in `sensors/mpu6500.cpp`/`.h` using `driver/i2c.h`)
 - **Temp:** TMP102 on I2C 0x48 (inline driver in `sensors/sensors.cpp` — reads register 0x00 via Wire)

@@ -26,6 +26,10 @@ CONFIG_FREERTOS_HZ=1000
 # FreeRTOS trace — enables uxTaskGetSystemState() for dynamic `ps` enumeration
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 
+# FreeRTOS runtime stats — per-task CPU time via ulRunTimeCounter
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+
 # Watchdog timers — longer timeouts for PSRAM SPI transfers and WASM compiles
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=800
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
