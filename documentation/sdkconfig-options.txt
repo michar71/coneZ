@@ -6,20 +6,22 @@ ESP-IDF 4.4.7). Configuration overrides go in `firmware/sdkconfig.defaults`
 and are applied automatically by PlatformIO — no manual `menuconfig` needed.
 
 Current settings (firmware/sdkconfig.defaults):
-  CONFIG_COMPILER_OPTIMIZATION_SIZE=y              -Os (IDF defaults to -Og)
-  CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y           Stack canary overflow detection
-  CONFIG_LOG_DEFAULT_LEVEL_NONE=y                   Compile out all IDF log strings
-  CONFIG_BT_ENABLED=n                               Bluetooth explicitly disabled
-  CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y      ~8KB IRAM savings
-  CONFIG_FREERTOS_HZ=1000                           Required by Arduino
-  CONFIG_ESP_INT_WDT_TIMEOUT_MS=800                 Longer WDT for PSRAM SPI
-  CONFIG_ESP_TASK_WDT_TIMEOUT_S=10                  Longer WDT for WASM compiles
-  CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16        Halved from 32
-  CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=16        Halved from 32
-  CONFIG_LWIP_STATS=y                               LWIP protocol statistics
-  CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2920              Halved TCP send buffer
-  CONFIG_LWIP_TCP_WND_DEFAULT=2920                  Halved TCP receive window
-  CONFIG_PARTITION_TABLE_CUSTOM=y                   Use partitions.csv
+  CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y              240 MHz (IDF defaults to 160)
+  CONFIG_ESPTOOLPY_FLASHMODE_QIO=y                   4-bit flash reads (IDF defaults to DIO)
+  CONFIG_COMPILER_OPTIMIZATION_SIZE=y                -Os (IDF defaults to -Og)
+  CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y            Stack canary overflow detection
+  CONFIG_LOG_DEFAULT_LEVEL_NONE=y                    Compile out all IDF log strings
+  CONFIG_BT_ENABLED=n                                Bluetooth explicitly disabled
+  CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y       ~8KB IRAM savings
+  CONFIG_FREERTOS_HZ=1000                            Required by Arduino
+  CONFIG_ESP_INT_WDT_TIMEOUT_MS=800                  Longer WDT for PSRAM SPI
+  CONFIG_ESP_TASK_WDT_TIMEOUT_S=10                   Longer WDT for WASM compiles
+  CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16         Halved from 32
+  CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=16         Halved from 32
+  CONFIG_LWIP_STATS=y                                LWIP protocol statistics
+  CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2920               Halved TCP send buffer
+  CONFIG_LWIP_TCP_WND_DEFAULT=2920                   Halved TCP receive window
+  CONFIG_PARTITION_TABLE_CUSTOM=y                    Use partitions.csv
   CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 Build flag (not Kconfig):
@@ -38,18 +40,28 @@ Status key:  [?] = needs investigation/testing before enabling
              [-] = skip (not recommended for this project)
 
 
-### Performance / CPU
+### Watchdog — Arduino vs ESP-IDF Differences
 
-[?] CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y
-    Default: 160 MHz. 240 MHz improves WASM execution, on-device
-    compilation, and general throughput. Costs ~50mA extra. Need to
-    verify PlatformIO's board_build.f_cpu doesn't conflict.
+[+] CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+    ESP-IDF default: y. Arduino framework default: n.
+    This is the key behavioral difference that caused task WDT
+    backtraces after the ESP-IDF switch. When enabled, the WDT
+    monitors core 1's idle task, which can't run when ShellTask
+    is busy (PSRAM test, WASM execution, BASIC programs, etc.).
+    The PSRAM test now has periodic yields as a workaround, but
+    long-running user programs (WASM/BASIC) can also starve the
+    idle task. Setting this to n matches Arduino's behavior.
 
-[?] CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
-    Default: DIO (2-bit reads). QIO uses 4-bit reads for faster code
-    fetch from flash. Both ESP32-S3 modules (ConeZ PCB, Heltec V3)
-    should support QIO. Need to verify board_build.flash_mode in
-    platformio.ini agrees. Wrong flash mode = boot failure.
+    Full comparison of WDT settings:
+
+    Setting                              Arduino    ESP-IDF (ours)
+    ───────────────────────────────────  ─────────  ──────────────
+    CONFIG_ESP_TASK_WDT                  y          y
+    CONFIG_ESP_TASK_WDT_PANIC            y          n
+    CONFIG_ESP_TASK_WDT_TIMEOUT_S        5          10
+    CONFIG_ESP_TASK_WDT_CHECK_IDLE_CPU0  y          y
+    CONFIG_ESP_TASK_WDT_CHECK_IDLE_CPU1  n          y  ← difference
+    CONFIG_ESP_INT_WDT_TIMEOUT_MS        300        800
 
 
 ### WiFi / Networking — Feature Removal
