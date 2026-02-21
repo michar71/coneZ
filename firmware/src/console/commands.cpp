@@ -2274,7 +2274,23 @@ int cmd_led(int argc, char **argv)
     }
     for (int ch = 0; ch < 4; ch++) {
         if (!bufs[ch] || counts[ch] == 0) continue;
-        out->printf("\nCh%d:\n", ch + 1);
+        out->printf("\nCh%d:", ch + 1);
+        if (getAnsiEnabled()) {
+            out->print(" [");
+            uint8_t pr = 0, pg = 0, pb = 0;
+            bool first = true;
+            for (int i = 0; i < counts[ch]; i++) {
+                CRGB c = bufs[ch][i];
+                if (first || c.r != pr || c.g != pg || c.b != pb) {
+                    out->printf("\033[38;2;%d;%d;%dm", c.r, c.g, c.b);
+                    pr = c.r; pg = c.g; pb = c.b;
+                    first = false;
+                }
+                out->print("\xe2\x96\x88");  // U+2588 FULL BLOCK (UTF-8)
+            }
+            out->print("\033[0m]");
+        }
+        out->println();
         for (int i = 0; i < counts[ch]; i++) {
             if (i % 8 == 0)
                 out->printf("  %3d:", i);

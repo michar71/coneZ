@@ -380,8 +380,11 @@ deflate {input} [output] [level]
 
 led
   Show LED strip configuration and current RGB values per LED.
-  Values displayed as #RRGGBB, 8 per line with starting index.
-  Only available on boards with RGB LEDs.
+  Each channel header includes a visual color bar using ANSI 24-bit
+  RGB block characters (when ANSI mode is on). Color escapes are
+  deduplicated — only emitted when the color changes from the
+  previous LED. Below the bar, values are listed as #RRGGBB, 8 per
+  line with starting index. Only available on boards with RGB LEDs.
 
   led set <ch> <index|start-end|all> <#RRGGBB>
       Set one or more LEDs on a channel to the given color.
