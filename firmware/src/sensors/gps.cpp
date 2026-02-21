@@ -389,10 +389,8 @@ bool get_isleapyear(void)
 
 int get_dayofyear(void)
 {
-    int year = gps_year;
     int month = gps_month;
     int day = gps_day;
-
 
     // Validate month range
     if (month < 1 || month > 12) {

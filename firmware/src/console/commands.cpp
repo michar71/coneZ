@@ -1306,10 +1306,8 @@ int cmd_status(int argc, char **argv)
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_app_desc_t desc;
     const char *ver = "?";
-    const char *proj = "conez";
     if (running && esp_ota_get_partition_description(running, &desc) == ESP_OK) {
         ver = desc.version;
-        proj = desc.project_name;
     }
 
     unsigned long ms = uptime_ms();
@@ -2033,6 +2031,7 @@ static void gps_show_status(void)
 }
 
 
+#ifdef BOARD_HAS_GPS
 static void gps_show_usage(void)
 {
     printfnl(SOURCE_COMMANDS, "Usage:\n");
@@ -2046,6 +2045,7 @@ static void gps_show_usage(void)
     printfnl(SOURCE_COMMANDS, "  gps restart <type>         Restart (hot/warm/cold/factory)\n");
     printfnl(SOURCE_COMMANDS, "  gps send <body>            Send raw NMEA (auto-checksum)\n");
 }
+#endif
 
 
 int cmd_gps(int argc, char **argv)
@@ -2505,20 +2505,18 @@ int cmd_time(int argc, char **argv)
 }
 
 
-static bool parse_color(const char *s, CRGB *out)
-{
-    if (*s == '#') s++;
-    if (strlen(s) != 6) return false;
-    char *end;
-    unsigned long v = strtoul(s, &end, 16);
-    if (*end) return false;
-    *out = CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
-    return true;
-}
-
 int cmd_led(int argc, char **argv)
 {
 #ifdef BOARD_HAS_RGB_LEDS
+    auto parse_color = [](const char *s, CRGB *out) -> bool {
+        if (*s == '#') s++;
+        if (strlen(s) != 6) return false;
+        char *end;
+        unsigned long v = strtoul(s, &end, 16);
+        if (*end) return false;
+        *out = CRGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+        return true;
+    };
     CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
     int   counts[] = { config.led_count1, config.led_count2,
                        config.led_count3, config.led_count4 };

@@ -917,7 +917,6 @@ static int line_editor(EditorState *ed)
             ed->search[ED_LINE_MAX - 1] = '\0';
             ed->search_valid = true;
 
-            int slen = (int)strlen(needle);
             char buf[ED_LINE_MAX];
             // Search from current cy+1 wrapping around
             for (int i = 0; i < ed->num_lines; i++) {

@@ -26,7 +26,6 @@ static double parse_degrees(const char *term) {
     if (term[0] == '\0') return 0.0;
     // Find the decimal point
     const char *dot = strchr(term, '.');
-    int int_len = dot ? (int)(dot - term) : (int)strlen(term);
     // Integer part: everything before the dot
     long int_part = strtol(term, NULL, 10);
     // Degrees = first (int_len-2) digits, minutes = last 2 digits + fraction

@@ -126,20 +126,6 @@ void dump_i2c(void)
 
 
 //LED Stuff -- led.cpp owns hardware output; helpers here are setup-time only
-#ifdef BOARD_HAS_RGB_LEDS
-static void blink_leds(CRGB col)
-{
-    leds1[0] = CRGB::Black;
-    led_show_now();
-    vTaskDelay(pdMS_TO_TICKS(300));
-    leds1[0] = col;
-    led_show_now();
-    vTaskDelay(pdMS_TO_TICKS(500));
-    leds1[0] = CRGB::Black;
-    led_show_now();
-    vTaskDelay(pdMS_TO_TICKS(300));
-}
-#endif
 
 
 DualStream dualStream;

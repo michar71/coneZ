@@ -552,7 +552,7 @@ static void emit_dynamic_block(conez_deflate_t *c, int is_final)
     emit_block_symbols(c, c->lit_code, c->lit_len, c->dist_code, c->dist_len);
 }
 
-static void emit_fixed_block(conez_deflate_t *c, int is_final)
+static void __attribute__((unused)) emit_fixed_block(conez_deflate_t *c, int is_final)
 {
     init_fixed_huffman();
     put_bits(c, is_final ? 1 : 0, 1);

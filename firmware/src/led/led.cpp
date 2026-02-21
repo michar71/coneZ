@@ -19,7 +19,9 @@ CRGB *leds4 = nullptr;
 static volatile bool led_dirty = false;
 
 // Mutex protects buffer pointer/count swaps in led_resize_channel().
+#ifdef BOARD_HAS_RGB_LEDS
 static SemaphoreHandle_t led_mutex = nullptr;
+#endif
 
 
 void led_setup( void )

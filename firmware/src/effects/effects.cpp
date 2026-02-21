@@ -256,7 +256,6 @@ void CIRCLE_effect(void)
     float lon = get_lon();
     int sec = get_sec();
     static int prev_sec = 0;
-    static int offset_cnt = 0;
 
     //Calculate Offset From Equator/0-meridian in Meters
     float lat_m;
@@ -284,7 +283,6 @@ void CIRCLE_effect(void)
         printfnl(SOURCE_OTHER, "PING - sec = %d", sec);
       
         int hue = (int)map(deg,0,360,0,255);
-        //hue = hue + offset_cnt;
         hue = hue + map( get_sec(), 0, 59, 0, 255 );
         hue  = hue % 256;
 
@@ -293,6 +291,5 @@ void CIRCLE_effect(void)
         led_set_channel(1, 50, col);
         led_show();
         vTaskDelay(pdMS_TO_TICKS(20));
-        //offset_cnt = offset_cnt + 5;
       }
 }

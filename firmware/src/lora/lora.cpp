@@ -157,12 +157,6 @@ int lora_setup( void )
 
 void lora_rx( void )
 {
-    unsigned int len;
-    uint8_t buf[256];
-    int status;
-    float RSSI;
-    float SNR;
-
     if( !lora_rxdone_flag )
         return;
 

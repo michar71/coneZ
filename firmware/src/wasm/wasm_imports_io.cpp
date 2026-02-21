@@ -134,7 +134,7 @@ m3ApiRawFunction(m3_wasi_fd_seek)
     m3ApiGetArg(int64_t, offset);
     m3ApiGetArg(int32_t, whence);
     m3ApiGetArg(int32_t, newoffset_ptr);
-    (void)offset; (void)whence; (void)newoffset_ptr;
+    (void)fd; (void)offset; (void)whence; (void)newoffset_ptr;
     m3ApiReturn(8);  // WASI EBADF
 }
 
