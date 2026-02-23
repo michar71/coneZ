@@ -1,0 +1,369 @@
+WASM Linear Memory on PSRAM — Feasibility Analysis
+====================================================
+
+Date: 2026-02-21
+Status: Implementation complete
+
+
+Implementation Summary
+----------------------
+
+The approach described below was implemented on 2026-02-21. Key details:
+
+- wasm3 forked to firmware/lib/wasm3/ with compile-time flag d_m3UsePsramMemory
+- Flag set to 1 for conez-v0-1 (has PSRAM), defaults to 0 for Heltec (no PSRAM)
+- All host imports converted to wasm_mem_*() helpers (wasm_internal.h)
+- PSRAM linear memory lazy-allocated on first .wasm run (not at boot)
+- Prealloc block protected: ResizeMemory reuses prealloc when page count
+  matches, clones to a new block on memory.grow
+- .wasm binary stays in DRAM (module stores raw pointers into it)
+- d_m3PsramYield() macro in m3_exec.h yields every ~512 PSRAM memory ops
+  to prevent Interrupt WDT timeout on long load/store sequences without calls
+- DRAM window: first d_m3PsramDramWindow bytes (4096) in DRAM for fast access;
+  split-aware helpers handle bulk ops that straddle the DRAM/PSRAM boundary
+- Checksum verified identical across DRAM and PSRAM runs — no data corruption
+
+Files changed: m3_config.h, m3_core.h, m3_exec.h, m3_env.c (wasm3 fork),
+  m3_psram_glue.h (new), wasm_psram_glue.cpp (new), wasm_internal.h,
+  wasm_wrapper.cpp, wasm_format.cpp, wasm_imports_{io,led,file,string,
+  compression,deflate}.cpp, platformio.ini
+
+
+Benchmark Results
+-----------------
+
+Test program: bench.wasm (tools/wasm/examples/bench.c compiled with c2wasm)
+  - Prime sieve: 1KB Eratosthenes, 100 iterations (computation-bound)
+  - Memory write: 1KB buffer × 1000 passes = 1MB total (store-bound)
+  - Memory read:  1KB buffer × 1000 passes = 1MB total (load-bound)
+
+NOTE: The initial benchmarks below were taken with a c2wasm bug that made
+`unsigned char` arrays 4x too large (sizeof=4 instead of 1). This placed
+the sieve array at offset 0 and membuf at offset 4096 — exactly at the
+DRAM window boundary. See "c2wasm Memory Layout" section below for details.
+The bug was fixed on 2026-02-21; re-benchmarking with the corrected compiler
+will show both arrays within the 4KB DRAM window.
+
+DRAM linear memory (same firmware, d_m3UsePsramMemory=0):
+
+  Primes 1554 ms,  Write 4039 ms,  Read 2946 ms,  Checksum 1546752000
+
+PSRAM linear memory via page cache (d_m3UsePsramMemory=1, no DRAM window):
+
+  40 MHz SPI:  Primes 8959 ms,  Write 27050 ms,  Read 10720 ms,  Checksum 1546752000
+  80 MHz SPI:  Primes 8294 ms,  Write 24705 ms,  Read  9948 ms,  Checksum 1546752000
+
+  Slowdown vs DRAM (80 MHz):  Primes 5.3x,  Write 6.1x,  Read 3.4x
+  80 MHz vs 40 MHz improvement: ~7-10% (from faster cache miss servicing)
+  Cache hit rate: 99% at steady state (both clock speeds)
+  Data integrity: checksums match across all DRAM and PSRAM runs
+
+PSRAM + 4KB DRAM window (d_m3PsramDramWindow=4096, buggy bench.wasm):
+
+  Primes 1617 ms,  Write 23779 ms,  Read 9648 ms,  Checksum 1546752000
+
+  The DRAM window dramatically improved primes (1617ms vs 8294ms, near the
+  1554ms DRAM baseline) because the sieve array was at offset 0, fully within
+  the 4KB DRAM buffer. Write and read tests were unaffected because membuf
+  started at offset 4096 — exactly the first byte of PSRAM.
+
+  After the unsigned char fix, both arrays fit within the 4KB DRAM window:
+    sieve:  offset 0    (1024 bytes, was 4096 bytes)
+    membuf: offset 1024 (1024 bytes, was at offset 4096)
+    strings: offset 2048 (was 8192)
+  Total data section: 2288 bytes (was 8432), binary 3454 bytes (was 9607).
+
+Summary table (all at 80 MHz SPI):
+
+  Configuration                Primes   Write    Read     Notes
+  -----------------------------------------------------------------------
+  DRAM only (flag=0)           1554 ms  4039 ms  2946 ms  baseline
+  PSRAM cache only             8294 ms  24705 ms 9948 ms  5.3x / 6.1x / 3.4x
+  PSRAM + 4KB DRAM window *    1617 ms  23779 ms 9648 ms  primes near DRAM
+  -----------------------------------------------------------------------
+  * = measured with buggy bench.wasm (unsigned char arrays 4x too large);
+      with the fix, both arrays are within the DRAM window and all three
+      tests should approach DRAM speed. Re-benchmark pending.
+
+
+c2wasm Memory Layout
+---------------------
+
+c2wasm places all data in a single WASM data segment starting at offset 0.
+Allocations happen sequentially via add_data_zeros():
+
+  1. Global arrays (file-scope static/extern) — in declaration order
+  2. Local arrays (function-scope) — as functions are compiled
+  3. String literals — appended by add_string() at point of use
+
+Global scalars (int, float, etc.) are stored as WASM globals, not in the
+data section. Only arrays and string data live in linear memory.
+
+Example: bench.c data layout (after unsigned char fix):
+
+  Offset  Size   Contents
+  ------  -----  --------
+  0       1024   sieve[1024]    (unsigned char, Global 2 = 0)
+  1024    1024   membuf[1024]   (unsigned char, Global 3 = 1024)
+  2048    240    string literals ("=== ConeZ WASM Benchmark ===\n\n", ...)
+  2288    ---    heap_ptr (Global 0 = 2288)
+
+Array globals are pointer-like: the WASM global holds the base address
+(offset into linear memory), and array element access emits:
+  global.get $idx → i32.const <elem_offset> → i32.add → i32.load8_u
+
+The heap starts at heap_ptr = (data_len + 3) & ~3, growing upward.
+malloc()/calloc()/realloc()/free() are host-imported and manage this space.
+
+Bug found 2026-02-21: parse_type_spec() mapped `unsigned char` → CT_UINT
+(4 bytes) instead of the correct CT_UCHAR (1 byte). This caused unsigned
+char arrays to be 4x oversized and misaligned in the data section. Fixed
+by adding CT_UCHAR to the CType enum with sizeof=1, i32.load8_u loads,
+and unsigned conversion semantics.
+
+
+DRAM Window Architecture
+------------------------
+
+When d_m3UsePsramMemory=1, the first d_m3PsramDramWindow bytes (default
+4096) of WASM linear memory live in a DRAM buffer. Everything beyond that
+threshold is in PSRAM at psram_addr + (offset - d_m3PsramDramWindow).
+
+    Offset 0                    d_m3PsramDramWindow            length
+    |--- DRAM buffer (fast) ---|--- PSRAM (via SPI cache) ---------|
+
+Individual load/store operations (1-8 bytes) branch on the offset:
+  - offset < window → memcpy from dram_buf (LIKELY path)
+  - offset >= window → m3_psram_read/write
+
+Bulk operations (memory.copy, memory.fill, data segment init) use
+split-aware helpers that handle straddle across the boundary.
+
+The DRAM buffer, M3MemoryHeader, and PSRAM block are all pre-allocated
+once and reused across WASM runs (no per-run allocation).
+
+M3MemoryHeader layout (when d_m3UsePsramMemory=1):
+  runtime     → pointer to IM3Runtime
+  maxStack    → interpreter stack ceiling
+  length      → total linear memory size (DRAM + PSRAM)
+  psram_addr  → PSRAM virtual address for data beyond window
+  dram_buf    → pointer to DRAM fast-path buffer
+
+
+Overview
+--------
+
+This document analyzes the feasibility of storing wasm3's linear memory
+(and optionally the .wasm binary) in ConeZ's SPI-based PSRAM instead of
+the main DRAM heap. The motivation is to free ~64KB of contiguous DRAM
+and enable larger WASM linear memory (multiple 64KB pages) using the
+8MB SPI PSRAM.
+
+
+Current Architecture
+--------------------
+
+wasm3 linear memory is a contiguous byte array allocated via malloc().
+On ConeZ, a persistent 64KB block (1 WASM page + M3MemoryHeader) is
+allocated once at boot in setup_wasm() and reused across WASM runs to
+prevent heap fragmentation.
+
+The .wasm binary is loaded from LittleFS into a malloc'd buffer. After
+m3_ParseModule(), the module stores raw pointers into this buffer (not
+copies) — the buffer must remain allocated for the module's lifetime.
+Typical .wasm files are 2–10KB.
+
+
+Key Finding: memcpy, Not Direct Dereference
+--------------------------------------------
+
+The wasm3 interpreter does NOT use direct pointer dereference for memory
+load/store operations. Instead it uses memcpy():
+
+    // Load (m3_exec.h)
+    u8* src8 = m3MemData(_mem) + operand;
+    memcpy(&value, src8, sizeof(value));
+
+    // Store
+    u8* mem8 = m3MemData(_mem) + operand;
+    memcpy(mem8, &val, sizeof(val));
+
+This is done for alignment safety and portability. The m3MemData() macro
+returns a u8* base pointer via pointer arithmetic from the M3MemoryHeader.
+
+This means there IS an interception point: we can replace those memcpy
+calls with psram_read()/psram_write() calls without changing the
+fundamental interpreter architecture.
+
+
+Proposed Approach
+-----------------
+
+Fork the wasm3 load/store macros in m3_exec.h to route through PSRAM:
+
+    // Current:
+    u8* src8 = m3MemData(_mem) + operand;
+    memcpy(&value, src8, sizeof(value));
+
+    // PSRAM-backed:
+    uint32_t psram_addr = _mem->psram_base + operand;
+    psram_read(psram_addr, &value, sizeof(value));
+
+Changes required:
+
+1. m3_exec.h — Modify ~8 load/store macro templates to use
+   psram_read()/psram_write() instead of memcpy with direct pointers.
+
+2. m3_env.h — Add a PSRAM virtual address field to M3Memory (or
+   M3MemoryHeader), so the interpreter knows where linear memory lives.
+
+3. m3_env.c — ResizeMemory() and data segment initialization must use
+   psram_write() to copy initial data into PSRAM-backed linear memory.
+
+4. Host imports (wasm_imports_*.cpp) — Replace all m3_GetMemory()
+   pointer-based access with PSRAM read/write helpers. Every host
+   function that reads/writes WASM linear memory needs updating.
+
+5. wasm_wrapper.cpp — Allocate linear memory via psram_malloc() instead
+   of calloc(). The persistent prealloc block moves to PSRAM.
+
+What stays in DRAM:
+
+- The .wasm binary buffer (small, and the module stores raw pointers
+  into it — would require invasive changes to move)
+- The wasm3 interpreter state, operand stack, module/function structs
+- FreeRTOS task stacks
+
+
+Performance Impact
+------------------
+
+The PSRAM page cache sits between the interpreter and the SPI bus:
+
+    WASM load/store  →  psram_read/write()  →  Page cache  →  SPI bus
+                                                  (hit)        (miss)
+
+Cache parameters: 64 pages × 512 bytes = 32KB DRAM window
+
+Estimated overhead per memory access:
+  - Cache hit:  ~10–20 CPU cycles (cache tag search + memcpy from page)
+  - Cache miss: ~560 CPU cycles (SPI transfer at 40 MHz, ~7 µs)
+  - Direct ptr: ~1–3 CPU cycles (current, memcpy from DRAM)
+
+Slowdown factor: roughly 5–10x on cache hits, 200x+ on misses.
+
+Mitigating factors:
+  - WASM programs have good spatial locality (stack at one end of linear
+    memory, heap grows from the other)
+  - The 32KB cache window covers half of a single 64KB page
+  - Sequential access patterns (array iteration, string processing) will
+    hit the cache almost every time
+  - The user has stated execution speed is not highly critical
+
+Worst case: pathological random access across >32KB would thrash the
+cache and approach raw SPI speed (~2 MB/s read, ~2.4 MB/s write).
+
+
+Benefits
+--------
+
+1. Frees ~64KB of contiguous DRAM heap (the largest single allocation
+   in the system after boot)
+
+2. Enables multi-page WASM linear memory — with 8MB PSRAM, modules
+   could request 4, 8, or more pages (256KB–512KB) without impacting
+   DRAM availability
+
+3. Reduces heap fragmentation pressure — the 64KB block is currently
+   the most fragmentation-sensitive allocation
+
+4. The .wasm binary buffer (2–10KB, allocated per-run) remains the
+   only WASM-related DRAM allocation
+
+
+Risks and Complications
+-----------------------
+
+1. wasm3 fork maintenance — modifying m3_exec.h means carrying patches
+   against upstream wasm3. The library is stable (no active development)
+   so this is low risk.
+
+2. Host import audit — every host function that touches linear memory
+   via m3_GetMemory() must be converted. There are ~157 host imports
+   total; those that read/write WASM memory (string args, buffer
+   fills, LED bulk set) all need updating. Read-only imports that just
+   read a pointer+length from WASM are the majority of the work.
+
+3. Thread safety — the PSRAM page cache is already mutex-protected.
+   However, WASM execution currently doesn't need the PSRAM mutex
+   (direct DRAM access). Adding PSRAM calls means WasmTask will
+   contend with other PSRAM users (log buffer, BASIC allocator,
+   deflate workspace). The PSRAM mutex is recursive so nested calls
+   are safe, but contention could add latency.
+
+4. Simulator divergence — the desktop simulator (simulator/conez/)
+   shares the same host import code. PSRAM-backed memory would need
+   a compile-time switch so the simulator continues using direct
+   malloc'd memory.
+
+5. Bounds checking — the existing m3MemCheck() macro compares offset
+   against _mem->length. This still works with PSRAM (just comparing
+   u32 values), but the error path (d_outOfBounds) needs no change.
+
+6. Bulk memory operations — WASM bulk-memory instructions (memory.copy,
+   memory.fill) are compiled separately in m3_compile.c. These also
+   need PSRAM-aware versions.
+
+
+Hybrid Approach (implemented)
+-----------------------------
+
+The DRAM window (d_m3PsramDramWindow) implements this: the first
+4KB of linear memory lives in DRAM, the rest in PSRAM via the page
+cache. Since c2wasm places arrays at the start of the data section,
+hot data naturally falls in the DRAM window for typical programs.
+
+See "DRAM Window Architecture" section above for details.
+
+
+Decision Matrix
+---------------
+
+                          DRAM (current)    PSRAM (proposed)
+    Max linear memory     64KB (1 page)     Multi-MB
+    DRAM cost             ~64KB             ~0 (cache shared)
+    Load/store speed      ~1-3 cycles       ~10-560 cycles
+    Heap fragmentation    High risk         None (PSRAM alloc)
+    Implementation        Done              Medium effort
+    Simulator compat      Native            Needs #ifdef
+    Host import changes   None              All memory-touching
+
+
+Implementation Order (if proceeding)
+-------------------------------------
+
+1. Add psram_base field to M3MemoryHeader or M3Memory struct
+2. Fork m3_exec.h load/store macros with PSRAM paths
+3. Modify ResizeMemory() in m3_env.c to use psram_malloc/write
+4. Modify data segment init to use psram_write
+5. Create helper functions for host imports (e.g., wasm_mem_read,
+   wasm_mem_write that abstract DRAM vs PSRAM)
+6. Convert host imports one file at a time (10 import files)
+7. Add compile-time flag (e.g., WASM_PSRAM_MEMORY) to gate changes
+8. Update simulator to bypass PSRAM path
+9. Test with existing .wasm modules — behavior must be identical
+10. Benchmark: measure interpreter throughput before and after
+
+
+References
+----------
+
+- firmware/lib/wasm3/src/m3_exec.h — load/store interpreter operations
+- firmware/lib/wasm3/src/m3_exec_defs.h — m3MemData, m3MemCheck macros
+- firmware/lib/wasm3/src/m3_env.h — M3Memory, M3MemoryHeader structs
+- firmware/lib/wasm3/src/m3_env.c — ResizeMemory, data segment init
+- firmware/lib/wasm3/src/m3_parse.c — module parsing, pointer storage
+- firmware/src/wasm/wasm_wrapper.cpp — ConeZ WASM integration
+- firmware/src/wasm/wasm_imports_*.cpp — host import implementations
+- firmware/src/psram/psram.h — PSRAM page cache API
+- documentation/wasm-api.txt — host import reference

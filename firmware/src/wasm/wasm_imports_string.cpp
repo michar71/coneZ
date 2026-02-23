@@ -24,7 +24,7 @@ static StrAlloc str_allocs[STR_MAX_ALLOCS];
 static int str_nallocs = 0;
 static uint32_t str_bump = STR_POOL_START;
 
-// Bounded strlen in WASM memory
+// Bounded strlen in WASM memory (legacy — used by wasm_format.cpp via old API)
 int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr)
 {
     if (ptr == 0 || ptr >= mem_size) return 0;
@@ -43,11 +43,7 @@ uint32_t pool_alloc(IM3Runtime runtime, int size)
     for (int i = 0; i < str_nallocs; i++) {
         if (!str_allocs[i].in_use && str_allocs[i].size >= (uint32_t)size) {
             str_allocs[i].in_use = true;
-            // Zero the memory
-            uint32_t mem_size = m3_GetMemorySize(runtime);
-            uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-            if (mem && str_allocs[i].offset + size <= mem_size)
-                memset(mem + str_allocs[i].offset, 0, size);
+            wasm_mem_set(runtime, str_allocs[i].offset, 0, size);
             return str_allocs[i].offset;
         }
     }
@@ -64,12 +60,7 @@ uint32_t pool_alloc(IM3Runtime runtime, int size)
     str_allocs[str_nallocs].in_use = true;
     str_nallocs++;
 
-    // Zero the memory
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (mem && off + size <= mem_size)
-        memset(mem + off, 0, size);
-
+    wasm_mem_set(runtime, off, 0, size);
     return off;
 }
 
@@ -114,13 +105,7 @@ static uint32_t pool_realloc(IM3Runtime runtime, uint32_t ptr, int size)
     uint32_t nptr = pool_alloc(runtime, size);
     if (nptr == 0) return 0;
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || ptr + old_size > mem_size || nptr + old_size > mem_size) {
-        pool_free(nptr);
-        return 0;
-    }
-    memcpy(mem + nptr, mem + ptr, old_size);
+    wasm_mem_copy(runtime, nptr, ptr, old_size);
     pool_free(ptr);
     return nptr;
 }
@@ -192,10 +177,8 @@ m3ApiRawFunction(m3_str_len)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, ptr);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem) m3ApiReturn(0);
-    m3ApiReturn(wasm_strlen(mem, mem_size, (uint32_t)ptr));
+    int len = wasm_mem_strlen(runtime, (uint32_t)ptr);
+    m3ApiReturn(len < 0 ? 0 : len);
 }
 
 // i32 str_copy(i32 src) -> new pool string
@@ -203,16 +186,13 @@ m3ApiRawFunction(m3_str_copy)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int len = wasm_strlen(mem, mem_size, (uint32_t)src);
+    if (src == 0) m3ApiReturn(0);
+    int len = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (len < 0) len = 0;
     uint32_t dst = pool_alloc(runtime, len + 1);
     if (dst == 0) m3ApiReturn(0);
-    // Re-fetch mem after alloc (shouldn't change but be safe)
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)src, len);
-    mem[dst + len] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)src, len);
+    wasm_mem_write8(runtime, dst + len, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -222,17 +202,15 @@ m3ApiRawFunction(m3_str_concat)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, a);
     m3ApiGetArg(int32_t, b);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem) m3ApiReturn(0);
-    int la = wasm_strlen(mem, mem_size, (uint32_t)a);
-    int lb = wasm_strlen(mem, mem_size, (uint32_t)b);
+    int la = wasm_mem_strlen(runtime, (uint32_t)a);
+    int lb = wasm_mem_strlen(runtime, (uint32_t)b);
+    if (la < 0) la = 0;
+    if (lb < 0) lb = 0;
     uint32_t dst = pool_alloc(runtime, la + lb + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)a, la);
-    memcpy(mem + dst + la, mem + (uint32_t)b, lb);
-    mem[dst + la + lb] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)a, la);
+    wasm_mem_copy(runtime, dst + la, (uint32_t)b, lb);
+    wasm_mem_write8(runtime, dst + la + lb, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -242,11 +220,9 @@ m3ApiRawFunction(m3_str_cmp)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, a);
     m3ApiGetArg(int32_t, b);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem) m3ApiReturn(0);
-    const char *sa = (a && (uint32_t)a < mem_size) ? (const char *)(mem + (uint32_t)a) : "";
-    const char *sb = (b && (uint32_t)b < mem_size) ? (const char *)(mem + (uint32_t)b) : "";
+    char sa[256] = "", sb[256] = "";
+    if (a) wasm_mem_read_str(runtime, (uint32_t)a, sa, sizeof(sa));
+    if (b) wasm_mem_read_str(runtime, (uint32_t)b, sb, sizeof(sb));
     m3ApiReturn(strcmp(sa, sb));
 }
 
@@ -258,13 +234,12 @@ m3ApiRawFunction(m3_str_mid)
     m3ApiGetArg(int32_t, src);
     m3ApiGetArg(int32_t, start);
     m3ApiGetArg(int32_t, count);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen < 0) slen = 0;
     int s = start - 1;  // convert to 0-based
     if (s < 0) s = 0;
-    if (s >= slen) { /* empty result */
+    if (s >= slen) {
         uint32_t dst = pool_alloc(runtime, 1);
         m3ApiReturn((int32_t)dst);
     }
@@ -273,9 +248,8 @@ m3ApiRawFunction(m3_str_mid)
     if (s + n > slen) n = slen - s;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)src + s, n);
-    mem[dst + n] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)src + s, n);
+    wasm_mem_write8(runtime, dst + n, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -285,17 +259,15 @@ m3ApiRawFunction(m3_str_left)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
     m3ApiGetArg(int32_t, n);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen < 0) slen = 0;
     if (n < 0) n = 0;
     if (n > slen) n = slen;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)src, n);
-    mem[dst + n] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)src, n);
+    wasm_mem_write8(runtime, dst + n, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -305,18 +277,16 @@ m3ApiRawFunction(m3_str_right)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
     m3ApiGetArg(int32_t, n);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen < 0) slen = 0;
     if (n < 0) n = 0;
     if (n > slen) n = slen;
     int s = slen - n;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)src + s, n);
-    mem[dst + n] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)src + s, n);
+    wasm_mem_write8(runtime, dst + n, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -327,10 +297,8 @@ m3ApiRawFunction(m3_str_chr)
     m3ApiGetArg(int32_t, code);
     uint32_t dst = pool_alloc(runtime, 4);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    mem[dst] = (uint8_t)(code & 0xFF);
-    mem[dst + 1] = 0;
+    wasm_mem_write8(runtime, dst, (uint8_t)(code & 0xFF));
+    wasm_mem_write8(runtime, dst + 1, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -339,10 +307,8 @@ m3ApiRawFunction(m3_str_asc)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, ptr);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || ptr == 0 || (uint32_t)ptr >= mem_size) m3ApiReturn(0);
-    m3ApiReturn((int32_t)mem[(uint32_t)ptr]);
+    if (ptr == 0 || !wasm_mem_check(runtime, (uint32_t)ptr, 1)) m3ApiReturn(0);
+    m3ApiReturn((int32_t)wasm_mem_read8(runtime, (uint32_t)ptr));
 }
 
 // i32 str_from_int(i32 val) -> new pool string
@@ -354,9 +320,7 @@ m3ApiRawFunction(m3_str_from_int)
     int n = snprintf(buf, sizeof(buf), "%ld", (long)val);
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, buf, n + 1);
+    wasm_mem_write(runtime, dst, buf, n + 1);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -369,9 +333,7 @@ m3ApiRawFunction(m3_str_from_i64)
     int n = snprintf(buf, sizeof(buf), "%lld", (long long)val);
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, buf, n + 1);
+    wasm_mem_write(runtime, dst, buf, n + 1);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -384,9 +346,7 @@ m3ApiRawFunction(m3_str_from_float)
     int n = snprintf(buf, sizeof(buf), "%g", val);
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, buf, n + 1);
+    wasm_mem_write(runtime, dst, buf, n + 1);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -395,10 +355,10 @@ m3ApiRawFunction(m3_str_to_int)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, ptr);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || ptr == 0 || (uint32_t)ptr >= mem_size) m3ApiReturn(0);
-    m3ApiReturn((int32_t)strtol((const char *)(mem + (uint32_t)ptr), NULL, 0));
+    if (ptr == 0) m3ApiReturn(0);
+    char buf[32];
+    wasm_mem_read_str(runtime, (uint32_t)ptr, buf, sizeof(buf));
+    m3ApiReturn((int32_t)strtol(buf, NULL, 0));
 }
 
 // i64 str_to_i64(i32 ptr) -> integer value
@@ -406,10 +366,10 @@ m3ApiRawFunction(m3_str_to_i64)
 {
     m3ApiReturnType(int64_t);
     m3ApiGetArg(int32_t, ptr);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || ptr == 0 || (uint32_t)ptr >= mem_size) m3ApiReturn((int64_t)0);
-    m3ApiReturn((int64_t)strtoll((const char *)(mem + (uint32_t)ptr), NULL, 0));
+    if (ptr == 0) m3ApiReturn((int64_t)0);
+    char buf[32];
+    wasm_mem_read_str(runtime, (uint32_t)ptr, buf, sizeof(buf));
+    m3ApiReturn((int64_t)strtoll(buf, NULL, 0));
 }
 
 // f32 str_to_float(i32 ptr) -> float value
@@ -417,10 +377,10 @@ m3ApiRawFunction(m3_str_to_float)
 {
     m3ApiReturnType(float);
     m3ApiGetArg(int32_t, ptr);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || ptr == 0 || (uint32_t)ptr >= mem_size) m3ApiReturn(0.0f);
-    m3ApiReturn(strtof((const char *)(mem + (uint32_t)ptr), NULL));
+    if (ptr == 0) m3ApiReturn(0.0f);
+    char buf[32];
+    wasm_mem_read_str(runtime, (uint32_t)ptr, buf, sizeof(buf));
+    m3ApiReturn(strtof(buf, NULL));
 }
 
 // i32 str_upper(i32 src) -> new pool string (uppercased)
@@ -428,16 +388,14 @@ m3ApiRawFunction(m3_str_upper)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen < 0) slen = 0;
     uint32_t dst = pool_alloc(runtime, slen + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
     for (int i = 0; i < slen; i++)
-        mem[dst + i] = toupper(mem[(uint32_t)src + i]);
-    mem[dst + slen] = 0;
+        wasm_mem_write8(runtime, dst + i, toupper(wasm_mem_read8(runtime, (uint32_t)src + i)));
+    wasm_mem_write8(runtime, dst + slen, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -446,16 +404,14 @@ m3ApiRawFunction(m3_str_lower)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen < 0) slen = 0;
     uint32_t dst = pool_alloc(runtime, slen + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
     for (int i = 0; i < slen; i++)
-        mem[dst + i] = tolower(mem[(uint32_t)src + i]);
-    mem[dst + slen] = 0;
+        wasm_mem_write8(runtime, dst + i, tolower(wasm_mem_read8(runtime, (uint32_t)src + i)));
+    wasm_mem_write8(runtime, dst + slen, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -467,12 +423,11 @@ m3ApiRawFunction(m3_str_instr)
     m3ApiGetArg(int32_t, haystack);
     m3ApiGetArg(int32_t, needle);
     m3ApiGetArg(int32_t, start);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || haystack == 0 || needle == 0) m3ApiReturn(0);
-    const char *h = (const char *)(mem + (uint32_t)haystack);
-    const char *n = (const char *)(mem + (uint32_t)needle);
-    int hlen = wasm_strlen(mem, mem_size, (uint32_t)haystack);
+    if (haystack == 0 || needle == 0) m3ApiReturn(0);
+    char h[256], n[128];
+    wasm_mem_read_str(runtime, (uint32_t)haystack, h, sizeof(h));
+    wasm_mem_read_str(runtime, (uint32_t)needle, n, sizeof(n));
+    int hlen = (int)strlen(h);
     int s = start - 1;  // convert to 0-based
     if (s < 0) s = 0;
     if (s >= hlen) m3ApiReturn(0);
@@ -486,20 +441,25 @@ m3ApiRawFunction(m3_str_trim)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
-    const uint8_t *p = mem + (uint32_t)src;
-    int start = 0, end = slen;
-    while (start < end && isspace(p[start])) start++;
-    while (end > start && isspace(p[end - 1])) end--;
-    int n = end - start;
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen <= 0) {
+        uint32_t dst = pool_alloc(runtime, 1);
+        m3ApiReturn((int32_t)dst);
+    }
+    // Read into temp buffer for whitespace scan
+    char tmp[256];
+    int rlen = slen > (int)sizeof(tmp) - 1 ? (int)sizeof(tmp) - 1 : slen;
+    wasm_mem_read(runtime, (uint32_t)src, tmp, rlen);
+    tmp[rlen] = '\0';
+    int st = 0, end = rlen;
+    while (st < end && isspace((unsigned char)tmp[st])) st++;
+    while (end > st && isspace((unsigned char)tmp[end - 1])) end--;
+    int n = end - st;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)src + start, n);
-    mem[dst + n] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)src + st, n);
+    wasm_mem_write8(runtime, dst + n, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -508,19 +468,22 @@ m3ApiRawFunction(m3_str_ltrim)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
-    const uint8_t *p = mem + (uint32_t)src;
-    int start = 0;
-    while (start < slen && isspace(p[start])) start++;
-    int n = slen - start;
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen <= 0) {
+        uint32_t dst = pool_alloc(runtime, 1);
+        m3ApiReturn((int32_t)dst);
+    }
+    char tmp[256];
+    int rlen = slen > (int)sizeof(tmp) - 1 ? (int)sizeof(tmp) - 1 : slen;
+    wasm_mem_read(runtime, (uint32_t)src, tmp, rlen);
+    int st = 0;
+    while (st < rlen && isspace((unsigned char)tmp[st])) st++;
+    int n = slen - st;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)src + start, n);
-    mem[dst + n] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)src + st, n);
+    wasm_mem_write8(runtime, dst + n, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -529,18 +492,21 @@ m3ApiRawFunction(m3_str_rtrim)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || src == 0) m3ApiReturn(0);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
-    const uint8_t *p = mem + (uint32_t)src;
-    int end = slen;
-    while (end > 0 && isspace(p[end - 1])) end--;
+    if (src == 0) m3ApiReturn(0);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (slen <= 0) {
+        uint32_t dst = pool_alloc(runtime, 1);
+        m3ApiReturn((int32_t)dst);
+    }
+    char tmp[256];
+    int rlen = slen > (int)sizeof(tmp) - 1 ? (int)sizeof(tmp) - 1 : slen;
+    wasm_mem_read(runtime, (uint32_t)src, tmp, rlen);
+    int end = rlen;
+    while (end > 0 && isspace((unsigned char)tmp[end - 1])) end--;
     uint32_t dst = pool_alloc(runtime, end + 1);
     if (dst == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, mem + (uint32_t)src, end);
-    mem[dst + end] = 0;
+    wasm_mem_copy(runtime, dst, (uint32_t)src, end);
+    wasm_mem_write8(runtime, dst + end, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -555,10 +521,8 @@ m3ApiRawFunction(m3_str_repeat)
     if (n > 4096) n = 4096;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    memset(mem + dst, (uint8_t)(char_code & 0xFF), n);
-    mem[dst + n] = 0;
+    wasm_mem_set(runtime, dst, (uint8_t)(char_code & 0xFF), n);
+    wasm_mem_write8(runtime, dst + n, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -571,10 +535,8 @@ m3ApiRawFunction(m3_str_space)
     if (n > 4096) n = 4096;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    memset(mem + dst, ' ', n);
-    mem[dst + n] = 0;
+    wasm_mem_set(runtime, dst, ' ', n);
+    wasm_mem_write8(runtime, dst + n, 0);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -587,9 +549,7 @@ m3ApiRawFunction(m3_str_hex)
     int len = snprintf(buf, sizeof(buf), "%X", (unsigned int)val);
     uint32_t dst = pool_alloc(runtime, len + 1);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, buf, len + 1);
+    wasm_mem_write(runtime, dst, buf, len + 1);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -602,9 +562,7 @@ m3ApiRawFunction(m3_str_oct)
     int len = snprintf(buf, sizeof(buf), "%o", (unsigned int)val);
     uint32_t dst = pool_alloc(runtime, len + 1);
     if (dst == 0) m3ApiReturn(0);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + dst, buf, len + 1);
+    wasm_mem_write(runtime, dst, buf, len + 1);
     m3ApiReturn((int32_t)dst);
 }
 
@@ -619,20 +577,19 @@ m3ApiRawFunction(m3_str_mid_assign)
     m3ApiGetArg(int32_t, start);
     m3ApiGetArg(int32_t, count);
     m3ApiGetArg(int32_t, src);
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || dst == 0) m3ApiReturn(0);
-    int dlen = wasm_strlen(mem, mem_size, (uint32_t)dst);
-    int slen = wasm_strlen(mem, mem_size, (uint32_t)src);
+    if (dst == 0) m3ApiReturn(0);
+    int dlen = wasm_mem_strlen(runtime, (uint32_t)dst);
+    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    if (dlen < 0) dlen = 0;
+    if (slen < 0) slen = 0;
     int s = start - 1;  // convert to 0-based
     if (s < 0) s = 0;
     if (s >= dlen) {
         // start beyond string — return copy of original
         uint32_t r = pool_alloc(runtime, dlen + 1);
         if (r == 0) m3ApiReturn(0);
-        mem = m3_GetMemory(runtime, &mem_size, 0);
-        memcpy(mem + r, mem + (uint32_t)dst, dlen);
-        mem[r + dlen] = 0;
+        wasm_mem_copy(runtime, r, (uint32_t)dst, dlen);
+        wasm_mem_write8(runtime, r + dlen, 0);
         m3ApiReturn((int32_t)r);
     }
     int n = count;
@@ -642,10 +599,9 @@ m3ApiRawFunction(m3_str_mid_assign)
     // Allocate new string same length as dst
     uint32_t r = pool_alloc(runtime, dlen + 1);
     if (r == 0) m3ApiReturn(0);
-    mem = m3_GetMemory(runtime, &mem_size, 0);
-    memcpy(mem + r, mem + (uint32_t)dst, dlen);  // copy original
-    memcpy(mem + r + s, mem + (uint32_t)src, n);  // overlay replacement
-    mem[r + dlen] = 0;
+    wasm_mem_copy(runtime, r, (uint32_t)dst, dlen);       // copy original
+    wasm_mem_copy(runtime, r + s, (uint32_t)src, n);       // overlay replacement
+    wasm_mem_write8(runtime, r + dlen, 0);
     m3ApiReturn((int32_t)r);
 }
 

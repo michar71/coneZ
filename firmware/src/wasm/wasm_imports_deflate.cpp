@@ -3,7 +3,6 @@
 #include "wasm_internal.h"
 #include "main.h"
 #include "deflate.h"
-#include "psram.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -22,22 +21,11 @@ static bool path_ok(const char *path, int len)
 
 static bool extract_path(IM3Runtime runtime, int32_t ptr, int32_t len, char *out)
 {
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || len <= 0 || len >= WASM_MAX_PATH_LEN || (uint32_t)ptr + len > mem_size)
-        return false;
-    memcpy(out, mem + ptr, len);
+    if (len <= 0 || len >= WASM_MAX_PATH_LEN) return false;
+    if (!wasm_mem_check(runtime, (uint32_t)ptr, (size_t)len)) return false;
+    wasm_mem_read(runtime, (uint32_t)ptr, out, (size_t)len);
     out[len] = '\0';
     return path_ok(out, len);
-}
-
-static void copy_from_wasm(const uint8_t *mem_base, uint32_t offset, uint8_t *dst, size_t len)
-{
-    const uint8_t *src = mem_base + offset;
-    if (IS_ADDRESS_MAPPED(src))
-        memcpy(dst, src, len);
-    else
-        psram_read((uint32_t)(uintptr_t)src, dst, len);
 }
 
 /* Streaming write callback for FILE* */
@@ -47,23 +35,19 @@ static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
     return fwrite(data, 1, len, f) == len ? 0 : -1;
 }
 
-/* Streaming write callback for WASM memory (PSRAM-safe) */
-struct wasm_mem_ctx {
-    uint8_t *mem_base;
+/* Streaming write callback for WASM memory via wasm_mem_write helpers */
+struct wasm_write_ctx {
+    IM3Runtime runtime;
     uint32_t offset;
     size_t max;
     size_t written;
 };
 
-static int wasm_mem_write(const uint8_t *data, size_t len, void *ctx)
+static int wasm_write_cb(const uint8_t *data, size_t len, void *ctx)
 {
-    struct wasm_mem_ctx *c = (struct wasm_mem_ctx *)ctx;
+    struct wasm_write_ctx *c = (struct wasm_write_ctx *)ctx;
     if (c->written + len > c->max) return -1;
-    uint8_t *dst = c->mem_base + c->offset + c->written;
-    if (IS_ADDRESS_MAPPED(dst))
-        memcpy(dst, data, len);
-    else
-        psram_write((uint32_t)(uintptr_t)dst, data, len);
+    wasm_mem_write(c->runtime, c->offset + (uint32_t)c->written, data, len);
     c->written += len;
     return 0;
 }
@@ -126,10 +110,7 @@ m3ApiRawFunction(m3_deflate_mem_to_file)
     m3ApiGetArg(int32_t, dst_len);
 
     if (src_len <= 0) m3ApiReturn(-1);
-
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || (uint32_t)src_ptr + src_len > mem_size) m3ApiReturn(-1);
+    if (!wasm_mem_check(runtime, (uint32_t)src_ptr, (size_t)src_len)) m3ApiReturn(-1);
 
     char dst_path[WASM_MAX_PATH_LEN];
     if (!extract_path(runtime, dst_ptr, dst_len, dst_path)) m3ApiReturn(-1);
@@ -137,7 +118,7 @@ m3ApiRawFunction(m3_deflate_mem_to_file)
     /* Copy source from WASM memory to DRAM */
     uint8_t *in_buf = (uint8_t *)malloc(src_len);
     if (!in_buf) m3ApiReturn(-1);
-    copy_from_wasm(mem_base, (uint32_t)src_ptr, in_buf, src_len);
+    wasm_mem_read(runtime, (uint32_t)src_ptr, in_buf, (size_t)src_len);
 
     char dst_fpath[WASM_MAX_PATH_LEN + 16];
     lfs_path(dst_fpath, sizeof(dst_fpath), dst_path);
@@ -163,21 +144,17 @@ m3ApiRawFunction(m3_deflate_mem)
     m3ApiGetArg(int32_t, dst_max);
 
     if (src_len <= 0 || dst_max <= 0) m3ApiReturn(-1);
-
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base) m3ApiReturn(-1);
-    if ((uint32_t)src_ptr + src_len > mem_size) m3ApiReturn(-1);
-    if ((uint32_t)dst_ptr + dst_max > mem_size) m3ApiReturn(-1);
+    if (!wasm_mem_check(runtime, (uint32_t)src_ptr, (size_t)src_len)) m3ApiReturn(-1);
+    if (!wasm_mem_check(runtime, (uint32_t)dst_ptr, (size_t)dst_max)) m3ApiReturn(-1);
 
     /* Copy source from WASM memory to DRAM */
     uint8_t *in_buf = (uint8_t *)malloc(src_len);
     if (!in_buf) m3ApiReturn(-1);
-    copy_from_wasm(mem_base, (uint32_t)src_ptr, in_buf, src_len);
+    wasm_mem_read(runtime, (uint32_t)src_ptr, in_buf, (size_t)src_len);
 
-    /* Stream compressed chunks to WASM memory (PSRAM-safe) */
-    struct wasm_mem_ctx ctx = { mem_base, (uint32_t)dst_ptr, (size_t)dst_max, 0 };
-    int result = gzip_stream(in_buf, src_len, wasm_mem_write, &ctx,
+    /* Stream compressed chunks to WASM memory via helpers */
+    struct wasm_write_ctx ctx = { runtime, (uint32_t)dst_ptr, (size_t)dst_max, 0 };
+    int result = gzip_stream(in_buf, src_len, wasm_write_cb, &ctx,
                              DEF_WBITS, DEF_MLEVEL, DEF_LEVEL);
     free(in_buf);
 

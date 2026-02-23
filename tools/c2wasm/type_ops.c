@@ -89,7 +89,8 @@ int type_element_size(TypeInfo t) {
     if (t.depth == 0) {
         /* Scalar type */
         switch (t.base) {
-        case CT_CHAR: return 1;
+        case CT_CHAR:
+        case CT_UCHAR: return 1;
         case CT_INT:
         case CT_UINT: return 4;
         case CT_FLOAT: return 4;

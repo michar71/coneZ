@@ -27,11 +27,9 @@ static bool wasm_path_ok(const char *path, int len)
 
 // Helper: extract validated path from WASM memory
 static bool wasm_extract_path(IM3Runtime runtime, int32_t ptr, int32_t len, char *out) {
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || len <= 0 || len >= WASM_MAX_PATH_LEN || (uint32_t)ptr + len > mem_size)
+    if (len <= 0 || len >= WASM_MAX_PATH_LEN || !wasm_mem_check(runtime, (uint32_t)ptr, (size_t)len))
         return false;
-    memcpy(out, mem_base + ptr, len);
+    wasm_mem_read(runtime, (uint32_t)ptr, out, (size_t)len);
     out[len] = '\0';
     return wasm_path_ok(out, len);
 }
@@ -58,17 +56,13 @@ m3ApiRawFunction(m3_file_open)
     m3ApiGetArg(int32_t, path_len);
     m3ApiGetArg(int32_t, mode);
 
-    // Validate memory access
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || (uint32_t)path_ptr + path_len > mem_size || path_len <= 0) {
-        m3ApiReturn(-1);
-    }
-
     // Copy path to null-terminated buffer
     char path[WASM_MAX_PATH_LEN];
-    if (path_len >= WASM_MAX_PATH_LEN) m3ApiReturn(-1);
-    memcpy(path, mem_base + path_ptr, path_len);
+    if (path_len <= 0 || path_len >= WASM_MAX_PATH_LEN ||
+        !wasm_mem_check(runtime, (uint32_t)path_ptr, (size_t)path_len)) {
+        m3ApiReturn(-1);
+    }
+    wasm_mem_read(runtime, (uint32_t)path_ptr, path, (size_t)path_len);
     path[path_len] = '\0';
 
     // Validate path
@@ -121,14 +115,27 @@ m3ApiRawFunction(m3_file_read)
         m3ApiReturn(-1);
     }
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || max_len <= 0 || (uint32_t)buf_ptr + max_len > mem_size) {
+    if (max_len <= 0 || !wasm_mem_check(runtime, (uint32_t)buf_ptr, (size_t)max_len)) {
         m3ApiReturn(-1);
     }
 
-    int bytes = (int)fread(mem_base + buf_ptr, 1, max_len, wasm_files[handle]);
-    m3ApiReturn(bytes);
+    // Read through temp buffer (PSRAM can't be passed to fread)
+    int total = 0;
+    uint32_t pos = (uint32_t)buf_ptr;
+    int remaining = max_len;
+    while (remaining > 0) {
+        uint8_t tmp[256];
+        int chunk = remaining > (int)sizeof(tmp) ? (int)sizeof(tmp) : remaining;
+        int n = (int)fread(tmp, 1, chunk, wasm_files[handle]);
+        if (n > 0) {
+            wasm_mem_write(runtime, pos, tmp, n);
+            pos += n;
+            total += n;
+        }
+        if (n < chunk) break;  // EOF or error
+        remaining -= n;
+    }
+    m3ApiReturn(total);
 }
 
 // i32 file_write(i32 handle, i32 buf_ptr, i32 len) -> bytes written or -1
@@ -143,14 +150,25 @@ m3ApiRawFunction(m3_file_write)
         m3ApiReturn(-1);
     }
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || len <= 0 || (uint32_t)buf_ptr + len > mem_size) {
+    if (len <= 0 || !wasm_mem_check(runtime, (uint32_t)buf_ptr, (size_t)len)) {
         m3ApiReturn(-1);
     }
 
-    int bytes = (int)fwrite(mem_base + buf_ptr, 1, len, wasm_files[handle]);
-    m3ApiReturn(bytes);
+    // Write through temp buffer (PSRAM can't be passed to fwrite)
+    int total = 0;
+    uint32_t pos = (uint32_t)buf_ptr;
+    int remaining = len;
+    while (remaining > 0) {
+        uint8_t tmp[256];
+        int chunk = remaining > (int)sizeof(tmp) ? (int)sizeof(tmp) : remaining;
+        wasm_mem_read(runtime, pos, tmp, chunk);
+        int n = (int)fwrite(tmp, 1, chunk, wasm_files[handle]);
+        total += n;
+        if (n < chunk) break;  // error
+        pos += n;
+        remaining -= n;
+    }
+    m3ApiReturn(total);
 }
 
 // i32 file_size(i32 handle) -> file size or -1
@@ -269,17 +287,13 @@ m3ApiRawFunction(m3_basic_file_open)
     m3ApiGetArg(int32_t, str_ptr);
     m3ApiGetArg(int32_t, mode);
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || str_ptr == 0 || (uint32_t)str_ptr >= mem_size) {
-        m3ApiReturn(-1);
-    }
+    if (str_ptr == 0) m3ApiReturn(-1);
 
-    int path_len = wasm_strlen(mem_base, mem_size, (uint32_t)str_ptr);
+    int path_len = wasm_mem_strlen(runtime, (uint32_t)str_ptr);
     if (path_len <= 0 || path_len >= WASM_MAX_PATH_LEN) m3ApiReturn(-1);
 
     char path[WASM_MAX_PATH_LEN];
-    memcpy(path, mem_base + (uint32_t)str_ptr, path_len);
+    wasm_mem_read(runtime, (uint32_t)str_ptr, path, (size_t)path_len);
     path[path_len] = '\0';
 
     if (!wasm_path_ok(path, path_len)) m3ApiReturn(-1);
@@ -330,14 +344,21 @@ m3ApiRawFunction(m3_basic_file_print)
         m3ApiReturn(-1);
     }
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base) m3ApiReturn(-1);
-
-    int len = wasm_strlen(mem_base, mem_size, (uint32_t)str_ptr);
+    int len = wasm_mem_strlen(runtime, (uint32_t)str_ptr);
     int written = 0;
-    if (len > 0)
-        written = (int)fwrite(mem_base + (uint32_t)str_ptr, 1, len, wasm_files[handle]);
+    if (len > 0) {
+        // Write through temp buffer
+        uint32_t pos = (uint32_t)str_ptr;
+        int remaining = len;
+        while (remaining > 0) {
+            char tmp[256];
+            int chunk = remaining > (int)sizeof(tmp) ? (int)sizeof(tmp) : remaining;
+            wasm_mem_read(runtime, pos, tmp, chunk);
+            written += (int)fwrite(tmp, 1, chunk, wasm_files[handle]);
+            pos += chunk;
+            remaining -= chunk;
+        }
+    }
     written += (int)fwrite("\n", 1, 1, wasm_files[handle]);
     m3ApiReturn(written);
 }
@@ -370,10 +391,8 @@ m3ApiRawFunction(m3_basic_file_readln)
     uint32_t dst = pool_alloc(runtime, pos + 1);
     if (dst == 0) m3ApiReturn(0);
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || dst + pos + 1 > mem_size) m3ApiReturn(0);
-    memcpy(mem + dst, buf, pos + 1);
+    if (!wasm_mem_check(runtime, dst, pos + 1)) m3ApiReturn(0);
+    wasm_mem_write(runtime, dst, buf, pos + 1);
     m3ApiReturn((int32_t)dst);
 }
 

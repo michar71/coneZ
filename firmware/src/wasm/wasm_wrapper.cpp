@@ -9,6 +9,10 @@
 #include "printManager.h"
 #include "main.h"
 #include "basic_wrapper.h"   // get_basic_param / set_basic_param
+#if d_m3UsePsramMemory
+#include "psram.h"
+#include "m3_psram_glue.h"
+#endif
 
 
 // WASM runtime stack size (bytes inside wasm3 interpreter)
@@ -26,10 +30,20 @@ static volatile bool wasm_running = false;
 volatile bool wasm_stop_requested = false;
 static char wasm_current_path[256] = {0};
 
-// Persistent pre-allocated WASM linear memory (1 page = 64KB + header).
-// Allocated once at boot, reused across runs to avoid heap fragmentation.
+// Persistent pre-allocated WASM linear memory (1 page = 64KB).
+// DRAM path: allocated at boot (prevents heap fragmentation).
+// PSRAM path: lazy-allocated on first wasm_run() (PSRAM allocator doesn't fragment).
+// Both paths reuse the block across runs (zeroed, not freed).
 static const u32 PREALLOC_PAGES = 1;
+#if d_m3UsePsramMemory
+// PSRAM path: header in DRAM, DRAM window + PSRAM for linear memory data
+static M3MemoryHeader *s_prealloc_hdr = NULL;
+static uint8_t *s_prealloc_dram = NULL;
+static uint32_t s_prealloc_psram = 0;
+#else
+// DRAM path: single contiguous block (header + data)
 static M3MemoryHeader *s_prealloc_mem = NULL;
+#endif
 
 
 // ---------- Automatic yield via m3_Yield override ----------
@@ -85,6 +99,9 @@ static void wasm_run(const char *path)
     wasm_stop_requested = false;
     set_basic_param(0, 0);    // clear stale stop flag from previous 'stop' command
     yield_counter = 0;
+#if d_m3UsePsramMemory
+    m3_psram_yield_ctr = 0;
+#endif
     strlcpy(wasm_current_path, path, sizeof(wasm_current_path));
 
     // Load file from LittleFS
@@ -104,9 +121,6 @@ static void wasm_run(const char *path)
         wasm_running = false;
         return;
     }
-
-    // Track whether we lent the persistent prealloc block to this runtime
-    bool prealloc_injected = false;
 
     // Allocate buffer for .wasm binary (must persist during module lifetime)
     uint8_t *wasm_buf = (uint8_t *)malloc(wasm_size);
@@ -160,15 +174,39 @@ static void wasm_run(const char *path)
     // Inject persistent pre-allocated linear memory into the runtime.  When
     // m3_LoadModule calls ResizeMemory(initPages), it sees numPages already ==
     // initPages, so m3_Realloc(ptr, size, size) returns the same pointer (no-op).
-    // We detach it before m3_FreeRuntime() so the block persists across runs.
+    // The prealloc flag tells ResizeMemory to clone (not realloc/free) on memory.grow,
+    // and tells Runtime_Release to skip freeing this block.
+#if d_m3UsePsramMemory
+    if (module->memoryInfo.initPages == PREALLOC_PAGES) {
+        // Lazy-allocate on first run, reuse thereafter
+        size_t psram_bytes = PREALLOC_PAGES * d_m3MemPageSize - d_m3PsramDramWindow;
+        if (!s_prealloc_hdr) {
+            s_prealloc_hdr = (M3MemoryHeader *)calloc(1, sizeof(M3MemoryHeader));
+            s_prealloc_dram = (uint8_t *)malloc(d_m3PsramDramWindow);
+            s_prealloc_psram = psram_malloc(psram_bytes);
+        }
+        if (s_prealloc_hdr && s_prealloc_dram && s_prealloc_psram) {
+            memset(s_prealloc_dram, 0, d_m3PsramDramWindow);
+            psram_memset(s_prealloc_psram, 0, psram_bytes);
+            s_prealloc_hdr->dram_buf = s_prealloc_dram;
+            s_prealloc_hdr->psram_addr = s_prealloc_psram;
+            s_prealloc_hdr->length = PREALLOC_PAGES * d_m3MemPageSize;
+            s_prealloc_hdr->runtime = runtime;
+            s_prealloc_hdr->prealloc = true;
+            runtime->memory.mallocated = s_prealloc_hdr;
+            runtime->memory.numPages = PREALLOC_PAGES;
+        }
+    }
+#else
     if (s_prealloc_mem && module->memoryInfo.initPages == PREALLOC_PAGES) {
         // Zero the data portion (header stays intact from initial calloc)
         memset((uint8_t *)s_prealloc_mem + sizeof(M3MemoryHeader), 0,
                PREALLOC_PAGES * d_m3MemPageSize);
+        s_prealloc_mem->prealloc = true;
         runtime->memory.mallocated = s_prealloc_mem;
         runtime->memory.numPages = PREALLOC_PAGES;
-        prealloc_injected = true;
     }
+#endif
 
     // Load module into runtime (runtime takes ownership)
     result = m3_LoadModule(runtime, module);
@@ -177,7 +215,7 @@ static void wasm_run(const char *path)
         printfnl(SOURCE_WASM, "wasm: load error: %s (module wants %u pages = %uKB)\n",
                  result, pages, (unsigned)(pages * 64));
         m3_FreeModule(module);
-        if (prealloc_injected) runtime->memory.mallocated = NULL;
+        // prealloc flag in header tells Runtime_Release to skip freeing
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -189,7 +227,7 @@ static void wasm_run(const char *path)
     result = link_imports(module);
     if (result) {
         printfnl(SOURCE_WASM, "wasm: link error: %s\n", result);
-        if (prealloc_injected) runtime->memory.mallocated = NULL;
+        // prealloc flag in header tells Runtime_Release to skip freeing
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -216,7 +254,7 @@ static void wasm_run(const char *path)
 
     if (!func_setup && !func_loop && !func_start) {
         printfnl(SOURCE_WASM, "wasm: no entry point (setup/loop/_start/main)\n");
-        if (prealloc_injected) runtime->memory.mallocated = NULL;
+        // prealloc flag in header tells Runtime_Release to skip freeing
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -239,7 +277,7 @@ static void wasm_run(const char *path)
     result = m3_RunStart(module);
     if (result) {
         printfnl(SOURCE_WASM, "wasm: start section error: %s\n", result);
-        if (prealloc_injected) runtime->memory.mallocated = NULL;
+        // prealloc flag in header tells Runtime_Release to skip freeing
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -301,13 +339,11 @@ static void wasm_run(const char *path)
         }
     }
 
-    // Cleanup — detach persistent prealloc block before freeing runtime
+    // Cleanup — prealloc flag in M3MemoryHeader tells Runtime_Release to skip freeing
     wasm_close_all_files();
     wasm_reset_gamma();
     wasm_string_pool_reset();
     wasm_current_path[0] = '\0';
-    if (prealloc_injected)
-        runtime->memory.mallocated = NULL;  // don't let m3_FreeRuntime() free our persistent block
     m3_FreeRuntime(runtime);
     m3_FreeEnvironment(env);
     free(wasm_buf);
@@ -352,12 +388,14 @@ void setup_wasm()
 {
     wasm_mutex = xSemaphoreCreateMutex();
 
-    // Pre-allocate linear memory block once — persists across runs
+    // DRAM prealloc at boot — prevents heap fragmentation from 64KB contiguous block.
+    // PSRAM prealloc is lazy (allocated on first wasm_run) since PSRAM doesn't fragment.
+#if !d_m3UsePsramMemory
     size_t prealloc_bytes = PREALLOC_PAGES * d_m3MemPageSize + sizeof(M3MemoryHeader);
     s_prealloc_mem = (M3MemoryHeader *)calloc(1, prealloc_bytes);
+#endif
 
-    // Start task at boot — keeps 8KB stack + 64KB prealloc pinned in heap
-    xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 8192, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
+    xTaskCreatePinnedToCore(wasm_task_fun, "WasmTask", 10240, NULL, 1, &wasm_task_handle, tskNO_AFFINITY);
 }
 
 bool set_wasm_program(const char *path)

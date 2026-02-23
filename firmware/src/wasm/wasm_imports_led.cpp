@@ -243,15 +243,14 @@ m3ApiRawFunction(m3_led_set_buffer) {
 
     if (count > max_count) count = max_count;
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || (uint32_t)rgb_ptr + (uint32_t)count * 3 > mem_size) {
+    if (!wasm_mem_check(runtime, (uint32_t)rgb_ptr, (uint32_t)count * 3)) {
         m3ApiTrap("led_set_buffer: out of bounds");
     }
 
-    const uint8_t *src = mem_base + rgb_ptr;
     for (int i = 0; i < count; i++) {
-        buf[i] = CRGB(wasm_gamma(src[i*3]), wasm_gamma(src[i*3+1]), wasm_gamma(src[i*3+2]));
+        uint8_t rgb[3];
+        wasm_mem_read(runtime, (uint32_t)rgb_ptr + i * 3, rgb, 3);
+        buf[i] = CRGB(wasm_gamma(rgb[0]), wasm_gamma(rgb[1]), wasm_gamma(rgb[2]));
     }
 
     m3ApiSuccess();

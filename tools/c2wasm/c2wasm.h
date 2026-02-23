@@ -271,7 +271,8 @@ extern uint8_t imp_used[IMP_COUNT];
 
 typedef enum {
     CT_VOID = 0,
-    CT_CHAR,       /* i32 */
+    CT_CHAR,       /* signed char — i32, 1-byte load/store */
+    CT_UCHAR,      /* unsigned char — i32, 1-byte load/store (zero-extend) */
     CT_INT,        /* i32 */
     CT_LONG_LONG,  /* i64 */
     CT_FLOAT,      /* f32 */
@@ -575,7 +576,7 @@ static inline int add_data_zeros(int size, int align) {
 }
 
 static inline int ctype_is_unsigned(CType ct) {
-    return ct == CT_UINT || ct == CT_ULONG_LONG;
+    return ct == CT_UCHAR || ct == CT_UINT || ct == CT_ULONG_LONG;
 }
 
 static inline uint8_t ctype_to_wasm(CType ct) {
@@ -668,13 +669,13 @@ static inline void emit_coerce_i32(CType from) {
     if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_S);
     else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_S);
     else if (from == CT_LONG_LONG || from == CT_ULONG_LONG) emit_op(OP_I32_WRAP_I64);
-    /* CT_UINT → already i32, no-op */
+    /* CT_UCHAR/CT_UINT → already i32, no-op */
 }
 /* Coerce top of wasm stack to i64 (sign/zero-extend based on source) */
 static inline void emit_coerce_i64(CType from) {
     if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
         emit_op(OP_I64_EXTEND_I32_S);
-    else if (from == CT_UINT)
+    else if (from == CT_UCHAR || from == CT_UINT)
         emit_op(OP_I64_EXTEND_I32_U);
     else if (from == CT_FLOAT) emit_op(OP_I64_TRUNC_F32_S);
     else if (from == CT_DOUBLE) emit_op(OP_I64_TRUNC_F64_S);
@@ -684,7 +685,7 @@ static inline void emit_coerce_i64(CType from) {
 static inline void emit_coerce_f32(CType from) {
     if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
         emit_op(OP_F32_CONVERT_I32_S);
-    else if (from == CT_UINT)
+    else if (from == CT_UCHAR || from == CT_UINT)
         emit_op(OP_F32_CONVERT_I32_U);
     else if (from == CT_LONG_LONG)
         emit_op(OP_F32_CONVERT_I64_S);
@@ -698,21 +699,21 @@ static inline void emit_coerce_f32(CType from) {
 static inline void emit_promote_f64(CType from) {
     if (from == CT_FLOAT) emit_op(OP_F64_PROMOTE_F32);
     else if (from == CT_INT || from == CT_CHAR) emit_op(OP_F64_CONVERT_I32_S);
-    else if (from == CT_UINT) emit_op(OP_F64_CONVERT_I32_U);
+    else if (from == CT_UCHAR || from == CT_UINT) emit_op(OP_F64_CONVERT_I32_U);
     else if (from == CT_LONG_LONG) emit_op(OP_F64_CONVERT_I64_S);
     else if (from == CT_ULONG_LONG) emit_op(OP_F64_CONVERT_I64_U);
 }
 /* General coerce between any two types */
 static inline void emit_coerce(CType from, CType to) {
     if (from == to) return;
-    if (to == CT_UINT) {
+    if (to == CT_UCHAR || to == CT_UINT) {
         /* float→uint: unsigned trunc */
         if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_U);
         else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_U);
         else if (from == CT_LONG_LONG || from == CT_ULONG_LONG) emit_op(OP_I32_WRAP_I64);
-        /* CT_INT/CT_CHAR/CT_CONST_STR → already i32 */
+        /* CT_INT/CT_CHAR/CT_UCHAR/CT_CONST_STR → already i32 */
     } else if (to == CT_ULONG_LONG) {
-        if (from == CT_UINT) emit_op(OP_I64_EXTEND_I32_U);
+        if (from == CT_UCHAR || from == CT_UINT) emit_op(OP_I64_EXTEND_I32_U);
         else if (from == CT_INT || from == CT_CHAR || from == CT_CONST_STR)
             emit_op(OP_I64_EXTEND_I32_S);
         else if (from == CT_FLOAT) emit_op(OP_I64_TRUNC_F32_U);

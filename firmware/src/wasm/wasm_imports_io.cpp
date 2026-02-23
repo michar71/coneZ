@@ -45,22 +45,20 @@ m3ApiRawFunction(m3_print_str)
     m3ApiGetArg(int32_t, offset);
     m3ApiGetArg(int32_t, len);
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem_base = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem_base || (uint32_t)offset + len > mem_size || len < 0) {
+    if (len < 0 || !wasm_mem_check(runtime, (uint32_t)offset, (size_t)len)) {
         m3ApiTrap("print_str: out of bounds");
     }
 
-    // Print up to 256 chars at a time to avoid huge stack buffers
-    const char *str = (const char *)(mem_base + offset);
+    // Print up to 255 chars at a time to avoid huge stack buffers
+    uint32_t pos = (uint32_t)offset;
     int remaining = len;
     while (remaining > 0) {
         int chunk = remaining > 255 ? 255 : remaining;
         char buf[256];
-        memcpy(buf, str, chunk);
+        wasm_mem_read(runtime, pos, buf, chunk);
         buf[chunk] = '\0';
         printfnl(SOURCE_WASM, "%s", buf);
-        str += chunk;
+        pos += chunk;
         remaining -= chunk;
     }
 
@@ -84,44 +82,41 @@ m3ApiRawFunction(m3_wasi_fd_write)
         m3ApiReturn(8);  // WASI EBADF
     }
 
-    uint32_t mem_size = m3_GetMemorySize(runtime);
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem) m3ApiReturn(8);
-
     // Validate iov array bounds
-    uint32_t iov_end = (uint32_t)iovs_ptr + (uint32_t)iovs_count * 8;
-    if (iov_end > mem_size || (uint32_t)nwritten_ptr + 4 > mem_size) {
+    if (!wasm_mem_check(runtime, (uint32_t)iovs_ptr, (uint32_t)iovs_count * 8) ||
+        !wasm_mem_check(runtime, (uint32_t)nwritten_ptr, 4)) {
         m3ApiReturn(28);  // WASI EINVAL
     }
 
     int32_t total = 0;
     for (int32_t i = 0; i < iovs_count; i++) {
-        uint32_t iov_base = (uint32_t)iovs_ptr + i * 8;
-        uint32_t buf_ptr = *(uint32_t *)(mem + iov_base);
-        uint32_t buf_len = *(uint32_t *)(mem + iov_base + 4);
+        uint32_t iov_off = (uint32_t)iovs_ptr + i * 8;
+        uint32_t buf_ptr, buf_len;
+        wasm_mem_read(runtime, iov_off, &buf_ptr, 4);
+        wasm_mem_read(runtime, iov_off + 4, &buf_len, 4);
 
         if (buf_len == 0) continue;
-        if ((uint32_t)buf_ptr + buf_len > mem_size) {
+        if (!wasm_mem_check(runtime, buf_ptr, buf_len)) {
             m3ApiReturn(28);  // WASI EINVAL
         }
 
-        // Print in chunks (same approach as m3_print_str)
-        const char *str = (const char *)(mem + buf_ptr);
+        // Print in chunks
+        uint32_t pos = buf_ptr;
         int remaining = (int)buf_len;
         while (remaining > 0) {
             int chunk = remaining > 255 ? 255 : remaining;
             char buf[256];
-            memcpy(buf, str, chunk);
+            wasm_mem_read(runtime, pos, buf, chunk);
             buf[chunk] = '\0';
             printfnl(SOURCE_WASM, "%s", buf);
-            str += chunk;
+            pos += chunk;
             remaining -= chunk;
         }
         total += (int32_t)buf_len;
     }
 
     // Write total bytes to nwritten_ptr
-    *(int32_t *)(mem + nwritten_ptr) = total;
+    wasm_mem_write(runtime, (uint32_t)nwritten_ptr, &total, 4);
 
     m3ApiReturn(0);  // success
 }

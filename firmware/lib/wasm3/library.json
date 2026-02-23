@@ -1,0 +1,6 @@
+{
+    "name": "Wasm3",
+    "version": "0.5.0-conez",
+    "frameworks": "espidf",
+    "platforms": "espressif32"
+}

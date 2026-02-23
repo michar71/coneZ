@@ -36,7 +36,7 @@ static void expr_set_scalar_type(CType ct) {
 }
 
 static int ctype_sizeof(CType ct) {
-    if (ct == CT_CHAR) return 1;
+    if (ct == CT_CHAR || ct == CT_UCHAR) return 1;
     if (ct == CT_LONG_LONG || ct == CT_ULONG_LONG || ct == CT_DOUBLE) return 8;
     return 4;
 }
@@ -48,7 +48,7 @@ static void emit_mem_store_for_ctype(CType ct) {
         emit_op(OP_F64_STORE); buf_uleb(CODE, 3); buf_uleb(CODE, 0);
     } else if (ct == CT_FLOAT) {
         emit_op(OP_F32_STORE); buf_uleb(CODE, 2); buf_uleb(CODE, 0);
-    } else if (ct == CT_CHAR) {
+    } else if (ct == CT_CHAR || ct == CT_UCHAR) {
         emit_op(OP_I32_STORE8); buf_uleb(CODE, 0); buf_uleb(CODE, 0);
     } else {
         emit_op(OP_I32_STORE); buf_uleb(CODE, 2); buf_uleb(CODE, 0);
@@ -64,6 +64,8 @@ static void emit_mem_load_for_ctype(CType ct) {
         emit_op(OP_F32_LOAD); buf_uleb(CODE, 2); buf_uleb(CODE, 0);
     } else if (ct == CT_CHAR) {
         emit_op(OP_I32_LOAD8_S); buf_uleb(CODE, 0); buf_uleb(CODE, 0);
+    } else if (ct == CT_UCHAR) {
+        emit_op(OP_I32_LOAD8_U); buf_uleb(CODE, 0); buf_uleb(CODE, 0);
     } else {
         emit_op(OP_I32_LOAD); buf_uleb(CODE, 2); buf_uleb(CODE, 0);
     }
@@ -331,7 +333,7 @@ static CType primary_expr(void) {
             int size = 4;  /* default for int, float, and pointers */
             if (type_had_pointer) size = 4;
             else if (ct == CT_VOID) size = 1;
-            else if (ct == CT_CHAR) size = 1;
+            else if (ct == CT_CHAR || ct == CT_UCHAR) size = 1;
             else if (ct == CT_DOUBLE || ct == CT_LONG_LONG || ct == CT_ULONG_LONG) size = 8;
             else if (size_tok == TOK_INT8 || size_tok == TOK_UINT8) size = 1;
             else if (size_tok == TOK_INT16 || size_tok == TOK_UINT16) size = 2;
@@ -360,7 +362,7 @@ static CType primary_expr(void) {
             buf_free(&tmp_buf);
             int size = 4;
             if (ct == CT_VOID) size = 1;
-            else if (ct == CT_CHAR) size = 1;
+            else if (ct == CT_CHAR || ct == CT_UCHAR) size = 1;
             else if (ct == CT_DOUBLE || ct == CT_LONG_LONG || ct == CT_ULONG_LONG) size = 8;
             emit_i32_const(size);
             expr_last_is_ptr = 0;

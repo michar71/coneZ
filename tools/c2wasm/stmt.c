@@ -103,7 +103,7 @@ static int parse_case_value(void) {
 }
 
 static int ctype_sizeof_bytes(CType ct) {
-    if (ct == CT_CHAR) return 1;
+    if (ct == CT_CHAR || ct == CT_UCHAR) return 1;
     if (ct == CT_LONG_LONG || ct == CT_ULONG_LONG || ct == CT_DOUBLE) return 8;
     return 4;
 }
@@ -121,7 +121,7 @@ static void emit_store_for_ctype(CType ct) {
         emit_op(OP_F32_STORE);
         buf_uleb(CODE, 2);
         buf_uleb(CODE, 0);
-    } else if (ct == CT_CHAR) {
+    } else if (ct == CT_CHAR || ct == CT_UCHAR) {
         emit_op(OP_I32_STORE8);
         buf_uleb(CODE, 0);
         buf_uleb(CODE, 0);
@@ -140,7 +140,7 @@ static void write_array_elem(int base_off, int idx, CType ct,
         error_at("array initializer out of bounds");
         return;
     }
-    if (ct == CT_CHAR) {
+    if (ct == CT_CHAR || ct == CT_UCHAR) {
         data_buf[off] = (char)i32v;
     } else if (ct == CT_FLOAT) {
         memcpy(data_buf + off, &f32v, 4);
@@ -827,7 +827,7 @@ static void parse_local_decl(CType base_type) {
                 array_size = 1;
                 if (array_ndims > 0) array_dims[array_ndims - 1] = 1;
             }
-            if (var_type != CT_CHAR) {
+            if (var_type != CT_CHAR && var_type != CT_UCHAR) {
                 error_at("inferred array size only supported for char[] with string initializer");
                 array_size = 1;
                 if (array_ndims > 0) array_dims[array_ndims - 1] = 1;
@@ -912,7 +912,7 @@ static void parse_local_decl(CType base_type) {
             }
         } else if (accept(TOK_ASSIGN)) {
             if (is_array) {
-                if (var_type == CT_CHAR && array_ndims == 1 && tok == TOK_STR_LIT) {
+                if ((var_type == CT_CHAR || var_type == CT_UCHAR) && array_ndims == 1 && tok == TOK_STR_LIT) {
                     int slen = tok_slen;
                     int ncopy = (slen < array_size) ? slen : array_size;
                     for (int i = 0; i < ncopy; i++) {
@@ -1104,7 +1104,7 @@ void parse_top_level(void) {
 
     if (accept(TOK_ASSIGN)) {
         if (is_array) {
-            if (base_type == CT_CHAR && tok == TOK_STR_LIT) {
+            if ((base_type == CT_CHAR || base_type == CT_UCHAR) && tok == TOK_STR_LIT) {
                 int slen = tok_slen;
                 if (array_ndims != 1) {
                     error_at("inferred size only supported for single-dimensional char[]");
@@ -1244,7 +1244,7 @@ void parse_top_level(void) {
         }
         if (accept(TOK_ASSIGN)) {
             if (decl_is_array) {
-                if (base_type == CT_CHAR && tok == TOK_STR_LIT) {
+                if ((base_type == CT_CHAR || base_type == CT_UCHAR) && tok == TOK_STR_LIT) {
                     int slen = tok_slen;
                     if (decl_array_ndims != 1) {
                         error_at("inferred size only supported for single-dimensional char[]");

@@ -14,13 +14,13 @@ static int wasm_vformat(IM3Runtime runtime,
                         uint32_t fmt_off, uint32_t args_off,
                         char *out, int out_size)
 {
-    uint32_t mem_size = 0;
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || fmt_off >= mem_size) return -1;
+    uint32_t mem_size = wasm_mem_size(runtime);
+    if (fmt_off >= mem_size) return -1;
 
-    const char *fmt = (const char *)(mem + fmt_off);
-    int fmt_len = 0;
-    while (fmt_off + fmt_len < mem_size && fmt[fmt_len]) fmt_len++;
+    // Read format string into local buffer
+    char fmt[512];
+    int fmt_len = wasm_mem_read_str(runtime, fmt_off, fmt, sizeof(fmt));
+    if (fmt_len < 0) return -1;
 
     uint32_t aoff = args_off;
     int pos = 0;
@@ -54,8 +54,8 @@ static int wasm_vformat(IM3Runtime runtime,
 
         // Width
         if (i < fmt_len && fmt[i] == '*') {
-            if (aoff + 4 > mem_size) { err = 1; break; }
-            int32_t w; memcpy(&w, mem + aoff, 4); aoff += 4;
+            if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
+            int32_t w; wasm_mem_read(runtime, aoff, &w, 4); aoff += 4;
             sp += snprintf(spec + sp, 28 - sp, "%d", (int)w);
             i++;
         } else {
@@ -70,8 +70,8 @@ static int wasm_vformat(IM3Runtime runtime,
             if (sp < 28) spec[sp++] = '.';
             i++;
             if (i < fmt_len && fmt[i] == '*') {
-                if (aoff + 4 > mem_size) { err = 1; break; }
-                int32_t p; memcpy(&p, mem + aoff, 4); aoff += 4;
+                if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
+                int32_t p; wasm_mem_read(runtime, aoff, &p, 4); aoff += 4;
                 sp += snprintf(spec + sp, 28 - sp, "%d", (int)p);
                 i++;
             } else {
@@ -97,69 +97,60 @@ static int wasm_vformat(IM3Runtime runtime,
         case 'd': case 'i':
             if (sp < 30) spec[sp++] = conv;
             spec[sp] = '\0';
-            if (aoff + 4 > mem_size) { err = 1; break; }
-            { int32_t v; memcpy(&v, mem + aoff, 4); aoff += 4;
+            if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
+            { int32_t v; wasm_mem_read(runtime, aoff, &v, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), spec, (int)v); }
             break;
 
         case 'u': case 'x': case 'X':
             if (sp < 30) spec[sp++] = conv;
             spec[sp] = '\0';
-            if (aoff + 4 > mem_size) { err = 1; break; }
-            { uint32_t v; memcpy(&v, mem + aoff, 4); aoff += 4;
+            if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
+            { uint32_t v; wasm_mem_read(runtime, aoff, &v, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), spec, (unsigned)v); }
             break;
 
         case 'c':
             if (sp < 30) spec[sp++] = 'c';
             spec[sp] = '\0';
-            if (aoff + 4 > mem_size) { err = 1; break; }
-            { int32_t v; memcpy(&v, mem + aoff, 4); aoff += 4;
+            if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
+            { int32_t v; wasm_mem_read(runtime, aoff, &v, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), spec, (char)v); }
             break;
 
         case 'f':
             if (sp < 30) spec[sp++] = 'f';
             spec[sp] = '\0';
-            if (aoff + 8 > mem_size) { err = 1; break; }
-            { double v; memcpy(&v, mem + aoff, 8); aoff += 8;
+            if (!wasm_mem_check(runtime, aoff, 8)) { err = 1; break; }
+            { double v; wasm_mem_read(runtime, aoff, &v, 8); aoff += 8;
               n = snprintf(tmp, sizeof(tmp), spec, v); }
             break;
 
         case 'e': case 'g':
             if (sp < 30) spec[sp++] = conv;
             spec[sp] = '\0';
-            if (aoff + 8 > mem_size) { err = 1; break; }
-            { double v; memcpy(&v, mem + aoff, 8); aoff += 8;
+            if (!wasm_mem_check(runtime, aoff, 8)) { err = 1; break; }
+            { double v; wasm_mem_read(runtime, aoff, &v, 8); aoff += 8;
               n = snprintf(tmp, sizeof(tmp), spec, v); }
             break;
 
         case 's':
             if (sp < 30) spec[sp++] = 's';
             spec[sp] = '\0';
-            if (aoff + 4 > mem_size) { err = 1; break; }
-            { uint32_t sptr; memcpy(&sptr, mem + aoff, 4); aoff += 4;
+            if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
+            { uint32_t sptr; wasm_mem_read(runtime, aoff, &sptr, 4); aoff += 4;
               // Copy string from WASM memory with bounds check
               char sbuf[128];
-              if (sptr > 0 && sptr < mem_size) {
-                  const char *s = (const char *)(mem + sptr);
-                  uint32_t max_len = mem_size - sptr;
-                  if (max_len > 127) max_len = 127;
-                  uint32_t slen = 0;
-                  while (slen < max_len && s[slen]) slen++;
-                  memcpy(sbuf, s, slen);
-                  sbuf[slen] = '\0';
-              } else {
-                  strcpy(sbuf, "(null)");
-              }
+              int slen = wasm_mem_read_str(runtime, sptr, sbuf, sizeof(sbuf));
+              if (slen < 0) strcpy(sbuf, "(null)");
               n = snprintf(tmp, sizeof(tmp), spec, sbuf);
             }
             break;
 
         case 'p':
             spec[sp] = '\0';
-            if (aoff + 4 > mem_size) { err = 1; break; }
-            { uint32_t v; memcpy(&v, mem + aoff, 4); aoff += 4;
+            if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
+            { uint32_t v; wasm_mem_read(runtime, aoff, &v, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), "0x%x", (unsigned)v); }
             break;
 
@@ -212,16 +203,13 @@ m3ApiRawFunction(m3_host_snprintf)
     if (r < 0) m3ApiReturn(-1);
 
     // Copy formatted output to WASM memory
-    if (buf_size > 0) {
-        uint32_t mem_size = 0;
-        uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-        if (mem && (uint32_t)buf_ptr + (uint32_t)buf_size <= mem_size) {
-            int avail = (int)sizeof(tmp) - 1;
-            int copy = r < avail ? r : avail;
-            if (copy > buf_size - 1) copy = buf_size - 1;
-            memcpy(mem + buf_ptr, tmp, copy);
-            mem[buf_ptr + copy] = '\0';
-        }
+    if (buf_size > 0 && wasm_mem_check(runtime, (uint32_t)buf_ptr, (uint32_t)buf_size)) {
+        int avail = (int)sizeof(tmp) - 1;
+        int copy = r < avail ? r : avail;
+        if (copy > buf_size - 1) copy = buf_size - 1;
+        wasm_mem_write(runtime, (uint32_t)buf_ptr, tmp, copy);
+        uint8_t nul = 0;
+        wasm_mem_write8(runtime, (uint32_t)buf_ptr + copy, nul);
     }
 
     m3ApiReturn(r);
@@ -235,24 +223,14 @@ m3ApiRawFunction(m3_host_snprintf)
 static int wasm_vsscanf(IM3Runtime runtime,
                         uint32_t str_off, uint32_t fmt_off, uint32_t args_off)
 {
-    uint32_t mem_size = 0;
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || str_off >= mem_size || fmt_off >= mem_size) return -1;
-
-    const char *str_base = (const char *)(mem + str_off);
-    const char *fmt_base = (const char *)(mem + fmt_off);
-
-    int str_len = 0;
-    while (str_off + str_len < mem_size && str_base[str_len]) str_len++;
-    int fmt_len = 0;
-    while (fmt_off + fmt_len < mem_size && fmt_base[fmt_len]) fmt_len++;
+    uint32_t mem_size = wasm_mem_size(runtime);
+    if (str_off >= mem_size || fmt_off >= mem_size) return -1;
 
     // Local copies for safe null-terminated access
     char str_buf[512], fmt_buf[256];
-    int sc = str_len < (int)sizeof(str_buf) - 1 ? str_len : (int)sizeof(str_buf) - 1;
-    memcpy(str_buf, str_base, sc); str_buf[sc] = '\0';
-    int fc = fmt_len < (int)sizeof(fmt_buf) - 1 ? fmt_len : (int)sizeof(fmt_buf) - 1;
-    memcpy(fmt_buf, fmt_base, fc); fmt_buf[fc] = '\0';
+    int sc = wasm_mem_read_str(runtime, str_off, str_buf, sizeof(str_buf));
+    int fc = wasm_mem_read_str(runtime, fmt_off, fmt_buf, sizeof(fmt_buf));
+    if (sc < 0 || fc < 0) return -1;
 
     uint32_t aoff = args_off;
     int matches = 0;
@@ -330,11 +308,11 @@ static int wasm_vsscanf(IM3Runtime runtime,
                 }
                 spos += consumed;
                 if (!suppress) {
-                    if (aoff + 4 > mem_size) return matches;
-                    uint32_t dst; memcpy(&dst, mem + aoff, 4); aoff += 4;
-                    if (dst + 8 > mem_size) return matches;
+                    if (!wasm_mem_check(runtime, aoff, 4)) return matches;
+                    uint32_t dst; wasm_mem_read(runtime, aoff, &dst, 4); aoff += 4;
+                    if (!wasm_mem_check(runtime, dst, 8)) return matches;
                     int64_t v64 = is_unsigned ? (int64_t)ullv : (int64_t)llv;
-                    memcpy(mem + dst, &v64, 8);
+                    wasm_mem_write(runtime, dst, &v64, 8);
                     matches++;
                 }
             } else { // 32-bit or narrower
@@ -348,22 +326,22 @@ static int wasm_vsscanf(IM3Runtime runtime,
                 }
                 spos += consumed;
                 if (!suppress) {
-                    if (aoff + 4 > mem_size) return matches;
-                    uint32_t dst; memcpy(&dst, mem + aoff, 4); aoff += 4;
+                    if (!wasm_mem_check(runtime, aoff, 4)) return matches;
+                    uint32_t dst; wasm_mem_read(runtime, aoff, &dst, 4); aoff += 4;
                     int32_t val = is_unsigned ? (int32_t)uv : iv;
                     if (lmod == 2) { // hh → 1 byte
-                        if (dst + 1 > mem_size) return matches;
-                        mem[dst] = (uint8_t)val;
+                        if (!wasm_mem_check(runtime, dst, 1)) return matches;
+                        wasm_mem_write8(runtime, dst, (uint8_t)val);
                     } else if (lmod == 1) { // h → 2 bytes
-                        if (dst + 2 > mem_size) return matches;
+                        if (!wasm_mem_check(runtime, dst, 2)) return matches;
                         int16_t h = (int16_t)val;
-                        memcpy(mem + dst, &h, 2);
+                        wasm_mem_write(runtime, dst, &h, 2);
                     } else { // none/l → 4 bytes
-                        if (dst + 4 > mem_size) return matches;
+                        if (!wasm_mem_check(runtime, dst, 4)) return matches;
                         if (is_unsigned)
-                            memcpy(mem + dst, &uv, 4);
+                            wasm_mem_write(runtime, dst, &uv, 4);
                         else
-                            memcpy(mem + dst, &iv, 4);
+                            wasm_mem_write(runtime, dst, &iv, 4);
                     }
                     matches++;
                 }
@@ -380,10 +358,10 @@ static int wasm_vsscanf(IM3Runtime runtime,
                 if (sscanf(str_buf + spos, sfmt, &dv, &consumed) < 1) return matches;
                 spos += consumed;
                 if (!suppress) {
-                    if (aoff + 4 > mem_size) return matches;
-                    uint32_t dst; memcpy(&dst, mem + aoff, 4); aoff += 4;
-                    if (dst + 8 > mem_size) return matches;
-                    memcpy(mem + dst, &dv, 8);
+                    if (!wasm_mem_check(runtime, aoff, 4)) return matches;
+                    uint32_t dst; wasm_mem_read(runtime, aoff, &dst, 4); aoff += 4;
+                    if (!wasm_mem_check(runtime, dst, 8)) return matches;
+                    wasm_mem_write(runtime, dst, &dv, 8);
                     matches++;
                 }
             } else { // default → float (4 bytes)
@@ -392,10 +370,10 @@ static int wasm_vsscanf(IM3Runtime runtime,
                 if (sscanf(str_buf + spos, sfmt, &fv, &consumed) < 1) return matches;
                 spos += consumed;
                 if (!suppress) {
-                    if (aoff + 4 > mem_size) return matches;
-                    uint32_t dst; memcpy(&dst, mem + aoff, 4); aoff += 4;
-                    if (dst + 4 > mem_size) return matches;
-                    memcpy(mem + dst, &fv, 4);
+                    if (!wasm_mem_check(runtime, aoff, 4)) return matches;
+                    uint32_t dst; wasm_mem_read(runtime, aoff, &dst, 4); aoff += 4;
+                    if (!wasm_mem_check(runtime, dst, 4)) return matches;
+                    wasm_mem_write(runtime, dst, &fv, 4);
                     matches++;
                 }
             }
@@ -412,11 +390,11 @@ static int wasm_vsscanf(IM3Runtime runtime,
             if (sscanf(str_buf + spos, sfmt, sbuf, &consumed) < 1) return matches;
             spos += consumed;
             if (!suppress) {
-                if (aoff + 4 > mem_size) return matches;
-                uint32_t dst; memcpy(&dst, mem + aoff, 4); aoff += 4;
+                if (!wasm_mem_check(runtime, aoff, 4)) return matches;
+                uint32_t dst; wasm_mem_read(runtime, aoff, &dst, 4); aoff += 4;
                 int slen = strlen(sbuf) + 1;
-                if (dst + (uint32_t)slen > mem_size) return matches;
-                memcpy(mem + dst, sbuf, slen);
+                if (!wasm_mem_check(runtime, dst, (size_t)slen)) return matches;
+                wasm_mem_write(runtime, dst, sbuf, slen);
                 matches++;
             }
             break;
@@ -425,10 +403,10 @@ static int wasm_vsscanf(IM3Runtime runtime,
         case 'c': {
             if (str_buf[spos] == '\0') return matches;
             if (!suppress) {
-                if (aoff + 4 > mem_size) return matches;
-                uint32_t dst; memcpy(&dst, mem + aoff, 4); aoff += 4;
-                if (dst + 1 > mem_size) return matches;
-                mem[dst] = (uint8_t)str_buf[spos];
+                if (!wasm_mem_check(runtime, aoff, 4)) return matches;
+                uint32_t dst; wasm_mem_read(runtime, aoff, &dst, 4); aoff += 4;
+                if (!wasm_mem_check(runtime, dst, 1)) return matches;
+                wasm_mem_write8(runtime, dst, (uint8_t)str_buf[spos]);
                 matches++;
             }
             spos++;
@@ -437,11 +415,11 @@ static int wasm_vsscanf(IM3Runtime runtime,
 
         case 'n': {
             if (!suppress) {
-                if (aoff + 4 > mem_size) return matches;
-                uint32_t dst; memcpy(&dst, mem + aoff, 4); aoff += 4;
-                if (dst + 4 > mem_size) return matches;
+                if (!wasm_mem_check(runtime, aoff, 4)) return matches;
+                uint32_t dst; wasm_mem_read(runtime, aoff, &dst, 4); aoff += 4;
+                if (!wasm_mem_check(runtime, dst, 4)) return matches;
                 int32_t pos = spos;
-                memcpy(mem + dst, &pos, 4);
+                wasm_mem_write(runtime, dst, &pos, 4);
             }
             break;
         }

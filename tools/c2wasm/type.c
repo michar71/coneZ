@@ -70,9 +70,10 @@ CType parse_type_spec(void) {
         base = CT_INT;
     }
 
-    /* Apply unsigned: CT_INT→CT_UINT, CT_LONG_LONG→CT_ULONG_LONG, CT_CHAR→CT_UINT */
+    /* Apply unsigned: CT_INT→CT_UINT, CT_CHAR→CT_UCHAR, CT_LONG_LONG→CT_ULONG_LONG */
     if (is_unsigned) {
-        if (base == CT_INT || base == CT_CHAR) base = CT_UINT;
+        if (base == CT_CHAR) base = CT_UCHAR;
+        else if (base == CT_INT) base = CT_UINT;
         else if (base == CT_LONG_LONG) base = CT_ULONG_LONG;
     }
 

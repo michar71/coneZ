@@ -151,7 +151,7 @@ External libraries in `platformio.ini` `lib_deps`:
 |---------|---------|-------|
 | RadioLib | ^7.6.0 | Uses `RadioLibHal` abstraction. Custom `EspHal` class in `lora/lora_hal.h` — raw GPSPI3 register access for SPI, ESP-IDF `driver/gpio.h` for GPIO, `esp_timer` for timing. |
 | sunset | ^1.1.7 | Pure C++ math (`<cmath>`, `<ctime>`). Zero platform dependency. |
-| Wasm3 | ^0.5.0 | Pure C interpreter. Zero platform dependency. |
+| Wasm3 | 0.5.0-conez | Pure C interpreter. **Local fork** in `firmware/lib/wasm3/` (overrides `lib_deps`). Fork adds `d_m3UsePsramMemory` compile-time flag to route WASM linear memory through SPI PSRAM instead of DRAM. See WASM Runtime section. |
 
 **FastLED removed.** LED color types (`CRGB`, `CHSV`, `hsv2rgb_rainbow`, `rgb2hsv_approximate`) are now custom implementations in `led/crgb.h`/`crgb.cpp`. Hardware LED output uses a custom WS2812B RMT driver in `led/led.cpp` — 4 RMT TX channels at 10 MHz, one per strip GPIO, with a custom encoder (bytes + reset pulse) following the standard ESP-IDF 5.x encoder pattern.
 
@@ -196,7 +196,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | mqtt_task | 1 | 5 | 4096 | ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp` | Created when MQTT connects |
 | led_render | 1 | 2 | 2048 | `led_task_fun` in `led/led.cpp` | Always running |
 | BasicTask | any | 1 | 16384 | `basic_task_fun` in `basic/basic_wrapper.cpp` | Created on first script |
-| WasmTask | any | 1 | 8192 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Always running |
+| WasmTask | any | 1 | 8192 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Always running (holds pre-allocated linear memory) |
 
 **Core 1 tasks (pinned):**
 - **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
@@ -206,7 +206,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 **Floating tasks (`tskNO_AFFINITY` — scheduler places on whichever core has bandwidth):**
 - **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
 - **BasicTask** — BASIC interpreter. Created on first script, not at boot.
-- **WasmTask** — WASM interpreter. Created at boot; persists between runs to hold 8KB stack + 64KB pre-allocated linear memory in place, preventing heap fragmentation.
+- **WasmTask** — WASM interpreter. Created at boot; persists between runs to hold pre-allocated linear memory in place. **DRAM path** (Heltec): 64KB pre-allocated at boot to prevent heap fragmentation. **PSRAM path** (ConeZ): lazy-allocated on first `.wasm` run — only a small DRAM header + 64KB in PSRAM, no boot-time cost if WASM is never used.
 
 **Critical rules:**
 - After `setup()`, only `led_render` calls `led_show_now()`. All other code writes to `leds1`-`leds4` and calls `led_show()` to set the dirty flag. During `setup()` only, `led_show_now()` may be used.
@@ -431,6 +431,8 @@ New BASIC functions are added by: (1) defining the C function that manipulates t
 
 WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build flag. Loads `.wasm` binaries from LittleFS and runs them on WasmTask (`tskNO_AFFINITY`). Entry point conventions: `setup()` + `loop()` (loop runs until stopped), or `_start()` / `main()` (single-shot).
 
+**PSRAM linear memory (`d_m3UsePsramMemory`):** On the ConeZ PCB, WASM linear memory (64KB per page) is allocated in SPI PSRAM instead of DRAM, freeing ~64KB of heap. Controlled by compile-time flag `d_m3UsePsramMemory=1` (set in `platformio.ini` for conez-v0-1 only; Heltec defaults to 0 = stock DRAM behavior). The wasm3 fork in `firmware/lib/wasm3/` intercepts all load/store operations via abstract macros (`m3MemRead`/`m3MemWrite`/`m3MemMove`/`m3MemSet` in `m3_exec.h`) that route through `m3_psram_glue.h` → `wasm_psram_glue.cpp` → `psram_read()`/`psram_write()`. The `M3MemoryHeader` stays in DRAM (small, frequently accessed); `psram_addr` field points to the PSRAM data block. Host imports use `wasm_mem_*` helpers (`wasm_mem_read`, `wasm_mem_write`, `wasm_mem_check`, `wasm_mem_read_str`, `wasm_mem_read8`, `wasm_mem_write8`, `wasm_mem_copy`, `wasm_mem_set`) declared in `wasm_internal.h` and implemented in `wasm_psram_glue.cpp` — these abstract both DRAM and PSRAM paths. When the flag is 0, all helpers compile to thin `memcpy` wrappers with zero overhead. `m3_GetMemory()` returns NULL when PSRAM is active to prevent accidental direct pointer access in host imports.
+
 **Source files:** `wasm_wrapper.cpp/h` (state, m3_Yield, `wasm_run()`, FreeRTOS task, public API) dispatches to per-category import files via `wasm_internal.h`:
 
 | File | Contents |
@@ -447,6 +449,7 @@ WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build fl
 | `wasm_imports_string.cpp` | BASIC string pool allocator + 19 string host imports (`basic_str_*`) |
 | `wasm_imports_compression.cpp` | inflate_file, inflate_file_to_mem, inflate_mem (gzip/zlib/raw deflate) |
 | `wasm_imports_deflate.cpp` | deflate_file, deflate_mem_to_file, deflate_mem (gzip compression) |
+| `wasm_psram_glue.cpp` | `m3_psram_*` glue (extern C), `wasm_mem_*` host import helpers — abstracts DRAM vs PSRAM linear memory access |
 
 Each file contains its wrapper functions and a `link_*_imports()` function that registers them. Adding a new host import is a single-file edit: add the `m3ApiRawFunction` wrapper and a `m3_LinkRawFunction` call in the same file's link function.
 
@@ -530,7 +533,7 @@ See `documentation/simulator.txt` for full reference.
 | Change `m3_LinkRawFunction` signature (type string) | Change the same signature in the simulator's link function |
 | Add/change sensor field in firmware | Add field to `SensorMock` in `sensor_state.h`, add slider in `sensor_panel.cpp` |
 | Update `conez_api.h` | No simulator change needed (header is for module authors, not the runtime) |
-| Change wasm3 version | Re-vendor: copy `firmware/.pio/libdeps/conez-v0-1/Wasm3/src/*.{c,h}` to `simulator/conez/thirdparty/wasm3/source/` |
+| Change wasm3 version | Re-vendor: copy `firmware/lib/wasm3/src/*.{c,h}` to `simulator/conez/thirdparty/wasm3/source/` (firmware uses a local fork, not lib_deps) |
 | Add/change CLI command | Add/change in `mainwindow.cpp` `onCommand()` dispatch and corresponding `cmd*()` method |
 | Add/change data files in `firmware/data/` | Copy updated files to `simulator/conez/data/` |
 
@@ -566,6 +569,8 @@ See `c_sharp/mayhem/readme.md` for quick-start instructions.
 `INCLUDE_BASIC` and `INCLUDE_WASM` in `platformio.ini` build_flags control which scripting runtimes are compiled in. Both are enabled by default. Remove either flag to exclude that runtime and save flash space (~67KB for wasm3).
 
 `INCLUDE_BASIC_COMPILER` and `INCLUDE_C_COMPILER` control the embedded bas2wasm and c2wasm compilers (on-device .bas/.c → .wasm compilation). Both are enabled by default. The `compile` CLI command compiles `.bas` files to `.wasm` on the device; optionally auto-runs the result with `compile file.bas run`.
+
+`d_m3UsePsramMemory=1` (conez-v0-1 only) routes WASM linear memory through SPI PSRAM instead of DRAM. The wasm3 fork in `firmware/lib/wasm3/` gates all changes behind this flag. When set to 0 (default, Heltec), behavior is identical to upstream wasm3. See the WASM Runtime section for details.
 
 **Build size (conez-v0-1, ESP32-S3, 327,680 RAM / 2,097,152 flash, both compilers):**
 
