@@ -62,7 +62,7 @@ src/
 ├── effects/                  Direct LED effects
 ├── cue/                      Cue timeline engine
 ├── psram/                    External SPI PSRAM driver
-└── util/                     Utilities, shell, sun calc, LUT, load avg
+└── util/                     Utilities, shell, sun calc, LUT, load avg, DFS/PM
 ```
 
 PlatformIO's `-I src/<dir>` flags in `platformio.ini` make all headers includable by basename (e.g. `#include "gps.h"`).
@@ -94,6 +94,7 @@ from source. This gives full control over ESP-IDF configuration via `sdkconfig.d
 - `CONFIG_LWIP_TCP_WND_DEFAULT=2920` — halved TCP receive window
 - `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y` — per-task CPU time via `ulRunTimeCounter`
 - `CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y` — uses esp_timer (1 MHz) as counter source
+- `CONFIG_PM_ENABLE=y` — power management / DFS (dynamic frequency scaling between `cpu_min` and `cpu_max`)
 - `CONFIG_PARTITION_TABLE_CUSTOM=y` — uses our `partitions.csv`
 
 **IMPORTANT: Kconfig changes must go in the per-environment sdkconfig files.**

@@ -39,6 +39,8 @@ cone_id=0
 cone_group=0
 ; ntp_server=192.168.1.100   ; local NTP server (default: pool.ntp.org)
 ; ntp_interval=3600          ; seconds between NTP re-syncs (default: 3600)
+; cpu_max=240                ; Max CPU frequency MHz (80/160/240)
+; cpu_min=80                 ; Min CPU frequency MHz. Same as max = fixed, lower = DFS.
 
 [mqtt]
 ; broker=sewerpipe.local

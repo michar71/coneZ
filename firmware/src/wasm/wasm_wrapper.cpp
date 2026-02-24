@@ -9,6 +9,7 @@
 #include "printManager.h"
 #include "main.h"
 #include "basic_wrapper.h"   // get_basic_param / set_basic_param
+#include "pm.h"
 #if d_m3UsePsramMemory
 #include "psram.h"
 #include "m3_psram_glue.h"
@@ -284,12 +285,13 @@ static void wasm_run(const char *path)
     };
 
     printfnl(SOURCE_WASM, "wasm: running %s on Core:%d\n", path, xPortGetCoreID());
+    pm_cpu_lock();
 
     // Run start section if present
     result = m3_RunStart(module);
     if (result) {
         printfnl(SOURCE_WASM, "wasm: start section error: %s\n", result);
-        // prealloc flag in header tells Runtime_Release to skip freeing
+        pm_cpu_unlock();
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(wasm_buf);
@@ -350,6 +352,8 @@ static void wasm_run(const char *path)
             else    printfnl(SOURCE_WASM, "wasm: setup() error: %s\n", result);
         }
     }
+
+    pm_cpu_unlock();
 
     // Cleanup — prealloc flag in M3MemoryHeader tells Runtime_Release to skip freeing
     wasm_close_all_files();

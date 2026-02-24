@@ -46,6 +46,7 @@
 #include "psram.h"
 #include "conez_mqtt.h"
 #include "loadavg.h"
+#include "pm.h"
 
 #define WIFI_TIMEOUT                5     // Seconds
 
@@ -350,6 +351,9 @@ void setup()
 
   // Load config from /config.ini (or use compiled defaults)
   config_init();
+
+  // Configure CPU frequency / DFS from config
+  pm_setup();
 
   // Seed time from compile timestamp (fallback until GPS or NTP locks)
   time_seed_compile();

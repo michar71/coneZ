@@ -55,6 +55,8 @@
 #define DEFAULT_CONE_GROUP      0
 #define DEFAULT_NTP_SERVER      "pool.ntp.org"
 #define DEFAULT_NTP_INTERVAL    3600            // seconds between NTP re-syncs
+#define DEFAULT_CPU_MAX         240             // Max CPU frequency MHz (80/160/240)
+#define DEFAULT_CPU_MIN         80              // Min CPU frequency MHz (DFS scales 80-240)
 
 // MQTT
 #define DEFAULT_MQTT_BROKER     "sewerpipe.local"
@@ -119,6 +121,8 @@ typedef struct {
     int     cone_group;
     char    ntp_server[CONFIG_MAX_NTP_SERVER];
     int     ntp_interval;
+    int     cpu_max;
+    int     cpu_min;
 
     // [mqtt]
     char    mqtt_broker[CONFIG_MAX_MQTT_BROKER];

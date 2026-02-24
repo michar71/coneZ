@@ -37,6 +37,7 @@
 #include "deflate.h"
 #include "glob.h"
 #include "loadavg.h"
+#include "pm.h"
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
 #include "lwip/stats.h"
@@ -1471,10 +1472,10 @@ int cmd_top(int argc, char **argv)
             out->printf(" | PSRAM: %u used / %u free",
                         (unsigned)psram_bytes_used(), (unsigned)psram_bytes_free());
         out->print("\n");
-        out->printf("CPU: %u.%u%% busy (%u.%u%% idle) | Refresh: %ds | r=refresh i=interval q=quit\n",
+        out->printf("CPU: %u.%u%% busy (%u.%u%% idle) @ %d MHz | Refresh: %ds | r=refresh i=interval q=quit\n",
                     (unsigned)(busy_x10 / 10), (unsigned)(busy_x10 % 10),
                     (unsigned)(idle_x10 / 10), (unsigned)(idle_x10 % 10),
-                    interval);
+                    pm_get_freq(), interval);
         if (loadavg_valid())
             out->printf("Load avg: %.2f, %.2f, %.2f (1m, 5m, 15m)\n\n",
                         loadavg_1(), loadavg_5(), loadavg_15());
@@ -1605,6 +1606,10 @@ int cmd_status(int argc, char **argv)
     if (loadavg_valid())
         out->printf("Load:    %.2f  %.2f  %.2f  (1m 5m 15m)\n",
                     loadavg_1(), loadavg_5(), loadavg_15());
+    if (pm_is_dfs_active())
+        out->printf("CPU:     %d MHz  (DFS: %d-%d MHz)\n", pm_get_freq(), config.cpu_min, config.cpu_max);
+    else
+        out->printf("CPU:     %d MHz\n", pm_get_freq());
 
     // Cone identity
     out->printf("Cone:    id=%d  group=%d\n", config.cone_id, config.cone_group);
@@ -3404,6 +3409,7 @@ int cmd_help( int argc, char **argv )
 #endif
     printfnl( SOURCE_COMMANDS, "  config [set|unset|reset]           Show or change settings\n" );
     printfnl( SOURCE_COMMANDS, "  copy|cp {src} {dst}                Copy file\n" );
+    printfnl( SOURCE_COMMANDS, "  cpu [80|160|240|auto|min|max]      CPU frequency / DFS control\n" );
     printfnl( SOURCE_COMMANDS, "  cue [load|start|stop|status]       Cue timeline engine\n" );
     printfnl( SOURCE_COMMANDS, "  debug [off|{source} [on|off]]      Show/set debug sources\n" );
     printfnl( SOURCE_COMMANDS, "  deflate|gzip {file} [out] [level]  Compress to gzip\n" );
@@ -3893,6 +3899,7 @@ void init_commands(ConezStream *dev)
     shell.addCommand("config", cmd_config, NULL, NULL, tc_config);
     shell.addCommand("copy", cmd_cp, "*");
     shell.addCommand("cp", cmd_cp, "*");
+    shell.addCommand("cpu", cmd_cpu);
     shell.addCommand("cue", cmd_cue, NULL, NULL, tc_cue);
     shell.addCommand("debug", cmd_debug, NULL, NULL, tc_debug);
     shell.addCommand("del", delFile, "*");

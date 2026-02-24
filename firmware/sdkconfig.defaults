@@ -1,6 +1,9 @@
 # CPU at full speed (IDF defaults to 160 MHz; board JSON says 240)
 CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y
 
+# Power management — enable DFS (dynamic frequency scaling)
+CONFIG_PM_ENABLE=y
+
 # Flash in QIO mode (4-bit reads; IDF defaults to DIO; board JSON says qio)
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 

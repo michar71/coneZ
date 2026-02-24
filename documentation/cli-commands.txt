@@ -124,6 +124,7 @@ filenames, and subcommands.
   compile {file} [run]               Compile .bas or .c to .wasm on-device
   config [set|unset|reset]           Show or change settings
   copy|cp {src} {dst}                Copy file (wildcards OK in src)
+  cpu [80|160|240|auto|min|max]      CPU frequency and DFS control
   cue [load|start|stop|status]       Cue timeline engine control
   debug [off|{source} [on|off]]      Show or set debug message types
   deflate|gzip {file} [out] [level]  Compress file to gzip format
@@ -239,6 +240,32 @@ config
 
   config reset
       Delete /config.ini and revert all settings to compiled defaults.
+
+cpu
+  Show current CPU frequency, DFS (Dynamic Frequency Scaling) status,
+  and PM lock count. Valid frequencies: 80, 160, 240 MHz (all PLL-derived;
+  APB stays 80 MHz, so all peripherals are unaffected). Minimum 80 MHz
+  is enforced — below that the PLL shuts down, breaking WiFi and SPI.
+
+  cpu 80|160|240
+      Set a fixed CPU frequency (min = max = N). DFS is disabled.
+
+  cpu auto [min max]
+      Enable DFS. Without arguments, scales 80 to current max (240).
+      With arguments, sets explicit min and max.
+      Examples: cpu auto            (80-240 MHz)
+                cpu auto 80 160     (80-160 MHz)
+
+  cpu min <MHz>
+      Set just the minimum DFS frequency.
+
+  cpu max <MHz>
+      Set just the maximum DFS frequency.
+
+  Note: Changes are immediate but not saved to flash. Use
+  "config set system.cpu_min 80" / "config set system.cpu_max 240"
+  for persistent settings. WASM and BASIC programs automatically
+  acquire a PM lock to run at max frequency.
 
 cue
   Control the cue timeline engine for synchronized LED shows.

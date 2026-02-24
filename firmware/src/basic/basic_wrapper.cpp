@@ -1,6 +1,7 @@
 #include "basic_wrapper.h"
 #include <cstring>
 #include "printManager.h"
+#include "pm.h"
 
 #ifdef INCLUDE_WASM
 #include "wasm_wrapper.h"
@@ -197,7 +198,9 @@ void basic_task_fun( void * parameter )
                 printfnl(SOURCE_BASIC,"Running: %s on Core:%d\n",local_code,xPortGetCoreID());
                 reset_params();
                 initbasic(1);
+                pm_cpu_lock();
                 int res = interp(local_code);
+                pm_cpu_unlock();
                 if (res != 0)
                 {
                     printfnl(SOURCE_BASIC,"Error Exit Code: %d\n",res);

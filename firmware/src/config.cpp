@@ -59,6 +59,8 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("system", "cone_group", CFG_INT,   cone_group),
     CFG_ENTRY("system", "ntp_server",   CFG_STR,   ntp_server),
     CFG_ENTRY("system", "ntp_interval", CFG_INT,   ntp_interval),
+    CFG_ENTRY("system", "cpu_max",      CFG_INT,   cpu_max),
+    CFG_ENTRY("system", "cpu_min",      CFG_INT,   cpu_min),
     // [mqtt]
     CFG_ENTRY("mqtt",   "broker",       CFG_STR,   mqtt_broker),
     CFG_ENTRY("mqtt",   "enabled",      CFG_BOOL,  mqtt_enabled),
@@ -197,6 +199,8 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->cone_group       = DEFAULT_CONE_GROUP;
     strlcpy(cfg->ntp_server,      DEFAULT_NTP_SERVER,     sizeof(cfg->ntp_server));
     cfg->ntp_interval     = DEFAULT_NTP_INTERVAL;
+    cfg->cpu_max          = DEFAULT_CPU_MAX;
+    cfg->cpu_min          = DEFAULT_CPU_MIN;
 
     strlcpy(cfg->mqtt_broker,     DEFAULT_MQTT_BROKER,    sizeof(cfg->mqtt_broker));
     cfg->mqtt_enabled     = DEFAULT_MQTT_ENABLED;
