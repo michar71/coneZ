@@ -36,6 +36,7 @@
 #include "inflate.h"
 #include "deflate.h"
 #include "glob.h"
+#include "loadavg.h"
 #include "mbedtls/md5.h"
 #include "mbedtls/sha256.h"
 #include "lwip/stats.h"
@@ -1285,6 +1286,271 @@ int cmd_ps(int argc, char **argv)
 }
 
 
+int cmd_top(int argc, char **argv)
+{
+    if (argc > 2) { printfnl(SOURCE_COMMANDS, "Usage: top [interval_secs]\n"); return 1; }
+    if (!getAnsiEnabled()) {
+        printfnl(SOURCE_COMMANDS, "Requires ANSI mode (color on)\n");
+        return 1;
+    }
+
+    int interval = 2;
+    if (argc == 2) {
+        interval = (int)strtol(argv[1], NULL, 0);
+        if (interval < 1) interval = 1;
+        if (interval > 60) interval = 60;
+    }
+
+    UBaseType_t maxTasks = uxTaskGetNumberOfTasks() + 4;  // headroom
+    TaskStatus_t *prev = (TaskStatus_t *)malloc(maxTasks * sizeof(TaskStatus_t));
+    TaskStatus_t *curr = (TaskStatus_t *)malloc(maxTasks * sizeof(TaskStatus_t));
+    uint32_t *order = (uint32_t *)malloc(maxTasks * sizeof(uint32_t));  // reused as TaskInfo[]
+    if (!prev || !curr || !order) {
+        free(prev); free(curr); free(order);
+        printfnl(SOURCE_COMMANDS, "Out of memory\n");
+        return -1;
+    }
+
+    setInteractive(true);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    while (getStream()->available()) getStream()->read();
+
+    // Take initial snapshot
+    uint32_t prevTotal = 0;
+    UBaseType_t prevCount = uxTaskGetSystemState(prev, maxTasks, &prevTotal);
+    bool firstPass = true;
+
+    for (bool quit = false; !quit; ) {
+        // Sleep in short increments so keypresses are responsive (skip on first pass)
+        for (int ms = 0; ms < interval * 1000 && !quit && !firstPass; ms += 100) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            while (getStream()->available()) {
+                int ch = getStream()->read();
+                if (ch == 'r' || ch == 'R') {
+                    break;  // immediate refresh
+                } else if (ch == 'i' || ch == 'I') {
+                    // Prompt for new interval
+                    getLock();
+                    ConezStream *out = getStream();
+                    out->print("\033[?25h");  // show cursor
+                    out->printf("\n\nNew interval (1-60): ");
+                    releaseLock();
+                    char buf[8];
+                    int pos = 0;
+                    for (;;) {
+                        while (!getStream()->available()) vTaskDelay(pdMS_TO_TICKS(50));
+                        int c = getStream()->read();
+                        if (c == '\r' || c == '\n') break;
+                        if (c == 27 || c == 3) { pos = 0; break; }  // ESC or Ctrl+C cancels
+                        if ((c == '\b' || c == 127) && pos > 0) {
+                            pos--;
+                            getLock(); getStream()->print("\b \b"); releaseLock();
+                            continue;
+                        }
+                        if (c >= '0' && c <= '9' && pos < 2) {
+                            buf[pos++] = c;
+                            getLock(); getStream()->write(c); releaseLock();
+                        }
+                    }
+                    buf[pos] = '\0';
+                    if (pos > 0) {
+                        int val = (int)strtol(buf, NULL, 10);
+                        if (val >= 1 && val <= 60) interval = val;
+                    }
+                    // Drain any trailing \r\n from the Enter keypress
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                    while (getStream()->available()) getStream()->read();
+                    // Retake baseline snapshot since time passed during input
+                    prevCount = uxTaskGetSystemState(prev, maxTasks, &prevTotal);
+                    break;  // refresh immediately with new interval
+                } else {
+                    while (getStream()->available()) getStream()->read();
+                    quit = true;
+                    break;
+                }
+            }
+        }
+        firstPass = false;
+        if (quit) break;
+
+        // Grow arrays if task count increased
+        UBaseType_t numNow = uxTaskGetNumberOfTasks();
+        if (numNow + 4 > maxTasks) {
+            maxTasks = numNow + 4;
+            free(curr); free(order);
+            curr = (TaskStatus_t *)malloc(maxTasks * sizeof(TaskStatus_t));
+            order = (uint32_t *)malloc(maxTasks * sizeof(uint32_t));
+            if (!curr || !order) break;
+        }
+
+        uint32_t currTotal = 0;
+        UBaseType_t currCount = uxTaskGetSystemState(curr, maxTasks, &currTotal);
+        // totalRunTime is wall-clock; task counters sum to numCores * wall_time
+        // Use numCores * delta so per-task percentages sum to 100%
+        uint64_t deltaTotal = (uint64_t)(currTotal - prevTotal) * portNUM_PROCESSORS;
+
+        // Compute delta CPU% per task, sort by descending CPU%
+        struct TaskInfo {
+            uint16_t idx;        // index into curr[]
+            uint16_t pct_x10;   // CPU% * 10
+        };
+        TaskInfo *info = (TaskInfo *)order;  // reuse — sizeof(TaskInfo) == sizeof(uint32_t)
+
+        for (UBaseType_t i = 0; i < currCount; i++) {
+            info[i].idx = i;
+            info[i].pct_x10 = 0;
+
+            if (deltaTotal > 0) {
+                // Find matching task in previous snapshot by handle
+                for (UBaseType_t j = 0; j < prevCount; j++) {
+                    if (prev[j].xHandle == curr[i].xHandle) {
+                        uint32_t delta = curr[i].ulRunTimeCounter - prev[j].ulRunTimeCounter;
+                        info[i].pct_x10 = (uint16_t)((uint64_t)delta * 1000ULL / deltaTotal);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Insertion sort by pct_x10 descending
+        for (UBaseType_t i = 1; i < currCount; i++) {
+            TaskInfo tmp = info[i];
+            int j = (int)i - 1;
+            while (j >= 0 && info[j].pct_x10 < tmp.pct_x10) {
+                info[j + 1] = info[j];
+                j--;
+            }
+            info[j + 1] = tmp;
+        }
+
+        // Compute idle% (sum of IDLE task deltas over both cores)
+        uint32_t idleDelta = 0;
+        if (deltaTotal > 0) {
+            for (UBaseType_t i = 0; i < currCount; i++) {
+                if (strncmp(curr[i].pcTaskName, "IDLE", 4) == 0) {
+                    for (UBaseType_t j = 0; j < prevCount; j++) {
+                        if (prev[j].xHandle == curr[i].xHandle) {
+                            idleDelta += curr[i].ulRunTimeCounter - prev[j].ulRunTimeCounter;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        uint32_t idle_x10 = deltaTotal > 0 ? (uint32_t)((uint64_t)idleDelta * 1000ULL / deltaTotal) : 1000;
+        uint32_t busy_x10 = idle_x10 <= 1000 ? 1000 - idle_x10 : 0;
+
+        // Uptime + clock
+        uint32_t up = uptime_ms() / 1000;
+        unsigned uh = up / 3600, um = (up % 3600) / 60, us = up % 60;
+        char timeBuf[48];
+        if (get_time_valid()) {
+            uint64_t epoch = get_epoch_ms();
+            int utc_y = get_year(), utc_m = get_month(), utc_d = get_day();
+            int tz = effective_tz_offset(utc_y, utc_m, utc_d);
+            time_t local_t = (time_t)(epoch / 1000) + tz * 3600;
+            struct tm ltm;
+            gmtime_r(&local_t, &ltm);
+            snprintf(timeBuf, sizeof(timeBuf), " | %04d-%02d-%02d %02d:%02d:%02d %s",
+                     ltm.tm_year + 1900, ltm.tm_mon + 1, ltm.tm_mday,
+                     ltm.tm_hour, ltm.tm_min, ltm.tm_sec, tz_label(tz));
+        } else {
+            snprintf(timeBuf, sizeof(timeBuf), " | time not valid");
+        }
+
+        // Render
+        getLock();
+        ConezStream *out = getStream();
+        out->print("\033[2J\033[H\033[?25l\n");
+
+        out->printf("ConeZ top \xe2\x80\x94 %u tasks, uptime %u:%02u:%02u%s\n",
+                    (unsigned)currCount, uh, um, us, timeBuf);
+        out->printf("Heap: %u free / %u min",
+                    (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size());
+        if (psram_available())
+            out->printf(" | PSRAM: %u used / %u free",
+                        (unsigned)psram_bytes_used(), (unsigned)psram_bytes_free());
+        out->print("\n");
+        out->printf("CPU: %u.%u%% busy (%u.%u%% idle) | Refresh: %ds | r=refresh i=interval q=quit\n",
+                    (unsigned)(busy_x10 / 10), (unsigned)(busy_x10 % 10),
+                    (unsigned)(idle_x10 / 10), (unsigned)(idle_x10 % 10),
+                    interval);
+        if (loadavg_valid())
+            out->printf("Load avg: %.2f, %.2f, %.2f (1m, 5m, 15m)\n\n",
+                        loadavg_1(), loadavg_5(), loadavg_15());
+        else
+            out->print("Load avg: ---, ---, --- (1m, 5m, 15m)\n\n");
+
+        out->printf("\033[48;5;17;97m  %-16s %-6s %4s  %4s  %5s  %8s  %6s  %s\033[K\033[0m\n",
+                    "Name", "State", "Prio", "Core", "CPU%", "Time", "Stack", "Free");
+
+        for (UBaseType_t i = 0; i < currCount; i++) {
+            TaskStatus_t *t = &curr[info[i].idx];
+
+            const char *state;
+            switch (t->eCurrentState) {
+                case eRunning:   state = "Run";   break;
+                case eReady:     state = "Ready"; break;
+                case eBlocked:   state = "Block"; break;
+                case eSuspended: state = "Susp";  break;
+                case eDeleted:   state = "Del";   break;
+                default:         state = "?";     break;
+            }
+
+            BaseType_t coreId = xTaskGetCoreID(t->xHandle);
+            uint32_t freeBytes = (uint32_t)t->usStackHighWaterMark;
+
+            TaskSnapshot_t snap = {};
+            vTaskGetSnapshot(t->xHandle, &snap);
+            uint32_t totalBytes = (snap.pxEndOfStack > t->pxStackBase)
+                ? ((uint32_t)(snap.pxEndOfStack - t->pxStackBase + 1) + 15U) & ~15U
+                : 0;
+
+            char cpuBuf[16];
+            uint16_t p = info[i].pct_x10;
+            if (p == 0)
+                snprintf(cpuBuf, sizeof(cpuBuf), "  0.0");
+            else
+                snprintf(cpuBuf, sizeof(cpuBuf), "%3u.%u", (unsigned)(p / 10), (unsigned)(p % 10));
+
+            char timeBuf[16];
+            uint32_t secs = t->ulRunTimeCounter / 1000000;
+            if (secs >= 3600)
+                snprintf(timeBuf, sizeof(timeBuf), "%u:%02u:%02u",
+                         (unsigned)(secs / 3600), (unsigned)(secs % 3600 / 60), (unsigned)(secs % 60));
+            else
+                snprintf(timeBuf, sizeof(timeBuf), "%u:%02u",
+                         (unsigned)(secs / 60), (unsigned)(secs % 60));
+
+            if (coreId == tskNO_AFFINITY)
+                out->printf("  %-16s %-6s %4u     -  %s  %8s  %6u  %u\n",
+                    t->pcTaskName, state, (unsigned)t->uxCurrentPriority,
+                    cpuBuf, timeBuf, (unsigned)totalBytes, (unsigned)freeBytes);
+            else
+                out->printf("  %-16s %-6s %4u  %4d  %s  %8s  %6u  %u\n",
+                    t->pcTaskName, state, (unsigned)t->uxCurrentPriority,
+                    (int)coreId, cpuBuf, timeBuf, (unsigned)totalBytes, (unsigned)freeBytes);
+        }
+
+        releaseLock();
+
+        // Swap: current becomes previous
+        TaskStatus_t *tmp = prev;
+        prev = curr;
+        curr = tmp;
+        prevTotal = currTotal;
+        prevCount = currCount;
+    }
+
+    free(prev); free(curr); free(order);
+    setInteractive(false);
+    getLock();
+    getStream()->print("\033[?25h\033[0m\n");
+    releaseLock();
+    return 0;
+}
+
+
 int tc(int argc, char **argv)
 {
     if (argc != 1)
@@ -1336,6 +1602,9 @@ int cmd_status(int argc, char **argv)
 
     // Version + uptime
     out->printf("ConeZ %s  %s  up %ud %02uh %02um\n", ver, board_name, days, hours, mins);
+    if (loadavg_valid())
+        out->printf("Load:    %.2f  %.2f  %.2f  (1m 5m 15m)\n",
+                    loadavg_1(), loadavg_5(), loadavg_15());
 
     // Cone identity
     out->printf("Cone:    id=%d  group=%d\n", config.cone_id, config.cone_group);
@@ -2506,6 +2775,9 @@ int cmd_time(int argc, char **argv)
     unsigned int mins  = (totalSec % 3600) / 60;
     unsigned int secs  = totalSec % 60;
     printfnl(SOURCE_COMMANDS, "Uptime: %ud %02uh %02um %02us\n", days, hours, mins, secs);
+    if (loadavg_valid())
+        printfnl(SOURCE_COMMANDS, "Load:   %.2f  %.2f  %.2f  (1m 5m 15m)\n",
+                 loadavg_1(), loadavg_5(), loadavg_15());
 
     return 0;
 }
@@ -3168,6 +3440,7 @@ int cmd_help( int argc, char **argv )
     printfnl( SOURCE_COMMANDS, "  stop                               Stop running script\n" );
     printfnl( SOURCE_COMMANDS, "  tc                                 Show thread count\n" );
     printfnl( SOURCE_COMMANDS, "  time|date                          Show current date/time\n" );
+    printfnl( SOURCE_COMMANDS, "  top [interval]                     Live task monitor (ANSI)\n" );
     printfnl( SOURCE_COMMANDS, "  uptime                             Show system uptime\n" );
     printfnl( SOURCE_COMMANDS, "  version|ver                        Show firmware version\n" );
 #ifdef INCLUDE_WASM
@@ -3667,6 +3940,7 @@ void init_commands(ConezStream *dev)
     shell.addCommand("stop", stopBasic);
     shell.addCommand("tc", tc);
     shell.addCommand("time", cmd_time);
+    shell.addCommand("top", cmd_top);
     shell.addCommand("date", cmd_time);
     shell.addCommand("uptime", cmd_time);
     shell.addCommand("ver", cmd_version);

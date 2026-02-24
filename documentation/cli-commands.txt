@@ -161,6 +161,7 @@ filenames, and subcommands.
   stop                               Stop running script
   tc                                 Show thread count per core
   time|date|uptime                   Show current date/time, source, uptime
+  top [interval]                     Live task monitor with interval CPU% (ANSI)
   version|ver                        Show firmware version and board info
   wasm [status|info <file>]          WASM runtime status/info
   wifi [enable|disable|ssid|password] Show WiFi status or control
@@ -199,8 +200,8 @@ color [on|off]
 
   color off
       Disable all ANSI escape codes. Output is plain text only.
-      Commands that require ANSI (art, clear, game, winamp) will
-      print an error. The editor falls back to a line-based mode.
+      Commands that require ANSI (art, clear, game, top, winamp)
+      will print an error. The editor falls back to a line-based mode.
 
 compile {file.bas|file.c} [run]
   Compile a BASIC or C source file to a WASM binary on-device.
@@ -661,10 +662,11 @@ sha256sum {file ...}
 
 status
   Show a compact one-screen system overview. Each subsystem gets one line:
-  firmware version and uptime, cone identity (id/group), WiFi, MQTT, LoRa,
-  GPS (boards with GPS only), time, script (WASM), cue engine, heap, PSRAM,
-  LEDs (boards with RGB LEDs), and sensors. Inactive or unavailable
-  subsystems show a short status (e.g. "Disabled", "idle", "not available").
+  firmware version and uptime, load averages (1/5/15 min), cone identity
+  (id/group), WiFi, MQTT, LoRa, GPS (boards with GPS only), time, script
+  (WASM), cue engine, heap, PSRAM, LEDs (boards with RGB LEDs), and sensors.
+  Inactive or unavailable subsystems show a short status (e.g. "Disabled",
+  "idle", "not available").
 
 stop
   Stop the currently running script. Sets parameter 0 to 1 (checked by
@@ -678,13 +680,33 @@ tc
 time / date / uptime
   Show current local date, time, day of week, timezone, time source
   (GPS+PPS, NTP, or build/compile-time), NTP server and sync age,
-  epoch milliseconds, and system uptime. Time is displayed in the local
+  epoch milliseconds, system uptime, and load averages (1/5/15 min).
+  Time is displayed in the local
   timezone (config system.timezone + auto DST). Available on all boards —
   GPS boards use PPS-disciplined time, others fall back to NTP when WiFi
   is connected. NTP auto-initializes whenever WiFi connects (including
   via CLI commands) and re-syncs periodically (config system.ntp_interval,
   default 3600s). If neither GPS nor NTP is available, time starts from
   the firmware's compile timestamp (shown as source "build").
+
+top [interval]
+  Live task monitor with interval-based CPU percentages. Refreshes the
+  screen every interval seconds (default 2, range 1-60). Shows a header
+  with heap/PSRAM stats, overall CPU busy/idle%, load averages (1/5/15
+  min EWMA), date/time, and uptime, followed by a task table sorted by
+  CPU% descending. CPU% reflects activity during the last refresh
+  interval, not cumulative since boot. On dual-core boards, percentages
+  are normalized so they sum to 100%. Load averages use the Linux
+  convention: 2.0 = both cores fully busy.
+  Requires ANSI mode (color on).
+
+  Interactive keys:
+    r       Refresh immediately
+    i       Change refresh interval (prompts for 1-60, ESC cancels)
+    any other key   Exit
+
+  Examples: top
+            top 5
 
 ver
   Alias for version.

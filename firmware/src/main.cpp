@@ -45,6 +45,7 @@
 #include "adc.h"
 #include "psram.h"
 #include "conez_mqtt.h"
+#include "loadavg.h"
 
 #define WIFI_TIMEOUT                5     // Seconds
 
@@ -568,6 +569,9 @@ void loop()
 
   // Cue timeline engine
   cue_loop();
+
+  // CPU load average sampling (5-second EWMA)
+  loadavg_sample();
 
 #ifdef BOARD_HAS_RGB_LEDS
   //RUN Direct Effects

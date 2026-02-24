@@ -62,7 +62,7 @@ src/
 ├── effects/                  Direct LED effects
 ├── cue/                      Cue timeline engine
 ├── psram/                    External SPI PSRAM driver
-└── util/                     Utilities, shell, sun calc, LUT
+└── util/                     Utilities, shell, sun calc, LUT, load avg
 ```
 
 PlatformIO's `-I src/<dir>` flags in `platformio.ini` make all headers includable by basename (e.g. `#include "gps.h"`).
@@ -199,7 +199,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | WasmTask | any | 1 | 8192 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Always running (holds pre-allocated linear memory) |
 
 **Core 1 tasks (pinned):**
-- **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
+- **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, load average sampling, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
 - **httpd** — ESP-IDF `esp_http_server` task. Handles all HTTP requests autonomously (no polling needed). Pinned to core 1. Stack 4096 for HTML generation and OTA streaming.
 - **led_render** — Pushes LED data to hardware via RMT at ~30 FPS when dirty, at least 2/sec unconditionally. Priority 2 preempts both loopTask and ShellTask.
 
@@ -224,7 +224,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 1. **All output after `setup()` must go through `printfnl()`** which holds `print_mutex`. Direct writes bypass the mutex and corrupt output ordering.
 2. **DualStream and TelnetServer both override `write(const uint8_t*, size_t)`** for efficient bulk writes.
 3. **ESP-IDF component logging is suppressed** via `esp_log_level_set("*", ESP_LOG_NONE)` — shares the USB CDC.
-4. **Interactive apps** (editor, game) use `setInteractive(true)` which makes `printfnl()` return immediately. The app writes directly under `getLock()`/`releaseLock()`.
+4. **Interactive apps** (editor, game, top, winamp) use `setInteractive(true)` which makes `printfnl()` return immediately. The app writes directly under `getLock()`/`releaseLock()`.
 
 **Historical note:** The core-1 pinning constraint from the Arduino HWCDC era is no longer required. ShellTask, BasicTask, and WasmTask now use `tskNO_AFFINITY` — the scheduler places them on whichever core has bandwidth. Only loopTask and led_render remain pinned to core 1.
 
@@ -383,16 +383,13 @@ static const char * const subs_example[] = { "start", "stop", "status", NULL };
 
 **Ordering rule:** Callback functions must be defined after the subcommand arrays they reference. The existing code groups all `subs_*` arrays first, then all `tc_*` callbacks, then `init_commands()`.
 
-#### Step 5: Add help text
+#### Step 5: Update help and documentation
 
-The `"name ..."` string in `addCommand` doubles as help text. Everything after the first space is shown by the `help` command. Keep it concise — the help display is a single-column list.
+1. **`cmd_help()` in `commands.cpp`** — add a line to the hand-maintained help display (alphabetical order)
+2. **`documentation/cli-commands.txt`** — add a quick reference line and a detailed description section
+3. **`AGENTS.md`** — if the command interacts with a subsystem already documented, update that section
 
-#### Step 6: Add documentation
-
-1. **`documentation/cli-commands.txt`** — add a quick reference line and a detailed description section
-2. **`AGENTS.md`** — if the command interacts with a subsystem already documented, update that section
-
-#### Step 7: Add aliases (optional)
+#### Step 6: Add aliases (optional)
 
 Aliases are just additional `addCommand` calls pointing to the same function with the same completion:
 
@@ -514,7 +511,7 @@ make -j$(nproc)
 
 **Data directory:** `simulator/conez/data/` ships example scripts copied from `firmware/data/`. Auto-detected at startup relative to the binary; overridable with `--sandbox`. CLI commands (`dir`, `cat`, `del`, `ren`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`) and WASM file I/O operate in this directory. Bare filenames in `run` resolve here.
 
-**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`/`ls`, `del`/`rm`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`/`date`, `uptime`, `ver`/`version`, `wasm`, `cue`, `mqtt`, `inflate`/`gunzip`, `deflate`/`gzip`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, radio, reboot, tc, wifi, winamp) are not available.
+**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`/`ls`, `del`/`rm`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`/`date`, `uptime`, `ver`/`version`, `wasm`, `cue`, `mqtt`, `inflate`/`gunzip`, `deflate`/`gzip`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, radio, reboot, tc, top, wifi, winamp) are not available.
 
 **Source layout:** `src/gui/` (LED strip, console, sensor panel widgets), `src/state/` (LED buffers, sensor mock, config, cue engine), `src/wasm/` (runtime + 12 import files mirroring firmware), `src/worker/` (QThread for WASM, embedded compilation), `src/compiler/` (single-TU wrappers for embedded bas2wasm and c2wasm). Vendored wasm3 in `thirdparty/wasm3/source/`. Example data in `data/`.
 
