@@ -324,7 +324,7 @@ String Support
 The compiler extends the language with string variables and functions.
 String values are pointers into WASM linear memory (null-terminated C
 strings). The runtime manages a string pool in the 0x8000-0xEFFF region
-for dynamically allocated strings.
+for dynamically allocated strings (concatenation, MID$, etc.).
 
 
 String Variables:
@@ -744,7 +744,7 @@ The compiler produces a valid WASM 1.0 binary with these sections:
   Function   Type indices for local functions (setup + SUBs)
   Memory     1 page (64KB)
   Global     All BASIC variables as mutable globals + heap pointer
-  Export     setup function + memory + __line global
+  Export     setup function + memory + __line + _heap_ptr globals
   Code       Function bodies as WASM bytecode
   Data       String constants
 
@@ -753,21 +753,31 @@ that uses GETPARAM and FORMAT will import just those two functions.
 
 Memory layout:
 
-  [0 .. data_end)       String constants
-  [data_end .. heap)    Reserved (heap pointer global)
-  [0x8000 .. 0xEFFF)   String pool (host-managed, for runtime strings)
-  [0xF000 .. 0xF100)   FORMAT argument buffer (scratch space)
-  [0xF100 .. 0xF110)   File handle table (4 x i32, init to -1)
+  [0 .. data_end)       String constants (null-terminated, compiled in)
+  [data_end .. aligned) Padding (4-byte aligned)
+  [aligned .. +DATA)    DATA table (type-tagged entries, if DATA used)
+  [_heap_ptr .. 0x8000) Low heap (DIM arrays via calloc, grows upward)
+  [0x8000 .. 0xEFFF)    String pool (host-managed, for runtime strings)
+  [0xF000 .. 0xF100)    FORMAT argument buffer (scratch space)
+  [0xF100 .. 0xF110)    File handle table (4 x i32, init to -1)
 
 Variables are WASM globals (not in linear memory). DIM arrays are allocated
-via host imports (calloc/free/realloc) in WASM linear memory with a small
-header containing dimension metadata.
+via host imports (calloc/free/realloc) from the low heap, which grows
+upward from _heap_ptr. This places small arrays in the DRAM window (first
+4KB of linear memory) on PSRAM-backed systems for near-DRAM speed. If the
+low heap is full, allocations fall back to the string pool at 0x8000+.
+Array headers contain dimension metadata (ndims + upper bounds per dim).
 
-The exported `__line` global (mutable i32) tracks the current BASIC source
-line number. The compiler emits a `global.set __line` at the start of each
-statement. The WASM runtime reads this on error to report the originating
-BASIC line (e.g. "wasm: loop() error: trap (BASIC line 42)"). Hand-written
-WASM modules that don't export `__line` are unaffected.
+Exported globals:
+
+  __line    (mutable i32) Current BASIC source line — the compiler emits
+            global.set __line at the start of each statement. The runtime
+            reads this on error to report the originating BASIC line.
+  _heap_ptr (mutable i32) Start of the low heap — initialized to the
+            first free address after the data section. The host reads
+            this after module load to initialize the low-heap allocator.
+
+Hand-written WASM modules that don't export these globals are unaffected.
 
 
 SUB Compilation

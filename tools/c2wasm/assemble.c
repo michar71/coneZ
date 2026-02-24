@@ -210,7 +210,7 @@ Buf assemble_to_buf(void) {
     /* --- Export Section (7) --- */
     {
         Buf sec; buf_init(&sec);
-        int nexports = 2; /* memory + __line always exported */
+        int nexports = 3; /* memory + __line + _heap_ptr always exported */
         int setup_idx = find_func_by_name("setup");
         int loop_idx = find_func_by_name("loop");
         if (setup_idx >= 0) nexports++;
@@ -236,6 +236,10 @@ Buf assemble_to_buf(void) {
         buf_str(&sec, "__line");
         buf_byte(&sec, 0x03);
         buf_uleb(&sec, GLOBAL_LINE);
+
+        buf_str(&sec, "_heap_ptr");
+        buf_byte(&sec, 0x03);
+        buf_uleb(&sec, GLOBAL_HEAP_PTR);
 
         buf_section(&out, 7, &sec);
         buf_free(&sec);

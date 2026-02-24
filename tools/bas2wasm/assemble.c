@@ -193,7 +193,7 @@ Buf assemble_to_buf(void) {
     /* --- Export Section (7) --- */
     {
         Buf sec; buf_init(&sec);
-        buf_uleb(&sec, 3);
+        buf_uleb(&sec, 4);
         buf_str(&sec, "setup");
         buf_byte(&sec, 0x00);
         buf_uleb(&sec, num_used_imports + 0);
@@ -203,6 +203,9 @@ Buf assemble_to_buf(void) {
         buf_str(&sec, "__line");
         buf_byte(&sec, 0x03);
         buf_uleb(&sec, GLOBAL_LINE);
+        buf_str(&sec, "_heap_ptr");
+        buf_byte(&sec, 0x03);
+        buf_uleb(&sec, GLOBAL_HEAP);
         buf_section(&out, 7, &sec);
         buf_free(&sec);
     }

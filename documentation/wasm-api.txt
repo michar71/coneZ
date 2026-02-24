@@ -829,9 +829,8 @@ signatures. Use i32 for int parameters, f32 for float, i64 for int64_t.
 The loop function must use #[export_name = "loop"] because `loop` is a
 Rust keyword.
 
-Allocator note: the current host allocator guarantees 4-byte alignment.
-`ConezAllocator` returns null for allocation requests requiring alignment
-greater than 4.
+Allocator note: both the low heap and string pool guarantee 4-byte
+alignment. `ConezAllocator` returns null for alignment requests > 4.
 
 
 Example Binary Sizes (stripped)
@@ -855,8 +854,22 @@ use a basic_ prefix to distinguish them from general-purpose imports.
 
 All string functions operate on null-terminated strings in WASM linear
 memory. String pointers refer to either static data (compiled string
-literals at low addresses) or pool-allocated strings in the 0x8000-0xEFFF
-region. The pool is a host-managed free-list allocator with bump fallback.
+literals at low addresses), low-heap allocations (DIM arrays, user
+malloc — below 0x8000), or pool-allocated strings in the 0x8000-0xEFFF
+region.
+
+Two allocator tiers:
+
+  Low heap:    Grows upward from _heap_ptr (after data section) toward
+               0x8000. Used by malloc/calloc/realloc imports. Places
+               DIM arrays in the DRAM window (first 4KB) on PSRAM systems.
+               Falls back to string pool when full.
+  String pool: 0x8000-0xEFFF (28KB). Used by basic_str_* imports for
+               runtime string operations (concatenation, MID$, etc.).
+
+The host reads the exported _heap_ptr global after module load to
+initialize the low-heap allocator. Old .wasm binaries without this
+export fall back to pool-only allocation (backward compatible).
 
 String pool management:
 
@@ -867,8 +880,8 @@ String pool management:
 
 General C allocator imports (declared in conez_api.h):
 
-  void* malloc(size_t size)                 Allocate from host-managed WASM pool.
-  void  free(void* ptr)                     Free pool allocation (safe no-op for 0).
+  void* malloc(size_t size)                 Allocate from low heap (or pool).
+  void  free(void* ptr)                     Free (dispatched by address range).
   void* calloc(size_t n, size_t size)       Allocate and zero n*size bytes.
   void* realloc(void* ptr, size_t size)     Resize allocation (may move/copy).
 

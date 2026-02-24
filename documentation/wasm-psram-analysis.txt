@@ -326,6 +326,46 @@ hot data naturally falls in the DRAM window for typical programs.
 See "DRAM Window Architecture" section above for details.
 
 
+bas2wasm Memory Layout & Low-Heap Optimization (2026-02-23)
+------------------------------------------------------------
+
+bas2wasm places data differently from c2wasm:
+
+  Offset 0              String literals (null-terminated, cold)
+  (data_len+3)&~3       DATA table (if any, type-tagged entries)
+  (total_data+3)&~3     _heap_ptr (Global 1, initialized here)
+  0x8000 - 0xEFFF       String pool (host-managed, runtime only)
+  0xF000 - 0xF0FF       FORMAT argument buffer (256 bytes)
+  0xF100 - 0xF10F       File handle table (4 x i32)
+
+Scalar variables are WASM globals (no linear memory traffic).
+DIM arrays are allocated at runtime via the calloc host import.
+
+Problem: Before this optimization, calloc/malloc/free/realloc all
+routed to pool_alloc() which allocates from the string pool at
+0x8000+. DIM arrays were completely outside the 4KB DRAM window,
+getting no fast-path benefit at all. The region from _heap_ptr to
+0x8000 was entirely unused.
+
+Solution: A "low heap" allocator grows upward from _heap_ptr,
+placing DIM arrays in the low region of linear memory (inside the
+DRAM window for small programs). Both compilers now export the
+_heap_ptr global so the host can read it after module load. The
+calloc/malloc imports try the low heap first, falling back to the
+string pool if full. Free/realloc dispatch by address range:
+pointers below 0x8000 go to the low heap, others to the string pool.
+
+After optimization, for a BASIC sieve program:
+
+  Offset 0x0000:  format strings (~50 bytes)
+  Offset 0x0038:  _heap_ptr
+  Offset 0x0038:  sieve(1024) (4096 bytes, DIM'd at runtime)
+                   ^^^ now in DRAM window — fast path!
+
+Old .wasm binaries without the _heap_ptr export fall back to
+pool_alloc for all allocations (full backward compatibility).
+
+
 Decision Matrix
 ---------------
 

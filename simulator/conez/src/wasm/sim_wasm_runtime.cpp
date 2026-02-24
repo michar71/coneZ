@@ -252,6 +252,18 @@ void SimWasmRuntime::run(const std::string &wasmPath)
         return 0;
     };
 
+    // Look up _heap_ptr global — initialize low-heap allocator for DIM arrays
+    IM3Global g_heap = m3_FindGlobal(module, "_heap_ptr");
+    if (g_heap) {
+        M3TaggedValue val;
+        if (m3_GetGlobal(g_heap, &val) == m3Err_none)
+            low_heap_init((uint32_t)val.value.i32);
+        else
+            low_heap_init(0);
+    } else {
+        low_heap_init(0);
+    }
+
     emitOutput("wasm: running " + wasmPath + "\n");
 
     // Run start section
@@ -329,6 +341,7 @@ void SimWasmRuntime::run(const std::string &wasmPath)
     wasm_close_all_files();
     wasm_reset_gamma();
     wasm_string_pool_reset();
+    low_heap_reset();
 
     m3_FreeRuntime(runtime);
     m3_FreeEnvironment(env);

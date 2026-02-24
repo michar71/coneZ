@@ -467,14 +467,25 @@ Current Array/Pointer Limitations
 Memory Layout
 -------------
 
-  0x0000 - data_len      Data section (string literals + static array backing)
+  0x0000 - data_len      Data section (global arrays → local arrays → string literals)
   data_len - heap_start  Padding (4-byte aligned)
-  heap_start+            Heap (available for host_printf args, etc.)
+  heap_start - 0x8000    Low heap (user malloc/calloc, grows upward from _heap_ptr)
+  0x8000 - 0xEFFF        String pool (host-managed, for runtime string ops)
   0xF000 - 0xF0FF        Printf argument buffer (256 bytes)
 
   WASM globals:
-    global[0]   _heap_ptr    Bump allocator pointer (initialized to heap_start)
-    global[1+]  User globals (static int, static float, etc.)
+    global[0]   _heap_ptr    Low heap pointer (initialized to heap_start, exported)
+    global[1]   __line       Current source line (exported)
+    global[2+]  User globals (static int, static float, etc.)
+
+Static arrays (global and local) are compiled directly into the data
+section starting at offset 0. This naturally places hot data in the
+DRAM window (first 4KB) on PSRAM-backed systems. Dynamic allocations
+via malloc()/calloc() use the low heap starting at _heap_ptr, falling
+back to the string pool at 0x8000 if the low heap is full.
+
+Scalar variables (int, float, etc.) are WASM globals, not in linear
+memory — they generate zero memory traffic.
 
 
 Compiler Architecture

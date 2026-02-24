@@ -116,6 +116,115 @@ static uint32_t pool_realloc(IM3Runtime runtime, uint32_t ptr, int size)
     return nptr;
 }
 
+// ---- Low Heap (DIM arrays, user malloc/calloc) ----
+// Grows upward from _heap_ptr toward STR_POOL_BASE (0x8000).
+
+#define LOW_HEAP_MAX_ALLOCS 32
+
+static StrAlloc low_allocs[LOW_HEAP_MAX_ALLOCS];
+static int low_nallocs = 0;
+static uint32_t low_heap_start = 0;
+static uint32_t low_heap_bump = 0;
+
+void low_heap_init(uint32_t start)
+{
+    low_nallocs = 0;
+    low_heap_start = start;
+    low_heap_bump = start;
+}
+
+void low_heap_reset(void)
+{
+    low_nallocs = 0;
+    low_heap_bump = low_heap_start;
+}
+
+static uint32_t low_heap_alloc(IM3Runtime runtime, int size)
+{
+    if (low_heap_start == 0) return 0;
+    if (size <= 0) size = 1;
+    size = (size + 3) & ~3;
+
+    for (int i = 0; i < low_nallocs; i++) {
+        if (!low_allocs[i].in_use && low_allocs[i].size >= (uint32_t)size) {
+            low_allocs[i].in_use = true;
+            uint32_t ms = 0;
+            uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
+            if (mem && low_allocs[i].offset + (uint32_t)size <= ms)
+                memset(mem + low_allocs[i].offset, 0, (size_t)size);
+            return low_allocs[i].offset;
+        }
+    }
+
+    if (low_heap_bump + size > STR_POOL_BASE) return 0;
+    if (low_nallocs >= LOW_HEAP_MAX_ALLOCS) return 0;
+
+    uint32_t off = low_heap_bump;
+    low_heap_bump += size;
+
+    low_allocs[low_nallocs].offset = off;
+    low_allocs[low_nallocs].size = size;
+    low_allocs[low_nallocs].in_use = true;
+    low_nallocs++;
+
+    uint32_t ms = 0;
+    uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
+    if (mem && off + (uint32_t)size <= ms)
+        memset(mem + off, 0, (size_t)size);
+
+    return off;
+}
+
+static void low_heap_free(uint32_t ptr)
+{
+    for (int i = 0; i < low_nallocs; i++) {
+        if (low_allocs[i].offset == ptr && low_allocs[i].in_use) {
+            low_allocs[i].in_use = false;
+            if (ptr + low_allocs[i].size == low_heap_bump) {
+                low_heap_bump = ptr;
+                low_nallocs--;
+            }
+            return;
+        }
+    }
+}
+
+static uint32_t low_heap_size(uint32_t ptr)
+{
+    for (int i = 0; i < low_nallocs; i++) {
+        if (low_allocs[i].offset == ptr && low_allocs[i].in_use)
+            return low_allocs[i].size;
+    }
+    return 0;
+}
+
+static uint32_t low_heap_realloc(IM3Runtime runtime, uint32_t ptr, int size)
+{
+    if (ptr == 0) return low_heap_alloc(runtime, size);
+    if (size <= 0) {
+        low_heap_free(ptr);
+        return 0;
+    }
+
+    size = (size + 3) & ~3;
+    uint32_t old_size = low_heap_size(ptr);
+    if (old_size == 0) return 0;
+    if (old_size >= (uint32_t)size) return ptr;
+
+    uint32_t nptr = low_heap_alloc(runtime, size);
+    if (nptr == 0) return 0;
+
+    uint32_t ms = 0;
+    uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
+    if (mem) {
+        uint32_t copy_size = old_size < (uint32_t)size ? old_size : (uint32_t)size;
+        if (ptr + copy_size <= ms && nptr + copy_size <= ms)
+            memcpy(mem + nptr, mem + ptr, copy_size);
+    }
+    low_heap_free(ptr);
+    return nptr;
+}
+
 int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr)
 {
     if (ptr >= mem_size) return 0;
@@ -152,21 +261,26 @@ m3ApiRawFunction(m3_str_free) {
     m3ApiSuccess();
 }
 
-// i32 malloc(i32 size)
+// i32 malloc(i32 size) -> low heap or pool pointer
 m3ApiRawFunction(m3_malloc) {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, size);
-    m3ApiReturn((int32_t)pool_alloc(runtime, size));
+    uint32_t ptr = low_heap_alloc(runtime, size);
+    if (ptr == 0) ptr = pool_alloc(runtime, size);
+    m3ApiReturn((int32_t)ptr);
 }
 
-// void free(i32 ptr)
+// void free(i32 ptr) — dispatch by address range
 m3ApiRawFunction(m3_free) {
     m3ApiGetArg(int32_t, ptr);
-    pool_free((uint32_t)ptr);
+    if ((uint32_t)ptr < STR_POOL_BASE)
+        low_heap_free((uint32_t)ptr);
+    else
+        pool_free((uint32_t)ptr);
     m3ApiSuccess();
 }
 
-// i32 calloc(i32 nmemb, i32 size)
+// i32 calloc(i32 nmemb, i32 size) -> low heap or pool pointer
 m3ApiRawFunction(m3_calloc) {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, nmemb);
@@ -174,15 +288,22 @@ m3ApiRawFunction(m3_calloc) {
     if (nmemb <= 0 || size <= 0) m3ApiReturn(0);
     int64_t total = (int64_t)nmemb * (int64_t)size;
     if (total <= 0 || total > 0x7FFFFFFF) m3ApiReturn(0);
-    m3ApiReturn((int32_t)pool_alloc(runtime, (int)total));
+    uint32_t ptr = low_heap_alloc(runtime, (int)total);
+    if (ptr == 0) ptr = pool_alloc(runtime, (int)total);
+    m3ApiReturn((int32_t)ptr);
 }
 
-// i32 realloc(i32 ptr, i32 size)
+// i32 realloc(i32 ptr, i32 size) -> low heap or pool pointer
 m3ApiRawFunction(m3_realloc) {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, ptr);
     m3ApiGetArg(int32_t, size);
-    m3ApiReturn((int32_t)pool_realloc(runtime, (uint32_t)ptr, size));
+    uint32_t result;
+    if ((uint32_t)ptr < STR_POOL_BASE)
+        result = low_heap_realloc(runtime, (uint32_t)ptr, size);
+    else
+        result = pool_realloc(runtime, (uint32_t)ptr, size);
+    m3ApiReturn((int32_t)result);
 }
 
 // i32 basic_str_len(i32 ptr)

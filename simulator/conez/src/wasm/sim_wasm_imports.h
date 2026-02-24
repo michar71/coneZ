@@ -21,6 +21,8 @@ M3Result link_deflate_imports(IM3Module module);
 void wasm_close_all_files();
 void wasm_reset_gamma();
 void wasm_string_pool_reset();
+void low_heap_init(uint32_t start);
+void low_heap_reset(void);
 
 // String pool helpers (used by file imports)
 uint32_t pool_alloc(IM3Runtime runtime, int size);

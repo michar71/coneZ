@@ -443,7 +443,7 @@ WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build fl
 | `wasm_imports_io.cpp` | Print (i32/f32/i64/f64/str), WASI stubs, LUT |
 | `wasm_imports_math.cpp` | 12 float + 12 double transcendental wrappers + 3 curve functions (lerp, larp, larpf) |
 | `wasm_format.cpp` | wasm_vformat(), wasm_vsscanf(), host_printf/snprintf/sscanf |
-| `wasm_imports_string.cpp` | BASIC string pool allocator + 19 string host imports (`basic_str_*`) |
+| `wasm_imports_string.cpp` | Low-heap allocator (DIM arrays, user malloc) + string pool (0x8000+) + 19 string host imports (`basic_str_*`) |
 | `wasm_imports_compression.cpp` | inflate_file, inflate_file_to_mem, inflate_mem (gzip/zlib/raw deflate) |
 | `wasm_imports_deflate.cpp` | deflate_file, deflate_mem_to_file, deflate_mem (gzip compression) |
 | `wasm_psram_glue.cpp` | `m3_psram_*` glue (extern C), `wasm_mem_*` host import helpers — abstracts DRAM vs PSRAM linear memory access |
