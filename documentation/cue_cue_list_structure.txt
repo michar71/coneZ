@@ -76,3 +76,19 @@ Cue-Count (32 Bit 4 Bytes) -> Number of cues in list or 0 if undetermined (Read 
 Media Link (20 bytes). -> String 
 Expiration Time (64 Bit, 8 Byte) -> Time when the list can be discarded
 Version (2 Byte) -> Version of Cue List/Cue Protocol
+
+
+
+Status Report from Device
+-------------------------
+Not really a cue but fits into 64 Bytes.
+
+- Timestamp (8 Bytes)
+- ID  (4 Bites)
+- Lat (8 Bytes)
+- Long (8 Bytes)
+- Alt (2 Bytes)
+- Status (2 Bytes)
+- Activity (2 Bytes)
+- Battery (2 Bytes)
+- Radio Reception (2 Bytes)

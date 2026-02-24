@@ -676,6 +676,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!isCommandShortcut && !e.KeyModifiers.HasFlag(KeyModifiers.Alt) &&
+            (e.Key == Key.Left || e.Key == Key.Right) &&
+            !IsTypingIntoInputControl(e))
+        {
+            var deltaMs = e.Key == Key.Left ? -1 : 1;
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                deltaMs *= 1000;
+            }
+
+            if (_viewModel.NudgeSelectedEffectStart(deltaMs))
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.Key == Key.Delete || e.Key == Key.Back)
         {
             if (_viewModel.SelectedEffect != null)
@@ -689,6 +706,19 @@ public partial class MainWindow : Window
             }
             e.Handled = true;
         }
+    }
+
+    private static bool IsTypingIntoInputControl(KeyEventArgs e)
+    {
+        for (var current = e.Source as Visual; current != null; current = current.GetVisualParent())
+        {
+            if (current is TextBox || current is NumericUpDown)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void AddCue_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

@@ -725,6 +725,23 @@ public sealed class MainWindowViewModel : ObservableObject
         ApplyEffectEdits(force: true);
     }
 
+    public bool NudgeSelectedEffectStart(int deltaMs)
+    {
+        if (SelectedEffect == null || deltaMs == 0)
+        {
+            return false;
+        }
+
+        var newStartMs = Math.Max(0, SelectedEffect.Effect.StartMs + deltaMs);
+        if (newStartMs == SelectedEffect.Effect.StartMs)
+        {
+            return false;
+        }
+
+        EditStartMs = newStartMs;
+        return true;
+    }
+
     private void LoadSelectedEffect()
     {
         if (SelectedEffect == null)
