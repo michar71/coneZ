@@ -55,6 +55,7 @@ private:
     void cmdMqtt(const QStringList &args);
     void cmdInflate(const QStringList &args);
     void cmdDeflate(const QStringList &args);
+    void cmdArtnet(const QStringList &args);
 
     LedStripWidget *m_leds;
     ConsoleWidget *m_console;

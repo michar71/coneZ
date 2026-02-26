@@ -512,13 +512,13 @@ make -j$(nproc)
 
 **Data directory:** `simulator/conez/data/` ships example scripts copied from `firmware/data/`. Auto-detected at startup relative to the binary; overridable with `--sandbox`. CLI commands (`dir`, `cat`, `del`, `ren`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`) and WASM file I/O operate in this directory. Bare filenames in `run` resolve here.
 
-**Console commands:** `?`/`help`, `run`, `stop`, `open`, `dir`/`ls`, `del`/`rm`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`/`date`, `uptime`, `ver`/`version`, `wasm`, `cue`, `mqtt`, `inflate`/`gunzip`, `deflate`/`gzip`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, radio, reboot, tc, top, wifi, winamp) are not available.
+**Console commands:** `?`/`help`, `artnet`, `run`, `stop`, `open`, `dir`/`ls`, `del`/`rm`, `cat`/`list`, `ren`/`mv`, `cp`, `mkdir`, `rmdir`, `grep`, `hexdump`, `df`, `clear`/`cls`, `param`, `led`, `sensors`, `time`/`date`, `uptime`, `ver`/`version`, `wasm`, `cue`, `mqtt`, `inflate`/`gunzip`, `deflate`/`gzip`. These mirror the firmware CLI; hardware-only commands (art, color, config, debug, edit, game, gpio, gps, history, load, lora, mem, ps, psram, radio, reboot, tc, top, wifi, winamp) are not available.
 
-**Source layout:** `src/gui/` (LED strip, console, sensor panel widgets), `src/state/` (LED buffers, sensor mock, config, cue engine), `src/wasm/` (runtime + 12 import files mirroring firmware), `src/worker/` (QThread for WASM, embedded compilation), `src/compiler/` (single-TU wrappers for embedded bas2wasm and c2wasm). Vendored wasm3 in `thirdparty/wasm3/source/`. Example data in `data/`.
+**Source layout:** `src/gui/` (LED strip, console, sensor panel widgets), `src/state/` (LED buffers, sensor mock, config, cue engine, MQTT client, ArtNet sender), `src/wasm/` (runtime + 12 import files mirroring firmware), `src/worker/` (QThread for WASM, embedded compilation), `src/compiler/` (single-TU wrappers for embedded bas2wasm and c2wasm). Vendored wasm3 in `thirdparty/wasm3/source/`. Example data in `data/`.
 
 **Threading:** Main thread runs Qt event loop and all widgets. WasmWorker QThread runs the wasm3 interpreter. Communication via Qt signals/slots with queued connections. Shared state (LedState, SensorState) is mutex-protected.
 
-**Differences from firmware:** Sensors come from GUI sliders (not real hardware). GPIO stubs log to console. No LoRa, WiFi, or PSRAM. Cue engine plays back .cue files with full timeline support; when not playing, cue_playing/cue_elapsed fall back to sensor panel sliders. File I/O uses the data directory. DateTime uses host system clock.
+**Differences from firmware:** Sensors come from GUI sliders (not real hardware). GPIO stubs log to console. No LoRa, WiFi, or PSRAM. Cue engine plays back .cue files with full timeline support; when not playing, cue_playing/cue_elapsed fall back to sensor panel sliders. File I/O uses the data directory. DateTime uses host system clock. ArtNet output available (opt-in via `--artnet` or `artnet enable`) — sends LED data as Art-Net UDP packets to drive real fixtures or visualizers.
 
 See `documentation/simulator.txt` for full reference.
 

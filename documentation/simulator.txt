@@ -59,9 +59,16 @@ filenames resolved against the data directory (see below).
 Command-Line Options
 --------------------
 
-  --leds <count>       LED count per channel (default 50, all 4 channels)
-  --sandbox <path>     Directory for file I/O and script storage
-  <file>               Positional argument: script to run on startup
+  --leds <count>             LED count per channel (default 50, all 4 channels)
+  --sandbox <path>           Directory for file I/O and script storage
+  --cone-id <id>             Cone ID for cue targeting (default 0)
+  --cone-group <group>       Cone group for cue targeting (default 0)
+  --mqtt-broker <host>       MQTT broker hostname (default localhost)
+  --mqtt-port <port>         MQTT broker port (default 1883)
+  --artnet                   Enable ArtNet UDP output
+  --artnet-host <ip>         ArtNet destination IP (default 255.255.255.255)
+  --artnet-universe <n>      ArtNet starting universe (default 0)
+  <file>                     Positional argument: script to run on startup
 
 
 Data Directory
@@ -134,6 +141,7 @@ runtime messages (start, stop, errors with BASIC line numbers).
 
 Console Commands:
 
+  artnet               ArtNet output status/control (see below)
   ?/help               Show available commands
   cat <file>           Show file contents (alias: list)
   clear/cls            Clear console output
@@ -173,6 +181,43 @@ These commands mirror the firmware CLI where applicable. Hardware-only
 commands (art, color, config, debug, edit, game, gpio, gps,
 history, load, lora, mem, ps, psram, radio, reboot, tc, wifi, winamp)
 are not available in the simulator.
+
+
+ArtNet Output
+-------------
+
+The simulator can output LED data as Art-Net (UDP port 6454) packets,
+allowing it to drive real WS2812B controllers, ArtNet-capable fixtures,
+or lighting visualizers (QLC+, MagicQ, Resolume, etc.) over the network.
+
+ArtNet output is off by default. Enable it via the --artnet command-line
+flag or the CLI artnet enable command at runtime.
+
+Packet format: Art-Net OpOutput (0x5000), protocol version 14. All 4
+LED channels are packed sequentially into consecutive universes (170
+RGB pixels per universe, 512 bytes). With the default 4x50 LEDs, this
+produces 2 universes per frame at ~30 FPS.
+
+The destination defaults to 255.255.255.255 (broadcast), which reaches
+all ArtNet nodes on the local subnet. Set a specific IP with --artnet-host
+or artnet host <ip> for unicast.
+
+CLI commands:
+
+  artnet                     Show status (enabled, host, port, universe,
+                             frames/packets sent)
+  artnet enable              Enable ArtNet output
+  artnet disable             Disable ArtNet output
+  artnet host <ip>           Set destination IP (default: 255.255.255.255)
+  artnet port <n>            Set destination port (default: 6454)
+  artnet universe <n>        Set starting universe offset (default: 0)
+
+Examples:
+
+  ./conez-simulator --artnet                  # broadcast to all nodes
+  ./conez-simulator --artnet --artnet-host 192.168.1.100
+  artnet enable                               # enable at runtime
+  artnet universe 4                           # start at universe 4
 
 
 Architecture
@@ -288,9 +333,11 @@ Source Layout
       │   ├── console_widget       output + input
       │   └── sensor_panel         grouped sliders
       ├── state/
+      │   ├── artnet_sender        ArtNet UDP output (optional)
       │   ├── led_state            4-channel RGB buffers, mutex
+      │   ├── mqtt_client          MQTT 3.1.1 client (QTcpSocket)
       │   ├── sensor_state         mock values, mutex
-      │   ├── sim_config           LED counts, paths
+      │   ├── sim_config           LED counts, paths, network config
       │   └── cue_engine           cue timeline playback
       ├── wasm/
       │   ├── sim_wasm_runtime     wasm3 lifecycle, m3_Yield
@@ -350,6 +397,7 @@ Limitations
 -----------
 
   - No LoRa, WiFi, or HTTP. Network-dependent features are stubbed.
+  - ArtNet output and MQTT are available as optional network features.
   - GPIO operations log to console but do not affect real pins.
   - PSRAM is not emulated (modules use regular wasm3 linear memory).
   - Cue engine plays back .cue files with full timeline and spatial

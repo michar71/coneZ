@@ -9,6 +9,7 @@
 #include "sensor_state.h"
 #include "cue_engine.h"
 #include "mqtt_client.h"
+#include "artnet_sender.h"
 #include "inflate_util.h"
 #include "deflate_util.h"
 
@@ -106,6 +107,17 @@ MainWindow::MainWindow(QWidget *parent)
     mqtt.setBroker(QString::fromStdString(simConfig().mqtt_broker), simConfig().mqtt_port);
     if (simConfig().mqtt_enabled)
         mqtt.setEnabled(true);
+
+    // Wire ArtNet sender output to console and initialize from config
+    auto &artnet = artnetSender();
+    artnet.setOutputCallback([this](const QString &msg) {
+        m_console->appendText(msg);
+    });
+    artnet.setDestination(QString::fromStdString(simConfig().artnet_host),
+                          simConfig().artnet_port);
+    artnet.setUniverse(simConfig().artnet_universe);
+    if (simConfig().artnet_enabled)
+        artnet.setEnabled(true);
 
     // Initialize sandbox directory
     QDir().mkpath(QString::fromStdString(simConfig().sandbox_path));
@@ -207,6 +219,8 @@ void MainWindow::onCommand(const QString &cmd)
         cmdInflate(parts);
     } else if (verb == "deflate" || verb == "gzip") {
         cmdDeflate(parts);
+    } else if (verb == "artnet") {
+        cmdArtnet(parts);
     } else {
         m_console->appendText("Unknown command: " + verb + ". Type ? for help.\n");
     }
@@ -279,6 +293,7 @@ void MainWindow::cmdHelp()
 {
     m_console->appendText(
         "Available commands:\n"
+        "  artnet                              ArtNet output status/control\n"
         "  cat {filename}                      Show file contents\n"
         "  clear                               Clear console\n"
         "  cp {source} {dest}                  Copy file\n"
@@ -1125,4 +1140,45 @@ void MainWindow::cmdDeflate(const QStringList &args)
 
     m_console->appendText(QString("Deflated: %1 (%2 -> %3 bytes)\n")
         .arg(dstName).arg(inData.size()).arg(result));
+}
+
+void MainWindow::cmdArtnet(const QStringList &args)
+{
+    auto &an = artnetSender();
+
+    if (args.size() >= 2 && args[1].compare("enable", Qt::CaseInsensitive) == 0) {
+        an.setEnabled(true);
+        return;
+    }
+
+    if (args.size() >= 2 && args[1].compare("disable", Qt::CaseInsensitive) == 0) {
+        an.setEnabled(false);
+        return;
+    }
+
+    if (args.size() >= 3 && args[1].compare("host", Qt::CaseInsensitive) == 0) {
+        an.setDestination(args[2], an.port());
+        m_console->appendText(QString("ArtNet destination: %1:%2\n").arg(args[2]).arg(an.port()));
+        return;
+    }
+
+    if (args.size() >= 3 && args[1].compare("port", Qt::CaseInsensitive) == 0) {
+        an.setDestination(an.host(), args[2].toInt());
+        m_console->appendText(QString("ArtNet port: %1\n").arg(args[2].toInt()));
+        return;
+    }
+
+    if (args.size() >= 3 && args[1].compare("universe", Qt::CaseInsensitive) == 0) {
+        an.setUniverse(args[2].toInt());
+        m_console->appendText(QString("ArtNet starting universe: %1\n").arg(args[2].toInt()));
+        return;
+    }
+
+    // artnet (no args) — show status
+    m_console->appendText("ArtNet Status:\n");
+    m_console->appendText(QString("  Enabled:    %1\n").arg(an.enabled() ? "yes" : "no"));
+    m_console->appendText(QString("  Host:       %1:%2\n").arg(an.host()).arg(an.port()));
+    m_console->appendText(QString("  Universe:   %1\n").arg(an.universe()));
+    m_console->appendText(QString("  Frames:     %1\n").arg(an.frameCount()));
+    m_console->appendText(QString("  Packets:    %1\n").arg(an.packetCount()));
 }

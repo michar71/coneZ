@@ -25,6 +25,11 @@ struct SimConfig {
     int mqtt_port = 1883;
     bool mqtt_enabled = false;
 
+    bool artnet_enabled = false;
+    std::string artnet_host = "255.255.255.255";
+    int artnet_port = 6454;
+    int artnet_universe = 0;
+
     // Set at startup
     std::chrono::steady_clock::time_point start_time;
 };
