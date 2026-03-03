@@ -33,6 +33,7 @@
 #include "adc.h"
 #include "psram.h"
 #include "conez_mqtt.h"
+#include "artnet.h"
 #include "inflate.h"
 #include "deflate.h"
 #include "glob.h"
@@ -3768,12 +3769,125 @@ static const char * const * tc_log(int wordIndex, const char **words, int nWords
     return NULL;
 }
 
+static const char * const subs_artnet[] = { "enable", "disable", "start", "stop",
+                                            "universe", "dmx", NULL };
 static const char * const subs_mqtt[]   = { "broker", "port", "enable", "disable",
                                             "connect", "disconnect", "pub", NULL };
 static const char * const subs_psram[]  = { "test", "freq", "cache", NULL };
 static const char * const subs_psram_test[] = { "forever", NULL };
 static const char * const subs_wasm[]   = { "status", "info", NULL };
 static const char * const subs_wifi[]   = { "enable", "disable", "ssid", "password", NULL };
+
+static const char * const * tc_artnet(int wordIndex, const char **words, int nWords) {
+    if (wordIndex == 1) return subs_artnet;
+    if (wordIndex == 2 && nWords >= 2) {
+        if (strcasecmp(words[1], "universe") == 0 || strcasecmp(words[1], "dmx") == 0)
+            return TAB_COMPLETE_VALUE_INT;  // channel 1-4
+    }
+    if (wordIndex == 3 && nWords >= 3) {
+        if (strcasecmp(words[1], "universe") == 0 || strcasecmp(words[1], "dmx") == 0)
+            return TAB_COMPLETE_VALUE_INT;  // universe / DMX address
+    }
+    return NULL;
+}
+
+static int cmd_artnet(int argc, char **argv)
+{
+    if (argc == 1) {
+        const char *state;
+        if (artnet_running())
+            state = "running";
+        else if (config.artnet_enabled)
+            state = "enabled (no WiFi)";
+        else
+            state = "disabled";
+        printfnl(SOURCE_COMMANDS, "ArtNet receiver: %s\n", state);
+        printfnl(SOURCE_COMMANDS, "  Packets received : %u\n", (unsigned)artnet_rx_packets());
+        printfnl(SOURCE_COMMANDS, "  LED frames applied: %u\n", (unsigned)artnet_rx_frames());
+        printfnl(SOURCE_COMMANDS, "\n  Ch  Universe  DMX start\n");
+        const int unis[4]  = { config.artnet_uni1, config.artnet_uni2,
+                                config.artnet_uni3, config.artnet_uni4 };
+        const int dmxs[4]  = { config.artnet_dmx1, config.artnet_dmx2,
+                                config.artnet_dmx3, config.artnet_dmx4 };
+        for (int ch = 0; ch < 4; ch++) {
+            if (dmxs[ch] == 0)
+                printfnl(SOURCE_COMMANDS, "  %d   %d         disabled\n", ch + 1, unis[ch]);
+            else
+                printfnl(SOURCE_COMMANDS, "  %d   %d         %d\n", ch + 1, unis[ch], dmxs[ch]);
+        }
+        printfnl(SOURCE_COMMANDS, "\nUse 'config set artnet.*' to change mapping.\n");
+        return 0;
+    }
+
+    if (argc == 2 && strcasecmp(argv[1], "enable") == 0) {
+        config.artnet_enabled = true;
+        config_save();
+        artnet_start();
+        return 0;
+    }
+    if (argc == 2 && strcasecmp(argv[1], "disable") == 0) {
+        config.artnet_enabled = false;
+        config_save();
+        artnet_stop();
+        return 0;
+    }
+    if (argc == 2 && strcasecmp(argv[1], "start") == 0) {
+        artnet_start();
+        return 0;
+    }
+    if (argc == 2 && strcasecmp(argv[1], "stop") == 0) {
+        artnet_stop();
+        return 0;
+    }
+
+    // artnet universe <ch> <n>  — hot-apply universe for channel 1-4
+    if (argc == 4 && strcasecmp(argv[1], "universe") == 0) {
+        int ch  = parse_int(argv[2]);
+        int uni = parse_int(argv[3]);
+        if (ch < 1 || ch > 4) {
+            printfnl(SOURCE_COMMANDS, "Channel must be 1-4\n");
+            return 1;
+        }
+        int *fields[4] = { &config.artnet_uni1, &config.artnet_uni2,
+                           &config.artnet_uni3, &config.artnet_uni4 };
+        *fields[ch - 1] = uni;
+        printfnl(SOURCE_COMMANDS, "LED ch%d universe set to %d (not saved)\n", ch, uni);
+        return 0;
+    }
+
+    // artnet dmx <ch> <addr>  — hot-apply DMX start address for channel 1-4
+    if (argc == 4 && strcasecmp(argv[1], "dmx") == 0) {
+        int ch   = parse_int(argv[2]);
+        int addr = parse_int(argv[3]);
+        if (ch < 1 || ch > 4) {
+            printfnl(SOURCE_COMMANDS, "Channel must be 1-4\n");
+            return 1;
+        }
+        if (addr < 0 || addr > 512) {
+            printfnl(SOURCE_COMMANDS, "DMX address must be 0-512 (0 = disabled)\n");
+            return 1;
+        }
+        int *fields[4] = { &config.artnet_dmx1, &config.artnet_dmx2,
+                           &config.artnet_dmx3, &config.artnet_dmx4 };
+        *fields[ch - 1] = addr;
+        if (addr == 0)
+            printfnl(SOURCE_COMMANDS, "LED ch%d disabled (not saved)\n", ch);
+        else
+            printfnl(SOURCE_COMMANDS, "LED ch%d DMX start set to %d (not saved)\n", ch, addr);
+        return 0;
+    }
+
+    printfnl(SOURCE_COMMANDS, "Usage:\n");
+    printfnl(SOURCE_COMMANDS, "  artnet                    Show status and channel mapping\n");
+    printfnl(SOURCE_COMMANDS, "  artnet enable             Start receiver, save enabled=on\n");
+    printfnl(SOURCE_COMMANDS, "  artnet disable            Stop receiver, save enabled=off\n");
+    printfnl(SOURCE_COMMANDS, "  artnet start              Start receiver (no config change)\n");
+    printfnl(SOURCE_COMMANDS, "  artnet stop               Stop receiver (no config change)\n");
+    printfnl(SOURCE_COMMANDS, "  artnet universe <ch> <n>  Set universe for LED ch 1-4 (not saved)\n");
+    printfnl(SOURCE_COMMANDS, "  artnet dmx <ch> <addr>    Set DMX start addr 1-512 (0=off, not saved)\n");
+    printfnl(SOURCE_COMMANDS, "Use 'config set artnet.*' to persist changes across reboots.\n");
+    return 1;
+}
 
 static const char * const * tc_wifi(int wordIndex, const char **words, int nWords) {
     if (wordIndex == 1) return subs_wifi;
@@ -3889,6 +4003,7 @@ void init_commands(ConezStream *dev)
     // Commands — fileArgs=true for filename completion, subcommands for subcommand completion
     shell.addCommand("?", cmd_help);
     shell.addCommand("art", cmd_art);
+    shell.addCommand("artnet", cmd_artnet, NULL, NULL, tc_artnet);
     shell.addCommand("cat", listFile, "*");
     shell.addCommand("clear", cmd_clear);
     shell.addCommand("cls", cmd_clear);

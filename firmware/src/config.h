@@ -67,6 +67,12 @@
 #define DEFAULT_LED_COUNT       50
 #define DEFAULT_LED_COLOR       0x000000
 
+// ArtNet
+#define DEFAULT_ARTNET_ENABLED  false
+#define DEFAULT_ARTNET_UNI      0       // universe for each LED channel
+#define DEFAULT_ARTNET_DMX1     1       // ch1 starts at DMX address 1
+#define DEFAULT_ARTNET_DMX_OFF  0       // 0 = channel disabled
+
 // Debug (true = on at boot)
 #define DEFAULT_DBG_SYSTEM      true
 #define DEFAULT_DBG_BASIC       true
@@ -138,6 +144,17 @@ typedef struct {
     int     led_color2;
     int     led_color3;
     int     led_color4;
+
+    // [artnet]
+    bool    artnet_enabled;
+    int     artnet_uni1;
+    int     artnet_uni2;
+    int     artnet_uni3;
+    int     artnet_uni4;
+    int     artnet_dmx1;    // DMX start address (1-512); 0 = channel disabled
+    int     artnet_dmx2;
+    int     artnet_dmx3;
+    int     artnet_dmx4;
 
     // [debug]
     bool    dbg_system;

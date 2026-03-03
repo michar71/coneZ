@@ -62,6 +62,7 @@ set(SIM_SOURCES
     src/state/cue_engine.cpp
     src/state/mqtt_client.cpp
     src/state/artnet_sender.cpp
+    src/state/artnet_receiver.cpp
     src/wasm/sim_wasm_runtime.cpp
     src/wasm/sim_wasm_imports_led.cpp
     src/wasm/sim_wasm_imports_sensors.cpp

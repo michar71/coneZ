@@ -74,6 +74,16 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("led",    "color2",       CFG_HEX,   led_color2),
     CFG_ENTRY("led",    "color3",       CFG_HEX,   led_color3),
     CFG_ENTRY("led",    "color4",       CFG_HEX,   led_color4),
+    // [artnet]
+    CFG_ENTRY("artnet", "enabled",      CFG_BOOL,  artnet_enabled),
+    CFG_ENTRY("artnet", "uni1",         CFG_INT,   artnet_uni1),
+    CFG_ENTRY("artnet", "uni2",         CFG_INT,   artnet_uni2),
+    CFG_ENTRY("artnet", "uni3",         CFG_INT,   artnet_uni3),
+    CFG_ENTRY("artnet", "uni4",         CFG_INT,   artnet_uni4),
+    CFG_ENTRY("artnet", "dmx1",         CFG_INT,   artnet_dmx1),
+    CFG_ENTRY("artnet", "dmx2",         CFG_INT,   artnet_dmx2),
+    CFG_ENTRY("artnet", "dmx3",         CFG_INT,   artnet_dmx3),
+    CFG_ENTRY("artnet", "dmx4",         CFG_INT,   artnet_dmx4),
     // [debug]
     CFG_ENTRY("debug",  "system",       CFG_BOOL,  dbg_system),
     CFG_ENTRY("debug",  "basic",        CFG_BOOL,  dbg_basic),
@@ -98,14 +108,14 @@ static const char *CONFIG_PATH = "/config.ini";
 // Returns NULL-terminated array of "section.key" strings for tab completion.
 // Uses a static buffer — valid until the next call.
 #define CFG_KEY_NAME_MAX 32
-static char         cfg_key_buf[64][CFG_KEY_NAME_MAX];
-static const char  *cfg_key_ptrs[65];   // +1 for NULL terminator
+static char         cfg_key_buf[80][CFG_KEY_NAME_MAX];
+static const char  *cfg_key_ptrs[81];   // +1 for NULL terminator
 static bool         cfg_keys_built = false;
 
 const char * const * config_get_key_list(void)
 {
     if (!cfg_keys_built) {
-        int n = CFG_TABLE_SIZE < 64 ? CFG_TABLE_SIZE : 64;
+        int n = CFG_TABLE_SIZE < 80 ? CFG_TABLE_SIZE : 80;
         for (int i = 0; i < n; i++) {
             snprintf(cfg_key_buf[i], CFG_KEY_NAME_MAX, "%s.%s",
                      cfg_table[i].section, cfg_table[i].key);
@@ -214,6 +224,16 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->led_color2       = DEFAULT_LED_COLOR;
     cfg->led_color3       = DEFAULT_LED_COLOR;
     cfg->led_color4       = DEFAULT_LED_COLOR;
+
+    cfg->artnet_enabled   = DEFAULT_ARTNET_ENABLED;
+    cfg->artnet_uni1      = DEFAULT_ARTNET_UNI;
+    cfg->artnet_uni2      = DEFAULT_ARTNET_UNI;
+    cfg->artnet_uni3      = DEFAULT_ARTNET_UNI;
+    cfg->artnet_uni4      = DEFAULT_ARTNET_UNI;
+    cfg->artnet_dmx1      = DEFAULT_ARTNET_DMX1;
+    cfg->artnet_dmx2      = DEFAULT_ARTNET_DMX_OFF;
+    cfg->artnet_dmx3      = DEFAULT_ARTNET_DMX_OFF;
+    cfg->artnet_dmx4      = DEFAULT_ARTNET_DMX_OFF;
 
     cfg->dbg_system       = DEFAULT_DBG_SYSTEM;
     cfg->dbg_basic        = DEFAULT_DBG_BASIC;

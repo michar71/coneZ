@@ -45,6 +45,7 @@
 #include "adc.h"
 #include "psram.h"
 #include "conez_mqtt.h"
+#include "artnet.h"
 #include "loadavg.h"
 #include "pm.h"
 
@@ -493,6 +494,9 @@ void setup()
 
   // MQTT uses printfnl() — must come after printManagerInit()
   mqtt_setup();
+
+  // ArtNet receiver — started if artnet_enabled in config
+  artnet_setup();
 
   sunSetTZOffset(config.timezone);
 

@@ -1,6 +1,7 @@
 #include <QApplication>
 #include "mainwindow.h"
 #include "sim_config.h"
+#include "artnet_receiver.h"
 
 #include <QCommandLineParser>
 #include <QFileInfo>
@@ -27,9 +28,11 @@ int main(int argc, char *argv[])
     parser.addOption({"cone-group", "Cone group for cue targeting", "group", "0"});
     parser.addOption({"mqtt-broker", "MQTT broker hostname", "host", "localhost"});
     parser.addOption({"mqtt-port", "MQTT broker port", "port", "1883"});
-    parser.addOption({"artnet", "Enable ArtNet output"});
-    parser.addOption({"artnet-host", "ArtNet destination IP", "host", "255.255.255.255"});
-    parser.addOption({"artnet-universe", "ArtNet starting universe", "n", "0"});
+    parser.addOption({"artnet-tx", "Enable ArtNet output (transmit LED data)"});
+    parser.addOption({"artnet",    "Enable ArtNet output (alias for --artnet-tx)"});
+    parser.addOption({"artnet-host",     "ArtNet TX destination IP",       "host", "255.255.255.255"});
+    parser.addOption({"artnet-universe", "ArtNet TX starting universe",    "n",    "0"});
+    parser.addOption({"artnet-rx",       "Enable ArtNet input (receive LED data from DMX controller)"});
     parser.addPositionalArgument("file", "Script to run on startup (.bas, .c, .wasm)");
     parser.process(app);
 
@@ -45,9 +48,10 @@ int main(int argc, char *argv[])
     if (parser.isSet("cone-group")) cfg.cone_group = parser.value("cone-group").toInt();
     if (parser.isSet("mqtt-broker")) cfg.mqtt_broker = parser.value("mqtt-broker").toStdString();
     if (parser.isSet("mqtt-port"))   cfg.mqtt_port   = parser.value("mqtt-port").toInt();
-    if (parser.isSet("artnet"))          cfg.artnet_enabled  = true;
+    if (parser.isSet("artnet-tx") || parser.isSet("artnet")) cfg.artnet_enabled = true;
     if (parser.isSet("artnet-host"))     cfg.artnet_host     = parser.value("artnet-host").toStdString();
     if (parser.isSet("artnet-universe")) cfg.artnet_universe = parser.value("artnet-universe").toInt();
+    if (parser.isSet("artnet-rx"))       cfg.artnet_rx_enabled = true;
 
     // Binary location — used for relative path auto-detection
     // Build dir is simulator/conez/build/, project root is ../../../
