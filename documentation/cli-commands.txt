@@ -215,8 +215,8 @@ artnet
   Defaults: all channels on universe 0, ch1 at DMX address 1, ch2-4 disabled.
   DMX addresses are 1-indexed (standard convention). Each LED pixel consumes
   3 DMX channels (R, G, B), so 50 LEDs span 150 consecutive addresses.
-  Multiple LED channels may share a universe if their address ranges do not
-  overlap — the receiver applies all matching channels from each packet.
+  Multiple LED channels may share a universe; the receiver applies all
+  matching channels from each packet independently.
 
   Examples:
     artnet enable
