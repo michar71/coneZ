@@ -1,11 +1,11 @@
 Cues
 ====
 - All Cues are 64 Bytes long
-- Cues ar timestamped event-point that trigger actions/effects or set parameters.
-- If thd timestamp is inthe past (or 0) the cue is executed immidiatly, otherwsie at the time specified.
-- If the duration is 0 the cue will (Depending on the type) run indefentily/until overriden by another cue (Or self-terminates).
+- Cues are timestamped event-point that trigger actions/effects or set parameters.
+- If the timestamp is inthe past (or 0) the cue is executed immediately, otherwise at the time specified.
+- If the duration is 0 the cue will (Depending on the type) run indefenitly/until overridden by another cue (Or self-terminates).
 - Channel 0 is special. Any effect/parameter here will be applied to all Channels
-- Parmeter ID 0 is special. It is used for Script control. 
+- Parameter ID 0 is special. It is used for Script control. 
   - Value 0 -> NOP (So parameter 0, Value 0 does nothing)
   - Value 1 -> Restart Script
   - Value 2 -> Pause Script
@@ -24,7 +24,7 @@ Duration
 Type
 Channel
 
-(Total Heeader Size: 8+8+2+2 = 20 Bytes)
+(Total Header Size: 8+8+2+2 = 20 Bytes)
 
 Types:
 ======

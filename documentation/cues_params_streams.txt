@@ -1,0 +1,143 @@
+General Definitions
+===================
+Timestamo: Timestamps are always 8 Byte long. Times are expressed in Unix EPOCH Time
+ParamID: A param ID is a 4-byte ASCII identifier for a parameter
+StreamID: Identifies a stream (Which is 1..8 parameters). Also 4-Byte ASCII
+Cues: Cues are the basic transport block for data and commands. A cue is exactly 64 Bytes long
+CueID: Cue ID's are 1 byte numerical identifier for a cue
+scriptID: 4-Byte ASCII ID for a script
+pieceID: 4-Byte ASCII Identifier for a piece. A Piece is a list of cues that get executed by timestamp
+Action vs Data Cue: Action cues trigger an action while data cues just carry the data payload
+
+All Cues have at least a cueID and a timestamp!
+
+
+Predefined paramID's
+====================
+There are a few pre-defined paramID's used for system control.
+
+SCTR
+----
+Script Control
+
+  - Value 0 -> NOP (So parameter 0, Value 0 does nothing)
+  - Value 1 -> Restart current Script
+  - Value 2 -> Pause current Script
+  - Value 3 -> Continue current Script
+  - Value 4 -> Abort/Exit current Script
+
+CTRL
+----
+System Control
+[TBD, reset uC...]
+
+
+
+Cues
+====
+- If the timestamp is in the past (or 0) and the cue is an action cue the cue is executed immediately, otherwise at the time specified.
+- If the duration is 0 the cue will (Depending on the type) run indefenitly/until overridden by another cue (Or self-terminates).
+
+
+
+Data common to all Cues:
+cueID		(1 Byte)
+Reserved(0)     (1 Byte)
+Timestamp	(8 Byte)
+------------------------
+Total           10 Byte
+
+
+
+Types:
+======
+
+Script Cue -> Set a Script)
+---------------------------
+ScriptID (4 Bytes)
+Duration (8 Bytes)	(0 runs indefentilty, but can be used to terminate a script after a specific time)
+
+
+Color Cue: -> Set The color (And allow it to change over Time)
+---------------------------------------------------------------
+ParamID (4 Byte)
+Start Color(RGBA) (4 Byte)
+End Color (RGBA) (4 Byte)
+Transition Offset (1 Byte)
+Transition Window (1 Byte)
+
+Piece Cue: -> Set up a cue-list (Piece) to start at a specific time
+-------------------------------------------------------------------
+pieceID (4 Byte)
+(This cue can be used to chain cues together and jump from one to another...)
+
+Parameter Cue -> Set a Specific Parameter
+----------------------------------------------
+ParameID (4 Byte)
+Parameter Value (4 Byte)
+....
+(Up to 6 Parameter. Pad with 0's (NOP Parameter) if only a subset is used)
+It is up to the receiver to interpret the Data!. Technically everything can be sent as 32-bit float.
+
+Stream Definition Cue -> Defines a stream of up to 8 Parameters
+---------------------------------------------------------------
+Stream ID (4 Bytes) paramID’s for 8up to channels (4x8 = 32 bytes)
+Stream Definition (8x 1 Byte)
+   * Type (2 Bits)
+      0 ->Padding (Stream is not used)
+      1 ->Immediate (Gets applied immediately and data can be discarded afterwards)
+      2 ->Buffer (Has parameters in the future but as soon as that timestamp has passed it can be discarded)
+      3 ->Store (Should be stored for later reuse)
+
+Multi-Stream Cue -> Defines the data in the streams
+---------------------------------------------------
+- Index (Just a 8-bit counter to make it easier to see if data got lost)(1 byte)
+- Datarate (samples/sec) (1 bytes) -> Cn be used to interpolate data
+- 4 bytes of Stream info (totals of 8x 4 bits =32 bits 4 Bytes)
+  Stream Active (1 bit). Stream is used.
+  Interpolate stream (1 Bit). Can be used to interpolate needed to smooth out data
+  Stream type (2 bit)
+    0 = 8-bit unit
+    1 = 16-bit unit
+    2 = 32-bit hint
+    3 = 32-bit float
+
+
+- 48 Bytes of payload data
+-Stream count + Stream type defines layout. Streams are always interleaved.
+- 48 samples could be exactly 1 sec of 16-Bit data at 24samples/sex (which aligns nicely with 48khz audio stream…)
+- Layout could be
+    - 1 Stream, 8 bit = 48 bytes, 48 samples
+    - 1 Stream 8 bit, 1 Stream 16 bit, 16 Samples
+    - 2 Stream 32 bit, 6 samples
+
+Cue-List Header Cue
+-------------------
+pieceID(32 Bit 4 Bytes) 
+Media Link (20 bytes). String that links to a media file that goes with the cue-list
+Expiration Time (64 Bit, 8 Byte) -> Time when the list can be discarded
+
+
+Cue-List
+========
+If a whole list of cues is transmitted its called a cue-list. (Duh...)
+- Cue-lists can be stored as files (With the. suffix .clf for cue-list file)
+- Cue lists chan be opened in chunks of 64 bytes and traversed\
+- A fuel ist shall have a clue list header at the beginning
+- A cue list shall have 1 header (64 bytes) at the beginning followed by 64-byte cues
+- Cues in the cue list shall be sorted by timestamp
+
+
+Status Report from Device
+-------------------------
+Not really a cue but fits into 64 Bytes.
+
+- Timestamp (8 Bytes)
+- ID  (4 Bites)
+- Lat (8 Bytes)
+- Long (8 Bytes)
+- Alt (2 Bytes)
+- Status (2 Bytes)
+- Activity (2 Bytes)
+- Battery (2 Bytes)
+- Radio Reception (2 Bytes)
