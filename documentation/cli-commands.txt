@@ -12,7 +12,7 @@ individual Telnet session.
 The desktop simulator (see simulator.txt) supports a subset of these
 commands in its console: ?/help, run, stop, open, dir/ls, del, cat/list,
 ren/mv, cp, mkdir, rmdir, grep, hexdump, df, clear/cls, param, led,
-sensors, time/date, uptime, ver/version, wasm, cue, mqtt, inflate/gunzip.
+sensors, time/date, uptime, ver/version, wasm, cue, mqtt, artnet, inflate/gunzip.
 Hardware-only commands are not available in the simulator.
 
 Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
@@ -178,6 +178,55 @@ Detailed Command Descriptions
 art
   Display an ANSI art traffic cone. Uses 256-color escapes.
   Requires ANSI mode (color on).
+
+artnet
+  Show ArtNet receiver status: running state, packets received, LED frames
+  applied, and per-channel universe/DMX address mapping.
+
+  artnet enable
+      Start the ArtNet receiver and save artnet.enabled=on to config.
+      The receiver binds UDP port 6454 as soon as WiFi is connected.
+
+  artnet disable
+      Stop the ArtNet receiver and save artnet.enabled=off to config.
+
+  artnet start
+      Start the receiver without saving config (transient).
+
+  artnet stop
+      Stop the receiver without saving config (transient).
+
+  artnet universe <ch> <n>
+      Hot-apply the ArtNet universe for LED channel ch (1-4).
+      Takes effect immediately on the next received packet.
+      Not saved — use "config set artnet.uniN <n>" to persist.
+      Example: artnet universe 2 1
+
+  artnet dmx <ch> <addr>
+      Hot-apply the DMX start address for LED channel ch (1-4).
+      addr is 1-indexed (1-512); 0 disables the channel.
+      Not saved — use "config set artnet.dmxN <addr>" to persist.
+      Example: artnet dmx 2 151
+
+  Channel mapping is also configurable via "config set artnet.*":
+    artnet.uni1..4   ArtNet universe number for each LED channel (0-32767)
+    artnet.dmx1..4   DMX start address for each LED channel (1-512); 0 = disabled
+
+  Defaults: all channels on universe 0, ch1 at DMX address 1, ch2-4 disabled.
+  DMX addresses are 1-indexed (standard convention). Each LED pixel consumes
+  3 DMX channels (R, G, B), so 50 LEDs span 150 consecutive addresses.
+  Multiple LED channels may share a universe; the receiver applies all
+  matching channels from each packet independently.
+
+  Examples:
+    artnet enable
+    artnet universe 1 0          LED ch1 on ArtNet universe 0
+    artnet dmx 1 1               ch1 starts at DMX address 1 (R=1, G=2, B=3...)
+    artnet universe 2 0          LED ch2 also on universe 0
+    artnet dmx 2 151             ch2 starts at DMX address 151 (after 50 LEDs)
+    artnet universe 3 1          LED ch3 on universe 1
+    artnet dmx 3 1               ch3 starts at address 1 in universe 1
+    artnet dmx 4 0               disable ch4
 
 cat {file ...}
   Print the contents of one or more files to the console. Alias: list.

@@ -59,9 +59,18 @@ filenames resolved against the data directory (see below).
 Command-Line Options
 --------------------
 
-  --leds <count>       LED count per channel (default 50, all 4 channels)
-  --sandbox <path>     Directory for file I/O and script storage
-  <file>               Positional argument: script to run on startup
+  --leds <count>             LED count per channel (default 50, all 4 channels)
+  --sandbox <path>           Directory for file I/O and script storage
+  --cone-id <id>             Cone ID for cue targeting (default 0)
+  --cone-group <group>       Cone group for cue targeting (default 0)
+  --mqtt-broker <host>       MQTT broker hostname (default localhost)
+  --mqtt-port <port>         MQTT broker port (default 1883)
+  --artnet-tx                Enable ArtNet output (transmit LED data)
+  --artnet                   Enable ArtNet output (alias for --artnet-tx)
+  --artnet-host <ip>         ArtNet TX destination IP (default 255.255.255.255)
+  --artnet-universe <n>      ArtNet TX starting universe (default 0)
+  --artnet-rx                Enable ArtNet input (receive LED data from DMX controller)
+  <file>                     Positional argument: script to run on startup
 
 
 Data Directory
@@ -134,6 +143,22 @@ runtime messages (start, stop, errors with BASIC line numbers).
 
 Console Commands:
 
+  artnet               Show ArtNet RX status (enabled, ch/universe/dmx mapping,
+                       packets received)
+  artnet enable        Enable ArtNet input (receive LED data)
+  artnet disable       Disable ArtNet input
+  artnet start         Start receiver (transient, not saved)
+  artnet stop          Stop receiver (transient, not saved)
+  artnet universe <ch> <n>   Set receive universe for channel ch (1-4), not saved
+  artnet dmx <ch> <addr>     Set DMX start address for channel ch (1-4, addr 1-512
+                             or 0=disabled), not saved
+  artnet tx            Show ArtNet TX status (enabled, host, port, universe,
+                       frames/packets sent)
+  artnet tx enable     Enable ArtNet output
+  artnet tx disable    Disable ArtNet output
+  artnet tx host <ip>  Set TX destination IP (default: 255.255.255.255)
+  artnet tx port <n>   Set TX destination port (default: 6454)
+  artnet tx universe <n>     Set TX starting universe offset (default: 0)
   ?/help               Show available commands
   cat <file>           Show file contents (alias: list)
   clear/cls            Clear console output
@@ -173,6 +198,91 @@ These commands mirror the firmware CLI where applicable. Hardware-only
 commands (art, color, config, debug, edit, game, gpio, gps,
 history, load, lora, mem, ps, psram, radio, reboot, tc, wifi, winamp)
 are not available in the simulator.
+
+
+ArtNet
+------
+
+The simulator supports both ArtNet TX (output) and ArtNet RX (input) over
+UDP port 6454.
+
+
+ArtNet TX (Output)
+
+The simulator can transmit LED data as Art-Net OpOutput packets, allowing
+it to drive real WS2812B controllers, ArtNet-capable fixtures, or lighting
+visualizers (QLC+, MagicQ, Resolume, etc.) over the network.
+
+TX is off by default. Enable via --artnet-tx (or the --artnet alias) on
+the command line, or the CLI artnet tx enable command at runtime.
+
+Packet format: Art-Net OpOutput (0x5000), protocol version 14. All 4 LED
+channels are packed sequentially into consecutive universes (170 RGB pixels
+per universe, 512 bytes). With the default 4x50 LEDs, this produces 2
+universes per frame at ~30 FPS.
+
+The destination defaults to 255.255.255.255 (broadcast), which reaches all
+ArtNet nodes on the local subnet. Use --artnet-host or artnet tx host <ip>
+for unicast.
+
+CLI commands:
+
+  artnet tx                  Show TX status (enabled, host, port, universe,
+                             frames/packets sent)
+  artnet tx enable           Enable ArtNet output
+  artnet tx disable          Disable ArtNet output
+  artnet tx host <ip>        Set destination IP (default: 255.255.255.255)
+  artnet tx port <n>         Set destination port (default: 6454)
+  artnet tx universe <n>     Set starting universe offset (default: 0)
+
+Examples:
+
+  ./conez-simulator --artnet-tx               # broadcast to all nodes
+  ./conez-simulator --artnet-tx --artnet-host 192.168.1.100
+  artnet tx enable                            # enable at runtime
+  artnet tx universe 4                        # start at universe 4
+
+
+ArtNet RX (Input)
+
+The simulator can receive Art-Net OpOutput packets and map DMX data
+directly onto the 4 LED channels, mirroring the firmware's ArtNet
+receiver. This lets a DMX lighting console or ArtNet source drive the
+simulated LEDs without any running WASM program.
+
+RX is off by default. Enable via --artnet-rx on the command line, or the
+CLI artnet enable command at runtime.
+
+Each LED channel has an independent universe number and DMX start address:
+
+  Channel   Config defaults   Description
+  ch1       universe 0, dmx 1   first channel starts at universe 0, DMX 1
+  ch2       universe 0, dmx 0   disabled (dmx 0 = off)
+  ch3       universe 0, dmx 0   disabled
+  ch4       universe 0, dmx 0   disabled
+
+DMX addressing is 1-indexed (1-512). Each RGB LED consumes 3 consecutive
+DMX slots (R, G, B). addr=0 disables a channel.
+
+CLI commands:
+
+  artnet                     Show RX status (state, ch/universe/dmx mapping,
+                             packets/frames received)
+  artnet enable              Enable ArtNet input
+  artnet disable             Disable ArtNet input
+  artnet start               Start receiver (transient, not saved)
+  artnet stop                Stop receiver (transient, not saved)
+  artnet universe <ch> <n>   Set receive universe for channel 1-4 (not saved)
+  artnet dmx <ch> <addr>     Set DMX start address for channel 1-4,
+                             addr 1-512 or 0=disabled (not saved)
+
+Examples:
+
+  ./conez-simulator --artnet-rx               # receive from any ArtNet source
+  artnet enable                               # enable at runtime
+  artnet universe 1 1                         # ch1 listens on universe 1
+  artnet dmx 1 1                              # ch1 starts at DMX address 1
+  artnet dmx 2 151                            # ch2 starts at DMX address 151
 
 
 Architecture
@@ -288,9 +398,12 @@ Source Layout
       │   ├── console_widget       output + input
       │   └── sensor_panel         grouped sliders
       ├── state/
+      │   ├── artnet_sender        ArtNet UDP TX output (optional)
+      │   ├── artnet_receiver      ArtNet UDP RX input (optional, QUdpSocket)
       │   ├── led_state            4-channel RGB buffers, mutex
+      │   ├── mqtt_client          MQTT 3.1.1 client (QTcpSocket)
       │   ├── sensor_state         mock values, mutex
-      │   ├── sim_config           LED counts, paths
+      │   ├── sim_config           LED counts, paths, network config
       │   └── cue_engine           cue timeline playback
       ├── wasm/
       │   ├── sim_wasm_runtime     wasm3 lifecycle, m3_Yield
@@ -350,6 +463,7 @@ Limitations
 -----------
 
   - No LoRa, WiFi, or HTTP. Network-dependent features are stubbed.
+  - ArtNet TX/RX and MQTT are available as optional network features.
   - GPIO operations log to console but do not affect real pins.
   - PSRAM is not emulated (modules use regular wasm3 linear memory).
   - Cue engine plays back .cue files with full timeline and spatial

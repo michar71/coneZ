@@ -9,6 +9,8 @@
 #include "sensor_state.h"
 #include "cue_engine.h"
 #include "mqtt_client.h"
+#include "artnet_sender.h"
+#include "artnet_receiver.h"
 #include "inflate_util.h"
 #include "deflate_util.h"
 
@@ -106,6 +108,34 @@ MainWindow::MainWindow(QWidget *parent)
     mqtt.setBroker(QString::fromStdString(simConfig().mqtt_broker), simConfig().mqtt_port);
     if (simConfig().mqtt_enabled)
         mqtt.setEnabled(true);
+
+    // Wire ArtNet TX sender output to console and initialize from config
+    auto &artnet = artnetSender();
+    artnet.setOutputCallback([this](const QString &msg) {
+        m_console->appendText(msg);
+    });
+    artnet.setDestination(QString::fromStdString(simConfig().artnet_host),
+                          simConfig().artnet_port);
+    artnet.setUniverse(simConfig().artnet_universe);
+    if (simConfig().artnet_enabled)
+        artnet.setEnabled(true);
+
+    // Wire ArtNet RX receiver output to console and initialize from config
+    auto &artnetRx = artnetReceiver();
+    artnetRx.setOutputCallback([this](const QString &msg) {
+        m_console->appendText(msg);
+    });
+    const auto &cfg = simConfig();
+    artnetRx.setUniverseForChannel(1, cfg.artnet_rx_uni1);
+    artnetRx.setUniverseForChannel(2, cfg.artnet_rx_uni2);
+    artnetRx.setUniverseForChannel(3, cfg.artnet_rx_uni3);
+    artnetRx.setUniverseForChannel(4, cfg.artnet_rx_uni4);
+    artnetRx.setDmxAddrForChannel(1, cfg.artnet_rx_dmx1);
+    artnetRx.setDmxAddrForChannel(2, cfg.artnet_rx_dmx2);
+    artnetRx.setDmxAddrForChannel(3, cfg.artnet_rx_dmx3);
+    artnetRx.setDmxAddrForChannel(4, cfg.artnet_rx_dmx4);
+    if (cfg.artnet_rx_enabled)
+        artnetRx.setEnabled(true);
 
     // Initialize sandbox directory
     QDir().mkpath(QString::fromStdString(simConfig().sandbox_path));
@@ -207,6 +237,8 @@ void MainWindow::onCommand(const QString &cmd)
         cmdInflate(parts);
     } else if (verb == "deflate" || verb == "gzip") {
         cmdDeflate(parts);
+    } else if (verb == "artnet") {
+        cmdArtnet(parts);
     } else {
         m_console->appendText("Unknown command: " + verb + ". Type ? for help.\n");
     }
@@ -279,6 +311,12 @@ void MainWindow::cmdHelp()
 {
     m_console->appendText(
         "Available commands:\n"
+        "  artnet                              ArtNet RX+TX status\n"
+        "  artnet enable/disable               Enable/disable ArtNet receiver\n"
+        "  artnet start/stop                   Start/stop ArtNet receiver\n"
+        "  artnet universe <ch> <n>            Set RX universe for LED channel 1-4\n"
+        "  artnet dmx <ch> <addr>              Set RX DMX start address (1-512; 0=off)\n"
+        "  artnet tx [enable|disable|host|port|universe]  ArtNet transmit control\n"
         "  cat {filename}                      Show file contents\n"
         "  clear                               Clear console\n"
         "  cp {source} {dest}                  Copy file\n"
@@ -1125,4 +1163,118 @@ void MainWindow::cmdDeflate(const QStringList &args)
 
     m_console->appendText(QString("Deflated: %1 (%2 -> %3 bytes)\n")
         .arg(dstName).arg(inData.size()).arg(result));
+}
+
+void MainWindow::cmdArtnet(const QStringList &args)
+{
+    auto &tx = artnetSender();
+    auto &rx = artnetReceiver();
+
+    // ----------------------------------------------------------------
+    // artnet tx ...  — transmit subcommands
+    // ----------------------------------------------------------------
+    if (args.size() >= 2 && args[1].compare("tx", Qt::CaseInsensitive) == 0) {
+        if (args.size() >= 3 && args[2].compare("enable", Qt::CaseInsensitive) == 0) {
+            tx.setEnabled(true);
+            return;
+        }
+        if (args.size() >= 3 && args[2].compare("disable", Qt::CaseInsensitive) == 0) {
+            tx.setEnabled(false);
+            return;
+        }
+        if (args.size() >= 4 && args[2].compare("host", Qt::CaseInsensitive) == 0) {
+            tx.setDestination(args[3], tx.port());
+            m_console->appendText(QString("ArtNet TX destination: %1:%2\n").arg(args[3]).arg(tx.port()));
+            return;
+        }
+        if (args.size() >= 4 && args[2].compare("port", Qt::CaseInsensitive) == 0) {
+            tx.setDestination(tx.host(), args[3].toInt());
+            m_console->appendText(QString("ArtNet TX port: %1\n").arg(args[3].toInt()));
+            return;
+        }
+        if (args.size() >= 4 && args[2].compare("universe", Qt::CaseInsensitive) == 0) {
+            tx.setUniverse(args[3].toInt());
+            m_console->appendText(QString("ArtNet TX starting universe: %1\n").arg(args[3].toInt()));
+            return;
+        }
+        // artnet tx — show TX status
+        m_console->appendText("ArtNet TX status:\n");
+        m_console->appendText(QString("  Enabled:  %1\n").arg(tx.enabled() ? "yes" : "no"));
+        m_console->appendText(QString("  Host:     %1:%2\n").arg(tx.host()).arg(tx.port()));
+        m_console->appendText(QString("  Universe: %1\n").arg(tx.universe()));
+        m_console->appendText(QString("  Frames:   %1\n").arg(tx.frameCount()));
+        m_console->appendText(QString("  Packets:  %1\n").arg(tx.packetCount()));
+        return;
+    }
+
+    // ----------------------------------------------------------------
+    // artnet enable/disable/start/stop — RX receiver (mirrors firmware)
+    // ----------------------------------------------------------------
+    if (args.size() >= 2 && args[1].compare("enable", Qt::CaseInsensitive) == 0) {
+        rx.setEnabled(true);
+        return;
+    }
+    if (args.size() >= 2 && args[1].compare("disable", Qt::CaseInsensitive) == 0) {
+        rx.setEnabled(false);
+        return;
+    }
+    if (args.size() >= 2 && args[1].compare("start", Qt::CaseInsensitive) == 0) {
+        rx.setEnabled(true);
+        return;
+    }
+    if (args.size() >= 2 && args[1].compare("stop", Qt::CaseInsensitive) == 0) {
+        rx.setEnabled(false);
+        return;
+    }
+
+    // artnet universe <ch> <n>  — RX universe per LED channel (mirrors firmware)
+    if (args.size() >= 4 && args[1].compare("universe", Qt::CaseInsensitive) == 0) {
+        int ch  = args[2].toInt();
+        int uni = args[3].toInt();
+        if (ch < 1 || ch > 4) {
+            m_console->appendText("Channel must be 1-4\n");
+            return;
+        }
+        rx.setUniverseForChannel(ch, uni);
+        m_console->appendText(QString("ArtNet RX: LED ch%1 universe set to %2\n").arg(ch).arg(uni));
+        return;
+    }
+
+    // artnet dmx <ch> <addr>  — RX DMX start address per LED channel (mirrors firmware)
+    if (args.size() >= 4 && args[1].compare("dmx", Qt::CaseInsensitive) == 0) {
+        int ch   = args[2].toInt();
+        int addr = args[3].toInt();
+        if (ch < 1 || ch > 4) {
+            m_console->appendText("Channel must be 1-4\n");
+            return;
+        }
+        if (addr < 0 || addr > 512) {
+            m_console->appendText("DMX address must be 0-512 (0 = disabled)\n");
+            return;
+        }
+        rx.setDmxAddrForChannel(ch, addr);
+        if (addr == 0)
+            m_console->appendText(QString("ArtNet RX: LED ch%1 disabled\n").arg(ch));
+        else
+            m_console->appendText(QString("ArtNet RX: LED ch%1 DMX start set to %2\n").arg(ch).arg(addr));
+        return;
+    }
+
+    // artnet — show combined status
+    m_console->appendText("ArtNet RX status:\n");
+    m_console->appendText(QString("  Receiver: %1\n").arg(rx.enabled() ? "running" : "disabled"));
+    m_console->appendText(QString("  Packets:  %1    Frames: %2\n").arg(rx.rxPackets()).arg(rx.rxFrames()));
+    m_console->appendText("  Ch  Universe  DMX start\n");
+    for (int ch = 1; ch <= 4; ch++) {
+        int addr = rx.dmxAddrForChannel(ch);
+        if (addr == 0)
+            m_console->appendText(QString("  %1   %2         disabled\n").arg(ch).arg(rx.universeForChannel(ch)));
+        else
+            m_console->appendText(QString("  %1   %2         %3\n").arg(ch).arg(rx.universeForChannel(ch)).arg(addr));
+    }
+    m_console->appendText("\nArtNet TX status:\n");
+    m_console->appendText(QString("  Transmit: %1\n").arg(tx.enabled() ? "enabled" : "disabled"));
+    m_console->appendText(QString("  Host:     %1:%2\n").arg(tx.host()).arg(tx.port()));
+    m_console->appendText(QString("  Universe: %1\n").arg(tx.universe()));
+    m_console->appendText(QString("  Frames:   %1    Packets: %2\n").arg(tx.frameCount()).arg(tx.packetCount()));
 }

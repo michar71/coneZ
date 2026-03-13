@@ -1,4 +1,5 @@
 #include "led_strip_widget.h"
+#include "artnet_sender.h"
 #include <QPainter>
 
 LedStripWidget::LedStripWidget(QWidget *parent)
@@ -17,6 +18,7 @@ void LedStripWidget::refresh()
         m_snapshot = ledState().snapshot();
         ledState().clearDirty();
         update();
+        artnetSender().sendFrame(m_snapshot);
     }
 }
 
