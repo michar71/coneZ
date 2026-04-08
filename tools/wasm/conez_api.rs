@@ -170,32 +170,56 @@ extern "C" {
     pub fn lut_check(index: i32) -> i32;
 
     // ---- File I/O ----
-    /// Open a file. Mode: 0=read, 1=write, 2=append. Returns handle (0-3) or -1.
-    pub fn file_open(path: *const u8, path_len: i32, mode: i32) -> i32;
+    // All paths are null-terminated C strings, must start with '/', no '..',
+    // '/config.ini' protected. Functions returning status use 0=OK, -1=error
+    // (POSIX convention).
+    //
+    // Open modes: 0=READ ("rb"), 1=WRITE ("wb"), 2=APPEND ("ab"),
+    //             3=RW ("rb+"), 4=RW_TRUNC ("wb+"), 5=RW_APPEND ("ab+").
+    // Seek whence: 0=SET, 1=CUR, 2=END.
+    pub fn file_open(path: *const u8, mode: i32) -> i32;
     pub fn file_close(handle: i32);
     pub fn file_read(handle: i32, buf: *mut u8, max_len: i32) -> i32;
     pub fn file_write(handle: i32, buf: *const u8, len: i32) -> i32;
     pub fn file_size(handle: i32) -> i32;
-    pub fn file_seek(handle: i32, pos: i32) -> i32;
+    pub fn file_seek(handle: i32, offset: i32, whence: i32) -> i32;
     pub fn file_tell(handle: i32) -> i32;
-    pub fn file_exists(path: *const u8, path_len: i32) -> i32;
-    pub fn file_delete(path: *const u8, path_len: i32) -> i32;
-    pub fn file_rename(old_path: *const u8, old_len: i32, new_path: *const u8, new_len: i32)
-        -> i32;
+    pub fn file_eof(handle: i32) -> i32;
+    pub fn file_truncate(handle: i32, length: i32) -> i32;
+    pub fn file_flush(handle: i32) -> i32;
+    pub fn file_readln(handle: i32, buf: *mut u8, buf_len: i32) -> i32;
+    pub fn file_readln_str(handle: i32) -> i32;
+    pub fn file_writeln(handle: i32, str_ptr: *const u8) -> i32;
+
+    /// Stat a path. `out` points to `file_stat_t { i32 size; i32 type; i32 mtime; }`.
+    pub fn file_stat(path: *const u8, out: *mut i32) -> i32;
+    pub fn file_delete(path: *const u8) -> i32;
+    pub fn file_rename(old_path: *const u8, new_path: *const u8) -> i32;
+    pub fn file_mkdir(path: *const u8) -> i32;
+    pub fn file_rmdir(path: *const u8) -> i32;
+
+    // ---- Directory iteration ----
+    pub fn dir_open(path: *const u8) -> i32;
+    /// Reads next entry into `out` (260 bytes: `i32 type; u8 name[256]`).
+    /// Returns 1 on success, 0 at end, -1 on error.
+    pub fn dir_read(handle: i32, out: *mut u8) -> i32;
+    pub fn dir_close(handle: i32);
 
     // ---- Compression ----
+    // File paths are null-terminated (same convention as file I/O).
+    // Memory buffers use (pointer, length). All return size on success, -1 on error.
+
     /// Decompress a file to another file. Auto-detects gzip/zlib/raw deflate.
-    /// Returns decompressed size on success, -1 on error.
-    pub fn inflate_file(src: *const u8, src_len: i32, dst: *const u8, dst_len: i32) -> i32;
-    /// Decompress a file into a memory buffer. Returns decompressed size or -1.
-    pub fn inflate_file_to_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
-    /// Decompress memory to memory. Returns decompressed size or -1.
+    pub fn inflate_file(src: *const u8, dst: *const u8) -> i32;
+    /// Decompress a file into a memory buffer.
+    pub fn inflate_file_to_mem(src: *const u8, dst: *mut u8, dst_max: i32) -> i32;
+    /// Decompress memory to memory.
     pub fn inflate_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
-    /// Compress a file to another file (gzip). Returns compressed size or -1.
-    pub fn deflate_file(src: *const u8, src_len: i32, dst: *const u8, dst_len: i32) -> i32;
-    /// Compress memory to a file (gzip). Returns compressed size or -1.
-    pub fn deflate_mem_to_file(src: *const u8, src_len: i32, dst: *const u8, dst_len: i32) -> i32;
-    /// Compress memory to memory (gzip). Returns compressed size or -1.
+    /// Compress a file to another file (gzip).
+    pub fn deflate_file(src: *const u8, dst: *const u8) -> i32;
+    /// Compress memory to a file (gzip).
+    pub fn deflate_mem_to_file(src: *const u8, src_len: i32, dst: *const u8) -> i32;
+    /// Compress memory to memory (gzip).
     pub fn deflate_mem(src: *const u8, src_len: i32, dst: *mut u8, dst_max: i32) -> i32;
 
     // ---- Curve / Interpolation ----
@@ -289,35 +313,10 @@ pub const fn rgb_b(packed: i32) -> i32 {
     packed & 0xFF
 }
 
-/// Open a file by path string. Mode: 0=read, 1=write, 2=append.
-#[inline]
-pub fn file_open_str(path: &str, mode: i32) -> i32 {
-    unsafe { file_open(path.as_ptr(), path.len() as i32, mode) }
-}
-
-/// Check if a file exists by path string.
-#[inline]
-pub fn file_exists_str(path: &str) -> bool {
-    unsafe { file_exists(path.as_ptr(), path.len() as i32) != 0 }
-}
-
-/// Delete a file by path string.
-#[inline]
-pub fn file_delete_str(path: &str) -> bool {
-    unsafe { file_delete(path.as_ptr(), path.len() as i32) != 0 }
-}
-
-/// Decompress a file to another file by path strings.
-#[inline]
-pub fn inflate_file_str(src: &str, dst: &str) -> i32 {
-    unsafe { inflate_file(src.as_ptr(), src.len() as i32, dst.as_ptr(), dst.len() as i32) }
-}
-
-/// Decompress a file into a memory buffer by path string.
-#[inline]
-pub fn inflate_file_to_mem_str(src: &str, dst: &mut [u8]) -> i32 {
-    unsafe { inflate_file_to_mem(src.as_ptr(), src.len() as i32, dst.as_mut_ptr(), dst.len() as i32) }
-}
+// File I/O and compression helpers: paths must be null-terminated, so
+// callers should pass `b"/path\0".as_ptr()` or a `CString`. The old `_str`
+// wrappers are gone — the native `&str` form wasn't zero-terminated and
+// would have been unsafe with the new API.
 
 /// Optional allocator adapter for no_std + alloc crates.
 ///

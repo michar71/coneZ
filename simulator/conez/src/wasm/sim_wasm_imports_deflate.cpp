@@ -21,15 +21,18 @@ static std::string sandbox(const char *path)
     return simConfig().sandbox_path + path;
 }
 
-static bool get_path(IM3Runtime runtime, int32_t ptr, int32_t len, char *out, int out_size)
+// Extract null-terminated path from WASM memory and validate
+static bool get_path_z(IM3Runtime runtime, int32_t ptr, char *out, int out_size)
 {
+    if (ptr == 0) return false;
     uint32_t mem_size = 0;
     uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem || (uint32_t)ptr + len > mem_size || len <= 0 || len >= out_size)
-        return false;
+    if (!mem || (uint32_t)ptr >= mem_size) return false;
+    int len = wasm_strlen(mem, mem_size, (uint32_t)ptr);
+    if (len <= 0 || len >= out_size) return false;
     memcpy(out, mem + ptr, len);
     out[len] = '\0';
-    return true;
+    return valid_path(out);
 }
 
 static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
@@ -38,19 +41,16 @@ static int file_write_cb(const uint8_t *data, size_t len, void *ctx)
     return fwrite(data, 1, len, f) == len ? 0 : -1;
 }
 
-// i32 deflate_file(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_len) -> size or -1
+// i32 deflate_file(i32 src_ptr, i32 dst_ptr) -> size or -1
 m3ApiRawFunction(m3_deflate_file)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src_ptr);
-    m3ApiGetArg(int32_t, src_len);
     m3ApiGetArg(int32_t, dst_ptr);
-    m3ApiGetArg(int32_t, dst_len);
 
     char src_path[256], dst_path[256];
-    if (!get_path(runtime, src_ptr, src_len, src_path, sizeof(src_path))) m3ApiReturn(-1);
-    if (!get_path(runtime, dst_ptr, dst_len, dst_path, sizeof(dst_path))) m3ApiReturn(-1);
-    if (!valid_path(src_path) || !valid_path(dst_path)) m3ApiReturn(-1);
+    if (!get_path_z(runtime, src_ptr, src_path, sizeof(src_path))) m3ApiReturn(-1);
+    if (!get_path_z(runtime, dst_ptr, dst_path, sizeof(dst_path))) m3ApiReturn(-1);
 
     std::string src_full = sandbox(src_path);
     FILE *f = fopen(src_full.c_str(), "rb");
@@ -77,14 +77,13 @@ m3ApiRawFunction(m3_deflate_file)
     m3ApiReturn(result);
 }
 
-// i32 deflate_mem_to_file(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_len) -> size or -1
+// i32 deflate_mem_to_file(i32 src_ptr, i32 src_len, i32 dst_ptr) -> size or -1
 m3ApiRawFunction(m3_deflate_mem_to_file)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src_ptr);
     m3ApiGetArg(int32_t, src_len);
     m3ApiGetArg(int32_t, dst_ptr);
-    m3ApiGetArg(int32_t, dst_len);
 
     if (src_len <= 0) m3ApiReturn(-1);
 
@@ -93,8 +92,7 @@ m3ApiRawFunction(m3_deflate_mem_to_file)
     if (!mem_base || (uint32_t)src_ptr + src_len > mem_size) m3ApiReturn(-1);
 
     char dst_path[256];
-    if (!get_path(runtime, dst_ptr, dst_len, dst_path, sizeof(dst_path))) m3ApiReturn(-1);
-    if (!valid_path(dst_path)) m3ApiReturn(-1);
+    if (!get_path_z(runtime, dst_ptr, dst_path, sizeof(dst_path))) m3ApiReturn(-1);
 
     std::string dst_full = sandbox(dst_path);
     FILE *out = fopen(dst_full.c_str(), "wb");
@@ -135,8 +133,8 @@ m3ApiRawFunction(m3_deflate_mem)
 M3Result link_deflate_imports(IM3Module module)
 {
     M3Result r;
-    LINK("deflate_file",        "i(iiii)", m3_deflate_file)
-    LINK("deflate_mem_to_file", "i(iiii)", m3_deflate_mem_to_file)
+    LINK("deflate_file",        "i(ii)",   m3_deflate_file)
+    LINK("deflate_mem_to_file", "i(iii)",  m3_deflate_mem_to_file)
     LINK("deflate_mem",         "i(iiii)", m3_deflate_mem)
     return m3Err_none;
 }

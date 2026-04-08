@@ -427,105 +427,157 @@ int lut_save(int index);
 __attribute__((import_module("env"), import_name("lut_check")))
 int lut_check(int index);
 
-/* ---- File I/O ---- */
-
-/*
- * Open a file on LittleFS. Mode: 0=read, 1=write, 2=append.
- * Path must start with '/', no '..' allowed, /config.ini is protected.
- * Returns a handle (0-3) or -1 on failure. Max 4 files open at once.
+/* ============================================================================
+ * File I/O
+ *
+ * All paths are null-terminated C strings. They must start with '/', cannot
+ * contain '..', and '/config.ini' is protected from modification.
+ *
+ * Error convention (POSIX-style):
+ *   - Functions returning a handle: handle on success, -1 on error.
+ *   - Functions returning a count:  count on success, -1 on error.
+ *   - Functions returning status:   0 on success, -1 on error.
+ *   - Predicates (file_eof):        1 on condition, 0 otherwise.
+ *
+ * Up to 4 files and 4 directories may be open at once.
+ * ============================================================================
  */
-__attribute__((import_module("env"), import_name("file_open")))
-int file_open(const char *path, int path_len, int mode);
 
-/* Close a file handle. */
+/* Open modes (map to fopen "rb"/"wb"/"ab"/"rb+"/"wb+"/"ab+") */
+#define FILE_MODE_READ      0  /* must exist */
+#define FILE_MODE_WRITE     1  /* truncate, create if missing */
+#define FILE_MODE_APPEND    2  /* create, position at end */
+#define FILE_MODE_RW        3  /* read+write, must exist */
+#define FILE_MODE_RW_TRUNC  4  /* read+write, truncate/create */
+#define FILE_MODE_RW_APPEND 5  /* read+write, position at end, create */
+
+/* Seek whence values */
+#define FILE_SEEK_SET 0
+#define FILE_SEEK_CUR 1
+#define FILE_SEEK_END 2
+
+/* File types (file_stat_t.type, dir_entry_t.type) */
+#define FILE_TYPE_FILE     0
+#define FILE_TYPE_DIR      1
+#define FILE_TYPE_UNKNOWN -1
+
+typedef struct {
+    int size;   /* bytes (0 for directories) */
+    int type;   /* FILE_TYPE_* */
+    int mtime;  /* unix seconds (0 if unavailable) */
+} file_stat_t;
+
+typedef struct {
+    int  type;       /* FILE_TYPE_FILE or FILE_TYPE_DIR */
+    char name[256];  /* null-terminated entry name */
+} dir_entry_t;
+
+/* ---- Open file operations (require a handle) ---- */
+
+__attribute__((import_module("env"), import_name("file_open")))
+int file_open(const char *path, int mode);
+
 __attribute__((import_module("env"), import_name("file_close")))
 void file_close(int handle);
 
-/* Read up to max_len bytes into buf. Returns bytes read or -1. */
 __attribute__((import_module("env"), import_name("file_read")))
 int file_read(int handle, void *buf, int max_len);
 
-/* Write len bytes from buf. Returns bytes written or -1. */
 __attribute__((import_module("env"), import_name("file_write")))
 int file_write(int handle, const void *buf, int len);
 
-/* Return the total size of the open file, or -1. */
 __attribute__((import_module("env"), import_name("file_size")))
 int file_size(int handle);
 
-/* Seek to byte position. Returns 1 on success, 0 on failure. */
 __attribute__((import_module("env"), import_name("file_seek")))
-int file_seek(int handle, int pos);
+int file_seek(int handle, int offset, int whence);
 
-/* Return the current read/write position, or -1. */
 __attribute__((import_module("env"), import_name("file_tell")))
 int file_tell(int handle);
 
-/* Check if a file exists. Returns 1 if it exists, 0 otherwise. */
-__attribute__((import_module("env"), import_name("file_exists")))
-int file_exists(const char *path, int path_len);
+__attribute__((import_module("env"), import_name("file_eof")))
+int file_eof(int handle);
 
-/* Delete a file. Returns 1 on success, 0 on failure. */
+__attribute__((import_module("env"), import_name("file_truncate")))
+int file_truncate(int handle, int length);
+
+__attribute__((import_module("env"), import_name("file_flush")))
+int file_flush(int handle);
+
+/* Read a line into caller buffer. Strips trailing \r\n, null-terminates.
+ * Returns bytes written (excluding null), 0 at EOF with no data, -1 on error.
+ * If the line is longer than buf_len-1 the remainder stays in the stream. */
+__attribute__((import_module("env"), import_name("file_readln")))
+int file_readln(int handle, char *buf, int buf_len);
+
+/* Same as file_readln but returns a pool-allocated string.
+ * Returns pool pointer on success, 0 at EOF or error. Convenience for
+ * bas2wasm; c2wasm should prefer file_readln(). */
+__attribute__((import_module("env"), import_name("file_readln_str")))
+int file_readln_str(int handle);
+
+/* Writes str followed by '\n'. Returns 0 on success, -1 on error. */
+__attribute__((import_module("env"), import_name("file_writeln")))
+int file_writeln(int handle, const char *str);
+
+/* ---- Path-based operations (no open handle required) ---- */
+
+__attribute__((import_module("env"), import_name("file_stat")))
+int file_stat(const char *path, file_stat_t *out);
+
 __attribute__((import_module("env"), import_name("file_delete")))
-int file_delete(const char *path, int path_len);
+int file_delete(const char *path);
 
-/* Rename a file. Returns 1 on success, 0 on failure. */
 __attribute__((import_module("env"), import_name("file_rename")))
-int file_rename(const char *old_path, int old_len, const char *new_path, int new_len);
+int file_rename(const char *old_path, const char *new_path);
 
-/* Create a directory. Returns 1 on success, 0 on failure. */
 __attribute__((import_module("env"), import_name("file_mkdir")))
-int file_mkdir(const char *path, int path_len);
+int file_mkdir(const char *path);
 
-/* Remove an empty directory. Returns 1 on success, 0 on failure. */
 __attribute__((import_module("env"), import_name("file_rmdir")))
-int file_rmdir(const char *path, int path_len);
+int file_rmdir(const char *path);
 
-/* ---- Compression ---- */
+/* ---- Directory iteration ---- */
 
-/*
- * Decompress a file to another file. Auto-detects gzip/zlib/raw deflate.
- * src/dst are (pointer, length) pairs for the file path strings.
- * Returns decompressed size on success, -1 on error.
+__attribute__((import_module("env"), import_name("dir_open")))
+int dir_open(const char *path);
+
+/* Reads next entry into *out. Returns 1 on success, 0 at end, -1 on error.
+ * '.' and '..' are filtered out. */
+__attribute__((import_module("env"), import_name("dir_read")))
+int dir_read(int handle, dir_entry_t *out);
+
+__attribute__((import_module("env"), import_name("dir_close")))
+void dir_close(int handle);
+
+/* ---- Compression ----
+ *
+ * File paths are null-terminated C strings (same convention as file I/O).
+ * Memory buffers use (pointer, length). Path validation matches file I/O.
+ * All functions return the resulting size on success, -1 on error.
  */
+
+/* Decompress a file to another file. Auto-detects gzip/zlib/raw deflate. */
 __attribute__((import_module("env"), import_name("inflate_file")))
-int inflate_file(const char *src, int src_len, const char *dst, int dst_len);
+int inflate_file(const char *src, const char *dst);
 
-/*
- * Decompress a file into a memory buffer. Auto-detects format.
- * src is (pointer, length) for the file path; dst/dst_max point to WASM memory.
- * Returns decompressed size on success, -1 on error.
- */
+/* Decompress a file into a WASM memory buffer. */
 __attribute__((import_module("env"), import_name("inflate_file_to_mem")))
-int inflate_file_to_mem(const char *src, int src_len, void *dst, int dst_max);
+int inflate_file_to_mem(const char *src, void *dst, int dst_max);
 
-/*
- * Decompress memory to memory. Auto-detects gzip/zlib/raw deflate.
- * Returns decompressed size on success, -1 on error.
- */
+/* Decompress memory to memory. Auto-detects format. */
 __attribute__((import_module("env"), import_name("inflate_mem")))
 int inflate_mem(const void *src, int src_len, void *dst, int dst_max);
 
-/*
- * Compress a file to another file (gzip format).
- * src/dst are (pointer, length) pairs for the file path strings.
- * Returns compressed size on success, -1 on error.
- */
+/* Compress a file to another file (gzip format). */
 __attribute__((import_module("env"), import_name("deflate_file")))
-int deflate_file(const char *src, int src_len, const char *dst, int dst_len);
+int deflate_file(const char *src, const char *dst);
 
-/*
- * Compress a memory buffer to a file (gzip format).
- * src/src_len point to data in WASM memory; dst is (pointer, length) for the file path.
- * Returns compressed size on success, -1 on error.
- */
+/* Compress a memory buffer to a file (gzip format). */
 __attribute__((import_module("env"), import_name("deflate_mem_to_file")))
-int deflate_mem_to_file(const void *src, int src_len, const char *dst, int dst_len);
+int deflate_mem_to_file(const void *src, int src_len, const char *dst);
 
-/*
- * Compress memory to memory (gzip format).
- * Returns compressed size on success, -1 on error.
- */
+/* Compress memory to memory (gzip format). */
 __attribute__((import_module("env"), import_name("deflate_mem")))
 int deflate_mem(const void *src, int src_len, void *dst, int dst_max);
 
@@ -1017,34 +1069,10 @@ static inline int hsv_h(int packed) { return (packed >> 16) & 0xFF; }
 static inline int hsv_s(int packed) { return (packed >>  8) & 0xFF; }
 static inline int hsv_v(int packed) { return  packed        & 0xFF; }
 
-/* Open a file by C string (convenience wrapper). */
-static inline int file_open_str(const char *path, int mode) {
-    return file_open(path, (int)strlen(path), mode);
-}
-
-/* File helper convenience wrappers (C string versions). */
-static inline int file_exists_str(const char *path) {
-    return file_exists(path, (int)strlen(path));
-}
-static inline int file_delete_str(const char *path) {
-    return file_delete(path, (int)strlen(path));
-}
-static inline int file_rename_str(const char *old_path, const char *new_path) {
-    return file_rename(old_path, (int)strlen(old_path), new_path, (int)strlen(new_path));
-}
-static inline int file_mkdir_str(const char *path) {
-    return file_mkdir(path, (int)strlen(path));
-}
-static inline int file_rmdir_str(const char *path) {
-    return file_rmdir(path, (int)strlen(path));
-}
-
-/* Inflate convenience wrappers (C string path versions). */
-static inline int inflate_file_str(const char *src, const char *dst) {
-    return inflate_file(src, (int)strlen(src), dst, (int)strlen(dst));
-}
-static inline int inflate_file_to_mem_str(const char *src, void *dst, int dst_max) {
-    return inflate_file_to_mem(src, (int)strlen(src), dst, dst_max);
+/* file_exists: convenience check over file_stat(). Returns 1 if path exists. */
+static inline int file_exists(const char *path) {
+    file_stat_t st;
+    return file_stat(path, &st) == 0;
 }
 
 /* ---- Math / Utility Helpers ---- */

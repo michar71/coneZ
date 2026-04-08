@@ -528,6 +528,7 @@ static void compile_dim_core(int preserve) {
             emit_local_get(old_ptr_local);
             emit_call(IMP_FREE);
         }
+        emit_i32_const(1);
         emit_local_get(total_bytes_local);
         emit_call(IMP_CALLOC);
         emit_local_set(new_ptr_local);
@@ -1190,19 +1191,10 @@ static void compile_close_file(void) {
     emit_i32_store(0);
 }
 
-static void emit_str_ptr_len(void) {
-    int tmp = alloc_local();
-    emit_local_set(tmp);
-    emit_local_get(tmp);
-    emit_local_get(tmp);
-    emit_call(IMP_STR_LEN);
-}
-
 static void compile_kill(void) {
     expr();
     VType t = vpop();
     if (t != T_STR) { error_at("KILL requires a string path"); return; }
-    emit_str_ptr_len();
     emit_call(IMP_FILE_DELETE);
     emit_drop();
 }
@@ -1223,11 +1215,7 @@ static void compile_name_stmt(void) {
     emit_local_set(new_ptr);
 
     emit_local_get(old_ptr);
-    emit_local_get(old_ptr);
-    emit_call(IMP_STR_LEN);
     emit_local_get(new_ptr);
-    emit_local_get(new_ptr);
-    emit_call(IMP_STR_LEN);
     emit_call(IMP_FILE_RENAME);
     emit_drop();
 }
@@ -1236,7 +1224,6 @@ static void compile_mkdir(void) {
     expr();
     VType t = vpop();
     if (t != T_STR) { error_at("MKDIR requires a string path"); return; }
-    emit_str_ptr_len();
     emit_call(IMP_FILE_MKDIR);
     emit_drop();
 }
@@ -1245,7 +1232,6 @@ static void compile_rmdir(void) {
     expr();
     VType t = vpop();
     if (t != T_STR) { error_at("RMDIR requires a string path"); return; }
-    emit_str_ptr_len();
     emit_call(IMP_FILE_RMDIR);
     emit_drop();
 }

@@ -19,10 +19,12 @@ static bool path_ok(const char *path, int len)
     return true;
 }
 
-static bool extract_path(IM3Runtime runtime, int32_t ptr, int32_t len, char *out)
+// Extract a null-terminated path from WASM memory and validate it.
+static bool extract_path_z(IM3Runtime runtime, int32_t ptr, char *out)
 {
+    if (ptr == 0) return false;
+    int len = wasm_mem_strlen(runtime, (uint32_t)ptr);
     if (len <= 0 || len >= WASM_MAX_PATH_LEN) return false;
-    if (!wasm_mem_check(runtime, (uint32_t)ptr, (size_t)len)) return false;
     wasm_mem_read(runtime, (uint32_t)ptr, out, (size_t)len);
     out[len] = '\0';
     return path_ok(out, len);
@@ -62,18 +64,16 @@ static int wasm_write_cb(const uint8_t *data, size_t len, void *ctx)
 #endif
 #define DEF_LEVEL  6
 
-// i32 deflate_file(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_len) -> compressed size or -1
+// i32 deflate_file(i32 src_ptr, i32 dst_ptr) -> compressed size or -1
 m3ApiRawFunction(m3_deflate_file)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src_ptr);
-    m3ApiGetArg(int32_t, src_len);
     m3ApiGetArg(int32_t, dst_ptr);
-    m3ApiGetArg(int32_t, dst_len);
 
     char src_path[WASM_MAX_PATH_LEN], dst_path[WASM_MAX_PATH_LEN];
-    if (!extract_path(runtime, src_ptr, src_len, src_path)) m3ApiReturn(-1);
-    if (!extract_path(runtime, dst_ptr, dst_len, dst_path)) m3ApiReturn(-1);
+    if (!extract_path_z(runtime, src_ptr, src_path)) m3ApiReturn(-1);
+    if (!extract_path_z(runtime, dst_ptr, dst_path)) m3ApiReturn(-1);
 
     char src_fpath[WASM_MAX_PATH_LEN + 16];
     lfs_path(src_fpath, sizeof(src_fpath), src_path);
@@ -100,20 +100,19 @@ m3ApiRawFunction(m3_deflate_file)
     m3ApiReturn(result);
 }
 
-// i32 deflate_mem_to_file(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_len) -> compressed size or -1
+// i32 deflate_mem_to_file(i32 src_ptr, i32 src_len, i32 dst_ptr) -> compressed size or -1
 m3ApiRawFunction(m3_deflate_mem_to_file)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src_ptr);
     m3ApiGetArg(int32_t, src_len);
     m3ApiGetArg(int32_t, dst_ptr);
-    m3ApiGetArg(int32_t, dst_len);
 
     if (src_len <= 0) m3ApiReturn(-1);
     if (!wasm_mem_check(runtime, (uint32_t)src_ptr, (size_t)src_len)) m3ApiReturn(-1);
 
     char dst_path[WASM_MAX_PATH_LEN];
-    if (!extract_path(runtime, dst_ptr, dst_len, dst_path)) m3ApiReturn(-1);
+    if (!extract_path_z(runtime, dst_ptr, dst_path)) m3ApiReturn(-1);
 
     /* Copy source from WASM memory to DRAM */
     uint8_t *in_buf = (uint8_t *)malloc(src_len);
@@ -165,10 +164,10 @@ M3Result link_deflate_imports(IM3Module module)
 {
     M3Result r;
 
-    r = m3_LinkRawFunction(module, "env", "deflate_file", "i(iiii)", m3_deflate_file);
+    r = m3_LinkRawFunction(module, "env", "deflate_file", "i(ii)", m3_deflate_file);
     if (r && r != m3Err_functionLookupFailed) return r;
 
-    r = m3_LinkRawFunction(module, "env", "deflate_mem_to_file", "i(iiii)", m3_deflate_mem_to_file);
+    r = m3_LinkRawFunction(module, "env", "deflate_mem_to_file", "i(iii)", m3_deflate_mem_to_file);
     if (r && r != m3Err_functionLookupFailed) return r;
 
     r = m3_LinkRawFunction(module, "env", "deflate_mem", "i(iiii)", m3_deflate_mem);

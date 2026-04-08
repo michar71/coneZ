@@ -20,10 +20,12 @@ static bool path_ok(const char *path, int len)
     return true;
 }
 
-static bool extract_path(IM3Runtime runtime, int32_t ptr, int32_t len, char *out)
+// Extract a null-terminated path from WASM memory and validate it.
+static bool extract_path_z(IM3Runtime runtime, int32_t ptr, char *out)
 {
+    if (ptr == 0) return false;
+    int len = wasm_mem_strlen(runtime, (uint32_t)ptr);
     if (len <= 0 || len >= WASM_MAX_PATH_LEN) return false;
-    if (!wasm_mem_check(runtime, (uint32_t)ptr, (size_t)len)) return false;
     wasm_mem_read(runtime, (uint32_t)ptr, out, (size_t)len);
     out[len] = '\0';
     return path_ok(out, len);
@@ -53,18 +55,16 @@ static int wasm_write_cb(const uint8_t *data, size_t len, void *ctx)
     return 0;
 }
 
-// i32 inflate_file(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_len) -> decompressed size or -1
+// i32 inflate_file(i32 src_ptr, i32 dst_ptr) -> decompressed size or -1
 m3ApiRawFunction(m3_inflate_file)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src_ptr);
-    m3ApiGetArg(int32_t, src_len);
     m3ApiGetArg(int32_t, dst_ptr);
-    m3ApiGetArg(int32_t, dst_len);
 
     char src_path[WASM_MAX_PATH_LEN], dst_path[WASM_MAX_PATH_LEN];
-    if (!extract_path(runtime, src_ptr, src_len, src_path)) m3ApiReturn(-1);
-    if (!extract_path(runtime, dst_ptr, dst_len, dst_path)) m3ApiReturn(-1);
+    if (!extract_path_z(runtime, src_ptr, src_path)) m3ApiReturn(-1);
+    if (!extract_path_z(runtime, dst_ptr, dst_path)) m3ApiReturn(-1);
 
     // Read compressed file
     char src_fpath[WASM_MAX_PATH_LEN + 16];
@@ -92,12 +92,11 @@ m3ApiRawFunction(m3_inflate_file)
     m3ApiReturn(result);
 }
 
-// i32 inflate_file_to_mem(i32 src_ptr, i32 src_len, i32 dst_ptr, i32 dst_max) -> decompressed size or -1
+// i32 inflate_file_to_mem(i32 src_ptr, i32 dst_ptr, i32 dst_max) -> decompressed size or -1
 m3ApiRawFunction(m3_inflate_file_to_mem)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, src_ptr);
-    m3ApiGetArg(int32_t, src_len);
     m3ApiGetArg(int32_t, dst_ptr);
     m3ApiGetArg(int32_t, dst_max);
 
@@ -105,7 +104,7 @@ m3ApiRawFunction(m3_inflate_file_to_mem)
     if (!wasm_mem_check(runtime, (uint32_t)dst_ptr, (size_t)dst_max)) m3ApiReturn(-1);
 
     char src_path[WASM_MAX_PATH_LEN];
-    if (!extract_path(runtime, src_ptr, src_len, src_path)) m3ApiReturn(-1);
+    if (!extract_path_z(runtime, src_ptr, src_path)) m3ApiReturn(-1);
 
     // Read compressed file
     char src_fpath[WASM_MAX_PATH_LEN + 16];
@@ -157,10 +156,10 @@ M3Result link_compression_imports(IM3Module module)
 {
     M3Result r;
 
-    r = m3_LinkRawFunction(module, "env", "inflate_file", "i(iiii)", m3_inflate_file);
+    r = m3_LinkRawFunction(module, "env", "inflate_file", "i(ii)", m3_inflate_file);
     if (r && r != m3Err_functionLookupFailed) return r;
 
-    r = m3_LinkRawFunction(module, "env", "inflate_file_to_mem", "i(iiii)", m3_inflate_file_to_mem);
+    r = m3_LinkRawFunction(module, "env", "inflate_file_to_mem", "i(iii)", m3_inflate_file_to_mem);
     if (r && r != m3Err_functionLookupFailed) return r;
 
     r = m3_LinkRawFunction(module, "env", "inflate_mem", "i(iiii)", m3_inflate_mem);

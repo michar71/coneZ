@@ -506,66 +506,120 @@ LUT (lookup tables)
 File I/O
 ~~~~~~~~
 
-  int  file_open(char *path, int path_len, int mode)
-      Open a file on LittleFS. mode: 0=read, 1=write, 2=append.
-      Returns a handle (0-3) or -1 on failure. Max 4 files open at once.
-      Path must start with '/', no '..' allowed, /config.ini is protected.
+  All paths are null-terminated C strings. Path must start with '/', no '..'
+  allowed, and '/config.ini' is protected from modification.
+
+  Error convention (POSIX-style):
+      - Functions returning a handle: handle on success, -1 on error.
+      - Functions returning a count:  count on success, -1 on error.
+      - Functions returning status:   0 on success, -1 on error.
+      - Predicates (file_eof):        1 on condition, 0 otherwise.
+
+  Up to 4 files and 4 directories may be open simultaneously.
+
+  Open modes (FILE_MODE_*, map to fopen mode strings):
+      0 = READ       "rb"   (must exist)
+      1 = WRITE      "wb"   (truncate, create if missing)
+      2 = APPEND     "ab"   (create, position at end)
+      3 = RW         "rb+"  (read+write, must exist)
+      4 = RW_TRUNC   "wb+"  (read+write, truncate/create)
+      5 = RW_APPEND  "ab+"  (read+write, position at end, create)
+
+  Seek whence (FILE_SEEK_*):
+      0 = SET    offset from start of file
+      1 = CUR    offset from current position
+      2 = END    offset from end of file
+
+  Stat struct:
+      typedef struct {
+          int size;   /* bytes (0 for directories) */
+          int type;   /* 0=file, 1=dir, -1=unknown */
+          int mtime;  /* unix seconds (0 if unavailable) */
+      } file_stat_t;
+
+  Directory entry struct:
+      typedef struct {
+          int  type;       /* 0=file, 1=dir */
+          char name[256];  /* null-terminated entry name */
+      } dir_entry_t;
+
+  ---- Open file operations (require a handle) ----
+
+  int  file_open(const char *path, int mode)
+      Returns handle (0-3) or -1. Max 4 files open at once.
 
   void file_close(int handle)
-  int  file_read(int handle, void *buf, int max_len)   Returns bytes read or -1.
-  int  file_write(int handle, void *buf, int len)      Returns bytes written or -1.
-  int  file_size(int handle)       Total file size or -1.
-  int  file_seek(int handle, int pos)   Returns 1 on success, 0 on failure.
-  int  file_tell(int handle)       Current read/write position or -1.
+  int  file_read(int handle, void *buf, int max_len)   bytes read or -1
+  int  file_write(int handle, const void *buf, int len) bytes written or -1
+  int  file_size(int handle)                            file size or -1
+  int  file_seek(int handle, int offset, int whence)    0 on success, -1 on error
+  int  file_tell(int handle)                            current position or -1
+  int  file_eof(int handle)                             1 at EOF, 0 otherwise
+  int  file_truncate(int handle, int length)            0 on success, -1 on error
+  int  file_flush(int handle)                           0 on success, -1 on error
 
-  int  file_exists(char *path, int path_len)
-      Check if a file exists. Returns 1 if it exists, 0 otherwise.
+  int  file_readln(int handle, char *buf, int buf_len)
+      Read one line into buf. Strips trailing \r\n, null-terminates.
+      Returns bytes written (excluding null), 0 at EOF with no data, -1 on error.
+      Truncates if the line is longer than buf_len-1.
 
-  int  file_delete(char *path, int path_len)
-      Delete a file. Returns 1 on success, 0 on failure.
-      Same path restrictions as file_open().
+  int  file_readln_str(int handle)
+      Same as file_readln but returns a pool-allocated string pointer.
+      Returns pool pointer on success, 0 at EOF or error.
+      Convenience for bas2wasm — c2wasm should prefer file_readln().
 
-  int  file_rename(char *old_path, int old_len, char *new_path, int new_len)
-      Rename a file. Returns 1 on success, 0 on failure.
-      Same path restrictions apply to both paths.
+  int  file_writeln(int handle, const char *str)
+      Writes str followed by '\n'. Returns 0 on success, -1 on error.
 
-  int  file_mkdir(char *path, int path_len)
-      Create a directory. Returns 1 on success, 0 on failure.
+  ---- Path-based operations (no handle required) ----
 
-  int  file_rmdir(char *path, int path_len)
-      Remove an empty directory. Returns 1 on success, 0 on failure.
+  int  file_stat(const char *path, file_stat_t *out)
+      Fill out with size/type/mtime. Returns 0 on success, -1 if path missing.
+
+  int  file_delete(const char *path)                    0 on success, -1 on error
+  int  file_rename(const char *old_path, const char *new_path)  0 / -1
+  int  file_mkdir(const char *path)                     0 / -1
+  int  file_rmdir(const char *path)                     0 / -1 (must be empty)
+
+  ---- Directory iteration ----
+
+  int  dir_open(const char *path)
+      Open a directory for iteration. Returns handle (0-3) or -1.
+
+  int  dir_read(int handle, dir_entry_t *out)
+      Reads next entry into *out. Returns 1 on success, 0 at end, -1 on error.
+      '.' and '..' are filtered out.
+
+  void dir_close(int handle)
 
 
 Compression
 ~~~~~~~~~~~
 
-  All three functions auto-detect gzip, zlib, or raw deflate format from
-  the input data header. Paths use the same (pointer, length) convention
-  and validation rules as file I/O.
+  Auto-detects gzip, zlib, or raw deflate format on inflate. File paths
+  are null-terminated C strings (same convention as the file I/O API).
+  Memory buffers use (pointer, length). Path validation matches file I/O
+  (must start with '/', no '..', '/config.ini' protected).
 
-  int  inflate_file(char *src, int src_len, char *dst, int dst_len)
+  All functions return the resulting size on success, -1 on error.
+
+  int  inflate_file(const char *src, const char *dst)
       Decompress a file to another file.
-      Returns decompressed size on success, -1 on error.
 
-  int  inflate_file_to_mem(char *src, int src_len, void *dst, int dst_max)
+  int  inflate_file_to_mem(const char *src, void *dst, int dst_max)
       Decompress a file into a WASM memory buffer.
-      Returns decompressed size on success, -1 on error.
 
-  int  inflate_mem(void *src, int src_len, void *dst, int dst_max)
+  int  inflate_mem(const void *src, int src_len, void *dst, int dst_max)
       Decompress memory to memory.
-      Returns decompressed size on success, -1 on error.
 
-  int  deflate_file(char *src, int src_len, char *dst, int dst_len)
+  int  deflate_file(const char *src, const char *dst)
       Compress a file to another file (gzip format).
-      Returns compressed size on success, -1 on error.
 
-  int  deflate_mem_to_file(void *src, int src_len, char *dst, int dst_len)
-      Compress a memory buffer to a file (gzip format).
-      Returns compressed size on success, -1 on error.
+  int  deflate_mem_to_file(const void *src, int src_len, const char *dst)
+      Compress a WASM memory buffer to a file (gzip format).
 
-  int  deflate_mem(void *src, int src_len, void *dst, int dst_max)
+  int  deflate_mem(const void *src, int src_len, void *dst, int dst_max)
       Compress memory to memory (gzip format).
-      Returns compressed size on success, -1 on error.
 
 
 Inline Functions (compiled into module, not host imports)
@@ -691,29 +745,9 @@ Color Unpack Helpers
 File I/O Helpers
 ~~~~~~~~~~~~~~~~
 
-  int file_open_str(const char *path, int mode)
-      Convenience wrapper that computes strlen for you.
-
-  int file_exists_str(const char *path)
-      Convenience wrapper for file_exists().
-
-  int file_delete_str(const char *path)
-      Convenience wrapper for file_delete().
-
-  int file_rename_str(const char *old_path, const char *new_path)
-      Convenience wrapper for file_rename().
-
-  int file_mkdir_str(const char *path)
-      Convenience wrapper for file_mkdir().
-
-  int file_rmdir_str(const char *path)
-      Convenience wrapper for file_rmdir().
-
-  int inflate_file_str(const char *src, const char *dst)
-      Convenience wrapper for inflate_file().
-
-  int inflate_file_to_mem_str(const char *src, void *dst, int dst_max)
-      Convenience wrapper for inflate_file_to_mem().
+  int file_exists(const char *path)
+      Static inline wrapper over file_stat(). Returns 1 if the path exists,
+      0 otherwise. (Not an import — implemented in the header.)
 
 
 C Standard Library Helpers
@@ -789,8 +823,9 @@ declare host imports as extern "C" blocks. Example:
       fn wait_pps(timeout_ms: i32) -> i32;
       fn wait_param(id: i32, cond: i32, val: i32, timeout: i32) -> i32;
       fn get_humidity() -> f32;
-      fn file_exists(path: *const u8, len: i32) -> i32;
-      fn file_delete(path: *const u8, len: i32) -> i32;
+      fn file_open(path: *const u8, mode: i32) -> i32;  // null-term path
+      fn file_delete(path: *const u8) -> i32;             // null-term path
+      fn file_stat(path: *const u8, out: *mut i32) -> i32;
       fn print_str(ptr: *const u8, len: i32);
       fn print_i64(val: i64);
       fn print_f64(val: f64);

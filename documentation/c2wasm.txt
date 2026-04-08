@@ -390,9 +390,12 @@ All functions declared in tools/wasm/conez_api.h are available after
   Curve:      lerp, larp, larpf
 
   File I/O:   file_open, file_close, file_read, file_write,
-              file_size, file_seek, file_tell,
-              file_exists, file_delete, file_rename,
+              file_size, file_seek, file_tell, file_eof,
+              file_truncate, file_flush,
+              file_readln, file_readln_str, file_writeln,
+              file_stat, file_delete, file_rename,
               file_mkdir, file_rmdir
+  Dir iter:   dir_open, dir_read, dir_close
 
   Compress:   inflate_file, inflate_file_to_mem, inflate_mem,
               deflate_file, deflate_mem_to_file, deflate_mem
