@@ -460,8 +460,12 @@ void parse_stmt(void) {
         if (tok != TOK_SEMI) {
             if (is_type_keyword(tok)) {
                 CType init_type = parse_type_spec();
-                parse_local_decl(init_type);
-                /* parse_local_decl already consumed the semicolon */
+                if (init_type == CT_STRUCT && !type_had_pointer && tok == TOK_SEMI) {
+                    next_token();
+                } else {
+                    parse_local_decl(init_type);
+                    /* parse_local_decl already consumed the semicolon */
+                }
             } else {
                 CType ct = expr();
                 if (ct != CT_VOID) emit_drop();
@@ -740,6 +744,11 @@ void parse_stmt(void) {
     /* Local variable declaration */
     if (is_type_keyword(tok)) {
         CType base_type = parse_type_spec();
+        /* Stand-alone struct type declaration: `struct Foo { ... };` */
+        if (base_type == CT_STRUCT && !type_had_pointer && tok == TOK_SEMI) {
+            next_token();
+            return;
+        }
         parse_local_decl(base_type);
         return;
     }
@@ -770,6 +779,10 @@ void parse_block(void) {
 static void parse_local_decl(CType base_type) {
     int base_const = type_had_const;
     int base_pointer = type_had_pointer ? 1 : 0; /* first declarator may have consumed '*' in parse_type_spec */
+    int base_struct_id = (base_type == CT_STRUCT) ? type_last_struct_id : -1;
+    if (base_type == CT_STRUCT && base_struct_id < 0) {
+        error_at("struct type with no tag not supported here");
+    }
     do {
         CType var_type = base_type;
         int var_const = base_const;
@@ -782,9 +795,11 @@ static void parse_local_decl(CType base_type) {
         /* Check per-declarator const qualifier */
         while (tok == TOK_CONST) { var_const = 1; next_token(); }
         /* Skip pointer stars - count depth */
-        while (tok == TOK_STAR) { next_token(); is_pointer++; var_type = CT_INT; }
-        if (is_pointer > 0)
+        while (tok == TOK_STAR) { next_token(); is_pointer++; }
+        if (is_pointer > 0 && base_type != CT_STRUCT)
             var_type = CT_INT;  /* all pointers are i32 at runtime */
+        if (is_pointer > 0 && base_type == CT_STRUCT)
+            var_type = CT_INT;  /* pointer-to-struct held as i32 */
 
         if (tok != TOK_NAME) { 
             error_at("expected variable name"); 
@@ -817,6 +832,11 @@ static void parse_local_decl(CType base_type) {
         uint8_t wtype = ctype_to_wasm(var_type);
         int local_idx = -1;
         int elem_size = ctype_sizeof_bytes(var_type);
+        /* struct-by-value element size comes from the layout table, not the
+         * scalar ctype size. Pointer-to-struct uses the default i32 elem_size. */
+        if (base_type == CT_STRUCT && is_pointer == 0 && base_struct_id >= 0) {
+            elem_size = struct_types[base_struct_id].size;
+        }
         int consumed_array_string_init = 0;
         char array_init_str[1024];
         int array_init_len = 0;
@@ -868,15 +888,35 @@ static void parse_local_decl(CType base_type) {
             local_idx = alloc_local(WASM_I32);
             emit_i32_const(off);
             emit_local_set(local_idx);
+        } else if (base_type == CT_STRUCT && is_pointer == 0 && base_struct_id >= 0) {
+            /* Struct-by-value local: allocate sizeof(struct) in linear memory,
+             * local holds the base address as i32. Member access treats the
+             * local identically to an array base pointer. */
+            int sz = struct_types[base_struct_id].size;
+            int off = add_data_zeros(sz, 4);
+            local_idx = alloc_local(WASM_I32);
+            emit_i32_const(off);
+            emit_local_set(local_idx);
         } else {
             local_idx = alloc_local(wtype);
         }
 
-        Symbol *s = add_sym(name, SYM_LOCAL, var_type);
+        /* The symbol's ctype reflects the *value* kind: struct-by-value stays
+         * CT_STRUCT so member access can recognise it, everything else uses
+         * the scalar var_type already computed above. */
+        CType sym_ctype = var_type;
+        if (base_type == CT_STRUCT && is_pointer == 0) sym_ctype = CT_STRUCT;
+
+        Symbol *s = add_sym(name, SYM_LOCAL, sym_ctype);
         s->idx = local_idx;
         s->scope = cur_scope;
         s->is_const = var_const;
-        s->type_info = type_base(base_type);
+        /* Base type_info: struct tracks struct_id, everything else uses plain base */
+        if (base_type == CT_STRUCT && base_struct_id >= 0) {
+            s->type_info = type_base_struct(base_struct_id);
+        } else {
+            s->type_info = type_base(base_type);
+        }
         if (is_array) {
             for (int d = array_ndims - 1; d >= 0; d--) {
                 int dim = array_dims[d] > 0 ? array_dims[d] : 1;
@@ -975,6 +1015,13 @@ void parse_top_level(void) {
 
     CType base_type = parse_type_spec();
     is_const |= type_had_const;
+    int base_struct_id = (base_type == CT_STRUCT) ? type_last_struct_id : -1;
+
+    /* Stand-alone struct type declaration: `struct Foo { ... };` */
+    if (base_type == CT_STRUCT && !type_had_pointer && tok == TOK_SEMI) {
+        next_token();
+        return;
+    }
 
     if (tok != TOK_NAME) {
         error_at("expected name after type");
@@ -1065,12 +1112,30 @@ void parse_top_level(void) {
 
     /* Regular global variable */
     int gidx = nglobals++;
-    Symbol *s = add_sym(name, SYM_GLOBAL, base_type);
+    /* struct-by-value globals store their base address like an array does. */
+    int global_is_struct_val =
+        (base_type == CT_STRUCT && !type_had_pointer && !is_array && base_struct_id >= 0);
+    CType global_ctype = base_type;
+    if (global_is_struct_val) global_ctype = CT_INT;  /* storage is i32 ptr */
+    else if (base_type == CT_STRUCT) global_ctype = CT_INT;  /* ptr-to-struct */
+    Symbol *s = add_sym(name, SYM_GLOBAL, global_ctype);
     s->idx = gidx;
     s->is_static = is_static;
-    s->type_info = type_base(base_type);
-    if (!is_array)
+    if (base_type == CT_STRUCT && base_struct_id >= 0) {
+        s->type_info = type_base_struct(base_struct_id);
+        if (type_had_pointer) s->type_info = type_pointer(s->type_info);
+    } else {
+        s->type_info = type_base(base_type);
+    }
+    if (global_is_struct_val) {
+        /* Allocate the struct instance in data; global holds the base pointer */
+        int sz = struct_types[base_struct_id].size;
+        int off = add_data_zeros(sz, 4);
+        s->init_ival = off;
+        s->ctype = CT_INT;
+    } else if (!is_array) {
         alloc_global_scalar_storage(s);
+    }
     int array_allocated = 0;
     if (is_array) {
         if (array_size > 0) {
@@ -1080,6 +1145,8 @@ void parse_top_level(void) {
                 total_elems *= dim;
             }
             int elem_size = ctype_sizeof_bytes(base_type);
+            if (base_type == CT_STRUCT && base_struct_id >= 0)
+                elem_size = struct_types[base_struct_id].size;
             int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
             int bytes = total_elems * elem_size;
             int off = add_data_zeros(bytes, align);

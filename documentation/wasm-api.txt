@@ -19,13 +19,21 @@ C modules (Option 1 — c2wasm, no external dependencies):
   c2wasm is a self-contained C-to-WASM compiler that requires only libc.
   It compiles a C subset (int/float/double/void/char/long long,
   unsigned int/unsigned long long, const enforcement, arrays with
-  compound assignment, pointer dereference/increment/arithmetic,
-  full control flow, full operator precedence, printf,
-  #include "conez_api.h", #define with line continuation, #ifdef,
-  #if with full constant expressions, file I/O, WASM-native and
-  host-imported math) directly to WASM. Useful when clang/LLVM is
-  unavailable. See documentation/c2wasm.txt for the full language
-  reference and limitations.
+  compound assignment, tag-based structs with '.'/'->' member access,
+  pointer dereference/increment/arithmetic, full control flow,
+  full operator precedence, printf, #include "conez_api.h" plus
+  user headers resolved relative to the source file, #define with
+  line continuation, #ifdef, #if with full constant expressions,
+  file I/O, WASM-native and host-imported math) directly to WASM.
+  Useful when clang/LLVM is unavailable. See documentation/c2wasm.txt
+  for the full language reference and limitations.
+
+  Note: conez_api.h is intercepted to register host imports and is
+  not parsed as a regular header, so its typedef'd names like
+  file_stat_t / dir_entry_t are not visible to c2wasm user code.
+  Re-declare them with an explicit tag (`struct file_stat_t { ... };`)
+  or put tagged versions in your own header and #include it alongside
+  "conez_api.h".
 
   c2wasm is also embedded in firmware and the simulator — use
   "compile /file.c" on-device or "run file.c" in the simulator.

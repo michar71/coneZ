@@ -97,6 +97,15 @@ Types:
   Address-of (&), dereference (*), and basic pointer arithmetic are supported
   for expression codegen (see Expressions and Limitations below).
 
+  Structs are supported with a tag-based type registry. A struct-by-value
+  local/global allocates sizeof(struct) bytes in the data section; the
+  symbol holds an i32 base pointer. Members are accessed via '.' (struct
+  lvalue) or '->' (pointer-to-struct); both compute the field address as
+  base + offset and load/store using the field's scalar opcode. Arrays of
+  structs, struct fields that are arrays, and nested structs all work,
+  provided every struct used as a field is complete at the point of use.
+  sizeof(struct T) reports the laid-out size. See "Structs" below.
+
   Type/WASM mapping summary:
     C type              WASM    sizeof
     ------              ----    ------
@@ -150,7 +159,7 @@ Declarations:
     Not supported:
       int a[3] = {f(), 2, 3};                 // non-constant global initializer expr
       int a[4] = {[1 + x] = 7};               // non-constant designator index
-      struct P p = {.x = 1};                  // structs/designated struct init unsupported
+      struct P p = {.x = 1};                  // struct initializer lists unsupported
 
   Global vs local initializer rule:
     - Global initializers must be constant expressions.
@@ -412,18 +421,23 @@ NOT Supported
 
 The following C features are NOT in scope:
 
-  - struct, union, enum, typedef
+  - union, enum, typedef
+  - struct initializer lists (= { ... }), anonymous structs, bitfields
+  - Passing structs by value to/from functions
   - Full C array semantics (see limitations below; basic arrays work)
   - Full pointer semantics (see limitations below; basic pointer ops work)
-  - malloc/free (dynamic memory allocation)
   - goto, labels
   - Function pointers
-  - Multi-file compilation (#include of user headers)
   - Variadic functions (except printf builtin)
-  - Bitfields
   - String operations at runtime (strlen, strcmp, etc.)
 
-For programs requiring these features, use clang --target=wasm32 instead.
+c2wasm DOES support:
+  - struct declarations with '.' and '->' member access (see "Structs")
+  - #include "user_header.h" — resolved relative to the source file;
+    conez_api.h remains a special-cased intercept that registers imports
+  - malloc / free / calloc / realloc via ConeZ API imports
+
+For programs requiring the features above, use clang --target=wasm32 instead.
 
 Current Array/Pointer Limitations
 ---------------------------------
@@ -465,6 +479,78 @@ Current Array/Pointer Limitations
   - Full C pointer type system with complete alias/qualifier rules
   - Pointer comparison (<, >, ==, etc.)
   - Array parameters (arrays cannot be passed to/from functions by pointer)
+
+
+Structs
+-------
+
+c2wasm supports named struct declarations and member access via '.' and
+'->'. Structs are tag-based: every struct must be declared with an explicit
+tag (anonymous structs are rejected). Declarations may appear at the top
+level of a source file, inside a function, or inside a '#include'd header.
+
+  struct file_stat_t {
+      int size;
+      int type;
+      int mtime;
+  };
+
+Once declared, a struct tag can be used as a type in any declaration
+position that accepts a built-in type:
+
+  struct file_stat_t st;                 // local by-value instance
+  struct file_stat_t *sp;                // pointer to struct
+  struct file_stat_t points[16];         // array of structs
+  struct box { int w, h; } sized_box;    // declaration + global in one go
+
+Field access uses the usual C syntax:
+
+  st.size = 0;
+  sp->mtime = now;
+  points[i].type = 1;
+
+Behind the scenes each struct tag is entered into a compile-time layout
+table. Fields are laid out sequentially with natural alignment (1/2/4
+bytes) and the total struct size is rounded up to the next 4-byte
+boundary. The compiler emits plain scalar i32/i64/f32/f64 loads and
+stores against base + field_offset — there is no hidden struct copy
+path.
+
+Struct-by-value locals/globals are allocated as a fixed-size block in
+the data section at declaration time; the symbol's value is the i32 base
+pointer. Reading a struct-valued symbol pushes that base pointer onto
+the WASM stack (analogous to how reading an array decays to a pointer),
+which means passing &s to a host function that expects an i32 address
+(file_stat, dir_read) does what the user expects. sizeof(struct T)
+returns the layout table's total size.
+
+Limitations:
+
+  - No initializer lists. Write the fields one at a time:
+        struct file_stat_t st;
+        st.size = 0;                       // instead of `= { .size = 0, ... }`
+
+  - No pass- or return-by-value. Pointer-to-struct parameters are the
+    only way to cross function boundaries. With c2wasm imports this is
+    the natural convention anyway (file_stat(path, &out_struct)).
+
+  - No anonymous structs, no unions, no bitfields, no typedef.
+
+  - Forward-declared (incomplete) structs can only be used as pointer
+    targets, not as field types or by-value locals, until the body has
+    been parsed.
+
+  - conez_api.h is intercepted by the preprocessor to register host
+    imports — it is NOT parsed as a regular header. The typedef'd
+    struct names from conez_api.h (file_stat_t, dir_entry_t) are
+    therefore not visible to c2wasm user code. Re-declare them inline
+    with a tag:
+
+        struct file_stat_t { int size; int type; int mtime; };
+
+    or put the tagged versions in your own header and #include it
+    alongside "conez_api.h". Tests in tools/c2wasm/test/struct_*.c and
+    test/file_io.c demonstrate the pattern.
 
 
 Memory Layout

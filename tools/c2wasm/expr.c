@@ -301,16 +301,24 @@ static CType primary_expr(void) {
         /* Check for cast: (type)expr */
         if (is_type_keyword(tok)) {
             CType cast_to = parse_type_spec();
+            int cast_was_ptr = type_had_pointer;
             expect(TOK_RPAREN);
             CType from = unary_expr();
-            if (cast_to == CT_VOID) {
+            if (cast_to == CT_VOID && !cast_was_ptr) {
                 /* (void)expr — drop the value */
                 if (from != CT_VOID) emit_drop();
+            } else if (cast_was_ptr || cast_to == CT_STRUCT) {
+                /* Pointer cast or struct-type cast: i32 reinterpret, no-op
+                 * unless we need to coerce from non-i32 (float/long long). */
+                if (from == CT_FLOAT || from == CT_DOUBLE ||
+                    from == CT_LONG_LONG || from == CT_ULONG_LONG)
+                    emit_coerce_i32(from);
+                /* CT_INT/CT_UINT/CT_CHAR/CT_UCHAR/CT_CONST_STR stay as-is */
             } else {
                 emit_coerce(from, cast_to);
             }
-            expr_last_is_ptr = 0;
-            return cast_to;
+            expr_last_is_ptr = cast_was_ptr;
+            return cast_was_ptr ? CT_INT : cast_to;
         }
         /* Save last_var_sym across parenthesized expression for postfix ++/-- */
         Symbol *saved_last_var = last_var_sym;
@@ -335,6 +343,11 @@ static CType primary_expr(void) {
             else if (ct == CT_VOID) size = 1;
             else if (ct == CT_CHAR || ct == CT_UCHAR) size = 1;
             else if (ct == CT_DOUBLE || ct == CT_LONG_LONG || ct == CT_ULONG_LONG) size = 8;
+            else if (ct == CT_STRUCT) {
+                if (type_last_struct_id >= 0 && type_last_struct_id < n_struct_types)
+                    size = struct_types[type_last_struct_id].size;
+                else { error_at("sizeof incomplete struct"); size = 0; }
+            }
             else if (size_tok == TOK_INT8 || size_tok == TOK_UINT8) size = 1;
             else if (size_tok == TOK_INT16 || size_tok == TOK_UINT16) size = 2;
             emit_i32_const(size);
@@ -552,13 +565,134 @@ static void emit_sym_store(Symbol *sym) {
     }
 }
 
-/* ---- Postfix expressions: a++, a--, subscript ---- */
+/* Resolve a member access: given a struct type and member name, emit the
+ * field-offset addition and record the resulting lvalue. Address must already
+ * be on top of the stack. On success, the member's value is loaded and
+ * lvalue_addr_local is set so assignment can write back. */
+static CType emit_member_access(TypeInfo struct_type, const char *name) {
+    int sid = struct_type.struct_id;
+    if (sid < 0) {
+        error_at("member access on incomplete struct");
+        expr_set_scalar_type(CT_INT);
+        return CT_INT;
+    }
+    int fidx = struct_find_field(sid, name);
+    if (fidx < 0) {
+        error_fmt("struct %s has no field '%s'", struct_types[sid].tag, name);
+        expr_set_scalar_type(CT_INT);
+        return CT_INT;
+    }
+    StructField *f = &struct_types[sid].fields[fidx];
+    /* Stack: [struct_base_addr] */
+    if (f->offset != 0) {
+        emit_i32_const(f->offset);
+        emit_op(OP_I32_ADD);
+    }
+    /* Stack: [member_addr] */
+
+    /* Determine the resulting field type and how to handle it */
+    TypeInfo ft = f->type;
+
+    if (type_is_array(ft)) {
+        /* Array member: evaluates to the member's address (array decay).
+         * Do NOT load; treat as a pointer value. Also DO NOT record an
+         * lvalue (arrays are not assignable). */
+        lvalue_addr_local = -1;
+        last_var_sym = NULL;
+        expr_last_has_type = 1;
+        expr_last_type = type_decay(ft);
+        expr_last_is_ptr = 1;
+        expr_last_elem_size = type_element_size(expr_last_type);
+        return CT_INT;
+    }
+
+    if (type_is_struct(ft)) {
+        /* Nested struct member: address stays on stack, result is a struct
+         * value. No load, no lvalue tracking — user must chain with . or ->. */
+        lvalue_addr_local = -1;
+        last_var_sym = NULL;
+        expr_last_has_type = 1;
+        expr_last_type = ft;
+        expr_last_is_ptr = 0;
+        expr_last_elem_size = struct_types[ft.struct_id].size;
+        return CT_STRUCT;
+    }
+
+    /* Scalar or pointer field: save address as lvalue, then load the value */
+    CType field_ct = type_base_ctype(ft);
+    /* Pointer-to-anything reads as i32 via i32.load */
+    if (type_is_pointer(ft)) field_ct = CT_INT;
+
+    lvalue_addr_local = alloc_local(WASM_I32);
+    emit_local_set(lvalue_addr_local);
+    lvalue_type = field_ct;
+    last_var_sym = NULL;
+
+    emit_local_get(lvalue_addr_local);
+    emit_mem_load_for_ctype(field_ct);
+
+    expr_last_has_type = 1;
+    expr_last_type = ft;
+    expr_last_is_ptr = type_is_pointer(ft);
+    expr_last_elem_size = expr_last_is_ptr ? type_element_size(ft) : ctype_sizeof(field_ct);
+    return field_ct;
+}
+
+/* ---- Postfix expressions: a++, a--, subscript, .field, ->field ---- */
 static CType postfix_expr(void) {
     last_var_sym = NULL;  /* Clear last variable tracking */
     lvalue_addr_local = -1;  /* Clear lvalue tracking */
     CType t = primary_expr();
 
-    while (tok == TOK_INC || tok == TOK_DEC || tok == TOK_LBRACKET) {
+    while (tok == TOK_INC || tok == TOK_DEC || tok == TOK_LBRACKET ||
+           tok == TOK_DOT || tok == TOK_ARROW) {
+        if (tok == TOK_DOT || tok == TOK_ARROW) {
+            int is_arrow = (tok == TOK_ARROW);
+            next_token();
+            if (tok != TOK_NAME) {
+                error_at("expected field name after '.' or '->'");
+                expr_set_scalar_type(CT_INT);
+                t = CT_INT;
+                continue;
+            }
+            char fname[32];
+            {
+                int fnlen = (int)strlen(tok_sval);
+                if (fnlen > (int)sizeof(fname) - 1) fnlen = (int)sizeof(fname) - 1;
+                memcpy(fname, tok_sval, fnlen);
+                fname[fnlen] = 0;
+            }
+            next_token();
+
+            TypeInfo cur = expr_last_has_type ? expr_last_type : type_base(t);
+
+            if (is_arrow) {
+                /* left is pointer-to-struct → already an address on stack */
+                if (!type_is_struct_ptr(cur)) {
+                    /* If it's a plain i32 and user wrote ->, we can't resolve
+                     * the struct. Error out clearly. */
+                    error_at("'->' requires a pointer-to-struct operand");
+                    expr_set_scalar_type(CT_INT);
+                    t = CT_INT;
+                    continue;
+                }
+                TypeInfo inner = type_deref(cur);
+                t = emit_member_access(inner, fname);
+            } else {
+                /* '.' requires a struct lvalue: stack currently holds the
+                 * base address (because emit_sym_load of a struct-val sym
+                 * pushes the base pointer, same as reading an array's base). */
+                if (!type_is_struct(cur)) {
+                    error_at("'.' requires a struct operand");
+                    expr_set_scalar_type(CT_INT);
+                    t = CT_INT;
+                    continue;
+                }
+                t = emit_member_access(cur, fname);
+            }
+            continue;
+        }
+
         if (tok == TOK_LBRACKET) {
             /* Array subscript: ptr[index] or arr[index] */
             TypeInfo container = expr_last_has_type ? expr_last_type : type_base(t);
@@ -748,6 +882,19 @@ static CType unary_expr(void) {
                 emit_local_get(sym->idx);
             } else if (sym->kind == SYM_GLOBAL) {
                 emit_i32_const(sym->init_ival);
+            } else {
+                error_fmt("cannot take address of '%s'", name);
+                emit_i32_const(0);
+                expr_set_scalar_type(CT_INT);
+                return CT_INT;
+            }
+        } else if (type_is_struct(cur)) {
+            /* Struct-by-value local/global: base address lives in the i32
+             * local/global slot. Just push it — it IS the address. */
+            if (sym->kind == SYM_LOCAL) {
+                emit_local_get(sym->idx);
+            } else if (sym->kind == SYM_GLOBAL) {
+                emit_global_get(sym->idx);
             } else {
                 error_fmt("cannot take address of '%s'", name);
                 emit_i32_const(0);

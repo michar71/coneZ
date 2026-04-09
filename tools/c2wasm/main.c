@@ -47,6 +47,7 @@ int has_loop;
 int type_had_pointer;
 int type_had_const;
 int type_had_unsigned;
+int type_last_struct_id;
 
 void cw_compile(void) {
     lex_init();
@@ -70,7 +71,8 @@ Buf c2wasm_compile_buffer(const char *src, int len, const char *filename) {
     func_bufs = (FuncCtx *)cw_calloc(MAX_FUNCS, sizeof(FuncCtx));
     ctrl_stk = (CtrlEntry *)cw_calloc(MAX_CTRL, sizeof(CtrlEntry));
     data_buf = (char *)cw_calloc(MAX_STRINGS, 1);
-    if (!syms || !func_bufs || !ctrl_stk || !data_buf) {
+    struct_types = (StructType *)cw_calloc(MAX_STRUCT_TYPES, sizeof(StructType));
+    if (!syms || !func_bufs || !ctrl_stk || !data_buf || !struct_types) {
         cw_error("c2wasm: out of memory\n");
         c2wasm_reset();
         return result;
@@ -98,6 +100,8 @@ Buf c2wasm_compile_buffer(const char *src, int len, const char *filename) {
     type_had_pointer = 0;
     type_had_const = 0;
     type_had_unsigned = 0;
+    type_last_struct_id = -1;
+    n_struct_types = 0;
     memset(imp_used, 0, sizeof(imp_used));
 
     /* Initialize function buffers */
@@ -157,6 +161,7 @@ void c2wasm_reset(void) {
     cw_free(func_bufs); func_bufs = NULL;
     cw_free(ctrl_stk); ctrl_stk = NULL;
     cw_free(data_buf); data_buf = NULL;
+    cw_free(struct_types); struct_types = NULL;
 #endif
     nfuncs = 0;
     nsym = 0;
@@ -172,6 +177,8 @@ void c2wasm_reset(void) {
     type_had_pointer = 0;
     type_had_const = 0;
     type_had_unsigned = 0;
+    type_last_struct_id = -1;
+    n_struct_types = 0;
     memset(imp_used, 0, sizeof(imp_used));
     source = NULL;
     src_len = 0;

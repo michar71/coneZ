@@ -186,6 +186,7 @@ static struct kw keywords[] = {
     {"uint64_t", TOK_UINT64},
     {"size_t",   TOK_SIZE_T},
     {"sizeof",   TOK_SIZEOF},
+    {"struct",   TOK_STRUCT},
     {NULL, 0}
 };
 
@@ -847,6 +848,9 @@ const char *tok_name(int t) {
     case TOK_FLOAT: return "'float'";
     case TOK_VOID: return "'void'";
     case TOK_COLON: return "':'";
+    case TOK_STRUCT: return "'struct'";
+    case TOK_DOT: return "'.'";
+    case TOK_ARROW: return "'->'";
     default: return "<token>";
     }
 }

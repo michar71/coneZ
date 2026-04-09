@@ -805,7 +805,69 @@ int preproc_line(void) {
                        strcmp(fname, "stdbool.h") == 0) {
                 /* silently ignore standard headers */
             } else {
-                error_fmt("unsupported #include \"%s\"", fname);
+                /* User header: load file and splice contents into source at
+                 * the current position (same technique as macro expansion).
+                 * Filename is resolved relative to the including source file's
+                 * directory, or the CWD if src_file is unknown. */
+                skip_to_eol();  /* advance past the directive first */
+
+                char path[512];
+                path[0] = 0;
+                if (src_file) {
+                    /* Find last '/' in src_file to get directory */
+                    const char *slash = strrchr(src_file, '/');
+                    if (slash) {
+                        int dlen = (int)(slash - src_file + 1);
+                        if (dlen >= (int)sizeof(path) - 1) dlen = (int)sizeof(path) - 1;
+                        memcpy(path, src_file, dlen);
+                        path[dlen] = 0;
+                    }
+                }
+                int plen = (int)strlen(path);
+                int fnl = (int)strlen(fname);
+                if (plen + fnl >= (int)sizeof(path) - 1) {
+                    error_fmt("include path too long: %s", fname);
+                    return 1;
+                }
+                memcpy(path + plen, fname, fnl + 1);
+
+                FILE *hf = fopen(path, "rb");
+                if (!hf) {
+                    error_fmt("cannot open header file '%s'", path);
+                    return 1;
+                }
+                fseek(hf, 0, SEEK_END);
+                long hsz = ftell(hf);
+                fseek(hf, 0, SEEK_SET);
+                if (hsz < 0) hsz = 0;
+                char *hdata = (char *)cw_malloc(hsz + 2);
+                if (!hdata) { fclose(hf); error_at("out of memory"); return 1; }
+                if (hsz > 0 && (long)fread(hdata, 1, hsz, hf) != hsz) {
+                    fclose(hf); cw_free(hdata);
+                    error_fmt("read error on header '%s'", path);
+                    return 1;
+                }
+                fclose(hf);
+                /* Ensure trailing newline so the final line parses cleanly. */
+                hdata[hsz] = '\n';
+                hdata[hsz + 1] = 0;
+                int hlen = (int)hsz + 1;
+
+                /* Splice: insert hdata at src_pos, keeping the rest of source after it. */
+                int remain = src_len - src_pos;
+                char *new_src = (char *)cw_malloc(src_pos + hlen + remain + 1);
+                if (!new_src) { cw_free(hdata); error_at("out of memory"); return 1; }
+                memcpy(new_src, source, src_pos);
+                memcpy(new_src + src_pos, hdata, hlen);
+                memcpy(new_src + src_pos + hlen, source + src_pos, remain);
+                new_src[src_pos + hlen + remain] = 0;
+                cw_free(hdata);
+                cw_free(source);
+                source = new_src;
+                src_len = src_pos + hlen + remain;
+                /* Leave src_pos where it is — the next character to lex is
+                 * now the first character of the header. */
+                return 1;
             }
         } else if (source[src_pos] == '<') {
             /* Skip <...> includes silently */

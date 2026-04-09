@@ -283,6 +283,7 @@ typedef enum {
     CT_CONST_STR,  /* pointer to string literal (i32) */
     CT_UINT,       /* unsigned i32 */
     CT_ULONG_LONG, /* unsigned i64 */
+    CT_STRUCT,     /* struct instance — size/layout via struct_id in TypeInfo */
 } CType;
 
 /* Extended type information for pointers and arrays */
@@ -299,10 +300,12 @@ typedef struct {
     CType base;
     int sizes[MAX_TYPE_DEPTH];  /* For arrays: element count, -1 for pointers */
     int depth;  /* Total depth of pointer/array nesting */
+    int struct_id; /* index into struct_types[] when base == CT_STRUCT, else -1 */
 } TypeInfo;
 
 /* Type constructors */
 TypeInfo type_base(CType ct);
+TypeInfo type_base_struct(int struct_id);
 TypeInfo type_pointer(TypeInfo base);
 TypeInfo type_array(TypeInfo base, int size);
 TypeInfo type_decay(TypeInfo t);  /* array -> pointer */
@@ -311,9 +314,47 @@ TypeInfo type_decay(TypeInfo t);  /* array -> pointer */
 int type_is_pointer(TypeInfo t);
 int type_is_array(TypeInfo t);
 int type_is_scalar(TypeInfo t);
+int type_is_struct(TypeInfo t);         /* plain struct instance (not ptr/array) */
+int type_is_struct_ptr(TypeInfo t);     /* pointer to struct */
 CType type_base_ctype(TypeInfo t);
 int type_element_size(TypeInfo t);  /* Size of element when dereferenced */
 int type_sizeof(TypeInfo t);        /* Total size of type */
+
+/* ---- Struct type registry ---- */
+
+#ifdef C2WASM_EMBEDDED
+#define MAX_STRUCT_TYPES   8
+#define MAX_STRUCT_FIELDS  8
+#else
+#define MAX_STRUCT_TYPES   64
+#define MAX_STRUCT_FIELDS  32
+#endif
+
+typedef struct {
+    char name[32];
+    TypeInfo type;
+    int offset;
+} StructField;
+
+typedef struct {
+    char tag[32];        /* struct tag name, "" for anonymous (not supported yet) */
+    int nfields;
+    int size;            /* total size in bytes, rounded to 4 */
+    int complete;        /* 1 once body has been parsed */
+    StructField fields[MAX_STRUCT_FIELDS];
+} StructType;
+
+#ifdef C2WASM_EMBEDDED
+extern StructType *struct_types;
+#else
+extern StructType struct_types[MAX_STRUCT_TYPES];
+#endif
+extern int n_struct_types;
+
+int struct_find(const char *tag);         /* -1 if not found */
+int struct_register(const char *tag);     /* create incomplete, or return existing */
+int struct_add_field(int sid, const char *name, TypeInfo t);
+int struct_find_field(int sid, const char *name);  /* field index, -1 if missing */
 
 /* ================================================================
  *  Symbol Table
@@ -453,7 +494,7 @@ enum {
     TOK_CASE, TOK_DEFAULT, TOK_BREAK, TOK_CONTINUE, TOK_RETURN,
     TOK_INT, TOK_FLOAT, TOK_DOUBLE, TOK_VOID, TOK_CHAR,
     TOK_STATIC, TOK_CONST, TOK_UNSIGNED, TOK_LONG,
-    TOK_SHORT, TOK_SIGNED, TOK_BOOL,
+    TOK_SHORT, TOK_SIGNED, TOK_BOOL, TOK_STRUCT,
     TOK_INT8, TOK_INT16, TOK_INT32, TOK_INT64, TOK_SIZE_T,
     TOK_UINT8, TOK_UINT16, TOK_UINT32, TOK_UINT64,
     TOK_SIZEOF,
@@ -511,6 +552,7 @@ extern int has_loop;
 extern int type_had_pointer;
 extern int type_had_const;
 extern int type_had_unsigned;
+extern int type_last_struct_id;   /* struct ID after parse_type_spec, or -1 */
 
 /* ================================================================
  *  Helpers
@@ -735,12 +777,15 @@ static inline void emit_coerce(CType from, CType to) {
 
 /* Type operations (type_ops.c) */
 TypeInfo type_base(CType ct);
+TypeInfo type_base_struct(int struct_id);
 TypeInfo type_pointer(TypeInfo base);
 TypeInfo type_array(TypeInfo base, int size);
 TypeInfo type_decay(TypeInfo t);
 int type_is_pointer(TypeInfo t);
 int type_is_array(TypeInfo t);
 int type_is_scalar(TypeInfo t);
+int type_is_struct(TypeInfo t);
+int type_is_struct_ptr(TypeInfo t);
 CType type_base_ctype(TypeInfo t);
 int type_element_size(TypeInfo t);
 int type_sizeof(TypeInfo t);

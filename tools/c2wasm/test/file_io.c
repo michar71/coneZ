@@ -1,12 +1,21 @@
-/* Test file I/O import compilation.
+/* Test file I/O import compilation with struct-based result types.
  *
- * Note: c2wasm does not parse conez_api.h structs — it treats all pointer
- * args as int. So file_stat_t / dir_entry_t are passed as raw int arrays.
- * Mode/whence constants are plain literals here, not FILE_MODE_* macros. */
+ * c2wasm now supports structs, so file_stat_t and dir_entry_t can be
+ * declared inline and passed by address to the host imports. We still
+ * use literal mode/whence values since c2wasm intercepts conez_api.h
+ * for imports and doesn't see its #define constants. */
 #include "conez_api.h"
 
-int st[3];       /* file_stat_t: size, type, mtime */
-int ent[65];     /* dir_entry_t: type + char[256] = 260 bytes = 65 ints */
+struct file_stat_t {
+    int size;
+    int type;
+    int mtime;
+};
+
+struct dir_entry_t {
+    int  type;
+    char name[256];
+};
 
 void setup(void) {
     /* Open for write (mode 1), write, close */
@@ -17,10 +26,12 @@ void setup(void) {
     }
 
     /* Stat the file */
-    int rc = file_stat("/test.txt", st);
+    struct file_stat_t st;
+    int rc = file_stat("/test.txt", (void *)&st);
     print_i32(rc);
-    print_i32(st[0]);   /* size */
-    print_i32(st[1]);   /* type */
+    print_i32(st.size);
+    print_i32(st.type);
+    print_i32(st.mtime);
 
     /* Read back */
     h = file_open("/test.txt", 0);  /* mode 0 = read */
@@ -36,10 +47,13 @@ void setup(void) {
     }
 
     /* Directory listing */
+    struct dir_entry_t ent;
     int d = dir_open("/");
     if (d >= 0) {
-        while (dir_read(d, ent) == 1) {
-            print_i32(ent[0]);  /* type */
+        while (dir_read(d, (void *)&ent) == 1) {
+            print_i32(ent.type);
+            /* First character of the entry name, for a minimal smoke check */
+            print_i32(ent.name[0]);
         }
         dir_close(d);
     }
