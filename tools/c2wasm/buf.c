@@ -2,13 +2,17 @@
  * buf.c — byte buffer operations (adapted from bas2wasm)
  */
 #include "c2wasm.h"
+#include <limits.h>
 
 void buf_init(Buf *b) { b->data = NULL; b->len = b->cap = 0; }
 
 void buf_grow(Buf *b, int need) {
     if (b->len + need <= b->cap) return;
     int nc = b->cap ? b->cap * 2 : 256;
-    while (nc < b->len + need) nc *= 2;
+    while (nc < b->len + need) {
+        if (nc > INT_MAX / 2) cw_fatal("buf_grow: capacity overflow (len=%d need=%d)", b->len, need);
+        nc *= 2;
+    }
     b->data = cw_realloc(b->data, nc);
     b->cap = nc;
 }

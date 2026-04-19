@@ -23,9 +23,14 @@ TelnetServer::TelnetServer(uint16_t p)
         clients[i].fd = -1;
         clients[i].iac_state = 0;
         clients[i].iac_cmd = 0;
+        clients[i].iac_sb_bytes = 0;
         clients[i].needs_prompt = false;
     }
 }
+
+// Max bytes to consume inside an IAC SB..SE block before giving up — a peer
+// sending crafted non-terminated subneg data can't lock a client in state 3.
+static const uint16_t TELNET_SB_MAX = 256;
 
 void TelnetServer::begin() {
     listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -68,6 +73,7 @@ void TelnetServer::slot_close(TelnetClientSlot &slot) {
     }
     slot.iac_state = 0;
     slot.iac_cmd = 0;
+    slot.iac_sb_bytes = 0;
 }
 
 int TelnetServer::slot_send(TelnetClientSlot &slot, const uint8_t *buf, size_t len) {
@@ -112,6 +118,7 @@ void TelnetServer::checkClient() {
             clients[i].fd = incoming;
             clients[i].iac_state = 0;
             clients[i].iac_cmd = 0;
+            clients[i].iac_sb_bytes = 0;
             clients[i].needs_prompt = true;
 
             // Set non-blocking + TCP_NODELAY
@@ -228,6 +235,7 @@ int TelnetServer::read() {
                 }
                 if (b == SB) {
                     slot.iac_state = 3; // subnegotiation
+                    slot.iac_sb_bytes = 0;
                     break;
                 }
                 // WILL/WONT/DO/DONT + option byte follows
@@ -262,8 +270,16 @@ int TelnetServer::read() {
                         uint8_t se;
                         if (recv(slot.fd, &se, 1, 0) == 1 && se == SE) {
                             slot.iac_state = 0;
+                            slot.iac_sb_bytes = 0;
+                            break;
                         }
                     }
+                }
+                // Guard against a malformed subneg that never ends — a peer
+                // could otherwise pin us in this state indefinitely.
+                if (++slot.iac_sb_bytes > TELNET_SB_MAX) {
+                    slot.iac_state = 0;
+                    slot.iac_sb_bytes = 0;
                 }
                 break;
             }

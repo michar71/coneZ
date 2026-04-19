@@ -92,6 +92,22 @@ static M3Result link_imports(IM3Module module)
 }
 
 
+// ---------- Cleanup helper — reset host-side state, free runtime/env/buf ----------
+
+static void wasm_cleanup_runtime(IM3Runtime runtime, IM3Environment env, uint8_t *wasm_buf)
+{
+    wasm_close_all_files();
+    wasm_reset_gamma();
+    wasm_string_pool_reset();
+    low_heap_reset();
+    wasm_current_path[0] = '\0';
+    if (runtime) m3_FreeRuntime(runtime);
+    if (env)     m3_FreeEnvironment(env);
+    free(wasm_buf);
+    wasm_running = false;
+}
+
+
 // ---------- Run a .wasm file ----------
 
 static void wasm_run(const char *path)
@@ -292,10 +308,7 @@ static void wasm_run(const char *path)
     if (result) {
         printfnl(SOURCE_WASM, "wasm: start section error: %s\n", result);
         pm_cpu_unlock();
-        m3_FreeRuntime(runtime);
-        m3_FreeEnvironment(env);
-        free(wasm_buf);
-        wasm_running = false;
+        wasm_cleanup_runtime(runtime, env, wasm_buf);
         return;
     }
 
@@ -356,15 +369,7 @@ static void wasm_run(const char *path)
     pm_cpu_unlock();
 
     // Cleanup — prealloc flag in M3MemoryHeader tells Runtime_Release to skip freeing
-    wasm_close_all_files();
-    wasm_reset_gamma();
-    wasm_string_pool_reset();
-    low_heap_reset();
-    wasm_current_path[0] = '\0';
-    m3_FreeRuntime(runtime);
-    m3_FreeEnvironment(env);
-    free(wasm_buf);
-    wasm_running = false;
+    wasm_cleanup_runtime(runtime, env, wasm_buf);
 
     if (wasm_stop_requested) {
         printfnl(SOURCE_WASM, "wasm: stopped\n");

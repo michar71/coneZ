@@ -172,8 +172,9 @@ void cue_loop(void)
     uint64_t now_ms = get_epoch_ms();
     if (now_ms == 0) { xSemaphoreGive(cue_mutex); return; }
 
-    // Simple subtraction — epoch time never wraps at midnight
-    uint32_t elapsed_ms = (now_ms > music_start_ms) ? (uint32_t)(now_ms - music_start_ms) : 0;
+    // Simple subtraction — epoch time never wraps at midnight.
+    // 64-bit elapsed avoids the ~49-day wrap of uint32_t.
+    uint64_t elapsed_ms = (now_ms > music_start_ms) ? (now_ms - music_start_ms) : 0;
 
     // Walk cue list from cursor forward
     while (cue_cursor < cue_count) {
@@ -181,11 +182,11 @@ void cue_loop(void)
 
         // Compute this cone's effective start time including spatial offset
         int32_t spatial_off = compute_spatial_offset(cue);
-        int32_t effective_start = (int32_t)cue->start_ms + spatial_off;
+        int64_t effective_start = (int64_t)cue->start_ms + spatial_off;
         if (effective_start < 0) effective_start = 0;
 
         // Not yet time for this cue?
-        if ((uint32_t)effective_start > elapsed_ms)
+        if ((uint64_t)effective_start > elapsed_ms)
             break;
 
         // Check group targeting

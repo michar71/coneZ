@@ -189,7 +189,28 @@ m3ApiRawFunction(m3_file_seek)
     if (!file_handle_ok(handle)) m3ApiReturn(-1);
     int w = map_whence(whence);
     if (w < 0) m3ApiReturn(-1);
-    m3ApiReturn(fseek(wasm_files[handle], offset, w) == 0 ? 0 : -1);
+
+    // Validate target position is in [0, size]; reject out-of-range seeks so a
+    // bad offset can't leave the file pointer in an undefined state.
+    FILE *f = wasm_files[handle];
+    long cur = ftell(f);
+    if (cur < 0) m3ApiReturn(-1);
+
+    int fd = fileno(f);
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) != 0) m3ApiReturn(-1);
+    long size = (long)st.st_size;
+
+    long target;
+    switch (w) {
+        case SEEK_SET: target = (long)offset;        break;
+        case SEEK_CUR: target = cur + (long)offset;  break;
+        case SEEK_END: target = size + (long)offset; break;
+        default: m3ApiReturn(-1);
+    }
+    if (target < 0 || target > size) m3ApiReturn(-1);
+
+    m3ApiReturn(fseek(f, offset, w) == 0 ? 0 : -1);
 }
 
 // i32 file_tell(handle) -> pos or -1

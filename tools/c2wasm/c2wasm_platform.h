@@ -86,9 +86,22 @@ void  cw_fatal(const char *fmt, ...);    /* calls on_error + longjmp */
 #include <stdio.h>
 #include <stdlib.h>
 
-#define cw_malloc   malloc
-#define cw_realloc  realloc
-#define cw_calloc   calloc
+/* Checked allocators — abort on OOM so callers never see NULL. */
+static inline void *cw_malloc(size_t n) {
+    void *p = malloc(n);
+    if (!p) { fprintf(stderr, "c2wasm: out of memory (malloc %u)\n", (unsigned)n); exit(1); }
+    return p;
+}
+static inline void *cw_realloc(void *p, size_t n) {
+    void *q = realloc(p, n);
+    if (!q && n) { fprintf(stderr, "c2wasm: out of memory (realloc %u)\n", (unsigned)n); exit(1); }
+    return q;
+}
+static inline void *cw_calloc(size_t n, size_t sz) {
+    void *p = calloc(n, sz);
+    if (!p && n && sz) { fprintf(stderr, "c2wasm: out of memory (calloc %u*%u)\n", (unsigned)n, (unsigned)sz); exit(1); }
+    return p;
+}
 #define cw_free     free
 #define cw_error(fmt, ...)  fprintf(stderr, fmt, ##__VA_ARGS__)
 #define cw_info(fmt, ...)   printf(fmt, ##__VA_ARGS__)

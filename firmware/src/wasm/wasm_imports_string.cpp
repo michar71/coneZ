@@ -67,17 +67,46 @@ uint32_t pool_alloc(IM3Runtime runtime, int size)
 static void pool_free(uint32_t ptr)
 {
     if (ptr < STR_POOL_START || ptr >= STR_POOL_END) return;  // outside pool (constant or null)
+
+    int idx = -1;
     for (int i = 0; i < str_nallocs; i++) {
-        if (str_allocs[i].offset == ptr && str_allocs[i].in_use) {
-            str_allocs[i].in_use = false;
-            // Shrink bump if freeing top allocation
-            if (ptr + str_allocs[i].size == str_bump) {
-                str_bump = ptr;
-                str_nallocs--;
-            }
-            return;
+        if (str_allocs[i].offset == ptr && str_allocs[i].in_use) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    str_allocs[idx].in_use = false;
+
+    // Coalesce adjacent free blocks so long-lived modules don't fragment.
+    // Dead slots are marked size=0 — first-fit skips them (min alloc is 4).
+
+    // Forward: merge a free successor into us
+    for (int i = 0; i < str_nallocs; i++) {
+        if (i != idx && !str_allocs[i].in_use && str_allocs[i].size > 0
+            && str_allocs[idx].offset + str_allocs[idx].size == str_allocs[i].offset) {
+            str_allocs[idx].size += str_allocs[i].size;
+            str_allocs[i].size = 0;
+            break;
         }
     }
+    // Backward: absorb us into a free predecessor
+    for (int i = 0; i < str_nallocs; i++) {
+        if (i != idx && !str_allocs[i].in_use && str_allocs[i].size > 0
+            && str_allocs[i].offset + str_allocs[i].size == str_allocs[idx].offset) {
+            str_allocs[i].size += str_allocs[idx].size;
+            str_allocs[idx].size = 0;
+            idx = i;
+            break;
+        }
+    }
+
+    // Shrink bump if the coalesced block is at the top
+    if (str_allocs[idx].offset + str_allocs[idx].size == str_bump) {
+        str_bump = str_allocs[idx].offset;
+        str_allocs[idx].size = 0;
+    }
+
+    // Prune trailing dead records
+    while (str_nallocs > 0 && str_allocs[str_nallocs - 1].size == 0)
+        str_nallocs--;
 }
 
 static uint32_t pool_size(uint32_t ptr)
@@ -175,16 +204,40 @@ static uint32_t low_heap_alloc(IM3Runtime runtime, int size)
 
 static void low_heap_free(uint32_t ptr)
 {
+    int idx = -1;
     for (int i = 0; i < low_nallocs; i++) {
-        if (low_allocs[i].offset == ptr && low_allocs[i].in_use) {
-            low_allocs[i].in_use = false;
-            if (ptr + low_allocs[i].size == low_heap_bump) {
-                low_heap_bump = ptr;
-                low_nallocs--;
-            }
-            return;
+        if (low_allocs[i].offset == ptr && low_allocs[i].in_use) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    low_allocs[idx].in_use = false;
+
+    // Coalesce forward
+    for (int i = 0; i < low_nallocs; i++) {
+        if (i != idx && !low_allocs[i].in_use && low_allocs[i].size > 0
+            && low_allocs[idx].offset + low_allocs[idx].size == low_allocs[i].offset) {
+            low_allocs[idx].size += low_allocs[i].size;
+            low_allocs[i].size = 0;
+            break;
         }
     }
+    // Coalesce backward
+    for (int i = 0; i < low_nallocs; i++) {
+        if (i != idx && !low_allocs[i].in_use && low_allocs[i].size > 0
+            && low_allocs[i].offset + low_allocs[i].size == low_allocs[idx].offset) {
+            low_allocs[i].size += low_allocs[idx].size;
+            low_allocs[idx].size = 0;
+            idx = i;
+            break;
+        }
+    }
+
+    if (low_allocs[idx].offset + low_allocs[idx].size == low_heap_bump) {
+        low_heap_bump = low_allocs[idx].offset;
+        low_allocs[idx].size = 0;
+    }
+
+    while (low_nallocs > 0 && low_allocs[low_nallocs - 1].size == 0)
+        low_nallocs--;
 }
 
 static uint32_t low_heap_size(uint32_t ptr)

@@ -206,12 +206,17 @@ static bool commit_sentence(nmea_data_t *d) {
     switch (d->sentence_type) {
     case NMEA_RMC:
         if (d->s_location_set) {
-            d->lat = d->s_lat;
-            d->lon = d->s_lon;
-            d->speed = d->s_speed;
-            d->course = d->s_course;
+            // Only overwrite lat/lon when we have a real fix — a DR/simulated
+            // mode (RMC field 12 = E/N/S) leaves s_has_fix false, so preserve
+            // the last known good position instead of overwriting with garbage.
+            if (d->s_has_fix) {
+                d->lat = d->s_lat;
+                d->lon = d->s_lon;
+                d->speed = d->s_speed;
+                d->course = d->s_course;
+                d->update_count++;
+            }
             d->location_valid = d->s_has_fix;
-            d->update_count++;
         }
         if (d->s_time_valid) {
             d->hour = d->s_hour;
@@ -229,10 +234,13 @@ static bool commit_sentence(nmea_data_t *d) {
 
     case NMEA_GGA:
         if (d->s_location_set) {
-            d->lat = d->s_lat;
-            d->lon = d->s_lon;
+            // GGA quality 6-9 (DR/manual/sim) leaves s_has_fix false.
+            if (d->s_has_fix) {
+                d->lat = d->s_lat;
+                d->lon = d->s_lon;
+                d->update_count++;
+            }
             d->location_valid = d->s_has_fix;
-            d->update_count++;
         }
         d->satellites = d->s_satellites;
         d->hdop = d->s_hdop;

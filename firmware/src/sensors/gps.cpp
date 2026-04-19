@@ -117,10 +117,18 @@ static void IRAM_ATTR pps_isr(void *arg)
 }
 
 
-// Convert date/time fields to Unix epoch in milliseconds (UTC)
+// Convert date/time fields to Unix epoch in milliseconds (UTC).
+// Returns 0 if any field is out of range (callers treat 0 as invalid).
 static uint64_t datetime_to_epoch_ms(int year, int month, int day,
                                      int hour, int minute, int second)
 {
+    if (year  < 1970 || year   > 2099) return 0;
+    if (month < 1    || month  > 12)   return 0;
+    if (day   < 1    || day    > 31)   return 0;
+    if (hour  < 0    || hour   > 23)   return 0;
+    if (minute < 0   || minute > 59)   return 0;
+    if (second < 0   || second > 60)   return 0;  // 60 allows leap second
+
     // Days from 1970-01-01 to start of given year
     uint32_t days = 0;
     for (int y = 1970; y < year; y++) {

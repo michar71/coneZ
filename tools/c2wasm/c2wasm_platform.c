@@ -14,9 +14,23 @@ void *cw_cb_ctx = NULL;
 jmp_buf cw_bail;
 
 /* --- Memory wrappers --- */
-void *cw_malloc(size_t n)           { return malloc(n); }
-void *cw_realloc(void *p, size_t n) { return realloc(p, n); }
-void *cw_calloc(size_t n, size_t s) { return calloc(n, s); }
+/* All allocation failures longjmp via cw_fatal so callers can use the result
+ * without a NULL check. cw_free tolerates NULL. */
+void *cw_malloc(size_t n) {
+    void *p = malloc(n);
+    if (!p) cw_fatal("out of memory (malloc %u)", (unsigned)n);
+    return p;
+}
+void *cw_realloc(void *p, size_t n) {
+    void *q = realloc(p, n);
+    if (!q && n) cw_fatal("out of memory (realloc %u)", (unsigned)n);
+    return q;
+}
+void *cw_calloc(size_t n, size_t s) {
+    void *p = calloc(n, s);
+    if (!p && n && s) cw_fatal("out of memory (calloc %u*%u)", (unsigned)n, (unsigned)s);
+    return p;
+}
 void  cw_free(void *p)              { free(p); }
 
 /* --- Diagnostics --- */

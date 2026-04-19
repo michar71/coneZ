@@ -13,6 +13,7 @@
 #include "esp_mac.h"
 #include "lwip/netif.h"
 #include "main.h"
+#include <atomic>
 #include <string.h>
 
 // ---------- State ----------
@@ -27,21 +28,22 @@ static char                  s_hostname[64] = "";
 // ESP-IDF's wlanif.c doesn't increment LWIP's MIB2 byte counters,
 // so we wrap the netif's linkoutput (TX) and input (RX) to count bytes.
 
-static volatile uint32_t s_tx_bytes = 0;
-static volatile uint32_t s_rx_bytes = 0;
+// Atomic on ESP32-S3 (Xtensa LX7 S32C1I); writers can run from any core/context.
+static std::atomic<uint32_t> s_tx_bytes{0};
+static std::atomic<uint32_t> s_rx_bytes{0};
 static netif_linkoutput_fn s_orig_linkoutput = NULL;
 static netif_input_fn      s_orig_input = NULL;
 static bool                s_wrappers_installed = false;
 
 static err_t IRAM_ATTR counted_linkoutput(struct netif *netif, struct pbuf *p)
 {
-    s_tx_bytes += p->tot_len;
+    s_tx_bytes.fetch_add(p->tot_len, std::memory_order_relaxed);
     return s_orig_linkoutput(netif, p);
 }
 
 static err_t IRAM_ATTR counted_input(struct pbuf *p, struct netif *inp)
 {
-    s_rx_bytes += p->tot_len;
+    s_rx_bytes.fetch_add(p->tot_len, std::memory_order_relaxed);
     return s_orig_input(p, inp);
 }
 
@@ -288,7 +290,7 @@ uint32_t wifi_get_connected_since(void)
 bool wifi_get_byte_counts(uint32_t *tx_bytes, uint32_t *rx_bytes)
 {
     if (!s_wrappers_installed) return false;
-    *tx_bytes = s_tx_bytes;
-    *rx_bytes = s_rx_bytes;
+    *tx_bytes = s_tx_bytes.load(std::memory_order_relaxed);
+    *rx_bytes = s_rx_bytes.load(std::memory_order_relaxed);
     return true;
 }

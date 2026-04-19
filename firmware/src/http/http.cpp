@@ -47,12 +47,16 @@ static void page_cat(const char *s)
 __attribute__((format(printf, 1, 2)))
 static void page_catf(const char *fmt, ...)
 {
+    int remain = (int)sizeof(page_buf) - page_pos;
+    if (remain <= 1) return;  // no room for data + null terminator
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(page_buf + page_pos, sizeof(page_buf) - page_pos, fmt, ap);
+    int n = vsnprintf(page_buf + page_pos, remain, fmt, ap);
     va_end(ap);
-    if (n > 0 && page_pos + n < (int)sizeof(page_buf))
-        page_pos += n;
+    if (n < 0) return;
+    // vsnprintf wrote at most remain-1 chars; advance by actual, not intended, length
+    if (n >= remain) n = remain - 1;
+    page_pos += n;
 }
 
 static void page_cat_escaped(const char *str)
@@ -247,8 +251,141 @@ static esp_err_t http_dir(httpd_req_t *req)
 
 static esp_err_t http_nvs(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/plain");
-    httpd_resp_sendstr(req, "FIXME...");
+    page_reset();
+    page_cat("<html><body>\n");
+    page_cat("<h3>NVS Contents</h3><hr>\n");
+
+    nvs_stats_t stats;
+    if (nvs_get_stats(NVS_DEFAULT_PART_NAME, &stats) == ESP_OK) {
+        page_cat("<pre>");
+        page_catf("Entries: %u used / %u total  (%u free, %u namespaces)\n",
+                  (unsigned)stats.used_entries,
+                  (unsigned)stats.total_entries,
+                  (unsigned)stats.free_entries,
+                  (unsigned)stats.namespace_count);
+        page_cat("</pre>\n");
+    }
+
+    nvs_iterator_t it = NULL;
+    nvs_entry_find(NVS_DEFAULT_PART_NAME, NULL, NVS_TYPE_ANY, &it);
+    if (it == NULL) {
+        page_cat("<p>No NVS entries found.</p></body></html>");
+        httpd_resp_set_type(req, "text/html");
+        httpd_resp_sendstr(req, page_buf);
+        return ESP_OK;
+    }
+
+    page_cat("<pre>");
+    const char *prev_ns = "";
+    while (it != NULL) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+
+        if (strcmp(info.namespace_name, prev_ns) != 0) {
+            if (prev_ns[0]) page_cat("\n");
+            page_catf("[%s]\n", info.namespace_name);
+            prev_ns = info.namespace_name;
+        }
+
+        nvs_handle_t handle;
+        if (nvs_open(info.namespace_name, NVS_READONLY, &handle) != ESP_OK) {
+            page_catf("  %-16s = [open failed]\n", info.key);
+            nvs_entry_next(&it);
+            continue;
+        }
+
+        switch (info.type) {
+        case NVS_TYPE_I8: {
+            int8_t v = 0; nvs_get_i8(handle, info.key, &v);
+            page_catf("  %-16s i8   = %d\n", info.key, v);
+            break;
+        }
+        case NVS_TYPE_U8: {
+            uint8_t v = 0; nvs_get_u8(handle, info.key, &v);
+            page_catf("  %-16s u8   = %u\n", info.key, v);
+            break;
+        }
+        case NVS_TYPE_I16: {
+            int16_t v = 0; nvs_get_i16(handle, info.key, &v);
+            page_catf("  %-16s i16  = %d\n", info.key, v);
+            break;
+        }
+        case NVS_TYPE_U16: {
+            uint16_t v = 0; nvs_get_u16(handle, info.key, &v);
+            page_catf("  %-16s u16  = %u\n", info.key, v);
+            break;
+        }
+        case NVS_TYPE_I32: {
+            int32_t v = 0; nvs_get_i32(handle, info.key, &v);
+            page_catf("  %-16s i32  = %d\n", info.key, (int)v);
+            break;
+        }
+        case NVS_TYPE_U32: {
+            uint32_t v = 0; nvs_get_u32(handle, info.key, &v);
+            page_catf("  %-16s u32  = %u\n", info.key, (unsigned)v);
+            break;
+        }
+        case NVS_TYPE_I64: {
+            int64_t v = 0; nvs_get_i64(handle, info.key, &v);
+            page_catf("  %-16s i64  = %lld\n", info.key, (long long)v);
+            break;
+        }
+        case NVS_TYPE_U64: {
+            uint64_t v = 0; nvs_get_u64(handle, info.key, &v);
+            page_catf("  %-16s u64  = %llu\n", info.key, (unsigned long long)v);
+            break;
+        }
+        case NVS_TYPE_STR: {
+            size_t len = 0;
+            if (nvs_get_str(handle, info.key, NULL, &len) == ESP_OK && len > 0) {
+                char *str = (char *)malloc(len);
+                if (str && nvs_get_str(handle, info.key, str, &len) == ESP_OK) {
+                    page_catf("  %-16s str  = \"", info.key);
+                    page_cat_escaped(str);
+                    page_cat("\"\n");
+                } else {
+                    page_catf("  %-16s str  = [read error]\n", info.key);
+                }
+                free(str);
+            } else {
+                page_catf("  %-16s str  = [empty]\n", info.key);
+            }
+            break;
+        }
+        case NVS_TYPE_BLOB: {
+            size_t len = 0;
+            nvs_get_blob(handle, info.key, NULL, &len);
+            page_catf("  %-16s blob[%u] = ", info.key, (unsigned)len);
+            if (len > 0) {
+                const size_t max_hex = 32;
+                uint8_t *blob = (uint8_t *)malloc(len);
+                if (blob && nvs_get_blob(handle, info.key, blob, &len) == ESP_OK) {
+                    size_t show = (len < max_hex) ? len : max_hex;
+                    for (size_t i = 0; i < show; i++)
+                        page_catf("%02X ", blob[i]);
+                    if (len > max_hex)
+                        page_catf("... (%u more)", (unsigned)(len - max_hex));
+                } else {
+                    page_cat("[read error]");
+                }
+                free(blob);
+            }
+            page_cat("\n");
+            break;
+        }
+        default:
+            page_catf("  %-16s ?    = [unsupported type %d]\n", info.key, info.type);
+            break;
+        }
+
+        nvs_close(handle);
+        nvs_entry_next(&it);
+    }
+
+    page_cat("</pre>\n</body></html>");
+
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr(req, page_buf);
     return ESP_OK;
 }
 

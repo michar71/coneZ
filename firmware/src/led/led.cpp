@@ -158,11 +158,15 @@ static int grb_buf_size = 0;
 static void led_push_hw(void)
 {
     if (!rmt_enc) return;
+    // Hold led_mutex across the whole push: serializes against led_set_channel
+    // writers AND prevents concurrent callers from clobbering shared grb_buf.
+    // rmt_transmit with the bytes_encoder reads grb_buf asynchronously until
+    // rmt_tx_wait_all_done returns, so the buffer must stay intact.
     xSemaphoreTake(led_mutex, portMAX_DELAY);
+
     CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
     int counts[]  = { config.led_count1, config.led_count2,
                       config.led_count3, config.led_count4 };
-    xSemaphoreGive(led_mutex);
 
     // Find max LED count to size conversion buffer
     int max_count = 0;
@@ -174,7 +178,10 @@ static void led_push_hw(void)
     int needed = max_count * 3;
     if (needed > grb_buf_size) {
         uint8_t *new_buf = (uint8_t *)malloc(needed);
-        if (!new_buf) return;  // keep old buffer, skip this frame
+        if (!new_buf) {  // keep old buffer, skip this frame
+            xSemaphoreGive(led_mutex);
+            return;
+        }
         free(grb_buf);
         grb_buf = new_buf;
         grb_buf_size = needed;
@@ -196,6 +203,8 @@ static void led_push_hw(void)
         rmt_transmit(rmt_chan[ch], rmt_enc, grb_buf, counts[ch] * 3, &tx_cfg);
         rmt_tx_wait_all_done(rmt_chan[ch], pdMS_TO_TICKS(100));
     }
+
+    xSemaphoreGive(led_mutex);
 }
 
 static void rmt_init(void)
@@ -229,13 +238,25 @@ static void rmt_init(void)
 void led_setup( void )
 {
 #ifdef BOARD_HAS_RGB_LEDS
-    led_mutex = xSemaphoreCreateMutex();
+    if (!led_mutex) led_mutex = xSemaphoreCreateMutex();
+
+    // Safe to re-invoke (e.g. config reload): free the old buffers first so
+    // the CRGB arrays don't leak when led_count* changes.
+    delete[] leds1; leds1 = nullptr;
+    delete[] leds2; leds2 = nullptr;
+    delete[] leds3; leds3 = nullptr;
+    delete[] leds4; leds4 = nullptr;
+
     leds1 = new CRGB[config.led_count1]();
     leds2 = new CRGB[config.led_count2]();
     leds3 = new CRGB[config.led_count3]();
     leds4 = new CRGB[config.led_count4]();
 
-    rmt_init();
+    static bool rmt_initialized = false;
+    if (!rmt_initialized) {
+        rmt_init();
+        rmt_initialized = true;
+    }
 #endif
 }
 

@@ -140,17 +140,27 @@ void vprintfnl( source_e source, const char *format, va_list args )
         char sink_buf[max_txt + 32];
         unsigned long ms = uptime_ms();
         snprintf(sink_buf, sizeof(sink_buf), "[%lu.%03lu] [%s] %s", ms / 1000, ms % 1000, sink_tag, buf);
-        // Strip ANSI escape sequences in-place
+        // Strip ANSI escape sequences in-place. Handles:
+        //   ESC [ ... final (0x40-0x7E)    -> CSI (SGR, cursor, etc.)
+        //   ESC ] ... BEL | ESC \          -> OSC (title, hyperlinks)
+        //   ESC X                          -> single-char intermediate (7, 8, c, =, >, D, M, ...)
         char *r = sink_buf, *w = sink_buf;
         while (*r) {
-            if (*r == '\033' && *(r+1) == '[') {
-                r += 2;
-                while (*r && !(*r >= 'A' && *r <= 'Z') && !(*r >= 'a' && *r <= 'z'))
-                    r++;
+            if (*r != '\033') { *w++ = *r++; continue; }
+            r++;  // consume ESC
+            if (!*r) break;           // lone trailing ESC
+            char next = *r++;
+            if (next == '[') {
+                while (*r && !(*r >= 0x40 && *r <= 0x7E)) r++;
                 if (*r) r++;
-            } else {
-                *w++ = *r++;
+            } else if (next == ']') {
+                while (*r) {
+                    if (*r == 0x07) { r++; break; }
+                    if (*r == '\033' && *(r+1) == '\\') { r += 2; break; }
+                    r++;
+                }
             }
+            // else: ESC X single-char sequence — next byte already consumed
         }
         *w = '\0';
 

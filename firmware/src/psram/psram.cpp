@@ -32,6 +32,13 @@ static void psram_mutex_init(void) {
 #define PSRAM_LOCK()    xSemaphoreTakeRecursive(psram_mutex, portMAX_DELAY)
 #define PSRAM_UNLOCK()  xSemaphoreGiveRecursive(psram_mutex)
 
+// Bounded wait on a volatile SPI2 register bit — normally clears in a few SPI
+// clock cycles (µs). 1M iterations (~4ms at 240MHz) is far longer than any real
+// operation; if we hit the cap the hardware is wedged and we fall through
+// rather than hang the task forever.
+#define SPI2_WAIT(cond) \
+    do { for (int _spi2w_i = 0; _spi2w_i < 1000000 && (cond); _spi2w_i++) {} } while (0)
+
 // ---- Fallback allocation tracking (system heap) ----
 // Used when PSRAM is full, unavailable, or not present on the board.
 // Tracks allocations so psram_free() and psram_free_all() can release them.
@@ -172,7 +179,7 @@ static void spi2_init(int sck, int miso, int mosi, uint32_t freq) {
 
     // Synchronize register changes from APB domain into SPI module domain
     GPSPI2.cmd.update = 1;
-    while (GPSPI2.cmd.update) ;
+    SPI2_WAIT(GPSPI2.cmd.update);
 
     // Route SPI2 (FSPI) signals through GPIO matrix
     gpio_set_direction((gpio_num_t)sck, GPIO_MODE_INPUT_OUTPUT);
@@ -196,7 +203,7 @@ static inline void spi2_set_bitlen(int bits) {
     if (bits != spi2_last_bitlen) {
         GPSPI2.ms_dlen.ms_data_bitlen = bits;
         GPSPI2.cmd.update = 1;
-        while (GPSPI2.cmd.update) ;
+        SPI2_WAIT(GPSPI2.cmd.update);
         spi2_last_bitlen = bits;
     }
 }
@@ -217,7 +224,7 @@ static uint8_t spi2_transfer(uint8_t b) {
     spi2_set_bitlen(7);
     GPSPI2.data_buf[0] = b;
     GPSPI2.cmd.usr = 1;
-    while (GPSPI2.cmd.usr) ;
+    SPI2_WAIT(GPSPI2.cmd.usr);
     return GPSPI2.data_buf[0] & 0xFF;
 }
 
@@ -333,9 +340,9 @@ static void psram_write_chunk_fn(uint32_t addr, const uint8_t *buf, size_t len) 
 
     cs_low();
     GPSPI2.cmd.update = 1;
-    while (GPSPI2.cmd.update) ;
+    SPI2_WAIT(GPSPI2.cmd.update);
     GPSPI2.cmd.usr = 1;
-    while (GPSPI2.cmd.usr) ;
+    SPI2_WAIT(GPSPI2.cmd.usr);
     cs_high();
 
     spi2_phases_dirty = true;
@@ -362,9 +369,9 @@ static void psram_read_chunk_fn(uint32_t addr, uint8_t *buf, size_t len) {
 
     cs_low();
     GPSPI2.cmd.update = 1;
-    while (GPSPI2.cmd.update) ;
+    SPI2_WAIT(GPSPI2.cmd.update);
     GPSPI2.cmd.usr = 1;
-    while (GPSPI2.cmd.usr) ;
+    SPI2_WAIT(GPSPI2.cmd.usr);
     cs_high();
 
     // Read data directly from FIFO
@@ -1033,7 +1040,7 @@ int psram_change_freq(uint32_t freq_hz) {
     // Write the SPI2 clock register directly — safe under psram_mutex.
     GPSPI2.clock.val = spi_freq_to_clkdiv(freq_hz);
     GPSPI2.cmd.update = 1;
-    while (GPSPI2.cmd.update) ;
+    SPI2_WAIT(GPSPI2.cmd.update);
     spi2_last_bitlen = -1;  // invalidate — next transfer will re-sync ms_dlen
     PSRAM_UNLOCK();
     return 0;

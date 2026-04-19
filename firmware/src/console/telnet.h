@@ -7,10 +7,11 @@
 #define TELNET_MAX_CLIENTS 3
 
 struct TelnetClientSlot {
-    int     fd;         // socket fd, -1 = empty
-    int     iac_state;  // 0=normal, 1=got IAC, 2=got IAC+cmd, 3=subneg
-    uint8_t iac_cmd;    // command byte saved from state 1
-    bool    needs_prompt; // true after connect, cleared by sendToNew()
+    int      fd;             // socket fd, -1 = empty
+    int      iac_state;      // 0=normal, 1=got IAC, 2=got IAC+cmd, 3=subneg
+    uint8_t  iac_cmd;        // command byte saved from state 1
+    uint16_t iac_sb_bytes;   // bytes consumed in state 3 — bounded to abort malformed subneg
+    bool     needs_prompt;   // true after connect, cleared by sendToNew()
 };
 
 // Telnet server with IAC negotiation (WILL ECHO + WILL SGA).

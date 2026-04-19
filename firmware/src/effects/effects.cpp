@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "main.h"
+#include "effects.h"
 #include "led.h"
 #include "config.h"
 #include "util.h"
@@ -11,6 +12,31 @@
 
 
 extern volatile bool gps_pos_valid;
+
+
+// Per-effect persistent state — at module scope so effects_reset_all()
+// can zero it when switching effects (function-local statics would be
+// inaccessible from outside).
+static int s_sos_prev_sec = 0;
+
+static int           s_sos2_state      = 0;  // 0=IDLE 1=WAIT_OFFSET 2=RAMP_UP 3=RAMP_DOWN
+static int           s_sos2_prev_sec   = 0;
+static unsigned long s_sos2_target_ms  = 0;
+static int           s_sos2_step       = 0;
+static float         s_sos2_offset_ms  = 0.0f;
+
+static int s_circle_prev_sec = 0;
+
+void effects_reset_all(void)
+{
+    s_sos_prev_sec   = 0;
+    s_sos2_state     = 0;
+    s_sos2_prev_sec  = 0;
+    s_sos2_target_ms = 0;
+    s_sos2_step      = 0;
+    s_sos2_offset_ms = 0.0f;
+    s_circle_prev_sec = 0;
+}
 
 
 
@@ -63,7 +89,6 @@ void SOS_effect(void)
     float lat = get_lat();
     float lon = get_lon();
     int sec = get_sec();
-    static int prev_sec = 0;
 
     //Calculate Offset From Equator/0-meridian in Meters
     float lat_m;
@@ -88,9 +113,9 @@ void SOS_effect(void)
     printfnl(SOURCE_OTHER, "sec = %d", sec);
 
     //Wait for sec to roll over Mod 10;
-    if (sec != prev_sec && sec%10 == 0)
+    if (sec != s_sos_prev_sec && sec%10 == 0)
     {
-        prev_sec = sec;
+        s_sos_prev_sec = sec;
 
         //Wait Offset MS
         vTaskDelay(pdMS_TO_TICKS((int)round(offset_ms)));
@@ -119,23 +144,17 @@ void SOS_effect2(void)
 {
     enum State { IDLE, WAIT_OFFSET, RAMP_UP, RAMP_DOWN };
 
-    static State state = IDLE;
-    static int prev_sec = 0;
-    static unsigned long target_ms = 0;
-    static int step = 0;
-    static float offset_ms = 0;
-
     int ms_per_cycle = 3000;
     float sos_speed_scaling = 0.5;
 
-    switch (state) {
+    switch ((State)s_sos2_state) {
 
     case IDLE: {
         int sec = get_sec();
 
-        if (sec != prev_sec && sec % 3 == 0)
+        if (sec != s_sos2_prev_sec && sec % 3 == 0)
         {
-            prev_sec = sec;
+            s_sos2_prev_sec = sec;
 
             //Get Lat/Lon/Time
             float lat = get_lat();
@@ -152,35 +171,35 @@ void SOS_effect2(void)
 
             // Calculate offset in ms with speed of sound being approximately 343m/s
             const float sos_mps = 343.0 * sos_speed_scaling;
-            offset_ms = dist_meters / sos_mps * 1000;
-            offset_ms = fmod(offset_ms, ms_per_cycle);
+            s_sos2_offset_ms = dist_meters / sos_mps * 1000;
+            s_sos2_offset_ms = fmod(s_sos2_offset_ms, ms_per_cycle);
 
-            printfnl(SOURCE_OTHER, "Offset %.2f", offset_ms);
+            printfnl(SOURCE_OTHER, "Offset %.2f", s_sos2_offset_ms);
             printfnl(SOURCE_OTHER, "sec = %d", sec);
 
-            target_ms = uptime_ms() + (unsigned long)round(offset_ms);
-            state = WAIT_OFFSET;
+            s_sos2_target_ms = uptime_ms() + (unsigned long)round(s_sos2_offset_ms);
+            s_sos2_state = WAIT_OFFSET;
         }
         break;
     }
 
     case WAIT_OFFSET:
-        if (uptime_ms() >= target_ms)
+        if (uptime_ms() >= s_sos2_target_ms)
         {
-            printfnl(SOURCE_OTHER, "PING - offset_ms = %.2f", offset_ms);
+            printfnl(SOURCE_OTHER, "PING - offset_ms = %.2f", s_sos2_offset_ms);
 
-            step = 0;
-            target_ms = uptime_ms();
-            state = RAMP_UP;
+            s_sos2_step = 0;
+            s_sos2_target_ms = uptime_ms();
+            s_sos2_state = RAMP_UP;
         }
         break;
 
     case RAMP_UP: {
-        if (uptime_ms() < target_ms)
+        if (uptime_ms() < s_sos2_target_ms)
             break;
 
         // step 0..15 → brightness 0,16,32,...,240
-        int brightness = step * 16;
+        int brightness = s_sos2_step * 16;
         CRGB col;
         col.r = brightness;
         col.g = brightness;
@@ -188,23 +207,23 @@ void SOS_effect2(void)
         led_set_channel(1, config.led_count1, col);
         led_show();
 
-        step++;
-        target_ms = uptime_ms() + 20;
+        s_sos2_step++;
+        s_sos2_target_ms = uptime_ms() + 20;
 
-        if (step >= 16)
+        if (s_sos2_step >= 16)
         {
-            step = 0;
-            state = RAMP_DOWN;
+            s_sos2_step = 0;
+            s_sos2_state = RAMP_DOWN;
         }
         break;
     }
 
     case RAMP_DOWN: {
-        if (uptime_ms() < target_ms)
+        if (uptime_ms() < s_sos2_target_ms)
             break;
 
         // step 0..31 → brightness 255,247,239,...,7 (255 - step*8)
-        int brightness = 255 - step * 8;
+        int brightness = 255 - s_sos2_step * 8;
         if (brightness < 0) brightness = 0;
         CRGB col;
         col.r = brightness;
@@ -213,10 +232,10 @@ void SOS_effect2(void)
         led_set_channel(1, config.led_count1, col);
         led_show();
 
-        step++;
-        target_ms = uptime_ms() + 20;
+        s_sos2_step++;
+        s_sos2_target_ms = uptime_ms() + 20;
 
-        if (step >= 32)
+        if (s_sos2_step >= 32)
         {
             // Baseline green glow (or blue if not valid GPS)
             CRGB baseline;
@@ -235,7 +254,7 @@ void SOS_effect2(void)
             led_set_channel(1, config.led_count1, baseline);
             led_show();
 
-            state = IDLE;
+            s_sos2_state = IDLE;
         }
         break;
     }
@@ -256,7 +275,6 @@ void CIRCLE_effect(void)
     float lat = get_lat();
     float lon = get_lon();
     int sec = get_sec();
-    static int prev_sec = 0;
 
     //Calculate Offset From Equator/0-meridian in Meters
     float lat_m;
@@ -275,9 +293,9 @@ void CIRCLE_effect(void)
     printfnl(SOURCE_OTHER, "Deg: %.2f", deg);
 
     //Wait for sec to roll over Mod 10;
-    if (sec != prev_sec /*&& sec%2 == 0*/ )
+    if (sec != s_circle_prev_sec /*&& sec%2 == 0*/ )
     {
-        prev_sec = sec;
+        s_circle_prev_sec = sec;
 
         //Wait Offset MS
         vTaskDelay(pdMS_TO_TICKS((int)round(offset_ms)));

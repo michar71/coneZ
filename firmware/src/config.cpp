@@ -2,10 +2,19 @@
 #include <string.h>
 #include <esp_http_server.h>
 #include <unistd.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "config.h"
 #include "main.h"
 #include "printManager.h"
 #include "conez_usb.h"
+
+// Serializes config struct writes and file I/O so cross-task readers never
+// observe a half-written string field. Created in config_init().
+static SemaphoreHandle_t config_mutex = NULL;
+
+#define CONFIG_LOCK()   do { if (config_mutex) xSemaphoreTake(config_mutex, portMAX_DELAY); } while (0)
+#define CONFIG_UNLOCK() do { if (config_mutex) xSemaphoreGive(config_mutex); } while (0)
 
 // ---------- Global config instance ----------
 conez_config_t config;
@@ -275,6 +284,7 @@ static const cfg_descriptor_t *config_find(const char *section, const char *key)
 static void config_set_field(const cfg_descriptor_t *d, const char *value)
 {
     if (!value) return;
+    CONFIG_LOCK();
     uint8_t *base = (uint8_t *)&config;
 
     switch (d->type)
@@ -301,6 +311,7 @@ static void config_set_field(const cfg_descriptor_t *d, const char *value)
                                         strcasecmp(value, "1") == 0);
         break;
     }
+    CONFIG_UNLOCK();
 }
 
 
@@ -393,6 +404,8 @@ static void config_parse_ini(void)
 // ---------- Public API ----------
 void config_init(void)
 {
+    if (!config_mutex) config_mutex = xSemaphoreCreateMutex();
+
     config_fill_defaults(&config);
 
     if (littlefs_mounted && file_exists(CONFIG_PATH))
@@ -418,6 +431,8 @@ void config_save(void)
         printfnl(SOURCE_COMMANDS, "Error: cannot open %s for writing\n", CONFIG_PATH);
         return;
     }
+
+    CONFIG_LOCK();
 
     const char *prev_section = "";
     uint8_t *base = (uint8_t *)&config;
@@ -454,6 +469,8 @@ void config_save(void)
             break;
         }
     }
+
+    CONFIG_UNLOCK();
 
     fclose(f);
     printfnl(SOURCE_COMMANDS, "Config saved to %s\n", CONFIG_PATH);

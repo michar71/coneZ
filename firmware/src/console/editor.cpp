@@ -1,5 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <unistd.h>
 #include "editor.h"
 #include "printManager.h"
 #include "shell.h"
@@ -215,19 +216,39 @@ static bool editor_save(EditorState *ed)
 {
     ed_flush_work(ed);
 
+    // Write to a tmp file, then rename — so a crash or power-loss mid-save
+    // can't leave the user with a truncated or empty original.
+    char tmp_rel[sizeof(ed->filepath) + 4];
+    snprintf(tmp_rel, sizeof(tmp_rel), "%s.tmp", ed->filepath);
+
     char fpath[128];
+    char ftmp[128];
     lfs_path(fpath, sizeof(fpath), ed->filepath);
-    FILE *f = fopen(fpath, "w");
+    lfs_path(ftmp, sizeof(ftmp), tmp_rel);
+
+    FILE *f = fopen(ftmp, "w");
     if (!f) return false;
 
     char buf[ED_LINE_MAX];
     for (int i = 0; i < ed->num_lines; i++) {
         psram_read(ed_line_addr(ed, i), (uint8_t *)buf, ED_LINE_MAX);
         buf[ED_LINE_MAX - 1] = '\0';
-        fputs(buf, f);
-        fputc('\n', f);
+        if (fputs(buf, f) < 0 || fputc('\n', f) == EOF) {
+            fclose(f);
+            unlink(ftmp);
+            return false;
+        }
     }
-    fclose(f);
+    if (fflush(f) != 0 || fclose(f) != 0) {
+        unlink(ftmp);
+        return false;
+    }
+
+    if (rename(ftmp, fpath) != 0) {
+        unlink(ftmp);
+        return false;
+    }
+
     ed->modified = false;
     snprintf(ed->status_msg, sizeof(ed->status_msg), "Saved %d lines", ed->num_lines);
     return true;
