@@ -178,3 +178,149 @@ OPEN (won't fix / deferred)
 
 #60 "help" shell command crashes the main thread.
     Root cause under investigation.
+
+#79 cue.cpp CUE_TYPE_EFFECT and CUE_TYPE_GLOBAL dispatch are stubbed.
+    Print "not yet implemented" and no-op. CUE_TYPE_EFFECT needs to
+    launch the WASM at cue->effect_file with cue->params[16];
+    CUE_TYPE_GLOBAL semantics aren't defined yet.
+
+
+ROUND 3 FIXES (2026-04-19)
+==========================
+
+HIGH
+----
+
+#61 FIXED -- http.cpp page_catf() truncation corrupted HTML output.
+    When vsnprintf overflowed the page_buf, n returned the full
+    intended length so the guard `page_pos + n < sizeof(page_buf)`
+    evaluated false and page_pos did not advance. The next
+    page_catf call overwrote the truncated bytes, producing
+    garbled HTML (visible on /dir and the partitions page). Fixed
+    by clamping n to what was actually written and advancing
+    page_pos unconditionally.
+
+#62 FIXED -- cue.cpp elapsed_ms wrapped after ~49 days of playback.
+    uint32_t (now_ms - music_start_ms) overflowed, causing cues
+    to mis-match or stop firing during very long sessions.
+    Lifted elapsed_ms and effective_start to 64-bit throughout
+    the comparison.
+
+#63 FIXED -- wasm_wrapper.cpp leaked host state on m3_RunStart failure.
+    File slots, string pool, low heap, and wasm_current_path
+    weren't reset on the m3_RunStart error path, so the next run
+    inherited dirty state. Factored cleanup into
+    wasm_cleanup_runtime() and called it from both the error and
+    success paths.
+
+#64 FIXED -- conez_wifi.cpp WiFi byte counters could tear on dual-core.
+    volatile uint32_t s_tx_bytes/s_rx_bytes were load-add-stored
+    from concurrent LWIP callbacks; a preempting core could lose
+    an increment. Switched to std::atomic<uint32_t> with
+    fetch_add(memory_order_relaxed).
+
+MEDIUM
+------
+
+#65 FIXED -- c2wasm cw_malloc/realloc/calloc returned NULL on OOM.
+    Many call sites used the result without checking. Wrapped both
+    the embedded (cw_fatal + longjmp) and standalone (fprintf +
+    exit) allocators to abort on NULL; callers are now guaranteed
+    a valid pointer.
+
+#66 FIXED -- c2wasm buf.c capacity doubling could overflow int.
+    `while (nc < b->len + need) nc *= 2;` on a large-enough
+    capacity wrapped to a negative value, causing an infinite
+    loop or allocation failure. Added INT_MAX/2 guard that
+    calls cw_fatal.
+
+#67 FIXED -- WASM file_seek accepted any offset without validation.
+    A negative or out-of-range offset could leave the FILE* in
+    an undefined state. Now computes the target via ftell+fstat
+    and rejects offsets that would move outside [0, filesize].
+
+#68 FIXED -- psram.cpp had 8 unbounded `while (GPSPI2.cmd.X) ;` spins.
+    If the SPI2 peripheral hung, the calling task looped forever.
+    Added SPI2_WAIT(cond) macro (1M-iter cap ~= 4ms at 240MHz)
+    and replaced all 8 spins.
+
+#69 FIXED -- Telnet IAC subnegotiation could lock a client in state 3.
+    A peer sending unterminated IAC SB payload would consume
+    bytes indefinitely. Added iac_sb_bytes counter per client,
+    aborted after 256 bytes.
+
+#70 FIXED -- NMEA RMC/GGA overwrote lat/lon on bad-fix modes.
+    RMC mode E/N/S or GGA quality 6-8 correctly left
+    s_has_fix=false, but position was still copied to d->lat /
+    d->lon. Consumers that forgot to check location_valid saw
+    garbage coordinates (e.g. from dead-reckoning drift).
+    Now only overwrite lat/lon when s_has_fix is true; the
+    last known good position is preserved.
+
+#71 FIXED -- datetime_to_epoch_ms only validated month.
+    Garbage day/hour/minute/second in NMEA produced wildly
+    wrong epochs. Now range-checks year (1970-2099), month
+    (1-12), day (1-31), hour (0-23), minute (0-59), second
+    (0-60 for leap); returns 0 on invalid input.
+
+#72 FIXED -- config_save and config_set_field had no locking.
+    A cross-task reader could observe a half-written string
+    field (wifi_ssid, mqtt_broker, etc.). Added config_mutex
+    created in config_init; take/give around set_field (per
+    write) and save (snapshot loop).
+
+#73 FIXED -- editor_save was not atomic.
+    A crash or power loss mid-save left the file truncated or
+    empty. Now writes to <path>.tmp, flushes+closes, then
+    renames into place; unlinks the tmp on any error.
+
+LOW
+---
+
+#74 FIXED -- led_setup() could leak CRGB arrays on re-entry.
+    Safe today (called only from main setup()), but a future
+    config-reload path would leak the four buffers. Now
+    delete[] the old arrays before re-allocating; rmt_init()
+    guarded by a static bool so RMT channels and encoder can't
+    double-create.
+
+#75 FIXED -- led_push_hw's grb_buf was shared without synchronization.
+    Only one caller today, but led_show_now() is public.
+    Extended led_mutex to cover the whole led_push_hw, serializing
+    against led_set_channel writers and any hypothetical
+    concurrent pusher. rmt_transmit reads grb_buf asynchronously
+    until rmt_tx_wait_all_done returns, so the buffer must stay
+    intact for the full duration.
+
+#76 FIXED -- WASM string pool and low heap fragmented over time.
+    pool_free/low_heap_free only reclaimed the top allocation;
+    adjacent freed blocks weren't coalesced. Long-running modules
+    gradually exhausted the pool even when total free space was
+    ample. Now coalesce forward and backward on free, shrink
+    bump when the coalesced block is at the top, and prune
+    trailing dead records (marked size=0, skipped by first-fit
+    since min alloc is 4 bytes).
+
+#77 FIXED -- printManager ANSI stripper only handled CSI.
+    `ESC ]` (OSC — hyperlinks, window titles) and single-char
+    ESC sequences (`ESC 7`, `ESC c`, etc.) landed in the log
+    ring buffer / file sink / MQTT feed mangled. State machine
+    rewritten to handle ESC [ ... final (CSI), ESC ] ... BEL|ST
+    (OSC), and ESC X (single-char intermediate).
+
+#78 FIXED -- effects.cpp function-scope statics persisted across switches.
+    Transitioning between effects (or calling one after a long
+    gap) left stale prev_sec / state / target_ms / step / offset_ms
+    values that could trigger a spurious fire or skip. Moved all
+    statics to module scope with s_* prefixes and added
+    effects_reset_all() (declared in effects.h) to zero them.
+
+
+ROUND 3 NEW FEATURES (2026-04-19)
+=================================
+
+/nvs HTTP handler now renders NVS contents as HTML — grouped by
+    namespace, with typed values (i8..i64, u8..u64, str, blob),
+    HTML-escaped strings, and hex dumps for blobs (first 32 bytes
+    with "... (N more)" suffix for the tail). Previously returned
+    literal "FIXME..." text.

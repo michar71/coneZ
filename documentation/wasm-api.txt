@@ -561,6 +561,9 @@ File I/O
   int  file_write(int handle, const void *buf, int len) bytes written or -1
   int  file_size(int handle)                            file size or -1
   int  file_seek(int handle, int offset, int whence)    0 on success, -1 on error
+      whence: 0 = SEEK_SET, 1 = SEEK_CUR, 2 = SEEK_END.
+      Returns -1 if the target position would fall outside [0, file_size];
+      the file pointer is left unchanged in that case.
   int  file_tell(int handle)                            current position or -1
   int  file_eof(int handle)                             1 at EOF, 0 otherwise
   int  file_truncate(int handle, int length)            0 on success, -1 on error
