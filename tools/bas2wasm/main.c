@@ -217,9 +217,10 @@ int main(int argc, char **argv) {
     char default_out[512];
     if (!outpath) {
         strncpy(default_out, inpath, sizeof(default_out)-6);
+        default_out[sizeof(default_out)-6] = '\0';
         char *dot = strrchr(default_out, '.');
         if (dot) strcpy(dot, ".wasm");
-        else strcat(default_out, ".wasm");
+        else strncat(default_out, ".wasm", sizeof(default_out) - strlen(default_out) - 1);
         outpath = default_out;
     }
 

@@ -1083,13 +1083,13 @@ int loadFile(int argc, char **argv)
                 else
                 {
                     //Wait for a full line
-                    line[charcount] = inchar;
-                    charcount++;
-                    if (charcount>254)
+                    if (charcount >= 254)
                     {
                         getStream()->printf("Line %d too long\n",linecount+1);
                         break;
                     }
+                    line[charcount] = inchar;
+                    charcount++;
                     if (inchar == '\n')
                     {
                         //Write line

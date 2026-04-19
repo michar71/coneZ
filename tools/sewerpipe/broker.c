@@ -617,8 +617,9 @@ static void handle_publish(broker_t *b, client_t *c, uint8_t flags,
     }
 
     char topic[MAX_TOPIC_LEN];
-    memcpy(topic, topic_ptr, topic_len);
-    topic[topic_len] = '\0';
+    int copy_len = topic_len < MAX_TOPIC_LEN - 1 ? topic_len : MAX_TOPIC_LEN - 1;
+    memcpy(topic, topic_ptr, copy_len);
+    topic[copy_len] = '\0';
 
     /* MQTT-3.3.2-2: topic must not contain wildcard characters */
     if (memchr(topic, '+', topic_len) || memchr(topic, '#', topic_len)) {

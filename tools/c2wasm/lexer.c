@@ -339,7 +339,7 @@ static int parse_escape_sequence(void) {
 }
 
 static void append_string_segment(int *len, int max_len) {
-    while (src_pos < src_len && ch() != '"' && ch() != '\n' && *len < max_len) {
+    while (src_pos < src_len && ch() != '"' && ch() != '\n' && *len < max_len - 1) {
         if (ch() == '\\') {
             advance();
             tok_sval[(*len)++] = (char)parse_escape_sequence();

@@ -413,9 +413,13 @@ void setup()
     bus_cfg.clk_source = I2C_CLK_SRC_DEFAULT;
     bus_cfg.glitch_ignore_cnt = 7;
     bus_cfg.flags.enable_internal_pullup = true;
-    i2c_new_master_bus(&bus_cfg, &i2c_bus);
+    esp_err_t i2c_err = i2c_new_master_bus(&bus_cfg, &i2c_bus);
+    if (i2c_err != ESP_OK) {
+      usb_printf("I2C bus init failed: %d\n", i2c_err);
+      i2c_bus = NULL;
+    }
   }
-  dump_i2c();
+  if (i2c_bus) dump_i2c();
 
 
   // Fire up the LoRa radio.

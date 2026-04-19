@@ -161,7 +161,7 @@ bool MPU_Calibrate(void)
 
 float getMaxAccXYZ(bool resetMax)
 {
-    static float maxAcc = 0;
+    static volatile float maxAcc = 0;
     float accX = getAccX();
     float accY = getAccY();
     float accZ = getAccZ();

@@ -160,6 +160,8 @@ static void mqtt_stop_client(void)
 
 static void send_heartbeat(void)
 {
+    if (!s_client) return;
+
     char payload[128];
     snprintf(payload, sizeof(payload),
              "{\"uptime\":%u,\"heap\":%u,\"temp\":%.1f,\"rssi\":%d}",

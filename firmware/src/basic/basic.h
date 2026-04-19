@@ -84,6 +84,7 @@ void DRIVER()
 
 
 
+#define CSP_CHECK() do { if (csp <= cstk) { bad((char*)"NESTING TOO DEEP"); return; } } while(0)
 #define LOC(N) value[sub[v][N+2]]				/* SUBROUTINE LOCAL */
 
 
@@ -112,16 +113,24 @@ void err(char *msg)
 }
 
 void freedim() { int i; for (i=0; i<nvar; i++) if (mode[i]==VARMODE_DIM) free((Val*)value[i]); }
-void emit(int opcode()) { lmap[cpc]=lnum; prg[cpc++]=opcode; }
+
+// Validate that a pointer is a known DIM allocation
+bool is_dim_ptr(Val ptr) {
+	if (!ptr) return false;
+	for (int i = 0; i < nvar; i++)
+		if (mode[i] == VARMODE_DIM && value[i] == ptr) return true;
+	return false;
+}
+void emit(int opcode()) { if (cpc >= PRGSZ) { bad((char*)"PROGRAM TOO LARGE"); return; } lmap[cpc]=lnum; prg[cpc++]=opcode; }
 void inst(int opcode(), Val x) { emit(opcode); emit((Code)x); }
 Val *bound(Val *mem, int n) { if (n<1 || n>*mem) err((char*)"BOUNDS"); return mem+n;  }
 void BYE_() { freedim();globalerror = 4; }
 void BREAK_() { globalerror = 3; }
 
 int RESUME_() { pc=opc? opc:pc; opc=pc; cpc=ipc; STEP; }
-int NUMBER_() { *--sp=PCV; STEP; }
-int LOAD_() { *--sp=value[PCV]; STEP; }
-int STORE_() { value[PCV]=*sp++; STEP; }
+int NUMBER_() { if (sp <= stk) { err((char*)"STACK OVERFLOW"); return 0; } *--sp=PCV; STEP; }
+int LOAD_() { if (sp <= stk) { err((char*)"STACK OVERFLOW"); return 0; } *--sp=value[PCV]; STEP; }
+int STORE_() { if (sp >= stk+STKSZ) { err((char*)"STACK UNDERFLOW"); return 0; } value[PCV]=*sp++; STEP; }
 void ECHO_() 
 { 
 	printfnl(SOURCE_BASIC,"%d\n",*sp++); 
@@ -164,9 +173,9 @@ int FORMAT_()
 int ADD_() { A+=B; sp++; STEP; };
 int SUBS_() { A-=B; sp++; STEP; };
 int MUL_() { A*=B; sp++; STEP; };
-int DIV_() { if (!B) sp+=2,err((char*)"DIVISION BY ZERO"); A/=B; sp++; STEP; };
-int IDIV_() { if (!B) sp+=2,err((char*)"DIVISION BY ZERO"); A/=B; sp++; STEP; };
-int MOD_() { if (!B) sp+=2,err((char*)"MODULUS OF ZERO"); A%=B; sp++; STEP; };
+int DIV_() { if (!B) { sp+=2; err((char*)"DIVISION BY ZERO"); return 0; } A/=B; sp++; STEP; };
+int IDIV_() { if (!B) { sp+=2; err((char*)"DIVISION BY ZERO"); return 0; } A/=B; sp++; STEP; };
+int MOD_() { if (!B) { sp+=2; err((char*)"MODULUS OF ZERO"); return 0; } A%=B; sp++; STEP; };
 int EQ_() { A=(A==B)? -1: 0; sp++; STEP; };
 int LT_() { A=(A<B)? -1: 0; sp++; STEP; };
 int GT_() { A=(A>B)? -1: 0; sp++; STEP; };
@@ -179,9 +188,11 @@ int JMP_() { pc=prg+(int)*pc; STEP; }
 int FALSE_() { if (*sp++) pc++; else pc=prg+(int)*pc; STEP; }
 int FOR_() { if (value[PCV] >= *sp) pc=prg+(int)*pc, sp++; else PCV; STEP; }
 int NEXT_() { value[PCV]++; STEP; }
-int CALL_() 
-{ 
+int CALL_()
+{
 	Val v=PCV, n=sub[v][1], x, *ap=sp;
+	// Check stack space: need room for locals + return addr
+	if (sp - (sub[v][0] - sub[v][1] + 1) <= stk) { err((char*)"STACK OVERFLOW (RECURSION?)"); return 0; }
 	while (n--) { x=LOC(n); LOC(n)=*ap; *ap++=x; }
 	for (n=sub[v][1]; n<sub[v][0]; n++) *--sp=LOC(n);
 	*--sp=pc-prg;
@@ -198,10 +209,13 @@ int RETURN_()
 int SETRET_() { ret=*sp++; STEP; }
 int RV_() { *--sp=ret; STEP; }
 int DROP_() { sp+=PCV; STEP; }
-void DIM_() 
-{ 
-	int v=PCV, n=*sp++; Val *mem=(Val*)calloc(sizeof(Val),n+1);      //TODO We need to free this memory on BYE_ !!!
-	mem[0]=n; value[v]=(Val)mem;
+void DIM_()
+{
+	int v=PCV, n=*sp++;
+	if (mode[v]==VARMODE_DIM && value[v]) free((Val*)value[v]);
+	Val *mem=(Val*)calloc(sizeof(Val),n+1);
+	if (!mem) { err((char*)"OUT OF MEMORY"); return; }
+	mem[0]=n; value[v]=(Val)mem; mode[v]=VARMODE_DIM;
 }
 int LOADI_() { Val x=*sp++; x=*bound((Val*)value[PCV],x); *--sp=x; STEP; }
 int STOREI_() { Val x=*sp++, i=*sp++; *bound((Val*)value[PCV],i)=x; STEP; }
@@ -211,7 +225,7 @@ int find(char *var)
 {
 	int	i;
 	for (i=0; i<nvar && strcmp(var,name[i]); i++);
-	if (i==nvar) strcpy(name[nvar++], var);
+	if (i==nvar) { if (nvar >= VARS) { bad((char*)"TOO MANY VARIABLES"); return 0; } strlcpy(name[nvar++], var, SYMSZ); }
 	return i;
 }
 
@@ -229,14 +243,19 @@ int read()
 		if (!*d) return tok=(p-pun)+LP;
 		return lp++, tok=(d-dub)/2+NE;
 	} else if (isalpha(*lp)) {	/* IDENTIFIER */
-		for (p=tokn; isalnum(*lp); ) *p++=toupper(*lp++);
-		if (*lp == '#') *p++ = *lp++;
-		if (*lp == '$') *p++ = *lp++;
+		for (p=tokn; isalnum(*lp); ) { if (p - tokn < SYMSZ - 2) *p++=toupper(*lp++); else lp++; }
+		if (*lp == '#' && p - tokn < SYMSZ - 1) *p++ = *lp++;
+		else if (*lp == '#') lp++;
+		if (*lp == '$' && p - tokn < SYMSZ - 1) *p++ = *lp++;
+		else if (*lp == '$') lp++;
 		for (*p=0, k=kwd; *k && strcmp(tokn,*k); k++);
 		if (*k) return tok=(k-kwd)+AND;
 		return tokv=find(tokn), tok=NAME;
 	} else if (*lp=='"' && lp++) {	/* STRING */
-		for (p=stabp; *lp && *lp!='"'; ) *stabp++=*lp++;
+		for (p=stabp; *lp && *lp!='"'; ) {
+			if (stabp >= stab + STRSZ - 1) { bad((char*)"STRING TABLE FULL"); return -1; }
+			*stabp++=*lp++;
+		}
 		return *stabp++=0, lp++, tokv=p-stab, tok=STRING;
 	} else	{
 		bad((char*)"BAD TOKEN");
@@ -321,9 +340,10 @@ void stmt()
 		if (!compile) bad((char*)"SUB MUST BE COMPILED");
 		compile++;										/* MUST BALANCE WITH END */
 		need(NAME), mode[cursub=var=tokv]=2; 			/* SUB NAME */
-		n=0; LIST(need(NAME); sub[var][n+++2]=tokv); 	/* PARAMS */		
+		n=0; LIST(need(NAME); sub[var][n+++2]=tokv); 	/* PARAMS */
+		CSP_CHECK();
 		*--csp=cpc+1;									/* JUMP OVER CODE */
-		 inst(JMP_,0);						
+		 inst(JMP_,0);
 		sub[var][0]=sub[var][1]=n;						/* LOCAL=PARAM COUNT */
 		value[var]=cpc;									/* ADDRESS */
 		*--csp=var, *--csp=i;							/* FOR "END" CLAUSE */
@@ -338,6 +358,7 @@ void stmt()
 		break;
 	case WHILE:											/* CSTK: {WHILE,TEST-FALSE,TOP} */
 		compile++;										/* BODY IS COMPILED */
+		CSP_CHECK();
 		*--csp=cpc, expr();
 		*--csp=cpc+1, *--csp=WHILE, inst(FALSE_, 0);
 		break;
@@ -346,15 +367,18 @@ void stmt()
 		need(NAME), var=tokv, temp++;
 		need(EQ), expr(), inst(STORE_,var);
 		need(TO), expr();
+		CSP_CHECK();
 		*--csp=cpc, inst(FOR_,var), emit(0);
 		*--csp=var, *--csp=cpc-1, *--csp=FOR;
 		break;
 	case IF:											/* CSTK: {IF,N,ENDS...,TEST-FALSE} */
+		CSP_CHECK();
 		expr(), inst(FALSE_,0), *--csp=cpc-1;
 		if (want(THEN)) { stmt(); prg[*csp++]=(Code)cpc; }
 		else	compile++, *--csp=0, *--csp=IF;
 		break;
 	case ELSE:
+		CSP_CHECK();
 		n=csp[1]+1;
 		inst(JMP_,0);									/* JUMP OVER "ELSE" */
 		*--csp=IF, csp[1]=n, csp[2]=cpc-1; 				/* ADD A FIXUP */

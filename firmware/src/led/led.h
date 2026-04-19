@@ -31,4 +31,9 @@ void led_set_channel( int ch, int cnt, CRGB col );
 // new LEDs are black. Returns 0 on success, -1 on error.
 int led_resize_channel( int ch, int count );
 
+// Snapshot LED buffer pointers and counts under mutex.
+// Safe to call from any task. Pointers may become stale after a resize,
+// but won't be dangling during the current operation.
+void led_snapshot( CRGB *bufs[4], int counts[4] );
+
 #endif

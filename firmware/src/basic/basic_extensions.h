@@ -533,11 +533,11 @@ int LUTTOARRAY_()
 {
     Val *arr = (Val*)*sp;  //Pull array from stack
     //Validate array
-    if (arr == 0)
+    if (!is_dim_ptr((Val)arr))
     {
-        bad((char*)"LUTTOARRAY: BAD ARRAY POINTER");
+        bad((char*)"LUTTOARRAY: NOT A DIM ARRAY");
         return 0;
-    } 
+    }
 
     if (pLUT == NULL || currentLUTIndex < 0)
     {
@@ -562,9 +562,9 @@ int ARRAYTOLUT_()
 {
     Val *arr = (Val*)*sp;      //Pull array from stack
     //Validate array
-    if (arr == 0)
+    if (!is_dim_ptr((Val)arr))
     {
-        bad((char*)"ARRAYTOLUT: BAD ARRAY POINTER");
+        bad((char*)"ARRAYTOLUT: NOT A DIM ARRAY");
         return 0;
     }
 
@@ -684,11 +684,11 @@ int SETLEDRGB_()
     Val *arr_r = (Val*)*sp;      
 
     //Validate arrays
-    if ((arr_r == 0) || (arr_g == 0) || (arr_b == 0))
+    if (!is_dim_ptr((Val)arr_r) || !is_dim_ptr((Val)arr_g) || !is_dim_ptr((Val)arr_b))
     {
-        bad((char*)"SETLEDRGB: BAD ARRAY POINTER");
+        bad((char*)"SETLEDRGB: NOT A DIM ARRAY");
         return 0;
-    } 
+    }
 
     if ((arr_r[0] != getNumLeds()) || (arr_g[0] != getNumLeds()) || (arr_b[0] != getNumLeds()))
     {
@@ -727,11 +727,11 @@ int RGBTOHSVARRAY_()
     Val *arr_r = (Val*)*sp;      
 
     //Validate arrays
-    if ((arr_r == 0) || (arr_g == 0) || (arr_b == 0))
+    if (!is_dim_ptr((Val)arr_r) || !is_dim_ptr((Val)arr_g) || !is_dim_ptr((Val)arr_b))
     {
-        bad((char*)"RGBTOHSVARRAY: BAD ARRAY POINTER");
+        bad((char*)"RGBTOHSVARRAY: NOT A DIM ARRAY");
         return 0;
-    } 
+    }
 
     if ((arr_r[0] != arr_g[0]) || (arr_g[0] != arr_b[0]) || (arr_b[0] != arr_r[0]))
     {
@@ -769,9 +769,9 @@ int HSVTORGBARRAY_()
     Val *arr_r = (Val*)*sp;
 
     //Validate arrays
-    if ((arr_r == 0) || (arr_g == 0) || (arr_b == 0))
+    if (!is_dim_ptr((Val)arr_r) || !is_dim_ptr((Val)arr_g) || !is_dim_ptr((Val)arr_b))
     {
-        bad((char*)"HSVTORGBARRAY: BAD ARRAY POINTER");
+        bad((char*)"HSVTORGBARRAY: NOT A DIM ARRAY");
         return 0;
     }
 
@@ -895,9 +895,11 @@ int USEGAMMA_()
 int COPYARRAY_()
 {
     //Pull 2 arrays from stack
-    Val *arr_b = (Val*)*sp++;  
-    Val *arr_a = (Val*)*sp;   
-    
+    Val *arr_b = (Val*)*sp++;
+    Val *arr_a = (Val*)*sp;
+
+    if (!is_dim_ptr((Val)arr_a) || !is_dim_ptr((Val)arr_b)) { bad((char*)"COPYARRAY: NOT A DIM ARRAY"); return 0; }
+
     int size_a = (int)arr_a[0];
     int size_b = (int)arr_b[0];
 

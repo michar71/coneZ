@@ -174,12 +174,16 @@ void lora_rx( void )
     if (rxlen > sizeof(rxbuf) - 1)
         rxlen = sizeof(rxbuf) - 1;
     int16_t state = radio.readData( rxbuf, rxlen );
-    rxbuf[rxlen] = '\0';
 
     if( state == RADIOLIB_ERR_NONE )
     {
             rx_count++;
-            printfnl(SOURCE_LORA, "Packet: %s\n", (const char *)rxbuf );
+            // Replace non-printable bytes with '.' for safe display
+            char display[256];
+            for (size_t i = 0; i < rxlen; i++)
+                display[i] = (rxbuf[i] >= 0x20 && rxbuf[i] < 0x7F) ? (char)rxbuf[i] : '.';
+            display[rxlen] = '\0';
+            printfnl(SOURCE_LORA, "Packet (%d bytes): %s\n", (int)rxlen, display);
     }
 
     // Re-enter receive mode for the next packet

@@ -100,7 +100,7 @@ int read_tok(void) {
     if (isalpha((unsigned char)*lp) || *lp == '_') {
         char *tp = tokn;
         while (isalnum((unsigned char)*lp) || *lp == '_') {
-            if (tp - tokn < 15) *tp++ = toupper((unsigned char)*lp);
+            if (tp - tokn < 14) *tp++ = toupper((unsigned char)*lp);
             lp++;
         }
         /* Allow # suffix for float function names */

@@ -43,9 +43,11 @@ static void apply_universe(int universe, const uint8_t *dmx, int dmx_len)
                              config.artnet_uni3, config.artnet_uni4 };
     const int addrs[4]  = { config.artnet_dmx1, config.artnet_dmx2,
                              config.artnet_dmx3, config.artnet_dmx4 };
-    const int counts[4] = { config.led_count1,  config.led_count2,
-                             config.led_count3,  config.led_count4 };
-    CRGB *ptrs[4]       = { leds1, leds2, leds3, leds4 };
+
+    // Snapshot LED pointers/counts under mutex to avoid race with led_resize_channel
+    CRGB *ptrs[4];
+    int counts[4];
+    led_snapshot(ptrs, counts);
 
     bool dirty = false;
 
@@ -56,7 +58,9 @@ static void apply_universe(int universe, const uint8_t *dmx, int dmx_len)
 
         // DMX address is 1-indexed; convert to 0-indexed byte offset
         int base  = addrs[ch] - 1;
+        if (base < 0 || base >= 512) continue;  // invalid DMX address
         int count = counts[ch];
+        if (count <= 0) continue;
 
         for (int i = 0; i < count; i++) {
             int off = base + i * 3;

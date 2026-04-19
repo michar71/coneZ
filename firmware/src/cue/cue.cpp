@@ -79,7 +79,10 @@ static int32_t compute_spatial_offset(const cue_entry *cue)
         dist = dx * sinf(angle_rad) + dy * cosf(angle_rad);
     }
 
-    return (int32_t)(dist * cue->spatial_delay);
+    float result = dist * cue->spatial_delay;
+    if (result > 2147483647.0f) return 2147483647;
+    if (result < -2147483648.0f) return -2147483647;
+    return (int32_t)result;
 }
 
 

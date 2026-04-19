@@ -19,10 +19,17 @@ typedef struct {
     cfg_type_t  type;
     size_t      offset;
     size_t      size;       // for CFG_STR: max buffer length
+    int         min_val;    // for CFG_INT/CFG_HEX: minimum value (min > max = unconstrained)
+    int         max_val;    // for CFG_INT/CFG_HEX: maximum value
 } cfg_descriptor_t;
 
+// No range constraint (min > max sentinel)
 #define CFG_ENTRY(sec, k, typ, field) \
-    { sec, k, typ, offsetof(conez_config_t, field), sizeof(((conez_config_t*)0)->field) }
+    { sec, k, typ, offsetof(conez_config_t, field), sizeof(((conez_config_t*)0)->field), 1, 0 }
+
+// With range constraint [lo, hi] — value clamped to range
+#define CFG_ENTRY_R(sec, k, typ, field, lo, hi) \
+    { sec, k, typ, offsetof(conez_config_t, field), sizeof(((conez_config_t*)0)->field), lo, hi }
 
 static const cfg_descriptor_t cfg_table[] = {
     // [wifi]
@@ -36,54 +43,54 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("lora",   "ssid",         CFG_STR,   lora_ssid),
     CFG_ENTRY("lora",   "frequency",    CFG_FLOAT, lora_frequency),
     CFG_ENTRY("lora",   "bandwidth",    CFG_FLOAT, lora_bandwidth),
-    CFG_ENTRY("lora",   "sf",           CFG_INT,   lora_sf),
-    CFG_ENTRY("lora",   "cr",           CFG_INT,   lora_cr),
-    CFG_ENTRY("lora",   "preamble",     CFG_INT,   lora_preamble),
-    CFG_ENTRY("lora",   "tx_power",     CFG_INT,   lora_tx_power),
+    CFG_ENTRY_R("lora", "sf",           CFG_INT,   lora_sf,        5, 12),
+    CFG_ENTRY_R("lora", "cr",           CFG_INT,   lora_cr,        5, 8),
+    CFG_ENTRY_R("lora", "preamble",     CFG_INT,   lora_preamble,  1, 65535),
+    CFG_ENTRY_R("lora", "tx_power",     CFG_INT,   lora_tx_power,  -9, 22),
     CFG_ENTRY("lora",   "sync_word",    CFG_HEX,   lora_sync_word),
     CFG_ENTRY("lora",   "callsign",     CFG_STR,   lora_callsign),
     CFG_ENTRY("lora",   "rf_mode",      CFG_STR,   lora_rf_mode),
     CFG_ENTRY("lora",   "fsk_bitrate",  CFG_FLOAT, fsk_bitrate),
     CFG_ENTRY("lora",   "fsk_freqdev",  CFG_FLOAT, fsk_freqdev),
     CFG_ENTRY("lora",   "fsk_rxbw",     CFG_FLOAT, fsk_rxbw),
-    CFG_ENTRY("lora",   "fsk_shaping",  CFG_INT,   fsk_shaping),
+    CFG_ENTRY_R("lora", "fsk_shaping",  CFG_INT,   fsk_shaping,    0, 3),
     CFG_ENTRY("lora",   "fsk_whitening",CFG_BOOL,  fsk_whitening),
     CFG_ENTRY("lora",   "fsk_syncword", CFG_STR,   fsk_syncword),
-    CFG_ENTRY("lora",   "fsk_crc",      CFG_INT,   fsk_crc),
+    CFG_ENTRY_R("lora", "fsk_crc",      CFG_INT,   fsk_crc,        0, 2),
     // [system]
     CFG_ENTRY("system", "device_name",  CFG_STR,   device_name),
     CFG_ENTRY("system", "startup_script", CFG_STR, startup_script),
-    CFG_ENTRY("system", "timezone",     CFG_INT,   timezone),
+    CFG_ENTRY_R("system","timezone",    CFG_INT,   timezone,       -12, 14),
     CFG_ENTRY("system", "auto_dst",    CFG_BOOL,  auto_dst),
-    CFG_ENTRY("system", "cone_id",    CFG_INT,   cone_id),
-    CFG_ENTRY("system", "cone_group", CFG_INT,   cone_group),
+    CFG_ENTRY_R("system","cone_id",    CFG_INT,   cone_id,        0, 65535),
+    CFG_ENTRY_R("system","cone_group",CFG_INT,   cone_group,     0, 65535),
     CFG_ENTRY("system", "ntp_server",   CFG_STR,   ntp_server),
-    CFG_ENTRY("system", "ntp_interval", CFG_INT,   ntp_interval),
-    CFG_ENTRY("system", "cpu_max",      CFG_INT,   cpu_max),
-    CFG_ENTRY("system", "cpu_min",      CFG_INT,   cpu_min),
+    CFG_ENTRY_R("system","ntp_interval",CFG_INT,   ntp_interval,   60, 86400),
+    CFG_ENTRY_R("system","cpu_max",     CFG_INT,   cpu_max,        80, 240),
+    CFG_ENTRY_R("system","cpu_min",     CFG_INT,   cpu_min,        80, 240),
     // [mqtt]
     CFG_ENTRY("mqtt",   "broker",       CFG_STR,   mqtt_broker),
     CFG_ENTRY("mqtt",   "enabled",      CFG_BOOL,  mqtt_enabled),
-    CFG_ENTRY("mqtt",   "port",         CFG_INT,   mqtt_port),
+    CFG_ENTRY_R("mqtt", "port",         CFG_INT,   mqtt_port,      1, 65535),
     // [led]
-    CFG_ENTRY("led",    "count1",       CFG_INT,   led_count1),
-    CFG_ENTRY("led",    "count2",       CFG_INT,   led_count2),
-    CFG_ENTRY("led",    "count3",       CFG_INT,   led_count3),
-    CFG_ENTRY("led",    "count4",       CFG_INT,   led_count4),
+    CFG_ENTRY_R("led",  "count1",       CFG_INT,   led_count1,     0, 1000),
+    CFG_ENTRY_R("led",  "count2",       CFG_INT,   led_count2,     0, 1000),
+    CFG_ENTRY_R("led",  "count3",       CFG_INT,   led_count3,     0, 1000),
+    CFG_ENTRY_R("led",  "count4",       CFG_INT,   led_count4,     0, 1000),
     CFG_ENTRY("led",    "color1",       CFG_HEX,   led_color1),
     CFG_ENTRY("led",    "color2",       CFG_HEX,   led_color2),
     CFG_ENTRY("led",    "color3",       CFG_HEX,   led_color3),
     CFG_ENTRY("led",    "color4",       CFG_HEX,   led_color4),
     // [artnet]
     CFG_ENTRY("artnet", "enabled",      CFG_BOOL,  artnet_enabled),
-    CFG_ENTRY("artnet", "uni1",         CFG_INT,   artnet_uni1),
-    CFG_ENTRY("artnet", "uni2",         CFG_INT,   artnet_uni2),
-    CFG_ENTRY("artnet", "uni3",         CFG_INT,   artnet_uni3),
-    CFG_ENTRY("artnet", "uni4",         CFG_INT,   artnet_uni4),
-    CFG_ENTRY("artnet", "dmx1",         CFG_INT,   artnet_dmx1),
-    CFG_ENTRY("artnet", "dmx2",         CFG_INT,   artnet_dmx2),
-    CFG_ENTRY("artnet", "dmx3",         CFG_INT,   artnet_dmx3),
-    CFG_ENTRY("artnet", "dmx4",         CFG_INT,   artnet_dmx4),
+    CFG_ENTRY_R("artnet","uni1",        CFG_INT,   artnet_uni1,    0, 32767),
+    CFG_ENTRY_R("artnet","uni2",        CFG_INT,   artnet_uni2,    0, 32767),
+    CFG_ENTRY_R("artnet","uni3",        CFG_INT,   artnet_uni3,    0, 32767),
+    CFG_ENTRY_R("artnet","uni4",        CFG_INT,   artnet_uni4,    0, 32767),
+    CFG_ENTRY_R("artnet","dmx1",        CFG_INT,   artnet_dmx1,    0, 512),
+    CFG_ENTRY_R("artnet","dmx2",        CFG_INT,   artnet_dmx2,    0, 512),
+    CFG_ENTRY_R("artnet","dmx3",        CFG_INT,   artnet_dmx3,    0, 512),
+    CFG_ENTRY_R("artnet","dmx4",        CFG_INT,   artnet_dmx4,    0, 512),
     // [debug]
     CFG_ENTRY("debug",  "system",       CFG_BOOL,  dbg_system),
     CFG_ENTRY("debug",  "basic",        CFG_BOOL,  dbg_basic),
@@ -267,6 +274,7 @@ static const cfg_descriptor_t *config_find(const char *section, const char *key)
 // Write a value string into the config struct via a descriptor.
 static void config_set_field(const cfg_descriptor_t *d, const char *value)
 {
+    if (!value) return;
     uint8_t *base = (uint8_t *)&config;
 
     switch (d->type)
@@ -278,9 +286,15 @@ static void config_set_field(const cfg_descriptor_t *d, const char *value)
         *(float *)(base + d->offset) = atof(value);
         break;
     case CFG_INT:
-    case CFG_HEX:
-        *(int *)(base + d->offset) = (int)strtol(value, NULL, 0);
+    case CFG_HEX: {
+        int v = (int)strtol(value, NULL, 0);
+        if (d->min_val <= d->max_val) {  // range constraint active
+            if (v < d->min_val) v = d->min_val;
+            if (v > d->max_val) v = d->max_val;
+        }
+        *(int *)(base + d->offset) = v;
         break;
+    }
     case CFG_BOOL:
         *(bool *)(base + d->offset) = (strcasecmp(value, "on") == 0 ||
                                         strcasecmp(value, "true") == 0 ||
@@ -305,7 +319,9 @@ static void config_set_default_field(const cfg_descriptor_t *d)
 static char *str_trim(char *s)
 {
     while (*s == ' ' || *s == '\t') s++;
-    char *end = s + strlen(s) - 1;
+    size_t len = strlen(s);
+    if (len == 0) return s;
+    char *end = s + len - 1;
     while (end > s && (*end == ' ' || *end == '\t')) *end-- = '\0';
     return s;
 }

@@ -44,7 +44,10 @@ struct EditorState {
 
 static uint32_t ed_line_addr(EditorState *ed, int n)
 {
-    return ed->blocks[n / ED_LINES_PER_BLOCK]
+    if (n < 0 || n >= ED_MAX_LINES) return 0;
+    int block = n / ED_LINES_PER_BLOCK;
+    if (block >= ed->num_blocks) return 0;
+    return ed->blocks[block]
          + (n % ED_LINES_PER_BLOCK) * ED_LINE_MAX;
 }
 

@@ -157,9 +157,11 @@ static int grb_buf_size = 0;
 
 static void led_push_hw(void)
 {
+    xSemaphoreTake(led_mutex, portMAX_DELAY);
     CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
     int counts[]  = { config.led_count1, config.led_count2,
                       config.led_count3, config.led_count4 };
+    xSemaphoreGive(led_mutex);
 
     // Find max LED count to size conversion buffer
     int max_count = 0;
@@ -246,6 +248,8 @@ void led_show_now( void )
 void led_set_channel( int ch, int cnt, CRGB col )
 {
 #ifdef BOARD_HAS_RGB_LEDS
+    xSemaphoreTake(led_mutex, portMAX_DELAY);
+
     CRGB *buf = nullptr;
     int max_leds = 0;
 
@@ -258,11 +262,27 @@ void led_set_channel( int ch, int cnt, CRGB col )
         case 4: buf = leds4; max_leds = config.led_count4; break;
     }
 
-    if (!buf) return;
+    if (!buf) { xSemaphoreGive(led_mutex); return; }
     if (cnt > max_leds) cnt = max_leds;
 
     for (int ii = 0; ii < cnt; ii++)
         buf[ii] = col;
+
+    xSemaphoreGive(led_mutex);
+#endif
+}
+
+
+void led_snapshot( CRGB *bufs[4], int counts[4] )
+{
+#ifdef BOARD_HAS_RGB_LEDS
+    xSemaphoreTake(led_mutex, portMAX_DELAY);
+    bufs[0] = leds1; bufs[1] = leds2; bufs[2] = leds3; bufs[3] = leds4;
+    counts[0] = config.led_count1; counts[1] = config.led_count2;
+    counts[2] = config.led_count3; counts[3] = config.led_count4;
+    xSemaphoreGive(led_mutex);
+#else
+    for (int i = 0; i < 4; i++) { bufs[i] = nullptr; counts[i] = 0; }
 #endif
 }
 

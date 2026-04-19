@@ -56,6 +56,8 @@ static int wasm_vformat(IM3Runtime runtime,
         if (i < fmt_len && fmt[i] == '*') {
             if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
             int32_t w; wasm_mem_read(runtime, aoff, &w, 4); aoff += 4;
+            if (w < -999) w = -999;
+            if (w > 999) w = 999;
             sp += snprintf(spec + sp, 28 - sp, "%d", (int)w);
             i++;
         } else {
@@ -72,6 +74,8 @@ static int wasm_vformat(IM3Runtime runtime,
             if (i < fmt_len && fmt[i] == '*') {
                 if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
                 int32_t p; wasm_mem_read(runtime, aoff, &p, 4); aoff += 4;
+                if (p < 0) p = 0;
+                if (p > 999) p = 999;
                 sp += snprintf(spec + sp, 28 - sp, "%d", (int)p);
                 i++;
             } else {

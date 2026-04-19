@@ -437,7 +437,7 @@ m3ApiRawFunction(m3_dir_read)
             continue;
 
         // stat to determine type (matches dir_list() in commands.cpp)
-        char fullpath[WASM_MAX_PATH_LEN + 16 + 256];
+        char fullpath[WASM_MAX_PATH_LEN + 16 + 256 + 2];
         snprintf(fullpath, sizeof(fullpath), "%s/%s",
                  wasm_dir_path[handle], ent->d_name);
         struct stat st;
