@@ -124,6 +124,7 @@ static int peek_ch(void) {
 
 static void skip_ws(void) {
     while (src_pos < src_len) {
+        preproc_check_include_boundary();
         int c = ch();
         if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { advance(); continue; }
         /* // comment */
@@ -353,7 +354,9 @@ static int lex_raw(void) {
     tok_int_unsigned = 0;
     tok_i64 = 0;
 
+    preproc_check_include_boundary();
     skip_ws();
+    preproc_check_include_boundary();
     if (src_pos >= src_len) return TOK_EOF;
 
     /* When inside #if 0 / #ifdef skip, only process # directives */

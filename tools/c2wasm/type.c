@@ -102,8 +102,7 @@ static int parse_struct_body(int sid) {
             } else {
                 ft = type_base(field_base);
             }
-            if (is_ptr) {
-                /* Collapse multiple pointer levels to one (pointer = i32) */
+            for (int pi = 0; pi < is_ptr; pi++) {
                 ft = type_pointer(ft);
             }
             if (is_array) {

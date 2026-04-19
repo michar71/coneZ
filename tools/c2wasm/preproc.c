@@ -25,12 +25,42 @@ static int api_registered;
 static int pp_macro_eval_depth;
 static int pp_predefined_counter;
 
+/* ---- Include file/line tracking ---- */
+#define MAX_INCLUDE_DEPTH 8
+
+typedef struct {
+    int restore_line;   /* line_num to restore when header ends */
+    char *restore_file; /* src_file to restore (not owned — points to original) */
+    int end_pos;        /* src_pos at which header content ends */
+} IncludeFrame;
+
+static IncludeFrame include_stk[MAX_INCLUDE_DEPTH];
+static int include_sp;
+/* Heap-allocated src_file strings for include frames (freed on pop) */
+static char *include_file_strs[MAX_INCLUDE_DEPTH];
+
 void preproc_init(void) {
     ifdef_depth = 0;
     ifdef_overflow = 0;
     api_registered = 0;
     pp_macro_eval_depth = 0;
     pp_predefined_counter = 0;
+    /* Free any leftover include file strings from a previous error */
+    for (int i = 0; i < include_sp; i++) {
+        cw_free(include_file_strs[i]);
+        include_file_strs[i] = NULL;
+    }
+    include_sp = 0;
+}
+
+void preproc_check_include_boundary(void) {
+    while (include_sp > 0 && src_pos >= include_stk[include_sp - 1].end_pos) {
+        include_sp--;
+        line_num = include_stk[include_sp].restore_line;
+        src_file = include_stk[include_sp].restore_file;
+        cw_free(include_file_strs[include_sp]);
+        include_file_strs[include_sp] = NULL;
+    }
 }
 
 int preproc_skipping(void) {
@@ -865,6 +895,28 @@ int preproc_line(void) {
                 cw_free(source);
                 source = new_src;
                 src_len = src_pos + hlen + remain;
+
+                /* Push include frame for line/file tracking */
+                if (include_sp < MAX_INCLUDE_DEPTH) {
+                    /* Adjust end_pos of any existing frames that extend past
+                     * the insertion point (nested includes shift them). */
+                    for (int si = 0; si < include_sp; si++) {
+                        if (include_stk[si].end_pos > src_pos)
+                            include_stk[si].end_pos += hlen;
+                    }
+                    include_stk[include_sp].restore_line = line_num;
+                    include_stk[include_sp].restore_file = src_file;
+                    include_stk[include_sp].end_pos = src_pos + hlen;
+                    /* Allocate a copy for the header's filename */
+                    int pathlen = (int)strlen(path);
+                    char *hfile = (char *)cw_malloc(pathlen + 1);
+                    if (hfile) memcpy(hfile, path, pathlen + 1);
+                    include_file_strs[include_sp] = hfile;
+                    include_sp++;
+                    line_num = 1;
+                    src_file = hfile;
+                }
+
                 /* Leave src_pos where it is — the next character to lex is
                  * now the first character of the header. */
                 return 1;

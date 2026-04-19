@@ -359,24 +359,35 @@ static CType primary_expr(void) {
             int save_nlocals = sf->nlocals;
             int save_data_len = data_len;
             int save_nsym = nsym;
+            int save_struct_id = type_last_struct_id;
+            int save_n_structs = n_struct_types;
             uint8_t save_imp_used[IMP_COUNT];
             memcpy(save_imp_used, imp_used, sizeof(imp_used));
             Buf save_code = sf->code;
             Buf tmp_buf; buf_init(&tmp_buf);
             sf->code = tmp_buf;
             CType ct = expr();
+            /* Capture struct type info before restoring state */
+            int sizeof_has_type = expr_last_has_type;
+            TypeInfo sizeof_type = expr_last_type;
             tmp_buf = sf->code;
             sf->code = save_code;
             sf->ncall_fixups = save_fixups; /* discard any fixups from expr */
             sf->nlocals = save_nlocals;     /* discard any locals from expr */
             data_len = save_data_len;       /* discard any string literals from expr */
             nsym = save_nsym;               /* discard any symbols from expr */
+            type_last_struct_id = save_struct_id;
+            n_struct_types = save_n_structs;
             memcpy(imp_used, save_imp_used, sizeof(imp_used));
             buf_free(&tmp_buf);
             int size = 4;
             if (ct == CT_VOID) size = 1;
             else if (ct == CT_CHAR || ct == CT_UCHAR) size = 1;
             else if (ct == CT_DOUBLE || ct == CT_LONG_LONG || ct == CT_ULONG_LONG) size = 8;
+            else if (ct == CT_STRUCT && sizeof_has_type && sizeof_type.struct_id >= 0)
+                size = struct_types[sizeof_type.struct_id].size;
+            else if (sizeof_has_type && (type_is_array(sizeof_type) || type_is_pointer(sizeof_type)))
+                size = type_sizeof(sizeof_type);
             emit_i32_const(size);
             expr_last_is_ptr = 0;
         }
@@ -1337,6 +1348,7 @@ CType assignment_expr(void) {
             Symbol *sym = find_sym(name);
             if (!sym) { error_fmt("undefined variable '%s'", name); return CT_INT; }
             if (type_is_array(sym->type_info)) { error_fmt("assignment to array '%s' is not allowed", name); return CT_INT; }
+            if (type_is_struct(sym->type_info)) { error_fmt("struct assignment not supported (use field-by-field copy)"); return CT_INT; }
             if (sym->is_const) error_fmt("assignment to const variable '%s'", name);
             CType rhs = assignment_expr();
             emit_coerce(rhs, sym->ctype);
@@ -1464,6 +1476,10 @@ CType assignment_expr(void) {
         if (last_var_sym) {
             /* Simple variable */
             if (last_var_sym->is_const) error_fmt("assignment to const variable '%s'", last_var_sym->name);
+            if (type_is_struct(last_var_sym->type_info)) {
+                error_fmt("struct assignment not supported (use field-by-field copy)");
+                return CT_INT;
+            }
             emit_coerce(rhs, last_var_sym->ctype);
             emit_sym_store_and_reload(last_var_sym);
             expr_last_is_ptr = type_is_pointer(last_var_sym->type_info) || type_is_array(last_var_sym->type_info);

@@ -834,6 +834,7 @@ void lexer_restore(LexerSave *s);
 void preproc_init(void);
 int preproc_line(void);  /* handle # directives, returns 1 if consumed */
 int preproc_skipping(void);  /* returns 1 if inside #if 0 / #ifdef skip block */
+void preproc_check_include_boundary(void);  /* restore line/file after leaving #include'd header */
 void register_api_imports(void);
 
 /* type.c */

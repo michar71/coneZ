@@ -79,7 +79,17 @@ Buf c2wasm_compile_buffer(const char *src, int len, const char *filename) {
     }
 #endif
 
-    source = (char *)src;
+    /* Copy source so #include can cw_free(source) safely during splicing */
+    source = (char *)cw_malloc(len + 1);
+    if (!source) {
+        cw_error("c2wasm: out of memory\n");
+#ifdef C2WASM_EMBEDDED
+        c2wasm_reset();
+#endif
+        return result;
+    }
+    memcpy(source, src, len);
+    source[len] = 0;
     src_len = len;
     src_pos = 0;
     line_num = 1;
@@ -180,6 +190,7 @@ void c2wasm_reset(void) {
     type_last_struct_id = -1;
     n_struct_types = 0;
     memset(imp_used, 0, sizeof(imp_used));
+    cw_free(source);
     source = NULL;
     src_len = 0;
     src_pos = 0;

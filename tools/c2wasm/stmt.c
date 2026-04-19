@@ -892,6 +892,9 @@ static void parse_local_decl(CType base_type) {
             /* Struct-by-value local: allocate sizeof(struct) in linear memory,
              * local holds the base address as i32. Member access treats the
              * local identically to an array base pointer. */
+            if (!struct_types[base_struct_id].complete) {
+                error_fmt("variable '%s' has incomplete struct type", name);
+            }
             int sz = struct_types[base_struct_id].size;
             int off = add_data_zeros(sz, 4);
             local_idx = alloc_local(WASM_I32);
@@ -1129,6 +1132,9 @@ void parse_top_level(void) {
     }
     if (global_is_struct_val) {
         /* Allocate the struct instance in data; global holds the base pointer */
+        if (!struct_types[base_struct_id].complete) {
+            error_fmt("variable '%s' has incomplete struct type", name);
+        }
         int sz = struct_types[base_struct_id].size;
         int off = add_data_zeros(sz, 4);
         s->init_ival = off;
@@ -1277,12 +1283,25 @@ void parse_top_level(void) {
             decl_is_array = 1;
         }
         gidx = nglobals++;
-        s = add_sym(name, SYM_GLOBAL, base_type);
+        int decl_is_struct_val =
+            (base_type == CT_STRUCT && !decl_is_array && base_struct_id >= 0);
+        CType decl_ctype = base_type;
+        if (decl_is_struct_val) decl_ctype = CT_INT;
+        else if (base_type == CT_STRUCT) decl_ctype = CT_INT;
+        s = add_sym(name, SYM_GLOBAL, decl_ctype);
         s->idx = gidx;
         s->is_static = is_static;
-        s->type_info = type_base(base_type);
-        if (!decl_is_array)
+        if (base_type == CT_STRUCT && base_struct_id >= 0)
+            s->type_info = type_base_struct(base_struct_id);
+        else
+            s->type_info = type_base(base_type);
+        if (decl_is_struct_val) {
+            int sz = struct_types[base_struct_id].size;
+            int off = add_data_zeros(sz, 4);
+            s->init_ival = off;
+        } else if (!decl_is_array) {
             alloc_global_scalar_storage(s);
+        }
         int decl_array_allocated = 0;
         if (decl_is_array) {
             if (decl_array_size > 0) {
@@ -1292,6 +1311,8 @@ void parse_top_level(void) {
                     total_elems *= dim;
                 }
                 int elem_size = ctype_sizeof_bytes(base_type);
+                if (base_type == CT_STRUCT && base_struct_id >= 0)
+                    elem_size = struct_types[base_struct_id].size;
                 int align = (elem_size >= 8) ? 8 : (elem_size >= 4 ? 4 : 1);
                 int bytes = total_elems * elem_size;
                 int off = add_data_zeros(bytes, align);
@@ -1379,6 +1400,15 @@ void parse_top_level(void) {
 /* ---- Function definition parser ---- */
 
 static void parse_func_def(CType ret_type, const char *name, int is_static) {
+    /* Struct return type not supported — must return a pointer */
+    if (ret_type == CT_STRUCT && !type_had_pointer) {
+        error_at("functions cannot return struct by value (return a pointer instead)");
+        ret_type = CT_INT;
+    }
+    if (ret_type == CT_STRUCT && type_had_pointer) {
+        ret_type = CT_INT;  /* pointer-to-struct is i32 at WASM level */
+    }
+
     /* Check for existing forward declaration */
     Symbol *existing = find_sym_kind(name, SYM_FUNC);
 
@@ -1404,9 +1434,21 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
         do {
             if (tok == TOK_VOID) { next_token(); break; }
             CType ptype = parse_type_spec();
+            int p_is_ptr = type_had_pointer;
+            int p_struct_id = type_last_struct_id;
+
+            /* Struct-by-value params not supported — must be pointer */
+            if (ptype == CT_STRUCT && !p_is_ptr) {
+                error_at("struct parameters must be passed by pointer");
+            }
+
+            /* All pointers (including struct*) are i32 at runtime */
+            CType param_ctype = ptype;
+            if (p_is_ptr) param_ctype = CT_INT;
+
             if (fc->nparams >= 8) { error_at("too many function parameters"); break; }
-            fc->param_wasm_types[fc->nparams] = ctype_to_wasm(ptype);
-            fc->param_ctypes[fc->nparams] = ptype;
+            fc->param_wasm_types[fc->nparams] = ctype_to_wasm(param_ctype);
+            fc->param_ctypes[fc->nparams] = param_ctype;
             fc->nparams++;
 
             if (tok == TOK_NAME) {
@@ -1415,11 +1457,19 @@ static void parse_func_def(CType ret_type, const char *name, int is_static) {
                 next_token();
 
                 /* Add param as a local symbol */
-                Symbol *ps = add_sym(pname, SYM_LOCAL, ptype);
+                Symbol *ps = add_sym(pname, SYM_LOCAL, param_ctype);
                 ps->idx = fc->nparams - 1;
                 ps->scope = cur_scope;
-                ps->type_info = type_base(ptype);
-                ps->stack_offset = (fc->nparams - 1) * 4;  /* Params are at positive offsets from frame */
+                /* Build proper TypeInfo preserving struct_id and pointer depth */
+                if (ptype == CT_STRUCT && p_struct_id >= 0) {
+                    ps->type_info = type_base_struct(p_struct_id);
+                } else {
+                    ps->type_info = type_base(ptype);
+                }
+                if (p_is_ptr) {
+                    ps->type_info = type_pointer(ps->type_info);
+                }
+                ps->stack_offset = (fc->nparams - 1) * 4;
                 ps->is_lvalue = 1;
             }
             /* Unnamed param: counted but no symbol added */

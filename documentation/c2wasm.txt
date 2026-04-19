@@ -521,8 +521,8 @@ the data section at declaration time; the symbol's value is the i32 base
 pointer. Reading a struct-valued symbol pushes that base pointer onto
 the WASM stack (analogous to how reading an array decays to a pointer),
 which means passing &s to a host function that expects an i32 address
-(file_stat, dir_read) does what the user expects. sizeof(struct T)
-returns the layout table's total size.
+(file_stat, dir_read) does what the user expects. sizeof(struct T) and
+sizeof(struct_variable) both return the layout table's total size.
 
 Limitations:
 
@@ -531,14 +531,18 @@ Limitations:
         st.size = 0;                       // instead of `= { .size = 0, ... }`
 
   - No pass- or return-by-value. Pointer-to-struct parameters are the
-    only way to cross function boundaries. With c2wasm imports this is
-    the natural convention anyway (file_stat(path, &out_struct)).
+    only way to cross function boundaries. The compiler errors on
+    struct-by-value parameters ("must be passed by pointer") and
+    struct return types ("return a pointer instead").
+
+  - No struct-to-struct assignment (b = a). Copy fields individually.
 
   - No anonymous structs, no unions, no bitfields, no typedef.
 
   - Forward-declared (incomplete) structs can only be used as pointer
     targets, not as field types or by-value locals, until the body has
-    been parsed.
+    been parsed. Attempting to instantiate an incomplete struct emits
+    an error.
 
   - conez_api.h is intercepted by the preprocessor to register host
     imports — it is NOT parsed as a regular header. The typedef'd
