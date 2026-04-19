@@ -120,8 +120,9 @@ void wasm_mem_read(IM3Runtime rt, uint32_t offset, void *dst, size_t len)
 {
 #if d_m3UsePsramMemory
     M3MemoryHeader *hdr = rt->memory.mallocated;
-    uint32_t end = offset + (uint32_t)len;
-    if (end <= d_m3PsramDramWindow) {
+    uint64_t end64 = (uint64_t)offset + len;
+    if (end64 > hdr->length) return;  // out of bounds
+    if (end64 <= d_m3PsramDramWindow) {
         memcpy(dst, hdr->dram_buf + offset, len);
     } else if (offset >= d_m3PsramDramWindow) {
         psram_read(hdr->psram_addr + offset - d_m3PsramDramWindow, (uint8_t *)dst, len);
@@ -140,8 +141,9 @@ void wasm_mem_write(IM3Runtime rt, uint32_t offset, const void *src, size_t len)
 {
 #if d_m3UsePsramMemory
     M3MemoryHeader *hdr = rt->memory.mallocated;
-    uint32_t end = offset + (uint32_t)len;
-    if (end <= d_m3PsramDramWindow) {
+    uint64_t end64 = (uint64_t)offset + len;
+    if (end64 > hdr->length) return;  // out of bounds
+    if (end64 <= d_m3PsramDramWindow) {
         memcpy(hdr->dram_buf + offset, src, len);
     } else if (offset >= d_m3PsramDramWindow) {
         psram_write(hdr->psram_addr + offset - d_m3PsramDramWindow, (const uint8_t *)src, len);
@@ -242,8 +244,9 @@ void wasm_mem_set(IM3Runtime rt, uint32_t offset, uint8_t val, size_t len)
 {
 #if d_m3UsePsramMemory
     M3MemoryHeader *hdr = rt->memory.mallocated;
-    uint32_t end = offset + (uint32_t)len;
-    if (end <= d_m3PsramDramWindow) {
+    uint64_t end64 = (uint64_t)offset + len;
+    if (end64 > hdr->length) return;  // out of bounds
+    if (end64 <= d_m3PsramDramWindow) {
         memset(hdr->dram_buf + offset, val, len);
     } else if (offset >= d_m3PsramDramWindow) {
         psram_memset(hdr->psram_addr + offset - d_m3PsramDramWindow, val, len);

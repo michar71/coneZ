@@ -170,8 +170,9 @@ static void send_heartbeat(void)
              getTemp(),
              (int)wifi_get_rssi());
 
-    esp_mqtt_client_publish(s_client, topic_status, payload, 0, 0, 0);
-    s_tx_count = s_tx_count + 1;
+    int msg_id = esp_mqtt_client_publish(s_client, topic_status, payload, 0, 0, 0);
+    if (msg_id >= 0)
+        s_tx_count = s_tx_count + 1;
     last_heartbeat_ms = uptime_ms();
 }
 

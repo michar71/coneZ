@@ -825,6 +825,17 @@ int cmd_config(int argc, char **argv)
         }
 
         config_set_field(d, argv[3]);
+
+        // Cross-validate cpu_min <= cpu_max
+        if (strcasecmp(section, "system") == 0 &&
+            (strcasecmp(key, "cpu_min") == 0 || strcasecmp(key, "cpu_max") == 0)) {
+            if (config.cpu_min > config.cpu_max) {
+                printfnl(SOURCE_COMMANDS, "Warning: cpu_min (%d) > cpu_max (%d), clamping cpu_min\n",
+                         config.cpu_min, config.cpu_max);
+                config.cpu_min = config.cpu_max;
+            }
+        }
+
         config_save();
 
         // Debug settings hot-apply immediately

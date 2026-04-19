@@ -8,8 +8,12 @@
 #include "led.h"
 #include "gps.h"
 #include "printManager.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 // ---------- State ----------
+
+static SemaphoreHandle_t cue_mutex = nullptr;  // protects cue_list/count/cursor/playing
 
 static cue_entry *cue_list = nullptr;
 static int   cue_count   = 0;
@@ -147,6 +151,7 @@ static void dispatch_cue(const cue_entry *cue)
 
 void cue_setup(void)
 {
+    if (!cue_mutex) cue_mutex = xSemaphoreCreateMutex();
     cue_list   = nullptr;
     cue_count  = 0;
     cue_cursor = 0;
@@ -157,9 +162,15 @@ void cue_setup(void)
 void cue_loop(void)
 {
     if (!playing) return;
+    if (xSemaphoreTake(cue_mutex, 0) != pdTRUE) return;  // non-blocking
+
+    if (!playing || !cue_list) {
+        xSemaphoreGive(cue_mutex);
+        return;
+    }
 
     uint64_t now_ms = get_epoch_ms();
-    if (now_ms == 0) return;  // no time source yet
+    if (now_ms == 0) { xSemaphoreGive(cue_mutex); return; }
 
     // Simple subtraction — epoch time never wraps at midnight
     uint32_t elapsed_ms = (now_ms > music_start_ms) ? (uint32_t)(now_ms - music_start_ms) : 0;
@@ -190,6 +201,8 @@ void cue_loop(void)
         playing = false;
         printfnl(SOURCE_SYSTEM, "cue: playback complete (%d cues)\n", cue_count);
     }
+
+    xSemaphoreGive(cue_mutex);
 }
 
 
@@ -266,14 +279,16 @@ bool cue_load(const char *path)
 
     fclose(f);
 
-    // Replace previous cue list
-    if (cue_list) {
-        delete[] cue_list;
-    }
+    // Replace previous cue list under mutex (cue_loop may be reading)
+    xSemaphoreTake(cue_mutex, portMAX_DELAY);
+    cue_entry *old_list = cue_list;
     cue_list   = new_list;
     cue_count  = hdr.num_cues;
     cue_cursor = 0;
     playing    = false;
+    xSemaphoreGive(cue_mutex);
+
+    delete[] old_list;
 
     printfnl(SOURCE_SYSTEM, "cue: loaded %d cues from %s\n", cue_count, path);
     return true;
@@ -282,18 +297,22 @@ bool cue_load(const char *path)
 
 void cue_start(uint64_t epoch_start_ms)
 {
+    xSemaphoreTake(cue_mutex, portMAX_DELAY);
     if (!cue_list || cue_count == 0) {
+        xSemaphoreGive(cue_mutex);
         printfnl(SOURCE_SYSTEM, "cue: no cue file loaded\n");
         return;
     }
 
     music_start_ms = epoch_start_ms;
     cue_cursor = 0;
-    playing = true;
 
     // Precompute cone and origin positions in meter-space
     latlon_to_meters(get_lat(), get_lon(), &my_x, &my_y);
     latlon_to_meters(config.origin_lat, config.origin_lon, &origin_x, &origin_y);
+
+    playing = true;
+    xSemaphoreGive(cue_mutex);
 
     printfnl(SOURCE_SYSTEM, "cue: playback started (%d cues)\n", cue_count);
 }
@@ -301,7 +320,9 @@ void cue_start(uint64_t epoch_start_ms)
 
 void cue_stop(void)
 {
+    xSemaphoreTake(cue_mutex, portMAX_DELAY);
     playing = false;
+    xSemaphoreGive(cue_mutex);
     printfnl(SOURCE_SYSTEM, "cue: playback stopped\n");
 }
 

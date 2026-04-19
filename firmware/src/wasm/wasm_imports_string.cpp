@@ -561,14 +561,12 @@ m3ApiRawFunction(m3_str_trim)
         uint32_t dst = pool_alloc(runtime, 1);
         m3ApiReturn((int32_t)dst);
     }
-    // Read into temp buffer for whitespace scan
-    char tmp[256];
-    int rlen = slen > (int)sizeof(tmp) - 1 ? (int)sizeof(tmp) - 1 : slen;
-    wasm_mem_read(runtime, (uint32_t)src, tmp, rlen);
-    tmp[rlen] = '\0';
-    int st = 0, end = rlen;
-    while (st < end && isspace((unsigned char)tmp[st])) st++;
-    while (end > st && isspace((unsigned char)tmp[end - 1])) end--;
+    // Scan leading whitespace
+    int st = 0;
+    while (st < slen && isspace(wasm_mem_read8(runtime, (uint32_t)src + st))) st++;
+    // Scan trailing whitespace
+    int end = slen;
+    while (end > st && isspace(wasm_mem_read8(runtime, (uint32_t)src + end - 1))) end--;
     int n = end - st;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
@@ -588,11 +586,8 @@ m3ApiRawFunction(m3_str_ltrim)
         uint32_t dst = pool_alloc(runtime, 1);
         m3ApiReturn((int32_t)dst);
     }
-    char tmp[256];
-    int rlen = slen > (int)sizeof(tmp) - 1 ? (int)sizeof(tmp) - 1 : slen;
-    wasm_mem_read(runtime, (uint32_t)src, tmp, rlen);
     int st = 0;
-    while (st < rlen && isspace((unsigned char)tmp[st])) st++;
+    while (st < slen && isspace(wasm_mem_read8(runtime, (uint32_t)src + st))) st++;
     int n = slen - st;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
@@ -612,11 +607,8 @@ m3ApiRawFunction(m3_str_rtrim)
         uint32_t dst = pool_alloc(runtime, 1);
         m3ApiReturn((int32_t)dst);
     }
-    char tmp[256];
-    int rlen = slen > (int)sizeof(tmp) - 1 ? (int)sizeof(tmp) - 1 : slen;
-    wasm_mem_read(runtime, (uint32_t)src, tmp, rlen);
-    int end = rlen;
-    while (end > 0 && isspace((unsigned char)tmp[end - 1])) end--;
+    int end = slen;
+    while (end > 0 && isspace(wasm_mem_read8(runtime, (uint32_t)src + end - 1))) end--;
     uint32_t dst = pool_alloc(runtime, end + 1);
     if (dst == 0) m3ApiReturn(0);
     wasm_mem_copy(runtime, dst, (uint32_t)src, end);

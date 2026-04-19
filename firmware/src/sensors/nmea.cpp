@@ -126,7 +126,9 @@ static void process_term(nmea_data_t *d) {
             d->s_month = (dt / 100) % 100;
             int yy     = dt % 100;
             d->s_year  = yy + 2000;
-            d->s_date_valid = (d->term[0] != '\0');
+            d->s_date_valid = (d->term[0] != '\0')
+                && d->s_day >= 1 && d->s_day <= 31
+                && d->s_month >= 1 && d->s_month <= 12;
             break;
         }
         case 12: // Mode indicator (NMEA 2.3+): A=autonomous, D=differential,

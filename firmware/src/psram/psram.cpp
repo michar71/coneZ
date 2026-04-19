@@ -304,7 +304,9 @@ static uint16_t psram_read_id() {
 // len must be <= 64 (FIFO capacity: 16 × 32-bit words).
 
 // Write len bytes to PSRAM at addr.
+// len must be <= 64 (SPI FIFO capacity: 16 × 32-bit words).
 static void psram_write_chunk_fn(uint32_t addr, const uint8_t *buf, size_t len) {
+    if (len == 0 || len > 64) return;  // guard: FIFO is 16 words
     // Configure: command(8-bit WRITE) + address(24-bit) + data(MOSI only)
     GPSPI2.user.val = (1 << 27)   // usr_mosi
                     | (1 << 30)   // usr_addr
@@ -341,7 +343,9 @@ static void psram_write_chunk_fn(uint32_t addr, const uint8_t *buf, size_t len) 
 }
 
 // Read len bytes from PSRAM at addr.
+// len must be <= 64 (SPI FIFO capacity: 16 × 32-bit words).
 static void psram_read_chunk_fn(uint32_t addr, uint8_t *buf, size_t len) {
+    if (len == 0 || len > 64) return;  // guard: FIFO is 16 words
     // Configure: command(8-bit) + address(24-bit) + [dummy(8-clk)] + data(MISO only)
     uint32_t user_val = (1 << 28)   // usr_miso
                       | (1 << 30)   // usr_addr

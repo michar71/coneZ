@@ -149,7 +149,12 @@ int type_sizeof(TypeInfo t) {
         return type_element_size(t);
     }
     if (t.kinds[0] == TYPE_ARRAY) {
-        return t.sizes[0] * type_element_size(t);
+        int elem = type_element_size(t);
+        if (elem > 0 && t.sizes[0] > INT_MAX / elem) {
+            error_at("array type too large");
+            return INT_MAX;
+        }
+        return t.sizes[0] * elem;
     }
     /* Pointer is always 4 bytes (i32) */
     return 4;

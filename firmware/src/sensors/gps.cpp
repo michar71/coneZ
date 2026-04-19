@@ -110,8 +110,8 @@ static void IRAM_ATTR pps_isr(void *arg)
 {
     (void)arg;
     pps_millis = uptime_ms();
-    pps_count = pps_count + 1;
     portENTER_CRITICAL_ISR(&time_mux);
+    pps_count = pps_count + 1;
     pps_edge_flag = true;
     portEXIT_CRITICAL_ISR(&time_mux);
 }
@@ -545,9 +545,9 @@ void ntp_loop(void)
         uint32_t mp = millis_at_pps;
         portEXIT_CRITICAL(&time_mux);
         if (uptime_ms() - mp < 10000) return;  // GPS still fresh
-        // GPS stale — downgrade so NTP can fill in
+        // GPS stale — downgrade to NTP if synced, else compile-time
         portENTER_CRITICAL(&time_mux);
-        time_source = 0;
+        time_source = (ntp_last_sync != 0) ? 1 : 0;
         portEXIT_CRITICAL(&time_mux);
     }
 

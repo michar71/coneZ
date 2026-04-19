@@ -157,6 +157,7 @@ static int grb_buf_size = 0;
 
 static void led_push_hw(void)
 {
+    if (!rmt_enc) return;
     xSemaphoreTake(led_mutex, portMAX_DELAY);
     CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
     int counts[]  = { config.led_count1, config.led_count2,
@@ -172,9 +173,10 @@ static void led_push_hw(void)
     // Ensure conversion buffer is large enough
     int needed = max_count * 3;
     if (needed > grb_buf_size) {
+        uint8_t *new_buf = (uint8_t *)malloc(needed);
+        if (!new_buf) return;  // keep old buffer, skip this frame
         free(grb_buf);
-        grb_buf = (uint8_t *)malloc(needed);
-        if (!grb_buf) { grb_buf_size = 0; return; }
+        grb_buf = new_buf;
         grb_buf_size = needed;
     }
 
@@ -207,11 +209,18 @@ static void rmt_init(void)
         tx_cfg.resolution_hz = 10 * 1000 * 1000;  // 10 MHz = 0.1us per tick
         tx_cfg.mem_block_symbols = 64;
         tx_cfg.trans_queue_depth = 1;
-        rmt_new_tx_channel(&tx_cfg, &rmt_chan[i]);
-        rmt_enable(rmt_chan[i]);
+        if (rmt_new_tx_channel(&tx_cfg, &rmt_chan[i]) != ESP_OK) {
+            rmt_chan[i] = NULL;
+            continue;
+        }
+        if (rmt_enable(rmt_chan[i]) != ESP_OK) {
+            rmt_chan[i] = NULL;
+        }
     }
 
-    ws2812_encoder_new(&rmt_enc);
+    if (ws2812_encoder_new(&rmt_enc) != ESP_OK) {
+        rmt_enc = NULL;
+    }
 }
 
 #endif  // BOARD_HAS_RGB_LEDS
