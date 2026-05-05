@@ -726,6 +726,11 @@ public partial class MainWindow : Window
         AddCueAtCurrentTime();
     }
 
+    private void AddChannel_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        _viewModel.ChannelCount++;
+    }
+
     private void ChannelLabel_OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (sender is not Control control)

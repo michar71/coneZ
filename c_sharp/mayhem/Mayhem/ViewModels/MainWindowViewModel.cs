@@ -522,7 +522,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             for (var i = current; i < count; i++)
             {
-                Project.Channels.Add(new Channel(i, $"Channel {i}"));
+                Project.Channels.Add(new Channel(i, FormatDefaultChannelName(i)));
             }
         }
         else if (current > count)
@@ -562,11 +562,19 @@ public sealed class MainWindowViewModel : ObservableObject
 
         if (Channels.Count == 0)
         {
-            Project.Channels.Add(new Channel(0, "Channel 0"));
+            Project.Channels.Add(new Channel(0, FormatDefaultChannelName(0)));
             Channels.Add(new ChannelEntry(Project.Channels.Root()!.Value));
         }
 
         BuildEffectInstances();
+    }
+
+    private static string FormatDefaultChannelName(int channelId)
+    {
+        var displayNumber = channelId + 1;
+        return displayNumber <= 99
+            ? $"CH{displayNumber:00}"
+            : $"C{displayNumber}";
     }
 
     private void BuildEffectInstances()

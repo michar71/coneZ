@@ -193,7 +193,15 @@
                         <Border Grid.Column="0" Background="#121212">
                             <Grid RowDefinitions="*,80">
                                 <Grid Grid.Row="0" RowDefinitions="18,*">
-                                    <Border Grid.Row="0" Background="#151515" />
+                                    <Border Grid.Row="0" Background="#151515">
+                                        <Button Content="+"
+                                                Width="22"
+                                                Height="18"
+                                                Padding="0"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Center"
+                                                Click="AddChannel_OnClick" />
+                                    </Border>
                                     <ScrollViewer Grid.Row="1"
                                                   Name="ChannelLabelsScroll"
                                                   VerticalScrollBarVisibility="Auto"
@@ -218,6 +226,7 @@
                                                                        PointerPressed="ChannelLabel_OnPointerPressed" />
                                                             <TextBox Text="{Binding Name}"
                                                                      VerticalAlignment="Center"
+                                                                     MaxLength="4"
                                                                      IsVisible="{Binding IsEditing}"
                                                                      LostFocus="ChannelName_OnLostFocus"
                                                                      KeyDown="ChannelName_OnKeyDown" />
@@ -685,7 +694,8 @@
                         Background="#0F0F0F"
                         Name="DebugPanel">
                     <Grid RowDefinitions="28,*">
-                        <DockPanel Margin="8,4,8,4">
+                        <DockPanel Margin="8,4,8,4"
+                                   LastChildFill="False">
                             <TextBlock Text="Debug Log"
                                        Foreground="White"
                                        Opacity="0.7"

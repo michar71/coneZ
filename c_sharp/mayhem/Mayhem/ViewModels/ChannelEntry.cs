@@ -23,9 +23,11 @@ public sealed class ChannelEntry : ObservableObject
         get => Channel.ChannelName;
         set
         {
-            if (Channel.ChannelName != value)
+            if (value == null) return;
+            var trimmed = value.Length > 4 ? value.Substring(0, 4) : value;
+            if (Channel.ChannelName != trimmed)
             {
-                Channel.ChannelName = value;
+                Channel.ChannelName = trimmed;
                 OnPropertyChanged();
             }
         }
