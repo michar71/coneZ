@@ -53,8 +53,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private decimal _editParamValue;
     private decimal _editParamStartValue;
     private decimal _editParamEndValue;
-    private string? _effectClipboardJson;
-    private ChannelEntry? _effectClipboardChannel;
+    private readonly List<EffectInstanceViewModel> _selectedEffects = new();
+    private readonly List<ClipboardEffect> _effectClipboard = new();
 
     private readonly string _scriptsDirectory;
 
@@ -147,6 +147,8 @@ public sealed class MainWindowViewModel : ObservableObject
     }
 
     public bool HasSelectedEffect => SelectedEffect != null;
+
+    public int SelectedEffectCount => _selectedEffects.Count;
 
     public string SelectedEffectType => SelectedEffect?.Effect.Type.ToString() ?? string.Empty;
     public bool IsColorEffectSelected
@@ -633,19 +635,32 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public bool CopySelectedEffect()
     {
-        if (SelectedEffect == null)
+        if (_selectedEffects.Count == 0)
         {
             return false;
         }
 
-        if (SelectedEffect.Effect is ColorEffect selectedColor)
+        _effectClipboard.Clear();
+        var firstStartMs = int.MaxValue;
+        for (var i = 0; i < _selectedEffects.Count; i++)
         {
-            SelectedEffect.Effect.SetColor(selectedColor.StartRgb);
-            SelectedEffect.NotifyColorChanged();
+            firstStartMs = Math.Min(firstStartMs, _selectedEffects[i].Effect.StartMs);
         }
 
-        _effectClipboardJson = SelectedEffect.Effect.ToJson();
-        _effectClipboardChannel = SelectedEffect.Channel;
+        foreach (var selected in _selectedEffects)
+        {
+            if (selected.Effect is ColorEffect selectedColor)
+            {
+                selected.Effect.SetColor(selectedColor.StartRgb);
+                selected.NotifyColorChanged();
+            }
+
+            _effectClipboard.Add(new ClipboardEffect(
+                selected.Effect.ToJson(),
+                Channels.IndexOf(selected.Channel),
+                selected.Effect.StartMs - firstStartMs));
+        }
+
         return true;
     }
 
@@ -661,71 +676,154 @@ public sealed class MainWindowViewModel : ObservableObject
             return false;
         }
 
-        RemoveEffect(SelectedEffect);
+        RemoveSelectedEffects();
         return true;
     }
 
     public EffectInstanceViewModel? PasteClipboardEffectAt(long startMs)
     {
-        if (string.IsNullOrWhiteSpace(_effectClipboardJson))
+        var pasted = PasteClipboardEffectsAt(startMs);
+        return pasted.Count > 0 ? pasted[0] : null;
+    }
+
+    public List<EffectInstanceViewModel> PasteClipboardEffectsAt(long startMs)
+    {
+        var pasted = new List<EffectInstanceViewModel>();
+        if (_effectClipboard.Count == 0)
         {
-            return null;
+            return pasted;
         }
 
-        if (_effectClipboardChannel == null || !Channels.Contains(_effectClipboardChannel))
+        ClearEffectSelection();
+        foreach (var clipboardEffect in _effectClipboard)
         {
-            return null;
+            if (clipboardEffect.ChannelIndex < 0 || clipboardEffect.ChannelIndex >= Channels.Count)
+            {
+                continue;
+            }
+
+            Effect effect;
+            try
+            {
+                effect = Effect.FromJson(clipboardEffect.EffectJson);
+            }
+            catch (Exception ex)
+            {
+                AddDebug($"Paste failed: {ex.Message}");
+                continue;
+            }
+
+            if (effect is ColorEffect pastedColor)
+            {
+                effect.SetColor(pastedColor.StartRgb);
+            }
+
+            effect.StartMs = (int)Math.Max(0, startMs + clipboardEffect.StartOffsetMs);
+            var vm = AddEffectInstance(Channels[clipboardEffect.ChannelIndex], effect);
+            AddEffectToSelection(vm);
+            pasted.Add(vm);
         }
 
-        Effect effect;
-        try
-        {
-            effect = Effect.FromJson(_effectClipboardJson);
-        }
-        catch (Exception ex)
-        {
-            AddDebug($"Paste failed: {ex.Message}");
-            return null;
-        }
-
-        if (effect is ColorEffect pastedColor)
-        {
-            effect.SetColor(pastedColor.StartRgb);
-        }
-
-        effect.StartMs = (int)Math.Max(0, startMs);
-        var vm = AddEffectInstance(_effectClipboardChannel, effect);
-        SelectEffect(vm);
-        return vm;
+        FinalizeSelectionChange();
+        return pasted;
     }
 
     public void RemoveEffect(EffectInstanceViewModel effect)
     {
-        if (ReferenceEquals(SelectedEffect, effect))
+        if (_selectedEffects.Contains(effect))
         {
-            SelectEffect(null);
+            RemoveEffectFromSelection(effect);
         }
 
         effect.Channel.RemoveEffect(effect);
         RemoveEffectFromList(effect.Channel.Channel, effect.Effect);
+        FinalizeSelectionChange();
+    }
+
+    public int RemoveSelectedEffects()
+    {
+        var effects = new List<EffectInstanceViewModel>(_selectedEffects);
+        foreach (var effect in effects)
+        {
+            effect.Channel.RemoveEffect(effect);
+            RemoveEffectFromList(effect.Channel.Channel, effect.Effect);
+        }
+
+        ClearEffectSelection();
+        FinalizeSelectionChange();
+        return effects.Count;
     }
 
     public void SelectEffect(EffectInstanceViewModel? effect)
     {
-        if (SelectedEffect != null)
+        ClearEffectSelection();
+        if (effect != null)
         {
-            SelectedEffect.IsSelected = false;
+            AddEffectToSelection(effect);
         }
 
+        FinalizeSelectionChange();
+    }
+
+    public void ToggleEffectSelection(EffectInstanceViewModel effect)
+    {
+        if (_selectedEffects.Contains(effect))
+        {
+            RemoveEffectFromSelection(effect);
+        }
+        else
+        {
+            AddEffectToSelection(effect);
+        }
+
+        FinalizeSelectionChange();
+    }
+
+    public IReadOnlyList<EffectInstanceViewModel> GetSelectedEffects() => _selectedEffects;
+
+    private void AddEffectToSelection(EffectInstanceViewModel effect)
+    {
+        if (_selectedEffects.Contains(effect))
+        {
+            return;
+        }
+
+        _selectedEffects.Add(effect);
+        effect.IsSelected = true;
         SelectedEffect = effect;
-        if (SelectedEffect != null)
+    }
+
+    private void RemoveEffectFromSelection(EffectInstanceViewModel effect)
+    {
+        if (!_selectedEffects.Remove(effect))
         {
-            SelectedEffect.IsSelected = true;
+            return;
         }
 
+        effect.IsSelected = false;
+        if (ReferenceEquals(SelectedEffect, effect))
+        {
+            SelectedEffect = _selectedEffects.Count > 0 ? _selectedEffects[^1] : null;
+        }
+    }
+
+    private void ClearEffectSelection()
+    {
+        foreach (var effect in _selectedEffects)
+        {
+            effect.IsSelected = false;
+        }
+
+        _selectedEffects.Clear();
+        SelectedEffect = null;
+    }
+
+    private void FinalizeSelectionChange()
+    {
         LoadSelectedEffect();
         OnPropertyChanged(nameof(HasSelectedEffect));
         OnPropertyChanged(nameof(SelectedEffectType));
+        OnPropertyChanged(nameof(SelectedEffectCount));
     }
 
     public void CommitSelectedEffectEdits()
@@ -1295,5 +1393,19 @@ public sealed class MainWindowViewModel : ObservableObject
         var clamped = Math.Clamp(value, 0, 1);
         const double k = 9.0;
         return Math.Log10(1 + k * clamped) / Math.Log10(1 + k);
+    }
+
+    private readonly struct ClipboardEffect
+    {
+        public ClipboardEffect(string effectJson, int channelIndex, int startOffsetMs)
+        {
+            EffectJson = effectJson;
+            ChannelIndex = channelIndex;
+            StartOffsetMs = startOffsetMs;
+        }
+
+        public string EffectJson { get; }
+        public int ChannelIndex { get; }
+        public int StartOffsetMs { get; }
     }
 }

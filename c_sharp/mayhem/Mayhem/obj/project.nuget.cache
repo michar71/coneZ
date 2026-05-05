@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "4Ht8Aln2STw=",
+  "dgSpecHash": "rQVzXtmtONE=",
   "success": true,
   "projectFilePath": "/Users/michaelhartmann/Documents/GitHub/coneZ/c_sharp/mayhem/Mayhem/Mayhem.csproj",
   "expectedPackageFiles": [
@@ -42,9 +42,7 @@
     "/Users/michaelhartmann/.nuget/packages/skiasharp.nativeassets.macos/2.88.9/skiasharp.nativeassets.macos.2.88.9.nupkg.sha512",
     "/Users/michaelhartmann/.nuget/packages/skiasharp.nativeassets.webassembly/2.88.9/skiasharp.nativeassets.webassembly.2.88.9.nupkg.sha512",
     "/Users/michaelhartmann/.nuget/packages/skiasharp.nativeassets.win32/2.88.9/skiasharp.nativeassets.win32.2.88.9.nupkg.sha512",
-    "/Users/michaelhartmann/.nuget/packages/tmds.dbus.protocol/0.21.2/tmds.dbus.protocol.0.21.2.nupkg.sha512",
-    "/Users/michaelhartmann/.nuget/packages/microsoft.netcore.app.runtime.osx-arm64/10.0.3/microsoft.netcore.app.runtime.osx-arm64.10.0.3.nupkg.sha512",
-    "/Users/michaelhartmann/.nuget/packages/microsoft.aspnetcore.app.runtime.osx-arm64/10.0.3/microsoft.aspnetcore.app.runtime.osx-arm64.10.0.3.nupkg.sha512"
+    "/Users/michaelhartmann/.nuget/packages/tmds.dbus.protocol/0.21.2/tmds.dbus.protocol.0.21.2.nupkg.sha512"
   ],
   "logs": [
     {
@@ -56,8 +54,7 @@
       "filePath": "/Users/michaelhartmann/Documents/GitHub/coneZ/c_sharp/mayhem/Mayhem/Mayhem.csproj",
       "libraryId": "Tmds.DBus.Protocol",
       "targetGraphs": [
-        "net10.0",
-        "net10.0/osx-arm64"
+        "net10.0"
       ]
     }
   ]

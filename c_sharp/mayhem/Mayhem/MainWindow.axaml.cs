@@ -50,7 +50,9 @@ public partial class MainWindow : Window
     private double _edgeScrollVelocity;
     private CueMarker? _draggingCue;
     private EffectInstanceViewModel? _draggingEffect;
+    private readonly List<EffectDragSnapshot> _draggingEffectGroup = new();
     private double _draggingEffectOffsetX;
+    private int _draggingEffectStartMs;
     private bool _isResizingEffect;
     private double _resizeStartX;
     private double _resizeStartWidth;
@@ -650,13 +652,13 @@ public partial class MainWindow : Window
 
         if (isCommandShortcut && e.Key == Key.V)
         {
-            var pasted = _viewModel.PasteClipboardEffectAt(_viewModel.CurrentTimeMs);
-            if (pasted != null)
+            var pasted = _viewModel.PasteClipboardEffectsAt(_viewModel.CurrentTimeMs);
+            if (pasted.Count > 0)
             {
-                var pasteEndMs = pasted.Effect.StartMs + pasted.Effect.DurationMs;
+                var pasteEndMs = GetSelectionEndMs(pasted);
                 _viewModel.SetCurrentTime(pasteEndMs);
                 AutoScrollTimelineIfNeeded();
-                _viewModel.AddDebug($"Effect pasted at {pasted.Effect.StartMs} ms on {pasted.Channel.Name}.");
+                _viewModel.AddDebug(FormatEffectCountMessage(pasted.Count, "pasted"));
                 e.Handled = true;
             }
             return;
@@ -695,10 +697,10 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Delete || e.Key == Key.Back)
         {
-            if (_viewModel.SelectedEffect != null)
+            if (_viewModel.SelectedEffectCount > 0)
             {
-                _viewModel.RemoveEffect(_viewModel.SelectedEffect);
-                _viewModel.AddDebug("Effect deleted.");
+                var removed = _viewModel.RemoveSelectedEffects();
+                _viewModel.AddDebug(FormatEffectCountMessage(removed, "deleted"));
             }
             else
             {
@@ -909,19 +911,24 @@ public partial class MainWindow : Window
             return;
         }
 
-        var wasSelected = effect.IsSelected;
-        _viewModel.SelectEffect(effect);
-        if (!wasSelected)
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
+            _viewModel.ToggleEffectSelection(effect);
             e.Handled = true;
             return;
+        }
+
+        if (!effect.IsSelected)
+        {
+            _viewModel.SelectEffect(effect);
         }
 
         _draggingEffect = effect;
         var position = e.GetPosition(control);
         _draggingEffectOffsetX = position.X;
+        _draggingEffectStartMs = effect.Effect.StartMs;
 
-        if (effect.Width - position.X <= 8)
+        if (_viewModel.SelectedEffectCount == 1 && effect.Width - position.X <= 8)
         {
             _isResizingEffect = true;
             _resizeStartX = effect.X;
@@ -930,6 +937,15 @@ public partial class MainWindow : Window
         else
         {
             _isResizingEffect = false;
+        }
+
+        _draggingEffectGroup.Clear();
+        if (!_isResizingEffect)
+        {
+            foreach (var selected in _viewModel.GetSelectedEffects())
+            {
+                _draggingEffectGroup.Add(new EffectDragSnapshot(selected, selected.Effect.StartMs));
+            }
         }
 
         e.Pointer.Capture(control);
@@ -1272,6 +1288,7 @@ public partial class MainWindow : Window
         if (!point.Properties.IsLeftButtonPressed)
         {
             _draggingEffect = null;
+            _draggingEffectGroup.Clear();
             _isResizingEffect = false;
             return;
         }
@@ -1300,6 +1317,12 @@ public partial class MainWindow : Window
         var timeMs = _viewModel.TimeFromX(Math.Max(0, startX));
         timeMs = SnapToCue(timeMs);
 
+        if (_draggingEffectGroup.Count > 1)
+        {
+            MoveDraggingEffectGroup((int)timeMs);
+            return;
+        }
+
         var channel = ChannelFromPosition(pos.Y + _channelLanesScroll.Offset.Y);
         if (channel == null)
         {
@@ -1307,6 +1330,30 @@ public partial class MainWindow : Window
         }
 
         _viewModel.MoveEffect(_draggingEffect, channel, timeMs);
+    }
+
+    private void MoveDraggingEffectGroup(int anchorStartMs)
+    {
+        if (_draggingEffect == null)
+        {
+            return;
+        }
+
+        var deltaMs = anchorStartMs - _draggingEffectStartMs;
+        for (var i = 0; i < _draggingEffectGroup.Count; i++)
+        {
+            var targetStartMs = _draggingEffectGroup[i].StartMs + deltaMs;
+            if (targetStartMs < 0)
+            {
+                deltaMs -= targetStartMs;
+            }
+        }
+
+        for (var i = 0; i < _draggingEffectGroup.Count; i++)
+        {
+            var snapshot = _draggingEffectGroup[i];
+            _viewModel.MoveEffect(snapshot.Effect, snapshot.Effect.Channel, snapshot.StartMs + deltaMs);
+        }
     }
 
     private double GetTimelineContentX(PointerEventArgs e)
@@ -1344,12 +1391,14 @@ public partial class MainWindow : Window
         }
 
         _draggingEffect = null;
+        _draggingEffectGroup.Clear();
         _isResizingEffect = false;
     }
 
     private void Effect_OnPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
     {
         _draggingEffect = null;
+        _draggingEffectGroup.Clear();
         _isResizingEffect = false;
     }
 
@@ -1445,6 +1494,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        _viewModel.SelectEffect(null);
         _isScrubbing = true;
         var position = e.GetPosition(control);
         _draggingCue = FindCueNearX(position.X);
@@ -1460,6 +1511,11 @@ public partial class MainWindow : Window
         }
         e.Pointer.Capture((IInputElement?)sender);
         UpdateEdgeScroll(control, e);
+    }
+
+    private void TimelineEmpty_OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _viewModel.SelectEffect(null);
     }
 
     private void Timeline_OnPointerMoved(object? sender, PointerEventArgs e)
@@ -1688,22 +1744,22 @@ public partial class MainWindow : Window
 
     private void MenuPaste_OnClick(object? sender, RoutedEventArgs e)
     {
-        var pasted = _viewModel.PasteClipboardEffectAt(_viewModel.CurrentTimeMs);
-        if (pasted != null)
+        var pasted = _viewModel.PasteClipboardEffectsAt(_viewModel.CurrentTimeMs);
+        if (pasted.Count > 0)
         {
-            var pasteEndMs = pasted.Effect.StartMs + pasted.Effect.DurationMs;
+            var pasteEndMs = GetSelectionEndMs(pasted);
             _viewModel.SetCurrentTime(pasteEndMs);
             AutoScrollTimelineIfNeeded();
-            _viewModel.AddDebug($"Effect pasted at {pasted.Effect.StartMs} ms on {pasted.Channel.Name}.");
+            _viewModel.AddDebug(FormatEffectCountMessage(pasted.Count, "pasted"));
         }
     }
 
     private void MenuDelete_OnClick(object? sender, RoutedEventArgs e)
     {
-        if (_viewModel.SelectedEffect != null)
+        if (_viewModel.SelectedEffectCount > 0)
         {
-            _viewModel.RemoveEffect(_viewModel.SelectedEffect);
-            _viewModel.AddDebug("Effect deleted.");
+            var removed = _viewModel.RemoveSelectedEffects();
+            _viewModel.AddDebug(FormatEffectCountMessage(removed, "deleted"));
         }
         else
         {
@@ -1726,6 +1782,22 @@ public partial class MainWindow : Window
         _viewModel.Zoom = 1.0;
     }
 
+    private static long GetSelectionEndMs(IReadOnlyList<EffectInstanceViewModel> effects)
+    {
+        long endMs = 0;
+        for (var i = 0; i < effects.Count; i++)
+        {
+            endMs = Math.Max(endMs, effects[i].Effect.StartMs + effects[i].Effect.DurationMs);
+        }
+
+        return endMs;
+    }
+
+    private static string FormatEffectCountMessage(int count, string action)
+    {
+        return count == 1 ? $"Effect {action}." : $"{count} effects {action}.";
+    }
+
     protected override void OnOpened(EventArgs e)
     {
         base.OnOpened(e);
@@ -1742,5 +1814,17 @@ public partial class MainWindow : Window
         _decodeCts?.Dispose();
         _audioPlayback.Dispose();
         _viewModel.DisposeAllMedia();
+    }
+
+    private readonly struct EffectDragSnapshot
+    {
+        public EffectDragSnapshot(EffectInstanceViewModel effect, int startMs)
+        {
+            Effect = effect;
+            StartMs = startMs;
+        }
+
+        public EffectInstanceViewModel Effect { get; }
+        public int StartMs { get; }
     }
 }

@@ -297,6 +297,7 @@
                                     <Border DragDrop.AllowDrop="True"
                                             DragDrop.DragOver="ChannelLanes_OnDragOver"
                                             DragDrop.Drop="ChannelLanes_OnDrop"
+                                            PointerPressed="TimelineEmpty_OnPointerPressed"
                                             Background="Transparent">
                                         <ItemsControl ItemsSource="{Binding Channels}">
                                         <ItemsControl.ItemsPanel>
