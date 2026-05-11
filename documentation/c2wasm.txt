@@ -614,6 +614,65 @@ fixups and remapped during assembly to account for import compaction
 (only used imports are included in the output).
 
 
+Constant Folding
+----------------
+
+c2wasm performs peephole constant folding during code generation. Adjacent
+literal operands are evaluated at compile time and the resulting bytecode
+collapses to a single typed const instruction. This eliminates runtime
+arithmetic for expressions like `1000 / FPS` or `256 * (1 << 4)`.
+
+Folded operations (i32, i64, f32, f64; signed and unsigned variants):
+
+  Arithmetic:    +  -  *  /  %       (% on floats is not folded)
+  Bitwise:       &  |  ^  <<  >>     (integer operands only)
+  Comparisons:   ==  !=  <  >  <=  >=    (result is i32 0/1)
+  Unary minus:   -expr               (rewrites the literal in place)
+
+Examples:
+
+    2 + 3 * 4              →  i32.const 14
+    (1+2) * (3+4)          →  i32.const 21
+    1.5f * 2.0f            →  f32.const 3.0
+    1000LL * 1000LL        →  i64.const 1000000
+    5 < 10                 →  i32.const 1
+    255 & 0x0F             →  i32.const 15
+    -5 + 7                 →  i32.const 2
+
+Mixed-type cases follow the standard C promotion rules:
+
+    1 + 2.0                →  f32.const 3.0       (int promoted to float)
+    (int)1 + 2LL           →  i64.const 3         (int extended to long long)
+
+Cases that are *not* folded:
+
+    - Division/modulo by zero (left as a runtime WASM trap).
+    - Signed INT_MIN/-1 and similar UB cases.
+    - Float modulo `%` (needs fmod() at compile time, intentionally skipped).
+    - Bitwise/shift ops when either operand is a float literal.
+    - Expressions where any operand is not a literal (variables, function
+      calls, memory loads, etc.).
+
+Internals — 3-slot ring:
+
+The fold tracker keeps three slots (fold_p, fold_a, fold_b) recording the
+last three constants emitted, plus the byte offsets in the function's
+code buffer where each was written. A binary op only folds when fold_a
+and fold_b are still adjacent in the buffer — i.e., no non-const
+instructions were emitted between them. On a successful fold the
+predecessor slot fold_p slides into fold_a so an enclosing operation can
+continue folding against the literal that came before. Without this
+predecessor slot, an expression like `2 + 3 * 4` would only fold the
+inner `3 * 4 = 12` and leave `2 + 12` for the runtime; with it, the
+whole expression collapses to `i32.const 14`.
+
+This is a one-level look-back; the optimizer is not a full constant
+propagator. Expressions like `x = (a * 2) * 3` where `a` is a variable
+do not fold the `2 * 3` because the multiplication is left-associative
+and the parser inserts an `i32.mul` between the two literals. For deeper
+optimization, use clang.
+
+
 Examples
 --------
 
@@ -780,7 +839,7 @@ Comparison with clang
   -------              ------              -----
   Dependencies         libc only           LLVM/clang toolchain
   Build time           <1ms per file       ~100ms per file
-  Optimization         None (direct emit)  -O2 (dead code, inlining, etc.)
+  Optimization         Constant folding    -O2 (dead code, inlining, etc.)
   Output size          Slightly larger     Smaller (optimized)
   C coverage           Subset (see above)  Full C11/C17
   bulk-memory          Not used            -mbulk-memory for memcpy/memset

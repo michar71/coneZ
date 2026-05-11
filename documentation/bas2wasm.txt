@@ -720,6 +720,9 @@ Folded operations:
 Folding chains across subexpressions:
 
     1 + 2 + 3 + 4            →  i32.const 10       (single instruction)
+    1 + 2 * 3                →  i32.const 7        (nested: 2*3=6 then 1+6)
+    2 + 3 * 4                →  i32.const 14       (nested fold across outer)
+    (1+2) * (3+4)            →  i32.const 21
     1.5 * 2.0                →  f32.const 3.0
     2 + 3.0                  →  f32.const 5.0       (mixed: promoted to f32)
     2.0 ^ 3.0                →  f32.const 8.0
@@ -732,6 +735,17 @@ Mixed constant+variable expressions partially fold:
     2 + 3 + X                →  i32.const 5; global.get X; i32.add
 
 Division and modulo by zero are left as runtime operations (WASM trap).
+
+Internals — 3-slot ring:
+
+The fold tracker keeps three slots (fold_p, fold_a, fold_b) recording the
+last three constants emitted, along with their byte offsets in the code
+buffer. A binary op only folds when fold_a and fold_b are still adjacent
+in the buffer (no non-const instructions emitted between them). On a
+successful fold the predecessor slot fold_p slides into fold_a so an
+enclosing operation can keep folding against the literal that came before.
+This is what makes nested cases like `2 + 3 * 4` collapse fully rather
+than stopping at `2 + 12`.
 
 
 Compiled Output
@@ -919,6 +933,28 @@ Example:
       FORMAT "Read: $", LINE$
   WEND
   CLOSE #2
+
+
+Testing
+-------
+
+The test suite is in tools/bas2wasm/test/. Run with:
+
+  cd tools/bas2wasm
+  make test
+
+The runner compiles each .bas file and validates the output with
+wasm-validate (if installed). Reject tests (reject_*.bas) verify that
+the compiler correctly reports errors. The .bas examples in
+firmware/data/ are also compiled, which doubles as a regression check
+that production scripts still build.
+
+Adding a test: drop a .bas file in test/. Positive tests must compile
+to valid WASM. Files named reject_*.bas must fail compilation.
+
+A second target, `make verify`, does byte-for-byte comparison against
+the snapshots in test/baseline/ — useful for catching codegen drift
+when intentional changes are made (regenerate via test/make_baseline.sh).
 
 
 Embedded Mode
