@@ -994,12 +994,10 @@ Currently 79 tests covering:
     function, ON ERROR / RESUME, unmatched paren, invalid hex
 
 Known compiler issues surfaced by tests but not yet fixed (no positive
-test included for these — they emit invalid WASM or are silently
-accepted instead of rejected):
+test included for these — they are silently accepted instead of being
+rejected, or have features the docs imply that the compiler doesn't
+enforce):
 
-  - WAITFOR uses emit_if_void() blocks whose bodies push i32, producing
-    invalid bytecode that fails wasm-validate. Fix needs typed if-blocks
-    [i32]→[i32].
   - Unterminated string literals are not flagged by the lexer.
   - Wrong argument count and nested SUB definitions are silently
     accepted, contrary to what the docs imply.

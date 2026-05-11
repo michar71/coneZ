@@ -644,49 +644,61 @@ int compile_builtin_expr(const char *name) {
     }
     if (strcmp(name, "WAITFOR") == 0) {
         expr(); coerce_i32(); need(TOK_COMMA);
-        int ev = alloc_local(); emit_local_set(ev);
+        int ev = alloc_local(); emit_local_set(ev); vpop();
         expr(); coerce_i32(); need(TOK_COMMA);
-        int src = alloc_local(); emit_local_set(src);
+        int src = alloc_local(); emit_local_set(src); vpop();
         expr(); coerce_i32(); need(TOK_COMMA);
-        int cond = alloc_local(); emit_local_set(cond);
+        int cond = alloc_local(); emit_local_set(cond); vpop();
         expr(); coerce_i32(); need(TOK_COMMA);
-        int trig = alloc_local(); emit_local_set(trig);
+        int trig = alloc_local(); emit_local_set(trig); vpop();
         expr(); coerce_i32(); need(TOK_RP);
-        int tout = alloc_local(); emit_local_set(tout);
+        int tout = alloc_local(); emit_local_set(tout); vpop();
+
+        /* All if-blocks below MUST have stack signature [] -> [] (void).
+         * Each branch writes the result/scale to a local; we load `result`
+         * at the very end. This avoids needing typed if-blocks. */
+        int result = alloc_local();
+        int scale = alloc_local();
+        emit_i32_const(0); emit_local_set(result);
+
         emit_local_get(ev);
         emit_i32_const(4);
         emit_op(OP_I32_EQ);
         emit_if_void();
-            emit_local_get(trig);
+            emit_i32_const(1); emit_local_set(scale);   /* default scale */
             emit_local_get(cond);
             emit_i32_const(6);
             emit_op(OP_I32_EQ);
             emit_if_void();
-                emit_i32_const(3600000); emit_op(OP_I32_MUL);
+                emit_i32_const(3600000); emit_local_set(scale);
             emit_else();
                 emit_local_get(cond);
                 emit_i32_const(7);
                 emit_op(OP_I32_EQ);
                 emit_if_void();
-                    emit_i32_const(60000); emit_op(OP_I32_MUL);
+                    emit_i32_const(60000); emit_local_set(scale);
                 emit_else();
                     emit_local_get(cond);
                     emit_i32_const(8);
                     emit_op(OP_I32_EQ);
                     emit_if_void();
-                        emit_i32_const(1000); emit_op(OP_I32_MUL);
+                        emit_i32_const(1000); emit_local_set(scale);
                     emit_end();
                 emit_end();
             emit_end();
-            emit_call(IMP_DELAY_MS);
-            emit_i32_const(1);
+            emit_local_get(trig);
+            emit_local_get(scale);
+            emit_op(OP_I32_MUL);
+            emit_call(IMP_DELAY_MS);   /* takes 1 i32, returns nothing */
+            emit_i32_const(1); emit_local_set(result);
         emit_else();
             emit_local_get(ev);
             emit_i32_const(5);
             emit_op(OP_I32_EQ);
             emit_if_void();
                 emit_local_get(tout);
-                emit_call(IMP_WAIT_PPS);
+                emit_call(IMP_WAIT_PPS);   /* takes 1 i32, returns 1 i32 */
+                emit_local_set(result);
             emit_else();
                 emit_local_get(ev);
                 emit_i32_const(6);
@@ -696,12 +708,14 @@ int compile_builtin_expr(const char *name) {
                     emit_local_get(cond);
                     emit_local_get(trig);
                     emit_local_get(tout);
-                    emit_call(IMP_WAIT_PARAM);
-                emit_else();
-                    emit_i32_const(0);
+                    emit_call(IMP_WAIT_PARAM);   /* 4 args, returns 1 i32 */
+                    emit_local_set(result);
                 emit_end();
+                /* (else: result keeps its default 0) */
             emit_end();
         emit_end();
+
+        emit_local_get(result);
         vpush(T_I32);
         return 1;
     }
