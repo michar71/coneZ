@@ -1,5 +1,7 @@
-' Should fail: bas2wasm is single-pass with no forward declarations,
-' so mutual recursion is rejected ("not a function" at the forward reference).
+' Should fail: bas2wasm is single-pass, so mutual recursion needs an
+' explicit DECLARE FUNCTION before the first reference. Without DECLARE,
+' the forward call IS_ODD inside IS_EVEN is rejected ("not a function").
+' See mutual_recursion.bas for the working pattern.
 FUNCTION IS_EVEN N
   IF N = 0 THEN RETURN -1
   RETURN IS_ODD(N - 1)

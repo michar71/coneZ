@@ -232,6 +232,7 @@ typedef struct {
     int func_local_idx; /* index into func_bufs (0=setup, 1+=SUBs) */
     int is_const;       /* 1 if declared with CONST */
     int dim_count;      /* number of DIM dimensions (0 if not an array) */
+    int is_declared;    /* 1 = forward-declared via DECLARE, 0 = defined */
 } Var;
 
 typedef struct {
@@ -263,9 +264,13 @@ typedef struct { VType type; int32_t ival; float fval; int str_off; } DataItem;
 
 /* Constant folding — 3-slot ring (oldest → newest): fold_p, fold_a, fold_b.
  * Each const-emit shifts fold_p ← fold_a ← fold_b ← new. A successful fold
- * of fold_a+fold_b slides fold_p into fold_a so enclosing ops can keep folding. */
+ * of fold_a+fold_b slides fold_p into fold_a so enclosing ops can keep
+ * folding. The `buf` pointer is set at emit time so adjacency checks can
+ * confirm the slot's offsets refer to the current function's buffer (matters
+ * when crossing SUB boundaries). */
 typedef struct {
     int valid;       /* 0=none, 1=i32, 2=f32 */
+    Buf *buf;        /* buffer the offsets refer to (cur_func's code buf) */
     int buf_start;   /* CODE->len before emit */
     int buf_end;     /* CODE->len after emit */
     int32_t ival;
@@ -346,7 +351,8 @@ enum {
     TOK_REDIM=64, TOK_ERASE=65, TOK_PRESERVE=66,
     TOK_OPTION=67, TOK_BASE=68,
     TOK_HASH=69,
-    TOK_POW=70
+    TOK_POW=70,
+    TOK_DECLARE=71
 };
 
 /* ================================================================
@@ -458,6 +464,7 @@ static inline void emit_op(int op) { buf_byte(CODE, op); }
 static inline void emit_i32_const(int32_t v) {
     fold_p = fold_a; fold_a = fold_b;
     fold_b.valid = 1;
+    fold_b.buf = CODE;
     fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_I32_CONST); buf_sleb(CODE, v);
     fold_b.buf_end = CODE->len;
@@ -466,6 +473,7 @@ static inline void emit_i32_const(int32_t v) {
 static inline void emit_f32_const(float v) {
     fold_p = fold_a; fold_a = fold_b;
     fold_b.valid = 2;
+    fold_b.buf = CODE;
     fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_F32_CONST); buf_f32(CODE, v);
     fold_b.buf_end = CODE->len;
@@ -503,6 +511,9 @@ static inline void emit_i32_store(int offset) {
 }
 static inline void emit_f32_load(int offset) {
     buf_byte(CODE, OP_F32_LOAD); buf_uleb(CODE, 2); buf_uleb(CODE, offset);
+}
+static inline void emit_f32_store(int offset) {
+    buf_byte(CODE, OP_F32_STORE); buf_uleb(CODE, 2); buf_uleb(CODE, offset);
 }
 static inline void emit_i64_load(int offset) {
     buf_byte(CODE, OP_I64_LOAD); buf_uleb(CODE, 3); buf_uleb(CODE, offset);

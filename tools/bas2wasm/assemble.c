@@ -171,12 +171,17 @@ Buf assemble_to_buf(void) {
         /* Variable globals */
         for (int i = 0; i < nvar; i++) {
             uint8_t gt = WASM_I32;
-            if (vars[i].type_set && vars[i].type == T_F32) gt = WASM_F32;
-            else if (vars[i].type_set && vars[i].type == T_I64) gt = WASM_I64;
+            /* Arrays store an i32 pointer in their global regardless of the
+             * element type (DIM A# allocates an f32-element array but the
+             * variable slot itself holds the heap pointer). */
+            if (vars[i].mode != VAR_DIM) {
+                if (vars[i].type_set && vars[i].type == T_F32) gt = WASM_F32;
+                else if (vars[i].type_set && vars[i].type == T_I64) gt = WASM_I64;
+            }
             buf_byte(&sec, gt); buf_byte(&sec, 0x01);
             if (gt == WASM_F32) {
                 buf_byte(&sec, OP_F32_CONST);
-                float z = 0.0f; buf_f32(&sec, z);
+                buf_f32(&sec, 0.0f);
             } else if (gt == WASM_I64) {
                 buf_byte(&sec, OP_I64_CONST);
                 buf_sleb64(&sec, 0);

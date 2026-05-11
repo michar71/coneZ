@@ -9,8 +9,10 @@
 
 static void emit_binop(int i32_op, int f32_op, int i64_op) {
     VType b = vpop(), a = vpop();
-    /* Constant folding: check if both operands are adjacent constants */
+    /* Constant folding: check if both operands are adjacent constants in the
+     * current function's code buffer. */
     if (fold_a.valid && fold_b.valid &&
+        fold_a.buf == CODE && fold_b.buf == CODE &&
         fold_a.buf_end == fold_b.buf_start &&
         fold_b.buf_end == CODE->len) {
         int folded = 0;
@@ -136,8 +138,9 @@ static void emit_compare(int i32_op, int f32_op, int i64_op) {
 /* Integer binary op: coerce both operands to i32 */
 static void emit_int_binop(int i32_op) {
     VType b = vpop(), a = vpop();
-    /* Constant folding: both i32 */
+    /* Constant folding: both i32, same code buffer, adjacent. */
     if (fold_a.valid == 1 && fold_b.valid == 1 &&
+        fold_a.buf == CODE && fold_b.buf == CODE &&
         fold_a.buf_end == fold_b.buf_start &&
         fold_b.buf_end == CODE->len) {
         int32_t va = fold_a.ival, vb = fold_b.ival;
@@ -422,12 +425,14 @@ int compile_builtin_expr(const char *name) {
         expr(); coerce_i32(); need(TOK_RP);
         emit_call(IMP_LED_FILL);
         emit_call(IMP_LED_SHOW);
+        vpop(); vpop(); vpop();   /* consume R, G, B arg types */
         emit_i32_const(0); vpush(T_I32);
         return 1;
     }
     if (strcmp(name, "WAIT") == 0) {
         expr(); coerce_i32(); need(TOK_RP);
         emit_call(IMP_DELAY_MS);
+        vpop();                   /* consume duration arg type */
         emit_i32_const(0); vpush(T_I32);
         return 1;
     }
@@ -440,6 +445,7 @@ int compile_builtin_expr(const char *name) {
     if (strcmp(name, "USEGAMMA") == 0) {
         expr(); coerce_i32(); need(TOK_RP);
         emit_call(IMP_LED_SET_GAMMA);
+        vpop();                   /* consume gamma arg type */
         emit_i32_const(0); vpush(T_I32);
         return 1;
     }
@@ -450,7 +456,7 @@ int compile_builtin_expr(const char *name) {
         emit_call(IMP_MILLIS);
         emit_local_get(scratch);
         emit_op(OP_I32_DIV_S);
-        vpush(T_I32);
+        vpop(); vpush(T_I32);   /* consume divisor type; push result */
         return 1;
     }
     if (strcmp(name, "TIMESTAMP&") == 0) {
@@ -460,7 +466,7 @@ int compile_builtin_expr(const char *name) {
         emit_call(IMP_MILLIS64);
         emit_local_get(scratch);
         emit_op(OP_I64_DIV_S);
-        vpush(T_I64);
+        vpop(); vpush(T_I64);   /* consume divisor type; push result */
         return 1;
     }
     if (strcmp(name, "VERSION") == 0) {
@@ -761,6 +767,7 @@ int compile_builtin_expr(const char *name) {
             emit_br(0);
         emit_end(); emit_end();
         emit_call(IMP_LED_SHOW);
+        vpop(); vpop(); vpop();   /* consume aR, aG, aB arg types */
         emit_i32_const(0); vpush(T_I32);
         return 1;
     }
@@ -774,6 +781,7 @@ int compile_builtin_expr(const char *name) {
         int start = alloc_local(), arr = alloc_local();
         emit_local_set(val); emit_local_set(end);
         emit_local_set(start); emit_local_set(arr);
+        vpop(); vpop(); vpop(); vpop();   /* consume arr, start, end, val arg types */
         int i = alloc_local();
         emit_local_get(start); emit_local_set(i);
         emit_block(); emit_loop();
@@ -806,6 +814,7 @@ int compile_builtin_expr(const char *name) {
             if (i > 0) need(TOK_COMMA);
             expr(); coerce_i32();
             emit_drop();
+            vpop();               /* WASM-stack was dropped; mirror on vstack */
         }
         need(TOK_RP);
         emit_i32_const(0); vpush(T_I32);
@@ -985,6 +994,9 @@ void base_expr(void) {
                 if (vars[var].type == T_I64) {
                     emit_i64_load(0);
                     vpush(T_I64);
+                } else if (vars[var].type == T_F32) {
+                    emit_f32_load(0);
+                    vpush(T_F32);
                 } else {
                     emit_i32_load(0);
                     vpush(T_I32);
@@ -1013,6 +1025,8 @@ void base_expr(void) {
                 if (vars[var].mode != VAR_SUB) {
                     error_at("not a function");
                 } else {
+                    if (nargs != vars[var].param_count)
+                        error_at("wrong number of arguments");
                     emit_call(IMP_COUNT + vars[var].func_local_idx);
                 }
                 vpush(vars[var].type_set ? vars[var].type : T_I32);
@@ -1050,7 +1064,7 @@ void base_expr(void) {
 
     if (neg) {
         VType t = vpop();
-        if (fold_b.valid && fold_b.buf_end == CODE->len) {
+        if (fold_b.valid && fold_b.buf == CODE && fold_b.buf_end == CODE->len) {
             /* Save fold_p/fold_a — emit_*_const shifts them; we want them preserved
              * so an enclosing op can still fold against the predecessor literal. */
             FoldSlot saved_p = fold_p, saved_a = fold_a;
@@ -1104,8 +1118,8 @@ static void power(void) {
         int pos2 = CODE->len;
         FoldSlot save2 = fold_b;
         coerce_f32();
-        if (save1.valid && save1.buf_end == pos1 &&
-            save2.valid && save2.buf_end == pos2) {
+        if (save1.valid && save1.buf == CODE && save1.buf_end == pos1 &&
+            save2.valid && save2.buf == CODE && save2.buf_end == pos2) {
             float va = (save1.valid == 1) ? (float)save1.ival : save1.fval;
             float vb = (save2.valid == 1) ? (float)save2.ival : save2.fval;
             CODE->len = save1.buf_start;

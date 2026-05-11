@@ -81,10 +81,27 @@ static void compile_prints(void) {
     emit_drop();
 }
 
-static void compile_sub(void) {
+/* DECLARE FUNCTION name [params...]  /  DECLARE SUB name [params...]
+ * Reserves a func_local_idx and records the param list so later code can
+ * call the function before its body is compiled. The matching definition
+ * must follow somewhere in the source. */
+static void compile_declare(void) {
+    if (cur_func != 0) {
+        error_at("DECLARE must be at top level");
+        return;
+    }
+    if (!want(TOK_FUNCTION) && !want(TOK_KW_SUB)) {
+        error_at("DECLARE must be followed by FUNCTION or SUB");
+        return;
+    }
     need(TOK_NAME);
     int var = tokv;
+    if (vars[var].mode == VAR_SUB) {
+        error_at("function already declared or defined");
+        return;
+    }
     vars[var].mode = VAR_SUB;
+    vars[var].is_declared = 1;
 
     if (nfuncs >= MAX_FUNCS) { error_at("too many SUB/FUNCTION definitions"); return; }
     int fi = nfuncs++;
@@ -107,6 +124,62 @@ static void compile_sub(void) {
     }
     vars[var].param_count = np;
     for (int i = 0; i < np; i++) vars[var].param_vars[i] = params[i];
+    f->nparams = np;
+    for (int i = 0; i < np; i++) {
+        VType pt = vars[params[i]].type_set ? vars[params[i]].type : T_I32;
+        f->param_types[i] = wasm_type_for_vtype(pt);
+    }
+}
+
+static void compile_sub(void) {
+    if (cur_func != 0) {
+        error_at("nested SUB/FUNCTION definitions are not supported");
+        return;
+    }
+    need(TOK_NAME);
+    int var = tokv;
+    int was_declared = (vars[var].mode == VAR_SUB && vars[var].is_declared);
+    int fi;
+    if (was_declared) {
+        /* Fill in the body of a previously DECLAREd function. */
+        fi = vars[var].func_local_idx;
+        vars[var].is_declared = 0;
+    } else {
+        if (vars[var].mode == VAR_SUB) {
+            error_at("function already defined");
+            return;
+        }
+        vars[var].mode = VAR_SUB;
+        if (nfuncs >= MAX_FUNCS) { error_at("too many SUB/FUNCTION definitions"); return; }
+        fi = nfuncs++;
+        vars[var].func_local_idx = fi;
+        FuncCtx *fc = &func_bufs[fi];
+        buf_init(&fc->code);
+        fc->nparams = 0;
+        fc->nlocals = 0;
+        fc->ncall_fixups = 0;
+        fc->sub_var = var;
+    }
+    FuncCtx *f = &func_bufs[fi];
+
+    int params[8], np = 0;
+    if (!want(TOK_EOF)) {
+        ungot = 1;
+        do {
+            need(TOK_NAME);
+            if (np >= 8) { error_at("too many SUB parameters (max 8)"); return; }
+            params[np++] = tokv;
+        } while (want(TOK_COMMA));
+    }
+    if (was_declared) {
+        if (np != vars[var].param_count) {
+            error_at("definition parameter count differs from DECLARE");
+            return;
+        }
+    } else {
+        vars[var].param_count = np;
+        for (int i = 0; i < np; i++) vars[var].param_vars[i] = params[i];
+    }
     f->nparams = np;
     for (int i = 0; i < np; i++) {
         VType pt = vars[params[i]].type_set ? vars[params[i]].type : T_I32;
@@ -440,8 +513,8 @@ static int parse_dim_decl_sizes(int dim_locals[8], int *out_ndims) {
 static void compile_dim_core(int preserve) {
     need(TOK_NAME);
     int var = tokv;
-    if (vars[var].type == T_STR || vars[var].type == T_F32) {
-        error_at("DIM/REDIM currently supports integer arrays only");
+    if (vars[var].type == T_STR) {
+        error_at("DIM/REDIM does not support string arrays");
         return;
     }
 
@@ -1316,6 +1389,7 @@ void stmt(void) {
     case TOK_PRINTS:  compile_prints(); break;
     case TOK_FUNCTION:
     case TOK_KW_SUB:  compile_sub(); break;
+    case TOK_DECLARE: compile_declare(); break;
     case TOK_END:     compile_end(); break;
     case TOK_RETURN:  compile_return(); break;
     case TOK_LOCAL:   compile_local(); break;
@@ -1430,6 +1504,7 @@ void stmt(void) {
                 emit_local_get(addr_local);
                 emit_local_get(val_local);
                 if (vars[var].type_set && vars[var].type == T_I64) emit_i64_store(0);
+                else if (vars[var].type_set && vars[var].type == T_F32) emit_f32_store(0);
                 else emit_i32_store(0);
                 (void)ndims;
             } else {
@@ -1454,6 +1529,8 @@ void stmt(void) {
                         } while (want(TOK_COMMA));
                         need(TOK_RP);
                     }
+                    if (vars[var].mode == VAR_SUB && nargs != vars[var].param_count)
+                        error_at("wrong number of arguments");
                     emit_call(IMP_COUNT + vars[var].func_local_idx);
                     vpush(vars[var].type_set ? vars[var].type : T_I32);
                 }
@@ -1480,6 +1557,8 @@ void stmt(void) {
                     nargs++;
                 } while (want(TOK_COMMA));
                 if (vars[var].mode == VAR_SUB) {
+                    if (nargs != vars[var].param_count)
+                        error_at("wrong number of arguments");
                     emit_call(IMP_COUNT + vars[var].func_local_idx);
                     emit_drop();
                 } else {

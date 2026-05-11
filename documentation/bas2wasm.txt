@@ -449,11 +449,16 @@ DIM / REDIM / ERASE (compiler-only)
 -----------------------------------
 
   Arrays support 1..8 dimensions and use the active OPTION BASE lower bound
-  (default 1, optionally 0).
+  (default 1, optionally 0). Element type comes from the variable's type
+  suffix: no suffix = i32, `#` = f32, `&` = i64. String arrays (`$`) are
+  not supported.
 
-    DIM A(10)
-    DIM M(8, 8)
+    DIM A(10)         ' i32 elements
+    DIM F#(10)        ' f32 elements
+    DIM L&(10)        ' i64 elements
+    DIM M(8, 8)       ' multi-dimensional
     A(1) = 42
+    F#(1) = 3.14
     M(3, 4) = 7
 
   OPTION BASE sets the default lower bound for arrays to 0 or 1:
@@ -834,6 +839,40 @@ String LOCAL handling:
     is restored
 
 
+DECLARE (forward declaration)
+-----------------------------
+
+The compiler is single-pass, so a SUB or FUNCTION body that calls
+another user-defined function only resolves if the callee's definition
+appears earlier in the source. For mutual recursion (A calls B, B calls
+A), neither can come "earlier", so one of them needs a forward
+declaration:
+
+    DECLARE FUNCTION IS_ODD N
+
+    FUNCTION IS_EVEN N
+        IF N = 0 THEN RETURN -1
+        RETURN IS_ODD(N - 1)   ' OK — IS_ODD was declared
+    END FUNCTION
+
+    FUNCTION IS_ODD N
+        IF N = 0 THEN RETURN 0
+        RETURN IS_EVEN(N - 1)
+    END FUNCTION
+
+Syntax: `DECLARE FUNCTION name [params...]` or `DECLARE SUB name [params...]`.
+The parameter list matches the eventual definition — same names, same
+order, same count. The matching SUB/FUNCTION body must appear somewhere
+later in the source; a DECLARE without a matching definition is a
+compile-time error. The definition's parameter count must equal the
+DECLARE's, or the compiler rejects the mismatch.
+
+DECLARE reserves a function slot up front so later call sites can
+resolve the name before the body has been seen. Parameter types are
+inferred from suffixes (`$`, `#`, `&`) on the parameter names, same as
+in a normal SUB definition.
+
+
 FOR Loop Semantics
 ------------------
 
@@ -949,7 +988,7 @@ the compiler correctly reports errors. The .bas examples in
 firmware/data/ are also compiled, which doubles as a regression check
 that production scripts still build.
 
-Currently 79 tests covering:
+Currently 90 tests covering:
 
   Arithmetic & operators: integer/float/mixed arithmetic, power (^),
     comparisons (int/float/string), logical AND/OR/NOT/XOR bitwise
@@ -987,20 +1026,14 @@ Currently 79 tests covering:
   FORMAT: all three specifiers (%, &, $) interleaved, expression args,
     `>` print shorthand
 
-  Reject tests (16): missing END FOR/WHILE/SUB/IF, missing NEXT/WEND,
+  Reject tests (20): missing END FOR/WHILE/SUB/IF, missing NEXT/WEND,
     ELSE without IF, string + number, string subtraction, malformed
     FOR, REDIM on a scalar, float/string DIM (not yet implemented),
-    mutual recursion (single-pass compiler limitation), undefined
-    function, ON ERROR / RESUME, unmatched paren, invalid hex
-
-Known compiler issues surfaced by tests but not yet fixed (no positive
-test included for these — they are silently accepted instead of being
-rejected, or have features the docs imply that the compiler doesn't
-enforce):
-
-  - Unterminated string literals are not flagged by the lexer.
-  - Wrong argument count and nested SUB definitions are silently
-    accepted, contrary to what the docs imply.
+    mutual recursion without DECLARE (forward call rejected), undefined
+    function, ON ERROR / RESUME, unmatched paren, invalid hex,
+    unterminated string literal, wrong argument count (too few and
+    too many), nested SUB/FUNCTION, DECLAREd function never defined,
+    DECLARE/definition arity mismatch
 
 Adding a test: drop a .bas file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.bas must fail compilation.

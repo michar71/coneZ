@@ -93,6 +93,16 @@ void bw_compile(void) {
     if (ctrl_sp > 0 && !had_error) {
         error_at("unterminated block (missing END)");
     }
+
+    /* Check for DECLAREd functions that never got defined. */
+    if (!had_error) {
+        for (int i = 0; i < nvar; i++) {
+            if (vars[i].mode == VAR_SUB && vars[i].is_declared) {
+                bw_error("ERROR: function '%s' declared but not defined\n", vars[i].name);
+                had_error = 1;
+            }
+        }
+    }
 }
 
 /* ================================================================

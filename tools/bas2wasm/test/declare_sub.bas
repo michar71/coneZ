@@ -1,0 +1,22 @@
+' DECLARE SUB with params, including the no-param case
+DECLARE SUB GREET NAME$
+DECLARE SUB SHOUT
+DECLARE FUNCTION DOUBLER X
+
+' Call before definition
+GREET "World"
+SHOUT
+> DOUBLER(7)
+
+' Definitions
+SUB GREET NAME$
+  FORMAT "Hello $", NAME$
+END SUB
+
+SUB SHOUT
+  FORMAT "!!!"
+END SUB
+
+FUNCTION DOUBLER X
+  RETURN X * 2
+END FUNCTION

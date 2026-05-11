@@ -72,6 +72,20 @@ int read_tok(void) {
             is_float = 1; lp++;
             while (isdigit((unsigned char)*lp)) lp++;
         }
+        /* Optional exponent: [eE][+-]?digits. Requires at least one digit
+         * after the e/E and optional sign — otherwise back out so e.g.
+         * `1end` lexes as integer `1` followed by identifier `end`. */
+        if (*lp == 'e' || *lp == 'E') {
+            char *exp_start = lp;
+            lp++;
+            if (*lp == '+' || *lp == '-') lp++;
+            if (isdigit((unsigned char)*lp)) {
+                is_float = 1;
+                while (isdigit((unsigned char)*lp)) lp++;
+            } else {
+                lp = exp_start;
+            }
+        }
         if (is_float) {
             tokf = strtof(start, NULL);
             return tok = TOK_FLOAT;
@@ -112,6 +126,9 @@ int read_tok(void) {
         *tp = 0;
         for (k = kwd; *k; k++)
             if (strcmp(tokn, *k) == 0) return tok = (k - kwd) + TOK_AND;
+        /* DECLARE doesn't fit the kwd index→token mapping (slot 50 would
+         * collide with TOK_HASH), so it's special-cased. */
+        if (strcmp(tokn, "DECLARE") == 0) return tok = TOK_DECLARE;
         tokv = add_var(tokn);
         return tok = TOK_NAME;
     }
@@ -143,7 +160,11 @@ int read_tok(void) {
             lp++;
         }
         if (data_len < MAX_STRINGS) dbuf_put(data_len++, 0);
-        if (*lp == '"') lp++;
+        if (*lp == '"') {
+            lp++;
+        } else {
+            error_at("unterminated string literal");
+        }
         tokv = off;
         return tok = TOK_STRING;
     }
