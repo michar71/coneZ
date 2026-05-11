@@ -643,22 +643,69 @@ static inline int alloc_local(uint8_t wtype) {
 }
 
 /* ================================================================
+ *  Constant folding slots
+ *
+ *  Three-slot ring (oldest → newest): fold_p, fold_a, fold_b.
+ *  Each const-emit shifts: fold_p ← fold_a ← fold_b ← new.
+ *  A binary op folds the adjacent pair fold_a + fold_b; on success the
+ *  predecessor fold_p slides into fold_a so an enclosing op can fold against
+ *  it. Non-const emits break adjacency naturally because the next const
+ *  won't satisfy `fold_b.buf_end == CODE->len`.
+ * ================================================================ */
+
+typedef struct {
+    int   valid;       /* 0=none, 1=i32, 2=i64, 3=f32, 4=f64 */
+    Buf  *buf;         /* buffer the offsets refer to (function-scoped) */
+    int   buf_start;
+    int   buf_end;
+    int32_t ival32;
+    int64_t ival64;
+    float   fval32;
+    double  fval64;
+} FoldSlot;
+extern FoldSlot fold_p, fold_a, fold_b;
+
+/* ================================================================
  *  Emit Helpers
  * ================================================================ */
 
 static inline void emit_op(int op) { buf_byte(CODE, op); }
 
 static inline void emit_i32_const(int32_t v) {
+    fold_p = fold_a; fold_a = fold_b;
+    fold_b.valid = 1;
+    fold_b.buf = CODE;
+    fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_I32_CONST); buf_sleb(CODE, v);
+    fold_b.buf_end = CODE->len;
+    fold_b.ival32 = v;
 }
 static inline void emit_f32_const(float v) {
+    fold_p = fold_a; fold_a = fold_b;
+    fold_b.valid = 3;
+    fold_b.buf = CODE;
+    fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_F32_CONST); buf_f32(CODE, v);
+    fold_b.buf_end = CODE->len;
+    fold_b.fval32 = v;
 }
 static inline void emit_f64_const(double v) {
+    fold_p = fold_a; fold_a = fold_b;
+    fold_b.valid = 4;
+    fold_b.buf = CODE;
+    fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_F64_CONST); buf_f64(CODE, v);
+    fold_b.buf_end = CODE->len;
+    fold_b.fval64 = v;
 }
 static inline void emit_i64_const(int64_t v) {
+    fold_p = fold_a; fold_a = fold_b;
+    fold_b.valid = 2;
+    fold_b.buf = CODE;
+    fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_I64_CONST); buf_sleb64(CODE, v);
+    fold_b.buf_end = CODE->len;
+    fold_b.ival64 = v;
 }
 static inline void emit_call(int func_idx) {
     buf_byte(CODE, OP_CALL);

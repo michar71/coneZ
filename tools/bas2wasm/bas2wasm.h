@@ -261,7 +261,9 @@ typedef struct {
 /* DATA items (compile-time collection, assembled into data section) */
 typedef struct { VType type; int32_t ival; float fval; int str_off; } DataItem;
 
-/* Constant folding */
+/* Constant folding — 3-slot ring (oldest → newest): fold_p, fold_a, fold_b.
+ * Each const-emit shifts fold_p ← fold_a ← fold_b ← new. A successful fold
+ * of fold_a+fold_b slides fold_p into fold_a so enclosing ops can keep folding. */
 typedef struct {
     int valid;       /* 0=none, 1=i32, 2=f32 */
     int buf_start;   /* CODE->len before emit */
@@ -318,7 +320,7 @@ extern int vsp;
 extern int had_error;
 extern int option_base;
 
-extern FoldSlot fold_a, fold_b;
+extern FoldSlot fold_p, fold_a, fold_b;
 
 /* ================================================================
  *  Lexer tokens
@@ -454,7 +456,7 @@ static inline VType vpop(void) {
 static inline void emit_op(int op) { buf_byte(CODE, op); }
 
 static inline void emit_i32_const(int32_t v) {
-    fold_a = fold_b;
+    fold_p = fold_a; fold_a = fold_b;
     fold_b.valid = 1;
     fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_I32_CONST); buf_sleb(CODE, v);
@@ -462,7 +464,7 @@ static inline void emit_i32_const(int32_t v) {
     fold_b.ival = v;
 }
 static inline void emit_f32_const(float v) {
-    fold_a = fold_b;
+    fold_p = fold_a; fold_a = fold_b;
     fold_b.valid = 2;
     fold_b.buf_start = CODE->len;
     buf_byte(CODE, OP_F32_CONST); buf_f32(CODE, v);
@@ -470,7 +472,7 @@ static inline void emit_f32_const(float v) {
     fold_b.fval = v;
 }
 static inline void emit_i64_const(int64_t v) {
-    fold_a.valid = fold_b.valid = 0;
+    fold_p.valid = fold_a.valid = fold_b.valid = 0;
     buf_byte(CODE, OP_I64_CONST); buf_sleb64(CODE, v);
 }
 static inline void emit_call(int func_idx) {

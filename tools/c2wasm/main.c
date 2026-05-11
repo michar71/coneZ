@@ -49,6 +49,8 @@ int type_had_const;
 int type_had_unsigned;
 int type_last_struct_id;
 
+FoldSlot fold_p, fold_a, fold_b;
+
 void cw_compile(void) {
     lex_init();
     preproc_init();
@@ -112,6 +114,7 @@ Buf c2wasm_compile_buffer(const char *src, int len, const char *filename) {
     type_had_unsigned = 0;
     type_last_struct_id = -1;
     n_struct_types = 0;
+    fold_p.valid = fold_a.valid = fold_b.valid = 0;
     memset(imp_used, 0, sizeof(imp_used));
 
     /* Initialize function buffers */

@@ -146,6 +146,168 @@ static CType promote(CType a, CType b) {
     return CT_INT;
 }
 
+/* ---- Constant folding ---- */
+
+static int fold_slots_adjacent(void) {
+    return fold_a.valid && fold_b.valid &&
+           fold_a.buf == CODE && fold_b.buf == CODE &&
+           fold_a.buf_end == fold_b.buf_start &&
+           fold_b.buf_end == CODE->len;
+}
+
+static double fold_slot_as_double(const FoldSlot *s) {
+    switch (s->valid) {
+    case 1: return (double)s->ival32;
+    case 2: return (double)s->ival64;
+    case 3: return (double)s->fval32;
+    case 4: return s->fval64;
+    }
+    return 0.0;
+}
+
+static int64_t fold_slot_as_i64(const FoldSlot *s) {
+    switch (s->valid) {
+    case 1: return (int64_t)s->ival32;
+    case 2: return s->ival64;
+    case 3: return (int64_t)s->fval32;
+    case 4: return (int64_t)s->fval64;
+    }
+    return 0;
+}
+
+/* Replace two adjacent constants in CODE with a single folded constant.
+ * Returns 1 on success (op is consumed), 0 if not foldable.
+ * *out_result is set to the wasm-stack type of the folded value.
+ *
+ * On a successful fold, fold_p slides into fold_a so an enclosing op can
+ * continue folding against the predecessor literal. */
+static int try_fold_binop(int op, CType *out_result) {
+    if (!fold_slots_adjacent()) return 0;
+
+    CType result = *out_result;
+    int is_float = (result == CT_FLOAT || result == CT_DOUBLE);
+    int is_i64 = (result == CT_LONG_LONG || result == CT_ULONG_LONG);
+    int is_unsigned = ctype_is_unsigned(result);
+    int is_cmp = (op == TOK_EQ || op == TOK_NE || op == TOK_LT ||
+                  op == TOK_GT || op == TOK_LE || op == TOK_GE);
+    int is_bitwise = (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET ||
+                      op == TOK_LSHIFT || op == TOK_RSHIFT);
+
+    /* Bitwise ops only valid on integer operands. If either slot is a float
+     * literal, abort — the existing path will emit explicit truncations. */
+    if (is_bitwise && (fold_a.valid >= 3 || fold_b.valid >= 3)) return 0;
+
+    /* Decide everything before touching CODE so we can bail with no side effects. */
+    enum { OUT_I32, OUT_I64, OUT_F32, OUT_F64 } out_kind = OUT_I32;
+    int32_t r32 = 0;
+    int64_t r64 = 0;
+    float   rf32 = 0;
+    double  rf64 = 0;
+
+    if (is_float && !is_bitwise) {
+        if (op == TOK_PERCENT) return 0;  /* fmod() not available at compile time */
+        double a = fold_slot_as_double(&fold_a);
+        double b = fold_slot_as_double(&fold_b);
+        double rd = 0.0;
+        switch (op) {
+        case TOK_PLUS:  rd = a + b; break;
+        case TOK_MINUS: rd = a - b; break;
+        case TOK_STAR:  rd = a * b; break;
+        case TOK_SLASH: if (b == 0.0) return 0; rd = a / b; break;
+        case TOK_EQ: r32 = (a == b); out_kind = OUT_I32; break;
+        case TOK_NE: r32 = (a != b); out_kind = OUT_I32; break;
+        case TOK_LT: r32 = (a <  b); out_kind = OUT_I32; break;
+        case TOK_GT: r32 = (a >  b); out_kind = OUT_I32; break;
+        case TOK_LE: r32 = (a <= b); out_kind = OUT_I32; break;
+        case TOK_GE: r32 = (a >= b); out_kind = OUT_I32; break;
+        default: return 0;
+        }
+        if (!is_cmp) {
+            if (result == CT_DOUBLE) { rf64 = rd; out_kind = OUT_F64; }
+            else                     { rf32 = (float)rd; out_kind = OUT_F32; }
+        }
+    } else if (is_i64) {
+        int64_t va = fold_slot_as_i64(&fold_a);
+        int64_t vb = fold_slot_as_i64(&fold_b);
+        switch (op) {
+        case TOK_PLUS:   r64 = (int64_t)((uint64_t)va + (uint64_t)vb); out_kind = OUT_I64; break;
+        case TOK_MINUS:  r64 = (int64_t)((uint64_t)va - (uint64_t)vb); out_kind = OUT_I64; break;
+        case TOK_STAR:   r64 = (int64_t)((uint64_t)va * (uint64_t)vb); out_kind = OUT_I64; break;
+        case TOK_SLASH:
+            if (vb == 0) return 0;
+            r64 = is_unsigned ? (int64_t)((uint64_t)va / (uint64_t)vb) : (va / vb);
+            out_kind = OUT_I64; break;
+        case TOK_PERCENT:
+            if (vb == 0) return 0;
+            r64 = is_unsigned ? (int64_t)((uint64_t)va % (uint64_t)vb) : (va % vb);
+            out_kind = OUT_I64; break;
+        case TOK_AMP:    r64 = va & vb; out_kind = OUT_I64; break;
+        case TOK_PIPE:   r64 = va | vb; out_kind = OUT_I64; break;
+        case TOK_CARET:  r64 = va ^ vb; out_kind = OUT_I64; break;
+        case TOK_LSHIFT: r64 = (int64_t)((uint64_t)va << (vb & 63)); out_kind = OUT_I64; break;
+        case TOK_RSHIFT:
+            r64 = is_unsigned ? (int64_t)((uint64_t)va >> (vb & 63)) : (va >> (vb & 63));
+            out_kind = OUT_I64; break;
+        case TOK_EQ: r32 = (va == vb); out_kind = OUT_I32; break;
+        case TOK_NE: r32 = (va != vb); out_kind = OUT_I32; break;
+        case TOK_LT: r32 = is_unsigned ? ((uint64_t)va <  (uint64_t)vb) : (va <  vb); out_kind = OUT_I32; break;
+        case TOK_GT: r32 = is_unsigned ? ((uint64_t)va >  (uint64_t)vb) : (va >  vb); out_kind = OUT_I32; break;
+        case TOK_LE: r32 = is_unsigned ? ((uint64_t)va <= (uint64_t)vb) : (va <= vb); out_kind = OUT_I32; break;
+        case TOK_GE: r32 = is_unsigned ? ((uint64_t)va >= (uint64_t)vb) : (va >= vb); out_kind = OUT_I32; break;
+        default: return 0;
+        }
+    } else {
+        /* i32 result */
+        int32_t a32 = (int32_t)fold_slot_as_i64(&fold_a);
+        int32_t b32 = (int32_t)fold_slot_as_i64(&fold_b);
+        switch (op) {
+        case TOK_PLUS:   r32 = (int32_t)((uint32_t)a32 + (uint32_t)b32); break;
+        case TOK_MINUS:  r32 = (int32_t)((uint32_t)a32 - (uint32_t)b32); break;
+        case TOK_STAR:   r32 = (int32_t)((uint32_t)a32 * (uint32_t)b32); break;
+        case TOK_SLASH:
+            if (b32 == 0) return 0;
+            if (!is_unsigned && a32 == (int32_t)0x80000000 && b32 == -1) return 0;
+            r32 = is_unsigned ? (int32_t)((uint32_t)a32 / (uint32_t)b32) : (a32 / b32);
+            break;
+        case TOK_PERCENT:
+            if (b32 == 0) return 0;
+            if (!is_unsigned && a32 == (int32_t)0x80000000 && b32 == -1) return 0;
+            r32 = is_unsigned ? (int32_t)((uint32_t)a32 % (uint32_t)b32) : (a32 % b32);
+            break;
+        case TOK_AMP:    r32 = a32 & b32; break;
+        case TOK_PIPE:   r32 = a32 | b32; break;
+        case TOK_CARET:  r32 = a32 ^ b32; break;
+        case TOK_LSHIFT: r32 = (int32_t)((uint32_t)a32 << (b32 & 31)); break;
+        case TOK_RSHIFT:
+            r32 = is_unsigned ? (int32_t)((uint32_t)a32 >> (b32 & 31)) : (a32 >> (b32 & 31));
+            break;
+        case TOK_EQ: r32 = (a32 == b32); break;
+        case TOK_NE: r32 = (a32 != b32); break;
+        case TOK_LT: r32 = is_unsigned ? ((uint32_t)a32 <  (uint32_t)b32) : (a32 <  b32); break;
+        case TOK_GT: r32 = is_unsigned ? ((uint32_t)a32 >  (uint32_t)b32) : (a32 >  b32); break;
+        case TOK_LE: r32 = is_unsigned ? ((uint32_t)a32 <= (uint32_t)b32) : (a32 <= b32); break;
+        case TOK_GE: r32 = is_unsigned ? ((uint32_t)a32 >= (uint32_t)b32) : (a32 >= b32); break;
+        default: return 0;
+        }
+        out_kind = OUT_I32;
+    }
+
+    /* Commit: rewind, emit folded const, slide fold_p down into fold_a. */
+    FoldSlot saved_p = fold_p;
+    CODE->len = fold_a.buf_start;
+    fold_p.valid = fold_a.valid = fold_b.valid = 0;
+    switch (out_kind) {
+    case OUT_I32: emit_i32_const(r32); break;
+    case OUT_I64: emit_i64_const(r64); break;
+    case OUT_F32: emit_f32_const(rf32); break;
+    case OUT_F64: emit_f64_const(rf64); break;
+    }
+    fold_a = saved_p;
+    fold_p.valid = 0;
+    if (is_cmp) *out_result = CT_INT;
+    return 1;
+}
+
 /* ---- printf builtin ---- */
 static CType compile_printf_call(void) {
     expect(TOK_LPAREN);
@@ -804,11 +966,54 @@ static CType postfix_expr(void) {
     return t;
 }
 
+/* Try to fold -CONST by rewriting fold_b in-place with the negated value.
+ * Returns 1 if the constant was rewritten, leaving fold_p/fold_a untouched so
+ * an enclosing binary op can still fold against the predecessor slots. */
+static int try_fold_unary_neg(CType t) {
+    if (!fold_b.valid || fold_b.buf != CODE || fold_b.buf_end != CODE->len) return 0;
+    FoldSlot saved_p = fold_p, saved_a = fold_a;
+    int ok = 0;
+    if (t == CT_FLOAT && fold_b.valid == 3) {
+        float v = -fold_b.fval32;
+        CODE->len = fold_b.buf_start;
+        fold_b.valid = 0;
+        emit_f32_const(v);
+        ok = 1;
+    } else if (t == CT_DOUBLE && fold_b.valid == 4) {
+        double v = -fold_b.fval64;
+        CODE->len = fold_b.buf_start;
+        fold_b.valid = 0;
+        emit_f64_const(v);
+        ok = 1;
+    } else if ((t == CT_LONG_LONG || t == CT_ULONG_LONG) && fold_b.valid == 2) {
+        int64_t v = (int64_t)(0 - (uint64_t)fold_b.ival64);
+        CODE->len = fold_b.buf_start;
+        fold_b.valid = 0;
+        emit_i64_const(v);
+        ok = 1;
+    } else if (fold_b.valid == 1 &&
+               (t == CT_INT || t == CT_UINT || t == CT_CHAR || t == CT_UCHAR)) {
+        int32_t v = (int32_t)(0 - (uint32_t)fold_b.ival32);
+        CODE->len = fold_b.buf_start;
+        fold_b.valid = 0;
+        emit_i32_const(v);
+        ok = 1;
+    }
+    if (ok) { fold_p = saved_p; fold_a = saved_a; }
+    return ok;
+}
+
 /* ---- Unary expressions ---- */
 static CType unary_expr(void) {
     if (tok == TOK_MINUS) {
         next_token();
         CType t = unary_expr();
+        if (try_fold_unary_neg(t)) {
+            expr_last_is_ptr = 0;
+            if (t == CT_FLOAT || t == CT_DOUBLE ||
+                t == CT_LONG_LONG || t == CT_ULONG_LONG) return t;
+            return (t == CT_UINT) ? CT_UINT : CT_INT;
+        }
         if (t == CT_FLOAT) { emit_op(OP_F32_NEG); return CT_FLOAT; }
         if (t == CT_DOUBLE) { emit_op(OP_F64_NEG); return CT_DOUBLE; }
         if (t == CT_LONG_LONG || t == CT_ULONG_LONG) {
@@ -1179,6 +1384,13 @@ static CType prec_expr_tail(CType left, int min_prec) {
             continue;
         }
         CType result = promote(left, right);
+
+        /* Constant folding: collapse adjacent-const operand pairs. */
+        if (try_fold_binop(op, &result)) {
+            left = result;
+            expr_last_is_ptr = 0;
+            continue;
+        }
 
         /* Bitwise and shift ops: coerce each operand from its own type to i32 */
         int is_bitwise = (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET ||

@@ -14,6 +14,7 @@ static void emit_binop(int i32_op, int f32_op, int i64_op) {
         fold_a.buf_end == fold_b.buf_start &&
         fold_b.buf_end == CODE->len) {
         int folded = 0;
+        FoldSlot saved_p = fold_p;  /* preserve predecessor across the fold */
         if (fold_a.valid == 1 && fold_b.valid == 1) {
             /* Both i32 */
             int32_t va = fold_a.ival, vb = fold_b.ival, r = 0;
@@ -23,8 +24,9 @@ static void emit_binop(int i32_op, int f32_op, int i64_op) {
             else if (i32_op == OP_I32_DIV_S && vb != 0) { r = va / vb; folded = 1; }
             if (folded) {
                 CODE->len = fold_a.buf_start;
-                fold_a.valid = fold_b.valid = 0;
+                fold_p.valid = fold_a.valid = fold_b.valid = 0;
                 emit_i32_const(r);
+                fold_a = saved_p; fold_p.valid = 0;
                 vpush(T_I32);
                 return;
             }
@@ -38,8 +40,9 @@ static void emit_binop(int i32_op, int f32_op, int i64_op) {
             else if (f32_op == OP_F32_DIV) { r = va / vb; folded = 1; }
             if (folded) {
                 CODE->len = fold_a.buf_start;
-                fold_a.valid = fold_b.valid = 0;
+                fold_p.valid = fold_a.valid = fold_b.valid = 0;
                 emit_f32_const(r);
+                fold_a = saved_p; fold_p.valid = 0;
                 vpush(T_F32);
                 return;
             }
@@ -56,8 +59,9 @@ static void emit_binop(int i32_op, int f32_op, int i64_op) {
             else if (f32_op == OP_F32_DIV) { r = va / vb; folded = 1; }
             if (folded) {
                 CODE->len = fold_a.buf_start;
-                fold_a.valid = fold_b.valid = 0;
+                fold_p.valid = fold_a.valid = fold_b.valid = 0;
                 emit_f32_const(r);
+                fold_a = saved_p; fold_p.valid = 0;
                 vpush(T_F32);
                 return;
             }
@@ -141,9 +145,11 @@ static void emit_int_binop(int i32_op) {
         if (i32_op == OP_I32_DIV_S && vb != 0) { r = va / vb; folded = 1; }
         else if (i32_op == OP_I32_REM_S && vb != 0) { r = va % vb; folded = 1; }
         if (folded) {
+            FoldSlot saved_p = fold_p;
             CODE->len = fold_a.buf_start;
-            fold_a.valid = fold_b.valid = 0;
+            fold_p.valid = fold_a.valid = fold_b.valid = 0;
             emit_i32_const(r);
+            fold_a = saved_p; fold_p.valid = 0;
             vpush(T_I32);
             return;
         }
@@ -1031,17 +1037,22 @@ void base_expr(void) {
     if (neg) {
         VType t = vpop();
         if (fold_b.valid && fold_b.buf_end == CODE->len) {
+            /* Save fold_p/fold_a — emit_*_const shifts them; we want them preserved
+             * so an enclosing op can still fold against the predecessor literal. */
+            FoldSlot saved_p = fold_p, saved_a = fold_a;
             if (fold_b.valid == 1) {
                 int32_t v = fold_b.ival;
                 CODE->len = fold_b.buf_start;
-                fold_a.valid = fold_b.valid = 0;
+                fold_b.valid = 0;
                 emit_i32_const(-v);
+                fold_p = saved_p; fold_a = saved_a;
                 vpush(T_I32);
             } else {
                 float v = fold_b.fval;
                 CODE->len = fold_b.buf_start;
-                fold_a.valid = fold_b.valid = 0;
+                fold_b.valid = 0;
                 emit_f32_const(-v);
+                fold_p = saved_p; fold_a = saved_a;
                 vpush(T_F32);
             }
         } else if (t == T_F32) {

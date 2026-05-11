@@ -51,7 +51,7 @@ int vsp;
 int had_error;
 int option_base;
 
-FoldSlot fold_a, fold_b;
+FoldSlot fold_p, fold_a, fold_b;
 
 void bw_compile(void) {
     nfuncs = 1;
@@ -71,6 +71,7 @@ void bw_compile(void) {
     option_base = 1;
     line_num = 0;
     src_pos = 0;
+    fold_p.valid = 0;
     fold_a.valid = 0;
     fold_b.valid = 0;
     memset(imp_used, 0, sizeof(imp_used));
@@ -164,6 +165,7 @@ void bas2wasm_reset(void) {
     had_error = 0;
     option_base = 1;
     vsp = 0;
+    fold_p.valid = 0;
     fold_a.valid = 0;
     fold_b.valid = 0;
     memset(imp_used, 0, sizeof(imp_used));
