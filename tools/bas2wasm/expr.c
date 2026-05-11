@@ -997,6 +997,10 @@ void base_expr(void) {
                 } else if (vars[var].type == T_F32) {
                     emit_f32_load(0);
                     vpush(T_F32);
+                } else if (vars[var].type == T_STR) {
+                    emit_i32_load(0);          /* load pointer */
+                    emit_call(IMP_STR_COPY);   /* return fresh duplicate */
+                    vpush(T_STR);
                 } else {
                     emit_i32_load(0);
                     vpush(T_I32);

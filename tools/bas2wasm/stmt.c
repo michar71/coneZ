@@ -513,10 +513,6 @@ static int parse_dim_decl_sizes(int dim_locals[8], int *out_ndims) {
 static void compile_dim_core(int preserve) {
     need(TOK_NAME);
     int var = tokv;
-    if (vars[var].type == T_STR) {
-        error_at("DIM/REDIM does not support string arrays");
-        return;
-    }
 
     need(TOK_LP);
     int dim_locals[8];
@@ -570,34 +566,74 @@ static void compile_dim_core(int preserve) {
 
     emit_i32_const(0);
     emit_local_set(old_count_local);
-    if (preserve) {
-        emit_local_get(old_ptr_local);
-        emit_if_void();
-        emit_i32_const(1);
-        emit_local_set(old_count_local);
-        for (int i = 0; i < ndims; i++) {
-            emit_local_get(old_count_local);
-            emit_local_get(old_ptr_local);
-            emit_i32_const((i + 1) * 4);
-            emit_op(OP_I32_ADD);
-            emit_i32_load(0);
-            emit_i32_const(option_base);
-            emit_op(OP_I32_SUB);
-            emit_i32_const(1);
-            emit_op(OP_I32_ADD);
-            emit_op(OP_I32_MUL);
-            emit_local_set(old_count_local);
-        }
-        emit_end();
-    }
+    /* (old_count_local is left at 0 for non-preserve; preserve doesn't need
+     *  it anymore — the element-remap loop below iterates per-dim extents.) */
 
     if (preserve) {
-        emit_local_get(old_ptr_local);
+        /* PRESERVE: allocate a fresh zero-filled buffer (calloc) and copy
+         * intersection elements from the old buffer below, taking stride
+         * differences into account. Old approach used realloc, which only
+         * works correctly for 1D arrays — for multi-dim, the (i,j,...) →
+         * flat-offset mapping changes when any non-final dim resizes. */
+        emit_i32_const(1);
         emit_local_get(total_bytes_local);
-        emit_call(IMP_REALLOC);
+        emit_call(IMP_CALLOC);
         emit_local_set(new_ptr_local);
     } else {
         if (vars[var].mode == VAR_DIM) {
+            /* String array: free every element's pool string before
+             * freeing the array memory itself. */
+            if (vars[var].type_set && vars[var].type == T_STR) {
+                int idx_local = alloc_local();
+                int data_base_local = alloc_local();
+                int old_n_local = alloc_local();
+                int old_ndims = vars[var].dim_count;
+
+                /* Recompute old element count from the header in old_ptr. */
+                emit_i32_const(1);
+                emit_local_set(old_n_local);
+                for (int d = 0; d < old_ndims; d++) {
+                    emit_local_get(old_n_local);
+                    emit_local_get(old_ptr_local);
+                    emit_i32_const((d + 1) * 4);
+                    emit_op(OP_I32_ADD);
+                    emit_i32_load(0);
+                    emit_i32_const(option_base);
+                    emit_op(OP_I32_SUB);
+                    emit_i32_const(1);
+                    emit_op(OP_I32_ADD);
+                    emit_op(OP_I32_MUL);
+                    emit_local_set(old_n_local);
+                }
+
+                emit_local_get(old_ptr_local);
+                emit_i32_const((old_ndims + 1) * 4);
+                emit_op(OP_I32_ADD);
+                emit_local_set(data_base_local);
+
+                emit_i32_const(0);
+                emit_local_set(idx_local);
+                emit_block();
+                emit_loop();
+                emit_local_get(idx_local);
+                emit_local_get(old_n_local);
+                emit_op(OP_I32_GE_S);
+                emit_br_if(1);
+                emit_local_get(data_base_local);
+                emit_local_get(idx_local);
+                emit_i32_const(4);
+                emit_op(OP_I32_MUL);
+                emit_op(OP_I32_ADD);
+                emit_i32_load(0);
+                emit_call(IMP_STR_FREE);
+                emit_local_get(idx_local);
+                emit_i32_const(1);
+                emit_op(OP_I32_ADD);
+                emit_local_set(idx_local);
+                emit_br(0);
+                emit_end();
+                emit_end();
+            }
             emit_local_get(old_ptr_local);
             emit_call(IMP_FREE);
         }
@@ -623,45 +659,178 @@ static void compile_dim_core(int preserve) {
     }
 
     if (preserve) {
-        emit_local_get(new_count_local);
-        emit_local_get(old_count_local);
-        emit_op(OP_I32_GT_S);
-        emit_if_void();
-        int idx_local = alloc_local();
-        int data_base_local = alloc_local();
+        /* PRESERVE element remap: iterate every old element by per-dimension
+         * indices (so the (i₁,…,iₙ) → flat-offset mapping respects the
+         * actual old strides), and for each element check whether its index
+         * is within the new extents. If yes, copy it to the new buffer at
+         * the new strides' offset. If no, the element is dropped; for
+         * string arrays we must free its pool string before the old buffer
+         * goes away. Buffer is calloc-zeroed so cells outside the
+         * intersection are already empty. */
+        int new_ext[8], old_ext[8], new_str[8], old_str[8], idx[8];
+        for (int d = 0; d < ndims; d++) {
+            new_ext[d] = alloc_local();
+            old_ext[d] = alloc_local();
+            new_str[d] = alloc_local();
+            old_str[d] = alloc_local();
+            idx[d] = alloc_local();
+        }
+        int in_range = alloc_local();
+        int old_off  = alloc_local();
+        int new_off  = alloc_local();
 
-        emit_local_get(old_count_local);
-        emit_local_set(idx_local);
-
-        emit_global_get(vars[var].global_idx);
-        emit_i32_const((ndims + 1) * 4);
-        emit_op(OP_I32_ADD);
-        emit_local_set(data_base_local);
-
-        emit_block();
-        emit_loop();
-        emit_local_get(idx_local);
-        emit_local_get(new_count_local);
-        emit_op(OP_I32_GE_S);
-        emit_br_if(1);
-
-        emit_local_get(data_base_local);
-        emit_local_get(idx_local);
-        emit_i32_const(elem_size);
-        emit_op(OP_I32_MUL);
-        emit_op(OP_I32_ADD);
-        emit_i32_const(0);
-        if (elem_size == 8) emit_i64_store(0);
-        else emit_i32_store(0);
-
-        emit_local_get(idx_local);
+        /* new_ext[d] = new_dim_size - option_base + 1 */
+        for (int d = 0; d < ndims; d++) {
+            emit_local_get(dim_locals[d]);
+            emit_i32_const(option_base);
+            emit_op(OP_I32_SUB);
+            emit_i32_const(1);
+            emit_op(OP_I32_ADD);
+            emit_local_set(new_ext[d]);
+        }
+        /* new_str[ndims-1] = 1; new_str[d] = new_str[d+1] * new_ext[d+1] */
         emit_i32_const(1);
-        emit_op(OP_I32_ADD);
-        emit_local_set(idx_local);
-        emit_br(0);
+        emit_local_set(new_str[ndims - 1]);
+        for (int d = ndims - 2; d >= 0; d--) {
+            emit_local_get(new_str[d + 1]);
+            emit_local_get(new_ext[d + 1]);
+            emit_op(OP_I32_MUL);
+            emit_local_set(new_str[d]);
+        }
+
+        /* If old_ptr is null, nothing to copy. */
+        emit_local_get(old_ptr_local);
+        emit_if_void();
+
+        /* old_ext[d] from old buffer's header */
+        for (int d = 0; d < ndims; d++) {
+            emit_local_get(old_ptr_local);
+            emit_i32_const((d + 1) * 4);
+            emit_op(OP_I32_ADD);
+            emit_i32_load(0);
+            emit_i32_const(option_base);
+            emit_op(OP_I32_SUB);
+            emit_i32_const(1);
+            emit_op(OP_I32_ADD);
+            emit_local_set(old_ext[d]);
+        }
+        /* old strides */
+        emit_i32_const(1);
+        emit_local_set(old_str[ndims - 1]);
+        for (int d = ndims - 2; d >= 0; d--) {
+            emit_local_get(old_str[d + 1]);
+            emit_local_get(old_ext[d + 1]);
+            emit_op(OP_I32_MUL);
+            emit_local_set(old_str[d]);
+        }
+
+        /* Nested loops over old extents. Each level's counter is reset to
+         * 0 just before its loop opens (so the inner counter restarts on
+         * every outer iteration — the bug if you only reset once upfront). */
+        for (int d = 0; d < ndims; d++) {
+            emit_i32_const(0);
+            emit_local_set(idx[d]);
+            emit_block();
+            emit_loop();
+            emit_local_get(idx[d]);
+            emit_local_get(old_ext[d]);
+            emit_op(OP_I32_GE_S);
+            emit_br_if(1);
+        }
+
+        /* in_range = AND_d (idx[d] < new_ext[d]) */
+        emit_i32_const(1);
+        for (int d = 0; d < ndims; d++) {
+            emit_local_get(idx[d]);
+            emit_local_get(new_ext[d]);
+            emit_op(OP_I32_LT_S);
+            emit_op(OP_I32_AND);
+        }
+        emit_local_set(in_range);
+
+        /* old_off = sum(idx[d] * old_str[d]) */
+        emit_i32_const(0);
+        for (int d = 0; d < ndims; d++) {
+            emit_local_get(idx[d]);
+            emit_local_get(old_str[d]);
+            emit_op(OP_I32_MUL);
+            emit_op(OP_I32_ADD);
+        }
+        emit_local_set(old_off);
+
+        emit_local_get(in_range);
+        emit_if_void();
+            /* In intersection: copy element. new_off = sum(idx[d] * new_str[d]) */
+            emit_i32_const(0);
+            for (int d = 0; d < ndims; d++) {
+                emit_local_get(idx[d]);
+                emit_local_get(new_str[d]);
+                emit_op(OP_I32_MUL);
+                emit_op(OP_I32_ADD);
+            }
+            emit_local_set(new_off);
+
+            /* dest = new_data + new_off * elem_size */
+            emit_global_get(vars[var].global_idx);
+            emit_i32_const((ndims + 1) * 4);
+            emit_op(OP_I32_ADD);
+            emit_local_get(new_off);
+            emit_i32_const(elem_size);
+            emit_op(OP_I32_MUL);
+            emit_op(OP_I32_ADD);
+
+            /* src = old_data + old_off * elem_size; load value */
+            emit_local_get(old_ptr_local);
+            emit_i32_const((ndims + 1) * 4);
+            emit_op(OP_I32_ADD);
+            emit_local_get(old_off);
+            emit_i32_const(elem_size);
+            emit_op(OP_I32_MUL);
+            emit_op(OP_I32_ADD);
+            if (elem_size == 8) {
+                emit_i64_load(0);
+                emit_i64_store(0);
+            } else if (vars[var].type_set && vars[var].type == T_F32) {
+                emit_f32_load(0);
+                emit_f32_store(0);
+            } else {
+                /* Includes T_STR — moves the i32 pool pointer as-is. */
+                emit_i32_load(0);
+                emit_i32_store(0);
+            }
+        emit_else();
+            /* Dropped element. For string arrays, free its pool string. */
+            if (vars[var].type_set && vars[var].type == T_STR) {
+                emit_local_get(old_ptr_local);
+                emit_i32_const((ndims + 1) * 4);
+                emit_op(OP_I32_ADD);
+                emit_local_get(old_off);
+                emit_i32_const(elem_size);
+                emit_op(OP_I32_MUL);
+                emit_op(OP_I32_ADD);
+                emit_i32_load(0);
+                emit_call(IMP_STR_FREE);
+            }
         emit_end();
-        emit_end();
-        emit_end();
+
+        /* Close loops in reverse: increment idx[d], br back to loop start,
+         * end loop, end block. */
+        for (int d = ndims - 1; d >= 0; d--) {
+            emit_local_get(idx[d]);
+            emit_i32_const(1);
+            emit_op(OP_I32_ADD);
+            emit_local_set(idx[d]);
+            emit_br(0);
+            emit_end();
+            emit_end();
+        }
+
+        /* Free old buffer now that all kept strings have been moved and
+         * dropped strings have been freed. */
+        emit_local_get(old_ptr_local);
+        emit_call(IMP_FREE);
+
+        emit_end();   /* end "if old_ptr non-null" */
     }
 
     vars[var].mode = VAR_DIM;
@@ -692,6 +861,66 @@ static void compile_erase(void) {
         if (vars[var].mode != VAR_DIM) {
             error_at("ERASE expects DIM array variable");
             return;
+        }
+        /* For string arrays, free every element's pool string before freeing
+         * the array memory. Computes total element count from the stored
+         * dimension sizes. */
+        if (vars[var].type_set && vars[var].type == T_STR) {
+            int count_local = alloc_local();
+            int idx_local = alloc_local();
+            int data_base_local = alloc_local();
+            int ndims = vars[var].dim_count;
+
+            emit_global_get(vars[var].global_idx);
+            emit_if_void();   /* skip if pointer is null */
+                /* count = product of dim extents */
+                emit_i32_const(1);
+                emit_local_set(count_local);
+                for (int d = 0; d < ndims; d++) {
+                    emit_local_get(count_local);
+                    emit_global_get(vars[var].global_idx);
+                    emit_i32_const((d + 1) * 4);
+                    emit_op(OP_I32_ADD);
+                    emit_i32_load(0);
+                    emit_i32_const(option_base);
+                    emit_op(OP_I32_SUB);
+                    emit_i32_const(1);
+                    emit_op(OP_I32_ADD);
+                    emit_op(OP_I32_MUL);
+                    emit_local_set(count_local);
+                }
+
+                emit_global_get(vars[var].global_idx);
+                emit_i32_const((ndims + 1) * 4);
+                emit_op(OP_I32_ADD);
+                emit_local_set(data_base_local);
+
+                emit_i32_const(0);
+                emit_local_set(idx_local);
+
+                emit_block();
+                emit_loop();
+                emit_local_get(idx_local);
+                emit_local_get(count_local);
+                emit_op(OP_I32_GE_S);
+                emit_br_if(1);
+
+                emit_local_get(data_base_local);
+                emit_local_get(idx_local);
+                emit_i32_const(4);
+                emit_op(OP_I32_MUL);
+                emit_op(OP_I32_ADD);
+                emit_i32_load(0);
+                emit_call(IMP_STR_FREE);
+
+                emit_local_get(idx_local);
+                emit_i32_const(1);
+                emit_op(OP_I32_ADD);
+                emit_local_set(idx_local);
+                emit_br(0);
+                emit_end();
+                emit_end();
+            emit_end();
         }
         emit_global_get(vars[var].global_idx);
         emit_call(IMP_FREE);
@@ -1498,14 +1727,29 @@ void stmt(void) {
                 int ndims = 0;
                 if (!parse_dim_indices_to_addr(var, &addr_local, &ndims)) return;
                 need(TOK_EQ);
-                expr(); coerce_to(vars[var].type_set ? vars[var].type : T_I32); vpop();
-                int val_local = alloc_local_for_vtype(vars[var].type_set ? vars[var].type : T_I32);
-                emit_local_set(val_local);
-                emit_local_get(addr_local);
-                emit_local_get(val_local);
-                if (vars[var].type_set && vars[var].type == T_I64) emit_i64_store(0);
-                else if (vars[var].type_set && vars[var].type == T_F32) emit_f32_store(0);
-                else emit_i32_store(0);
+                if (vars[var].type_set && vars[var].type == T_STR) {
+                    /* String array element: free old, copy new. RHS expression
+                     * already returns a fresh pool allocation, but we run it
+                     * through str_copy anyway to match scalar semantics. */
+                    expr(); coerce_to(T_STR); vpop();
+                    int new_val = alloc_local();
+                    emit_local_set(new_val);
+                    emit_local_get(addr_local);
+                    emit_i32_load(0);            /* old pointer */
+                    emit_call(IMP_STR_FREE);
+                    emit_local_get(addr_local);
+                    emit_local_get(new_val);
+                    emit_i32_store(0);
+                } else {
+                    expr(); coerce_to(vars[var].type_set ? vars[var].type : T_I32); vpop();
+                    int val_local = alloc_local_for_vtype(vars[var].type_set ? vars[var].type : T_I32);
+                    emit_local_set(val_local);
+                    emit_local_get(addr_local);
+                    emit_local_get(val_local);
+                    if (vars[var].type_set && vars[var].type == T_I64) emit_i64_store(0);
+                    else if (vars[var].type_set && vars[var].type == T_F32) emit_f32_store(0);
+                    else emit_i32_store(0);
+                }
                 (void)ndims;
             } else {
                 if (!compile_builtin_expr(vars[var].name)) {

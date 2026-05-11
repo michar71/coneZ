@@ -119,11 +119,16 @@ Integer Literals:
 
 Float Literals:
 
-  Any number with a decimal point is a float literal:
+  Any number with a decimal point is a float literal. An optional
+  exponent (`[eE][+-]?digits`) is also accepted, with or without a
+  decimal point:
 
     X = 3.14
     Y = 0.5
-    Z = 1.0           ' float, not integer (has decimal point)
+    Z = 1.0            ' float, not integer (has decimal point)
+    A = 1.5e3          ' = 1500.0
+    B = 1e-6           ' = 0.000001 (no decimal point needed before e)
+    C = .25            ' = 0.25 (leading dot allowed)
 
 
 Math Functions (compiler-only):
@@ -474,7 +479,11 @@ DIM / REDIM / ERASE (compiler-only)
     REDIM PRESERVE M(8, 16)
 
   REDIM PRESERVE currently requires the same number of dimensions.
-  If the new shape is larger, added elements are zero-initialized.
+  If the new shape is larger in any dimension, added elements are
+  zero-initialized; if smaller, dropped elements are freed (their
+  pool strings released for string arrays). PRESERVE remaps each
+  (i,j,...) element across the stride change, so values keep their
+  logical-index identity even when intermediate dimensions resize.
 
   ERASE frees one or more DIM arrays and sets their pointers to null:
 
@@ -988,7 +997,7 @@ the compiler correctly reports errors. The .bas examples in
 firmware/data/ are also compiled, which doubles as a regression check
 that production scripts still build.
 
-Currently 90 tests covering:
+Currently 95 tests covering:
 
   Arithmetic & operators: integer/float/mixed arithmetic, power (^),
     comparisons (int/float/string), logical AND/OR/NOT/XOR bitwise
@@ -1009,8 +1018,12 @@ Currently 90 tests covering:
     LOCAL of every scalar type (i32/f32/i64/string), LOCAL shadowing
     a global
 
-  Arrays: 3-dimensional integer arrays, LBOUND/UBOUND with and without
-    dimension index, both OPTION BASE values, loop-driven fills
+  Arrays: integer/float/i64/string arrays (`DIM A`/`A#`/`A&`/`A$`),
+    up to 3 dimensions, LBOUND/UBOUND with and without a dimension
+    index, both OPTION BASE values, loop-driven fills, multi-dim
+    REDIM PRESERVE with stride remap (logical-index identity preserved
+    across resizes), ERASE and non-preserve REDIM correctly free pool
+    strings on string arrays
 
   DATA/READ/RESTORE: mixed-type tables, RESTORE re-reads, negative
     literals
@@ -1026,14 +1039,13 @@ Currently 90 tests covering:
   FORMAT: all three specifiers (%, &, $) interleaved, expression args,
     `>` print shorthand
 
-  Reject tests (20): missing END FOR/WHILE/SUB/IF, missing NEXT/WEND,
+  Reject tests (22): missing END FOR/WHILE/SUB/IF, missing NEXT/WEND,
     ELSE without IF, string + number, string subtraction, malformed
-    FOR, REDIM on a scalar, float/string DIM (not yet implemented),
-    mutual recursion without DECLARE (forward call rejected), undefined
-    function, ON ERROR / RESUME, unmatched paren, invalid hex,
-    unterminated string literal, wrong argument count (too few and
-    too many), nested SUB/FUNCTION, DECLAREd function never defined,
-    DECLARE/definition arity mismatch
+    FOR, REDIM on a scalar, mutual recursion without DECLARE
+    (forward call rejected), undefined function, ON ERROR / RESUME,
+    unmatched paren, invalid hex, unterminated string literal,
+    wrong argument count (too few and too many), nested SUB/FUNCTION,
+    DECLAREd function never defined, DECLARE/definition arity mismatch
 
 Adding a test: drop a .bas file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.bas must fail compilation.
@@ -1112,6 +1124,7 @@ Limitations
   - 64KB linear memory (1 WASM page)
   - No nested SUB definitions
   - RESUME is not supported (compile-time error)
-  - Array operations (SETARRAY, SHIFTARRAY, ROTATEARRAY, COPYARRAY,
-    SCALELIMITARRAY, RGBTOHSVARRAY, HSVTORGBARRAY) are not yet implemented
-  - SETLEDRGB is not yet implemented (use per-pixel LED functions instead)
+  - Array operations SHIFTARRAY, ROTATEARRAY, COPYARRAY, SCALELIMITARRAY,
+    RGBTOHSVARRAY, HSVTORGBARRAY, LUTTOARRAY, ARRAYTOLUT parse but are
+    stubs — they evaluate and discard their arguments and return 0.
+    SETARRAY and SETLEDRGB are fully implemented.

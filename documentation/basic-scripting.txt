@@ -150,7 +150,11 @@ Arrays
 ------
 
   DIM arr(size)
-      Allocate an array of size elements. Arrays are 1-indexed.
+      Allocate an array of size elements. Arrays are 1-indexed by
+      default (controllable with OPTION BASE 0). The element type comes
+      from the variable's type suffix: no suffix = integer, # = float,
+      & = 64-bit integer, $ = string. Multi-dimensional arrays (up to
+      8 dimensions) are also supported.
 
   arr(index)
       Read value at index.
@@ -158,14 +162,29 @@ Arrays
   arr(index) = value
       Write value at index.
 
-  UBOUND(arr)
-      Returns the array size (number of elements).
+  REDIM arr(new_size)
+      Reshape an array, discarding contents.
+
+  REDIM PRESERVE arr(new_size)
+      Reshape while keeping existing values at their logical (i,j,...)
+      positions. Dimension count must stay the same; sizes can change
+      and elements are remapped through the stride change. Dropped
+      elements (when shrinking) are freed; new ones are zero-initialized.
+
+  UBOUND(arr)             Upper bound of dimension 1 (or only dim).
+  UBOUND(arr, dim)        Upper bound of a specific dimension.
+  LBOUND(arr)             Lower bound (0 or 1 depending on OPTION BASE).
 
 Example:
 
-  DIM COLORS(50)
+  DIM COLORS(50)               ' integer array
+  DIM RAMP#(256)               ' float array
+  DIM TIMES&(10)               ' i64 array
+  DIM LABELS$(8)               ' string array
   SETARRAY COLORS, 1, 50, 0
   COLORS(1) = 255
+  RAMP#(1) = 0.5
+  LABELS$(1) = "first"
   > UBOUND(COLORS)
 
 

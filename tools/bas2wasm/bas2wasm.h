@@ -206,7 +206,7 @@ extern uint8_t imp_used[IMP_COUNT];
   #define MAX_CTRL         64
   #define MAX_STRINGS    8192
   #define MAX_DATA_ITEMS 1024
-  #define BW_MAX_LOCALS   128
+  #define BW_MAX_LOCALS   256
   #define BW_MAX_FIXUPS   512
 #endif
 #define FMT_BUF_SIZE 256
