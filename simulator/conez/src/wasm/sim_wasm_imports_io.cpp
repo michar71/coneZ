@@ -58,62 +58,6 @@ m3ApiRawFunction(m3_print_str) {
     m3ApiSuccess();
 }
 
-// ---- WASI fd_write (for printf from wasm-compiled C) ----
-
-m3ApiRawFunction(m3_wasi_fd_write) {
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    m3ApiGetArg(int32_t, iovs_ptr);
-    m3ApiGetArg(int32_t, iovs_len);
-    m3ApiGetArg(int32_t, nwritten_ptr);
-
-    uint32_t mem_size = 0;
-    uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
-    if (!mem) { m3ApiReturn(8); } // EBADF
-
-    // Only stdout(1) and stderr(2)
-    if (fd != 1 && fd != 2) { m3ApiReturn(8); }
-
-    uint32_t total = 0;
-    auto *rt = currentRuntime();
-
-    for (int32_t i = 0; i < iovs_len; i++) {
-        uint32_t iov_off = iovs_ptr + i * 8;
-        if (iov_off + 8 > mem_size) break;
-
-        uint32_t buf_ptr = *(uint32_t *)(mem + iov_off);
-        uint32_t buf_len = *(uint32_t *)(mem + iov_off + 4);
-
-        if (buf_ptr + buf_len > mem_size) buf_len = mem_size - buf_ptr;
-
-        if (rt && buf_len > 0)
-            rt->emitOutput(std::string((char *)mem + buf_ptr, buf_len));
-
-        total += buf_len;
-    }
-
-    if (nwritten_ptr + 4 <= mem_size)
-        *(uint32_t *)(mem + nwritten_ptr) = total;
-
-    m3ApiReturn(0); // success
-}
-
-m3ApiRawFunction(m3_wasi_fd_seek) {
-    m3ApiReturnType(int32_t);
-    m3ApiReturn(0);
-}
-
-m3ApiRawFunction(m3_wasi_fd_close) {
-    m3ApiReturnType(int32_t);
-    m3ApiReturn(0);
-}
-
-m3ApiRawFunction(m3_wasi_proc_exit) {
-    m3ApiGetArg(int32_t, code);
-    (void)code;
-    m3ApiTrap(m3Err_trapExit);
-}
-
 // ---- LUT (lookup tables — simplified: single in-memory table) ----
 
 static int lut_data[4096];
@@ -220,12 +164,6 @@ M3Result link_io_imports(IM3Module module)
     LINK("env", "print_i64", "v(I)",  m3_print_i64)
     LINK("env", "print_f64", "v(F)",  m3_print_f64)
     LINK("env", "print_str", "v(ii)", m3_print_str)
-
-    // WASI
-    LINK("wasi_snapshot_preview1", "fd_write",  "i(iiii)", m3_wasi_fd_write)
-    LINK("wasi_snapshot_preview1", "fd_seek",   "i(iIii)", m3_wasi_fd_seek)
-    LINK("wasi_snapshot_preview1", "fd_close",  "i(i)",    m3_wasi_fd_close)
-    LINK("wasi_snapshot_preview1", "proc_exit", "v(i)",    m3_wasi_proc_exit)
 
     // LUT
     LINK("env", "lut_load",  "i(i)",  m3_lut_load)

@@ -65,92 +65,6 @@ m3ApiRawFunction(m3_print_str)
     m3ApiSuccess();
 }
 
-// --- WASI stubs ---
-
-// i32 fd_write(i32 fd, i32 iovs_ptr, i32 iovs_count, i32 nwritten_ptr)
-// Minimal WASI fd_write: stdout (fd=1) and stderr (fd=2) only
-m3ApiRawFunction(m3_wasi_fd_write)
-{
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    m3ApiGetArg(int32_t, iovs_ptr);
-    m3ApiGetArg(int32_t, iovs_count);
-    m3ApiGetArg(int32_t, nwritten_ptr);
-
-    // Only stdout and stderr
-    if (fd != 1 && fd != 2) {
-        m3ApiReturn(8);  // WASI EBADF
-    }
-
-    // Validate iov array bounds
-    if (!wasm_mem_check(runtime, (uint32_t)iovs_ptr, (uint32_t)iovs_count * 8) ||
-        !wasm_mem_check(runtime, (uint32_t)nwritten_ptr, 4)) {
-        m3ApiReturn(28);  // WASI EINVAL
-    }
-
-    int32_t total = 0;
-    for (int32_t i = 0; i < iovs_count; i++) {
-        uint32_t iov_off = (uint32_t)iovs_ptr + i * 8;
-        uint32_t buf_ptr, buf_len;
-        wasm_mem_read(runtime, iov_off, &buf_ptr, 4);
-        wasm_mem_read(runtime, iov_off + 4, &buf_len, 4);
-
-        if (buf_len == 0) continue;
-        if (!wasm_mem_check(runtime, buf_ptr, buf_len)) {
-            m3ApiReturn(28);  // WASI EINVAL
-        }
-
-        // Print in chunks
-        uint32_t pos = buf_ptr;
-        int remaining = (int)buf_len;
-        while (remaining > 0) {
-            int chunk = remaining > 255 ? 255 : remaining;
-            char buf[256];
-            wasm_mem_read(runtime, pos, buf, chunk);
-            buf[chunk] = '\0';
-            printfnl(SOURCE_WASM, "%s", buf);
-            pos += chunk;
-            remaining -= chunk;
-        }
-        total += (int32_t)buf_len;
-    }
-
-    // Write total bytes to nwritten_ptr
-    wasm_mem_write(runtime, (uint32_t)nwritten_ptr, &total, 4);
-
-    m3ApiReturn(0);  // success
-}
-
-// i32 fd_seek(i32 fd, i64 offset, i32 whence, i32 newoffset_ptr) -> errno
-m3ApiRawFunction(m3_wasi_fd_seek)
-{
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    m3ApiGetArg(int64_t, offset);
-    m3ApiGetArg(int32_t, whence);
-    m3ApiGetArg(int32_t, newoffset_ptr);
-    (void)fd; (void)offset; (void)whence; (void)newoffset_ptr;
-    m3ApiReturn(8);  // WASI EBADF
-}
-
-// i32 fd_close(i32 fd) -> errno
-m3ApiRawFunction(m3_wasi_fd_close)
-{
-    m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, fd);
-    (void)fd;
-    m3ApiReturn(8);  // WASI EBADF
-}
-
-// void proc_exit(i32 code)
-m3ApiRawFunction(m3_wasi_proc_exit)
-{
-    m3ApiGetArg(int32_t, code);
-    (void)code;
-    wasm_stop_requested = true;
-    m3ApiTrap(m3Err_trapExit);
-}
-
 // --- LUT ---
 
 // i32 lut_load(i32 index) -> entry count or 0 on failure
@@ -228,19 +142,6 @@ M3Result link_io_imports(IM3Module module)
     if (result && result != m3Err_functionLookupFailed) return result;
 
     result = m3_LinkRawFunction(module, "env", "print_str", "v(ii)", m3_print_str);
-    if (result && result != m3Err_functionLookupFailed) return result;
-
-    // WASI
-    result = m3_LinkRawFunction(module, "wasi_snapshot_preview1", "fd_write", "i(iiii)", m3_wasi_fd_write);
-    if (result && result != m3Err_functionLookupFailed) return result;
-
-    result = m3_LinkRawFunction(module, "wasi_snapshot_preview1", "fd_seek", "i(iIii)", m3_wasi_fd_seek);
-    if (result && result != m3Err_functionLookupFailed) return result;
-
-    result = m3_LinkRawFunction(module, "wasi_snapshot_preview1", "fd_close", "i(i)", m3_wasi_fd_close);
-    if (result && result != m3Err_functionLookupFailed) return result;
-
-    result = m3_LinkRawFunction(module, "wasi_snapshot_preview1", "proc_exit", "v(i)", m3_wasi_proc_exit);
     if (result && result != m3Err_functionLookupFailed) return result;
 
     // LUT

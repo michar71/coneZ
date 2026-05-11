@@ -17,11 +17,6 @@
  * Or export a single entry:
  *   void _start()  or  int main()
  *
- * WASI support: The runtime implements wasi_snapshot_preview1 fd_write
- * (stdout/stderr), fd_seek, fd_close, and proc_exit. This means standard
- * printf() works when targeting wasm32-wasi or wasm32-wasip1 (e.g. Rust
- * println!()). See examples/rust_rainbow/ for a Rust example.
- *
  * All WASM output goes through the SOURCE_WASM debug channel, filterable
  * independently from BASIC via "debug WASM on/off" or config debug.wasm.
  */

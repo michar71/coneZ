@@ -442,7 +442,7 @@ WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build fl
 | `wasm_imports_gpio.cpp` | pin_set, pin_clear, pin_read, analog_read |
 | `wasm_imports_system.cpp` | Params, should_stop, cue, event sync (wait_pps, wait_param) |
 | `wasm_imports_file.cpp` | File I/O (open/close/read/write/seek/tell/exists/delete/rename) |
-| `wasm_imports_io.cpp` | Print (i32/f32/i64/f64/str), WASI stubs, LUT |
+| `wasm_imports_io.cpp` | Print (i32/f32/i64/f64/str), LUT |
 | `wasm_imports_math.cpp` | 12 float + 12 double transcendental wrappers + 3 curve functions (lerp, larp, larpf) |
 | `wasm_format.cpp` | wasm_vformat(), wasm_vsscanf(), host_printf/snprintf/sscanf |
 | `wasm_imports_string.cpp` | Low-heap allocator (DIM arrays, user malloc) + string pool (0x8000+) + 19 string host imports (`basic_str_*`) |
@@ -452,11 +452,9 @@ WebAssembly interpreter via wasm3 in `wasm/`. Guarded by `INCLUDE_WASM` build fl
 
 Each file contains its wrapper functions and a `link_*_imports()` function that registers them. Adding a new host import is a single-file edit: add the `m3ApiRawFunction` wrapper and a `m3_LinkRawFunction` call in the same file's link function.
 
-**Naming convention:** Host imports that are useful to C and Rust modules use short names matching libc conventions (e.g. `sinf`, `get_temp`, `led_fill`). Imports that exist only to support the BASIC-to-WASM compiler and aren't useful for C/Rust modules use a `basic_` prefix (e.g. `basic_str_alloc`, `basic_str_concat`, `basic_str_hex`).
+**Naming convention:** Host imports that are useful to C modules use short names matching libc conventions (e.g. `sinf`, `get_temp`, `led_fill`). Imports that exist only to support the BASIC-to-WASM compiler and aren't useful for C modules use a `basic_` prefix (e.g. `basic_str_alloc`, `basic_str_concat`, `basic_str_hex`).
 
 **Host imports** (module `"env"`): LED (`led_set_pixel`, `led_fill`, `led_show`, `led_count`, `led_set_pixel_hsv`, `led_fill_hsv`, `hsv_to_rgb`, `rgb_to_hsv`, `led_gamma8`, `led_set_gamma`, `led_set_buffer`, `led_shift`, `led_rotate`, `led_reverse`), GPIO (`pin_set`, `pin_clear`, `pin_read`, `analog_read`), GPS (`get_lat`, `get_lon`, `get_alt`, `get_speed`, `get_dir`, `gps_valid`), GPS origin/geometry (`get_origin_lat`, `get_origin_lon`, `has_origin`, `origin_dist`, `origin_bearing`), IMU (`get_roll`, `get_pitch`, `get_yaw`, `get_acc_x/y/z`, `imu_valid`), environment (`get_temp`, `get_humidity`, `get_brightness`, `get_bat_voltage`, `get_solar_voltage`), sun position (`get_sunrise`, `get_sunset`, `sun_valid`, `is_daylight`), cue engine (`cue_playing`, `cue_elapsed`), date/time (`get_year`, `get_month`, `get_day`, `get_hour`, `get_minute`, `get_second`, `get_day_of_week`, `get_day_of_year`, `get_is_leap_year`, `time_valid`, `get_epoch_ms`, `millis`, `millis64`, `delay_ms`), event sync (`wait_pps`, `wait_param`), params (`get_param`, `set_param`, `should_stop`), output (`print_i32`, `print_f32`, `print_i64`, `print_f64`, `print_str`), math float (`sinf`, `cosf`, `tanf`, `asinf`, `acosf`, `atanf`, `atan2f`, `powf`, `expf`, `logf`, `log2f`, `fmodf`), math double (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `pow`, `exp`, `log`, `log2`, `fmod`), curve (`lerp`, `larp`, `larpf`), printf/scanf (`host_printf`, `host_snprintf`, `host_sscanf`), LUT (`lut_load`, `lut_get`, `lut_size`, `lut_set`, `lut_save`, `lut_check`), file I/O (`file_open`, `file_close`, `file_read`, `file_write`, `file_size`, `file_seek`, `file_tell`, `file_exists`, `file_delete`, `file_rename`), compression (`inflate_file`, `inflate_file_to_mem`, `inflate_mem`, `deflate_file`, `deflate_mem_to_file`, `deflate_mem`). Full reference in `documentation/wasm-api.txt`.
-
-**WASI support** (module `"wasi_snapshot_preview1"`): Minimal WASI stubs so `println!()` works in Rust when compiled with `--target=wasm32-wasip1`. `fd_write` handles stdout/stderr via `printfnl(SOURCE_WASM, ...)`. `fd_seek`, `fd_close` return EBADF. `proc_exit` sets the stop flag. All WASM output uses the `SOURCE_WASM` debug channel (filterable independently from BASIC via `debug.wasm` config key or `debug WASM` CLI command).
 
 **Standard C library support:** The `conez_api.h` header provides `printf`/`sprintf`/`snprintf`/`sscanf` (host-imported by default, or define `CONEZ_PRINTF_INLINE` for a self-contained ~1KB inline printf), `puts`/`putchar`, memory functions (`memcpy`/`memset`/`memmove` via WASM bulk-memory instructions, `memcmp`), string functions (`strlen`, `strcmp`, `strncmp`, `strchr`), parsing (`atoi`, `atof`, `strtol`, `strtof`), `va_list` macros, `size_t`, `NULL`, `bool`/`true`/`false`, and `M_PI`. WASM-native math in both float and double (`sqrtf`/`sqrt`, `fabsf`/`fabs`, `floorf`/`floor`, `ceilf`/`ceil`, `truncf`/`trunc`, `fminf`/`fmin`, `fmaxf`/`fmax`) compile to single instructions. Utility helpers: `clamp`, `clamp255`, `abs_i`, `abs`, `map_range`, `sin256`.
 
@@ -485,19 +483,13 @@ clang --target=wasm32 -mbulk-memory -O2 -nostdlib \
 llvm-strip module.wasm
 ```
 
-**Authoring modules (Rust):** Two approaches:
-- **`#![no_std]`** targeting `wasm32-unknown-unknown` — minimal binary (~350 bytes). Declare ConeZ host imports as `extern "C"`, use `#[no_mangle]` exports. See `tools/wasm/examples/rust_rgb_cycle/` for a complete example.
-- **std** targeting `wasm32-wasip1` — `println!()` works via WASI `fd_write` but adds ~35KB of formatting overhead. See `tools/wasm/examples/rust_rainbow/`.
-
-Both use `cdylib` crate type, `opt-level = "z"`, LTO, strip, `panic = "abort"`. Post-process with `wasm-opt --enable-bulk-memory -Oz` to reduce binary size.
-
-See `tools/wasm/examples/` for sample modules (C and Rust). Use `make -C tools/wasm` to build all examples and `make -C tools/wasm install` to copy them to `firmware/data/` for LittleFS upload.
+See `tools/wasm/examples/` for sample C modules. Use `make -C tools/wasm` to build all examples and `make -C tools/wasm install` to copy them to `firmware/data/` for LittleFS upload.
 
 **Offline compiler tools:** `tools/bas2wasm/` (BASIC→WASM) and `tools/c2wasm/` (C→WASM) are self-contained compilers with no external dependencies beyond libc. Each has its own `buildnum.txt` for independent version tracking. Build each with `make` from its directory, or `make` from `tools/` to build all. Both compilers also work as embedded libraries — the simulator and firmware link them directly (no subprocess spawning) via platform abstraction headers (`bas2wasm_platform.h`, `c2wasm_platform.h`). In embedded mode, `malloc`/`fprintf`/`exit` redirect to host-provided callbacks, and symbol names are prefixed (`bw_`/`cw_`) to avoid link-time collisions when both compilers coexist in the same binary. See `documentation/bas2wasm.txt` and `documentation/c2wasm.txt` for full references.
 
 ### Desktop Simulator
 
-Qt6-based simulator in `simulator/conez/` that runs WASM programs on a Linux desktop without hardware. Provides an LED visualizer (4 channels, 30 FPS), interactive sensor sliders, and a console. Uses the same vendored wasm3 interpreter and the same 157 host imports as the firmware, so programs that work in the simulator work on hardware.
+Qt6-based simulator in `simulator/conez/` that runs WASM programs on a Linux desktop without hardware. Provides an LED visualizer (4 channels, 30 FPS), interactive sensor sliders, and a console. Uses the same vendored wasm3 interpreter and the same 172 host imports as the firmware, so programs that work in the simulator work on hardware.
 
 ```bash
 # Build (requires Qt6 Widgets, CMake >= 3.16, C++17)

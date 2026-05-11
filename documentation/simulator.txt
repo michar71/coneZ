@@ -138,8 +138,8 @@ Adjusting a slider immediately updates the value that WASM imports read.
 Groups: GPS, Origin, IMU, Environment, Power, Sun, Cue.
 
 Console: Dark-themed terminal with monospace font. Shows compiler output,
-WASM print output (print_i32, printf, WASI fd_write, FORMAT, etc.), and
-runtime messages (start, stop, errors with BASIC line numbers).
+WASM print output (print_i32, printf, FORMAT, etc.), and runtime messages
+(start, stop, errors with BASIC line numbers).
 
 Console Commands:
 
@@ -346,9 +346,8 @@ hardware are noted below.
     std::mt19937. wait_pps simulates a 1-second PPS interval.
     wait_param polls the param array every 10ms.
 
-  I/O (15 functions)
+  I/O (11 functions)
     print_i32/f32/i64/f64/str emit to the console widget via signal.
-    WASI fd_write (stdout/stderr) also routes to the console.
     LUT load/save use CSV files in the sandbox directory.
 
   File I/O (17 functions)

@@ -3,9 +3,9 @@ ConeZ WASM Module API Reference
 
 API Version: 0 (CONEZ_API_VERSION 0)
 
-This document describes the complete API available to C and Rust WASM
-modules running on the ConeZ wasm3 runtime. The authoritative source is
-the C header at tools/wasm/conez_api.h.
+This document describes the complete API available to C WASM modules
+running on the ConeZ wasm3 runtime. The authoritative source is the C
+header at tools/wasm/conez_api.h.
 
 
 Building Modules
@@ -52,20 +52,6 @@ C modules (Option 2 — clang, full C with optimization):
   sections with llvm-strip (or wasm-strip) to minimize binary size —
   the Makefile does this automatically.
 
-Rust modules (no_std, recommended for size):
-
-  Target wasm32-unknown-unknown. Declare host imports as extern "C".
-  Export setup/loop with #[no_mangle]. Produces tiny binaries (~350 B).
-  See tools/wasm/examples/rust_rgb_cycle/ for a complete example.
-
-Rust modules (std, for convenience):
-
-  Target wasm32-wasip1. println!() works via WASI fd_write but adds
-  ~35KB of formatting overhead. See tools/wasm/examples/rust_rainbow/.
-
-Both Rust approaches use cdylib crate type with opt-level="z", lto,
-strip, panic="abort". Post-process with wasm-opt --enable-bulk-memory -Oz.
-
 Use `make -C tools/wasm` to build all examples.
 Use `make -C tools/wasm install` to copy .wasm files to firmware/data/.
 
@@ -90,8 +76,7 @@ Host Imports (module "env")
 ---------------------------
 
 All host-imported functions are linked from the "env" WASM module. They
-are declared in conez_api.h for C; Rust no_std modules declare them as
-extern "C" { fn name(args) -> ret; }.
+are declared in conez_api.h for C.
 
 Signatures use wasm3 convention: return types before '(', args after.
   v=void, i=i32, I=i64, f=f32, F=f64
@@ -780,103 +765,8 @@ Type Definitions
   CONEZ_API_VERSION                0
 
 
-WASI Support
-------------
-
-Minimal WASI stubs are provided for Rust std modules targeting
-wasm32-wasip1:
-
-  fd_write (stdout/stderr only) — routes to printfnl(SOURCE_WASM, ...)
-  fd_seek, fd_close — return EBADF
-  proc_exit — sets stop flag and traps
-
-This is what makes println!() and print!() work in Rust std modules.
-Not needed for C modules or Rust no_std modules.
-
-
-Rust no_std API
----------------
-
-A complete Rust bindings file is available at tools/wasm/conez_api.rs.
-It declares all host imports and provides safe convenience helpers.
-Include it with `include!("../../conez_api.rs")` or copy the extern
-block into your lib.rs.
-
-Rust bindings now include allocator imports (`malloc`, `free`, `calloc`,
-`realloc`) plus a `ConezAllocator` adapter implementing
-`core::alloc::GlobalAlloc` for no_std + alloc crates.
-See `tools/wasm/examples/rust_alloc_demo/` for a complete `Vec`-using
-example with `#[global_allocator]`.
-
-For Rust modules targeting wasm32-unknown-unknown with #![no_std],
-declare host imports as extern "C" blocks. Example:
-
-  #![no_std]
-
-  use core::panic::PanicInfo;
-
-  #[panic_handler]
-  fn panic(_info: &PanicInfo) -> ! {
-      core::arch::wasm32::unreachable()
-  }
-
-  extern "C" {
-      fn led_fill(channel: i32, r: i32, g: i32, b: i32);
-      fn led_show();
-      fn led_set_gamma(enable: i32);
-      fn led_gamma8(val: i32) -> i32;
-      fn led_set_buffer(channel: i32, rgb_ptr: *const u8, count: i32);
-      fn get_year() -> i32;
-      fn get_hour() -> i32;
-      fn time_valid() -> i32;
-      fn has_origin() -> i32;
-      fn origin_dist() -> f32;
-      fn wait_pps(timeout_ms: i32) -> i32;
-      fn wait_param(id: i32, cond: i32, val: i32, timeout: i32) -> i32;
-      fn get_humidity() -> f32;
-      fn file_open(path: *const u8, mode: i32) -> i32;  // null-term path
-      fn file_delete(path: *const u8) -> i32;             // null-term path
-      fn file_stat(path: *const u8, out: *mut i32) -> i32;
-      fn print_str(ptr: *const u8, len: i32);
-      fn print_i64(val: i64);
-      fn print_f64(val: f64);
-      fn delay_ms(ms: i32);
-      fn sinf(x: f32) -> f32;
-      fn cosf(x: f32) -> f32;
-      fn sin(x: f64) -> f64;
-      fn cos(x: f64) -> f64;
-      fn pin_set(gpio: i32);
-      fn pin_read(gpio: i32) -> i32;
-      fn analog_read(pin: i32) -> i32;
-      fn get_bat_voltage() -> f32;
-      fn get_sunrise() -> i32;
-      fn is_daylight() -> i32;
-      fn cue_playing() -> i32;
-      fn cue_elapsed() -> i64;
-      fn led_shift(ch: i32, amount: i32, r: i32, g: i32, b: i32);
-      fn led_rotate(ch: i32, amount: i32);
-      fn led_reverse(ch: i32);
-      // ... declare any host imports you need
-  }
-
-  #[no_mangle]
-  pub extern "C" fn setup() {
-      let msg = b"hello from rust\n";
-      unsafe { print_str(msg.as_ptr(), msg.len() as i32) };
-  }
-
-  #[export_name = "loop"]
-  pub extern "C" fn wasm_loop() {
-      // ... your loop code
-  }
-
-All host imports listed above are available with the same names and
-signatures. Use i32 for int parameters, f32 for float, i64 for int64_t.
-The loop function must use #[export_name = "loop"] because `loop` is a
-Rust keyword.
-
 Allocator note: both the low heap and string pool guarantee 4-byte
-alignment. `ConezAllocator` returns null for alignment requests > 4.
+alignment.
 
 
 Example Binary Sizes (stripped)
@@ -885,17 +775,15 @@ Example Binary Sizes (stripped)
   rgb_cycle.wasm       (C, no printf)             465 bytes
   hsv_rainbow.wasm     (C, no printf)             411 bytes
   sos_flash.wasm       (C, printf + GPS + math)   744 bytes
-  rust_rgb_cycle.wasm  (Rust no_std, no printf)   353 bytes
   C module with printf (host-imported)             ~641 bytes
   C module with printf (CONEZ_PRINTF_INLINE)       ~7.7 KB
-  rust_rainbow.wasm    (Rust std, println!)        ~35 KB
 
 
 BASIC-Specific Host Imports (basic_* prefix)
 --------------------------------------------
 
 These imports exist only to support the bas2wasm compiler. They are NOT
-part of the C/Rust module API and are not declared in conez_api.h. They
+part of the C module API and are not declared in conez_api.h. They
 use a basic_ prefix to distinguish them from general-purpose imports.
 
 All string functions operate on null-terminated strings in WASM linear

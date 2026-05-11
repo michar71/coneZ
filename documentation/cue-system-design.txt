@@ -272,7 +272,7 @@ WASM (.wasm) via wasm3:
   + Clean per-frame calling convention: wasm3_CallV(render, ...) from C++
   + Sandboxed execution
   + ~10-50x faster than interpreted BASIC
-  + Effects authored in C (or Rust, AssemblyScript) and compiled to .wasm
+  + Effects authored in C (or AssemblyScript) and compiled to .wasm
   + Tiny files (200-500 bytes per typical effect)
   + wasm3-arduino exists as a PlatformIO library
   - Requires a C-to-wasm toolchain for authoring (clang/emscripten)
