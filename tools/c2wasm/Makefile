@@ -19,10 +19,18 @@ $(TARGET): $(OBJS) .buildnum
 	$(CC) $(CFLAGS) -DBUILD_NUMBER=$(NEXT_BUILDNUM) -c -o $@ $<
 
 .buildnum:
-.PHONY: all clean test verify .buildnum
+.PHONY: all clean test test-runtime verify .buildnum
 
 test: $(TARGET)
 	@test/run_tests.sh
+
+# Execution-based tests: compile each .c file with an `// EXPECTED:` block,
+# run it under node's WebAssembly host with stub imports, diff captured
+# output. Catches semantic regressions that wasm-validate's structural
+# pass can't (e.g. a fold that produces a valid but wrong-valued constant).
+test-runtime: $(TARGET)
+	@command -v node >/dev/null 2>&1 || { echo "node required for test-runtime"; exit 1; }
+	@node test/run_runtime.js
 
 verify: $(TARGET)
 	@fail=0; \

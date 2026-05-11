@@ -695,11 +695,32 @@ Testing
 The test suite is in tools/c2wasm/test/. Run with:
 
   cd tools/c2wasm
-  make test
+  make test           # structural: compile + wasm-validate
+  make test-runtime   # semantic: execute under node + diff output
 
-Tests compile each .c file to .wasm and validate with wasm-validate.
-Reject tests (reject_*.c) verify that the compiler correctly reports
-errors. The three examples in tools/wasm/examples/ are also compiled.
+`make test` compiles each .c file to .wasm and validates with
+wasm-validate. Reject tests (reject_*.c) verify that the compiler
+correctly reports errors. The three examples in tools/wasm/examples/
+are also compiled.
+
+`make test-runtime` is a complementary node-based harness that runs
+each test file that opens with an `// EXPECTED:` comment block,
+instantiating the WASM with stub imports and diffing the captured
+output against the expected lines. Catches semantic regressions
+(e.g. a fold pass producing a valid but wrong-valued constant) that
+the structural runner can't see. Test format:
+
+    // EXPECTED:
+    // 14
+    // 21
+    #include "conez_api.h"
+    void setup(void) { print_i32(2 + 3 * 4); print_i32((1+2)*(3+4)); }
+    void loop(void) {}
+
+The fold_basic/fold_nested/fold_unary/fold_compare/fold_mixed tests
+specifically pin down the constant-folding pass's behavior across
+i32/i64/f32/f64, arithmetic/bitwise/shift/comparison, mixed-type
+promotion, unary minus, and 3-slot nested-subexpression patterns.
 
 Test files cover: basic types, arithmetic, bitwise ops, comparisons,
 control flow (if/while/do/for/switch/break/continue), assignment ops,

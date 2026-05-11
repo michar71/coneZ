@@ -1,4 +1,21 @@
 /* Test: arithmetic operators, mixed int/float, precedence */
+
+// EXPECTED:
+// 13
+// 7
+// 30
+// 3
+// 1
+// 4
+// 3.5
+// 6
+// 3.5
+// 4.5
+// 14
+// 20
+// -5
+// -2.5
+// 5
 #include "conez_api.h"
 
 void setup(void) {

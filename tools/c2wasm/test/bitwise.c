@@ -1,4 +1,18 @@
 /* Test: bitwise operators, shifts */
+
+// EXPECTED:
+// 15
+// 255
+// 240
+// -1
+// 256
+// 16
+// 170
+// 187
+// 204
+// 255
+// 26
+// 493
 #include "conez_api.h"
 
 void setup(void) {
