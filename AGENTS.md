@@ -2,6 +2,10 @@
 
 This file provides guidance to AI coding agents working with code in this repository.
 
+## Git workflow
+
+**Never auto-commit or auto-push.** Only run `git commit` when the user explicitly asks for it ("commit this", "commit and push", etc.), and only run `git push` when the user explicitly asks to push. Finishing a task is *not* a request to commit; finishing a commit is *not* a request to push. When in doubt, stop and ask. This applies even when the same prompt earlier asked for a commit — every commit and every push needs its own request.
+
 ## Project Overview
 
 ConeZ is an ESP32-S3 embedded system that powers networked LED light displays on traffic cones for fun and interesting playa events. It combines GPS positioning, LoRa radio communication, IMU sensors, and RGB LED control via user scripts (BASIC or WebAssembly) running on dedicated FreeRTOS threads.
