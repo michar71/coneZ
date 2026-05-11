@@ -18,7 +18,10 @@ main.o: main.c bas2wasm.h .buildnum
 	$(CC) $(CFLAGS) -DBUILD_NUMBER=$(NEXT_BUILDNUM) -c -o $@ $<
 
 .buildnum:
-.PHONY: all clean verify .buildnum
+.PHONY: all clean test verify .buildnum
+
+test: $(TARGET)
+	@test/run_tests.sh
 
 %.o: %.c bas2wasm.h
 	$(CC) $(CFLAGS) -c -o $@ $<
