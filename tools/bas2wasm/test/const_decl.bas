@@ -1,0 +1,8 @@
+' CONST declarations
+CONST PI = 3.14159
+CONST MAX_LEDS = 100
+CONST GREETING$ = "Hello"
+
+R# = PI * 2.0
+N = MAX_LEDS / 4
+FORMAT "& % $", R#, N, GREETING$

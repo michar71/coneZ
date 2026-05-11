@@ -1,0 +1,16 @@
+' SUB and FUNCTION with mixed param types
+SUB SHOW NAME$, AGE, HEIGHT#
+  FORMAT "$ % &", NAME$, AGE, HEIGHT#
+END SUB
+
+FUNCTION CLAMP X, LO, HI
+  IF X < LO THEN RETURN LO
+  IF X > HI THEN RETURN HI
+  RETURN X
+END FUNCTION
+
+SHOW "Alice", 30, 1.65
+SHOW "Bob", 25, 1.80
+
+R = CLAMP(15, 0, 10)
+FORMAT "clamp=%", R

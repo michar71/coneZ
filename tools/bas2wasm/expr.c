@@ -708,13 +708,13 @@ int compile_builtin_expr(const char *name) {
     if (strcmp(name, "INT") == 0) {
         expr(); coerce_f32(); need(TOK_RP);
         emit_op(OP_I32_TRUNC_F32_S);
-        vpush(T_I32);
+        vpop(); vpush(T_I32);   /* replace input slot type with result */
         return 1;
     }
     if (strcmp(name, "FLOAT") == 0) {
         expr(); coerce_i32(); need(TOK_RP);
         emit_op(OP_F32_CONVERT_I32_S);
-        vpush(T_F32);
+        vpop(); vpush(T_F32);   /* replace input slot type with result */
         return 1;
     }
     /* SETLEDRGB(aR, aG, aB) */
@@ -1097,11 +1097,11 @@ static void power(void) {
             CODE->len = save1.buf_start;
             fold_a.valid = fold_b.valid = 0;
             emit_f32_const(powf(va, vb));
-            vpush(T_F32);
+            vpop(); vpop(); vpush(T_F32);  /* consume LHS+RHS, push result */
             return;
         }
         emit_call(IMP_POWF);
-        vpush(T_F32);
+        vpop(); vpop(); vpush(T_F32);  /* consume LHS+RHS, push result */
     }
 }
 

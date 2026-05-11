@@ -1,0 +1,6 @@
+' LUT API smoke test (LOADLUT/LUT/LUTSIZE/GAMMA256)
+LOADED = LOADLUT(0)
+N = LUTSIZE(0)
+V = LUT(0)
+G = GAMMA256(128)
+FORMAT "loaded=% size=% v0=% gamma128=%", LOADED, N, V, G
