@@ -1,5 +1,5 @@
 /* Test: backslash line continuation in #define */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define LONG_VALUE 100 + \
     200 + \

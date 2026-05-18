@@ -1,5 +1,5 @@
 /* Test: int *a, *b; comma-separated pointer declarations */
-#include "conez_api.h"
+#include <conez_api.h>
 
 int *gp1, *gp2;
 

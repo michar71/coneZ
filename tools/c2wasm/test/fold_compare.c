@@ -10,7 +10,7 @@
 // 1
 // 1
 // 0
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     print_i32(5 < 10);                 /* 1 */

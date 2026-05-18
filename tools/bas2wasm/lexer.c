@@ -23,7 +23,116 @@ static const char *kwd[] = {
     "REDIM","ERASE","PRESERVE","OPTION","BASE",NULL
 };
 
+/* ================================================================
+ *  $INCLUDE metacommand (QuickBASIC-style)
+ *
+ *    '$INCLUDE: 'file.bi'
+ *    REM $INCLUDE: 'file.bi'
+ *
+ *  The named file's contents are spliced into `source` at the point
+ *  after the directive line (same technique c2wasm uses for #include).
+ *  Filenames resolve relative to bw_include_dir. line_num is restored
+ *  when the included region is exhausted so error messages stay sane.
+ * ================================================================ */
+#define BW_MAX_INCLUDE_DEPTH 8
+typedef struct { int restore_line; int end_pos; } BwIncFrame;
+static BwIncFrame bw_inc_stk[BW_MAX_INCLUDE_DEPTH];
+static int bw_inc_sp;
+
+void bw_include_reset(void) { bw_inc_sp = 0; }
+
+static void bw_include_check_boundary(void) {
+    while (bw_inc_sp > 0 && src_pos >= bw_inc_stk[bw_inc_sp - 1].end_pos) {
+        bw_inc_sp--;
+        line_num = bw_inc_stk[bw_inc_sp].restore_line;
+    }
+}
+
+/* Returns 1 if `line` was a $INCLUDE directive (consumed/handled),
+ * 0 if it's an ordinary line the caller should process normally. */
+static int bw_try_include(const char *line) {
+    const char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\'') {
+        p++;
+    } else if ((p[0] == 'R' || p[0] == 'r') && (p[1] == 'E' || p[1] == 'e') &&
+               (p[2] == 'M' || p[2] == 'm') && (p[3] == ' ' || p[3] == '\t')) {
+        p += 3;
+    } else {
+        return 0;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '$') return 0;
+    p++;
+    static const char *kw = "INCLUDE";
+    for (int k = 0; k < 7; k++) {
+        if (tolower((unsigned char)p[k]) != tolower((unsigned char)kw[k])) return 0;
+    }
+    p += 7;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != ':') return 0;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '\'') { error_at("$INCLUDE: expected 'filename'"); return 1; }
+    p++;
+    char fname[128]; int fi = 0;
+    while (*p && *p != '\'' && fi < 127) fname[fi++] = *p++;
+    fname[fi] = 0;
+    if (*p != '\'') { error_at("$INCLUDE: unterminated filename"); return 1; }
+
+    if (bw_inc_sp >= BW_MAX_INCLUDE_DEPTH) {
+        error_at("$INCLUDE nested too deep"); return 1;
+    }
+
+    char path[384];
+    int dl = (int)strlen(bw_include_dir);
+    if (dl + fi + 1 > (int)sizeof(path)) { error_at("$INCLUDE path too long"); return 1; }
+    memcpy(path, bw_include_dir, dl);
+    memcpy(path + dl, fname, fi + 1);
+
+    FILE *f = fopen(path, "rb");
+    if (!f) { error_at("$INCLUDE: cannot open file"); return 1; }
+    fseek(f, 0, SEEK_END);
+    long fsz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (fsz < 0) fsz = 0;
+    char *fdata = (char *)bw_malloc(fsz + 2);
+    if (!fdata) { fclose(f); error_at("$INCLUDE: out of memory"); return 1; }
+    if (fsz > 0 && (long)fread(fdata, 1, fsz, f) != fsz) {
+        fclose(f); bw_free(fdata); error_at("$INCLUDE: read error"); return 1;
+    }
+    fclose(f);
+    fdata[fsz] = '\n';      /* ensure the last line terminates cleanly */
+    fdata[fsz + 1] = 0;
+    int flen = (int)fsz + 1;
+
+    /* Splice fdata into source at src_pos (just past the directive line). */
+    int remain = src_len - src_pos;
+    char *ns = (char *)bw_malloc(src_pos + flen + remain + 1);
+    if (!ns) { bw_free(fdata); error_at("$INCLUDE: out of memory"); return 1; }
+    memcpy(ns, source, src_pos);
+    memcpy(ns + src_pos, fdata, flen);
+    memcpy(ns + src_pos + flen, source + src_pos, remain);
+    ns[src_pos + flen + remain] = 0;
+    bw_free(fdata);
+    if (source_owned) bw_free(source);
+    source = ns;
+    source_owned = 1;
+    src_len = src_pos + flen + remain;
+
+    /* Shift any outer frames whose region extends past the splice point. */
+    for (int i = 0; i < bw_inc_sp; i++)
+        if (bw_inc_stk[i].end_pos > src_pos) bw_inc_stk[i].end_pos += flen;
+
+    bw_inc_stk[bw_inc_sp].restore_line = line_num;
+    bw_inc_stk[bw_inc_sp].end_pos = src_pos + flen;
+    bw_inc_sp++;
+    line_num = 0;   /* next_line()'s ++ makes the first included line == 1 */
+    return 1;
+}
+
 int next_line(void) {
+    bw_include_check_boundary();
     if (src_pos >= src_len) return 0;
     int i = 0;
     while (src_pos < src_len && source[src_pos] != '\n' && i < (int)sizeof(line_buf)-1)
@@ -33,6 +142,12 @@ int next_line(void) {
     lp = line_buf;
     line_num++;
     ungot = 0;
+    if (bw_try_include(line_buf)) {
+        if (had_error) return 0;
+        /* Directive consumed; fetch the first real line (now from the
+         * spliced include, or the line after a no-op). */
+        return next_line();
+    }
     return 1;
 }
 

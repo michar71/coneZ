@@ -1,5 +1,5 @@
 /* Test: #error directive causes compile failure (fix #10) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #error this should fail
 

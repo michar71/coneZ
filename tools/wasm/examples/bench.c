@@ -13,7 +13,7 @@
  *   cd tools/c2wasm && ./c2wasm ../wasm/examples/bench.c -o ../wasm/examples/bench.wasm
  */
 
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define SIEVE_SIZE 1024
 static unsigned char sieve[SIEVE_SIZE];

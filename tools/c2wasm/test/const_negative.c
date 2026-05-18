@@ -1,5 +1,5 @@
 /* Test: const int with negative, char, and float initializers */
-#include "conez_api.h"
+#include <conez_api.h>
 
 const int NEG_ONE = -1;
 const int NEG_TEN = -10;

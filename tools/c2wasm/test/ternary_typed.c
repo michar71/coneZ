@@ -1,5 +1,5 @@
 /* Test: ternary with float and double result types (fix #1) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Float ternary */

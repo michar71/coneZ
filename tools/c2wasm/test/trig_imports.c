@@ -1,5 +1,5 @@
 /* Test inverse trig and origin imports */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     float a = asinf(0.5f);

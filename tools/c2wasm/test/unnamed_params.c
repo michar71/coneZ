@@ -1,5 +1,5 @@
 /* Test: functions with unnamed parameters */
-#include "conez_api.h"
+#include <conez_api.h>
 
 int add(int a, int) {
     return a + 1;

@@ -1,6 +1,6 @@
 /* Test: const global long long literal path */
 
-#include "conez_api.h"
+#include <conez_api.h>
 
 const long long BIG = 2147483648;
 

@@ -1,5 +1,5 @@
 /* Test: f64 (double) math import calls (fix #19) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Basic trig */

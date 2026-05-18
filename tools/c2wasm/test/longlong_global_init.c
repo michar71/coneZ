@@ -1,5 +1,5 @@
 /* Test: long long global init (fix #2) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 long long g1 = 42;
 long long g2 = -100;

@@ -1,5 +1,5 @@
 /* Test: compound ops through pointer aliases on globals */
-#include "conez_api.h"
+#include <conez_api.h>
 
 int gi = 10;
 long long gll = 20;

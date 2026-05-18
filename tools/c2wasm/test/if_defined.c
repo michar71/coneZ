@@ -1,5 +1,5 @@
 /* Test: #if defined() and #if !defined() */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define HAS_FEATURE 1
 

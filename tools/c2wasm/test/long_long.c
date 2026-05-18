@@ -1,5 +1,5 @@
 /* Test: long long (i64) type support */
-#include "conez_api.h"
+#include <conez_api.h>
 
 long long global_time = 0;
 

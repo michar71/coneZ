@@ -36,7 +36,7 @@ Source File Structure
 
 A typical c2wasm program:
 
-  #include "conez_api.h"
+  #include <conez_api.h>
 
   static int counter = 0;
 
@@ -49,9 +49,21 @@ A typical c2wasm program:
       delay_ms(100);
   }
 
-The #include "conez_api.h" directive is special-cased: it registers all
-ConeZ API functions as known imports with their C types. No actual file
-reading or header parsing is performed.
+Include convention:
+
+  #include <conez_api.h>   — registers all ConeZ API functions as known
+                             imports with their C types. No file is read.
+  #include <stdint.h>      — and any other angle-bracket header: a
+                             compiler-internal no-op (those types are
+                             built in). No file is read.
+  #include "user_header.h" — a real file: its contents are loaded from
+                             disk and spliced into the source (resolved
+                             relative to the including file's directory).
+
+Angle brackets are reserved for compiler-internal headers; double quotes
+always mean "open and splice a real file". `#include "conez_api.h"`
+(quoted) is therefore now an error unless an actual file by that name
+exists next to the source.
 
 At least one of setup() or loop() must be defined. Both are exported.
 
@@ -260,8 +272,9 @@ Literals:
                  Invalid hex escapes (e.g. "\x") are rejected
 
 Preprocessor:
-  #include "conez_api.h"      Register all ConeZ API imports
-  #include <stdint.h>         Silently ignored (standard headers)
+  #include <conez_api.h>      Register all ConeZ API imports
+  #include <stdint.h>         Silently ignored (any <...> header)
+  #include "user_header.h"    Load + splice a real file from disk
   #define NAME value          Simple text macros (no function-like macros)
   #define LONG value \        Backslash line continuation in #define
           continuation
@@ -358,7 +371,7 @@ ConeZ API Functions
 -------------------
 
 All functions declared in tools/wasm/conez_api.h are available after
-#include "conez_api.h". These include:
+#include <conez_api.h>. These include:
 
   LED:        led_set_pixel, led_fill, led_show, led_count,
               led_set_pixel_hsv, led_fill_hsv, led_gamma8, led_set_gamma,
@@ -433,8 +446,9 @@ The following C features are NOT in scope:
 
 c2wasm DOES support:
   - struct declarations with '.' and '->' member access (see "Structs")
-  - #include "user_header.h" — resolved relative to the source file;
-    conez_api.h remains a special-cased intercept that registers imports
+  - #include "user_header.h" — real file, spliced in, resolved relative
+    to the source file; <conez_api.h> and other <...> headers are
+    compiler-internal intercepts (no file read)
   - malloc / free / calloc / realloc via ConeZ API imports
 
 For programs requiring the features above, use clang --target=wasm32 instead.
@@ -552,8 +566,8 @@ Limitations:
 
         struct file_stat_t { int size; int type; int mtime; };
 
-    or put the tagged versions in your own header and #include it
-    alongside "conez_api.h". Tests in tools/c2wasm/test/struct_*.c and
+    or put the tagged versions in your own header and #include "..." it
+    alongside <conez_api.h>. Tests in tools/c2wasm/test/struct_*.c and
     test/file_io.c demonstrate the pattern.
 
 
@@ -713,7 +727,7 @@ the structural runner can't see. Test format:
     // EXPECTED:
     // 14
     // 21
-    #include "conez_api.h"
+    #include <conez_api.h>
     void setup(void) { print_i32(2 + 3 * 4); print_i32((1+2)*(3+4)); }
     void loop(void) {}
 

@@ -1,5 +1,5 @@
 /* Test: curve helper imports */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     float lf = lerp(0.0f, 10.0f, 0.5f);

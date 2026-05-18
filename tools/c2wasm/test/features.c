@@ -1,5 +1,5 @@
 /* Feature test: exercises many C language features */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define MAX_STEPS 16
 #define CYCLE_MS  3000

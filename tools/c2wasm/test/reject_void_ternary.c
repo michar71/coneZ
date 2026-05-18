@@ -1,5 +1,5 @@
 /* Negative test: ternary with void/non-void branches should error */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void do_nothing(void) { }
 

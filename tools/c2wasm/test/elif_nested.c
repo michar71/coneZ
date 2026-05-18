@@ -1,5 +1,5 @@
 /* Test: nested #if inside #elif (fix #6/#7 combined) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define A 0
 #define B 1

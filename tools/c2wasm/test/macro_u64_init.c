@@ -1,5 +1,5 @@
 /* Test: unsigned long long macro initializer parsing */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define UMAX64 18446744073709551615ULL
 

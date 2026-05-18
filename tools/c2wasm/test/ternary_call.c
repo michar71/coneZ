@@ -1,5 +1,5 @@
 /* Test: ternary else-branch with function call (exercises call fixup adjustment) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     int x = 1;

@@ -997,7 +997,7 @@ the compiler correctly reports errors. The .bas examples in
 firmware/data/ are also compiled, which doubles as a regression check
 that production scripts still build.
 
-Currently 95 tests covering:
+Currently 97 tests covering:
 
   Arithmetic & operators: integer/float/mixed arithmetic, power (^),
     comparisons (int/float/string), logical AND/OR/NOT/XOR bitwise
@@ -1039,13 +1039,14 @@ Currently 95 tests covering:
   FORMAT: all three specifiers (%, &, $) interleaved, expression args,
     `>` print shorthand
 
-  Reject tests (22): missing END FOR/WHILE/SUB/IF, missing NEXT/WEND,
+  Reject tests (23): missing END FOR/WHILE/SUB/IF, missing NEXT/WEND,
     ELSE without IF, string + number, string subtraction, malformed
     FOR, REDIM on a scalar, mutual recursion without DECLARE
     (forward call rejected), undefined function, ON ERROR / RESUME,
     unmatched paren, invalid hex, unterminated string literal,
     wrong argument count (too few and too many), nested SUB/FUNCTION,
-    DECLAREd function never defined, DECLARE/definition arity mismatch
+    DECLAREd function never defined, DECLARE/definition arity mismatch,
+    $INCLUDE of a missing file
 
 Adding a test: drop a .bas file in test/. Positive tests must compile
 to valid WASM. Files named reject_*.bas must fail compilation.
@@ -1062,13 +1063,52 @@ and diffs it against the expected lines. Catches semantic regressions
 that wasm-validate's structural pass can't see — e.g. the multi-dim
 REDIM PRESERVE remap bug compiled to valid WASM that returned wrong
 values; only runtime execution caught it. Currently 21 runtime tests
-(files without an EXPECTED block are skipped). Sample:
+(files without an EXPECTED block are skipped; currently 22 runtime
+tests). Sample:
 
     ' EXPECTED:
     ' 14
     ' 21
     > 2 + 3 * 4
     > (1+2) * (3+4)
+
+
+$INCLUDE (QuickBASIC metacommand)
+---------------------------------
+
+bas2wasm supports the QuickBASIC `$INCLUDE` metacommand for pulling
+shared code (helper SUBs/FUNCTIONs, CONSTs, DATA) out of a separate
+file. Both spellings QB 4.5 accepts are recognized:
+
+    '$INCLUDE: 'helpers.bi'
+    REM $INCLUDE: 'helpers.bi'
+
+The metacommand must be the first thing in the comment; the filename
+is single-quoted; include files conventionally use the `.bi`
+("BASIC Include") extension. The named file's contents are spliced
+into the source at that point (the same technique c2wasm uses for
+#include) — there is no separate compilation unit and no name
+mangling, so an included FUNCTION/CONST is referenced exactly as if
+it had been written inline.
+
+Path resolution: standalone, the path is relative to the directory of
+the file passed on the command line. In embedded mode (on-device
+compile) there is no source directory, so use an absolute LittleFS
+path, e.g. `'$INCLUDE: '/lib/effects.bi'`.
+
+Notes / limits:
+  - Nesting is allowed up to 8 levels deep; a deeper chain is an error.
+  - There is NO include guard (matching QB): including the same file
+    twice defines its symbols twice → "function already defined".
+    Structure shared files so each is included once.
+  - A missing or unreadable file is a compile-time error
+    ("$INCLUDE: cannot open file"), reported on the directive's line.
+  - Error line numbers are tracked across the splice: a diagnostic in
+    an included file reports that file's line; lines after the
+    directive in the including file resume their original numbering.
+
+Reserved for future use: double-quoted include forms are not
+recognized — the metacommand always uses single quotes per QB.
 
 
 Embedded Mode

@@ -3,7 +3,7 @@
 /* Standard header includes — silently ignored */
 #include <stdint.h>
 
-#include "conez_api.h"
+#include <conez_api.h>
 
 /* Simple defines */
 #define FOO 42

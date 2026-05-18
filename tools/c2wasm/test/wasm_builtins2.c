@@ -1,5 +1,5 @@
 /* Test: additional WASM-native math builtins */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Single-arg builtins */

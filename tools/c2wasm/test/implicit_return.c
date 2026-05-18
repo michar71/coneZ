@@ -1,5 +1,5 @@
 /* Test: implicit return for non-void functions without explicit return */
-#include "conez_api.h"
+#include <conez_api.h>
 
 /* Function with return only on some paths — needs implicit return */
 static int maybe_return(int x) {

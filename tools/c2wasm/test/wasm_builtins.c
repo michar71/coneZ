@@ -1,5 +1,5 @@
 /* Test WASM-native math builtins (single opcode, no import) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     float x = 4.0f;

@@ -8,7 +8,7 @@
 // 10
 // 24
 // 100
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     print_i32(1 + 2 * 3);              /* 7 — outer + must fold across inner * */

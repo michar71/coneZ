@@ -1,5 +1,5 @@
 /* Test: math import functions */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* sinf / cosf */

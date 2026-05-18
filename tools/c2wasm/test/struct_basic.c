@@ -4,7 +4,7 @@
  *   - member access via '.'
  *   - sizeof(struct)
  */
-#include "conez_api.h"
+#include <conez_api.h>
 
 struct point {
     int x;

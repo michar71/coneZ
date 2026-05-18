@@ -1,5 +1,5 @@
 /* Test: unsigned char — sizeof, array element size, load/store, coercion */
-#include "conez_api.h"
+#include <conez_api.h>
 
 static unsigned char buf[16];
 unsigned char global_uc = 200;

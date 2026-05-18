@@ -307,6 +307,8 @@ extern int data_len;
 extern int ndata_items;
 
 extern char *source;
+extern int source_owned;        /* 1 = compiler owns `source`, must free */
+extern char bw_include_dir[256];/* dir prefix for $INCLUDE files ("" = none) */
 extern int src_len;
 extern int src_pos;
 extern char line_buf[512];
@@ -585,6 +587,7 @@ static inline void coerce_to(VType t) {
 
 /* lexer.c */
 int next_line(void);
+void bw_include_reset(void);
 int read_tok(void);
 int want(int t);
 void need(int t);

@@ -1,5 +1,5 @@
 /* Test: short, signed, _Bool type keywords */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     short x = 42;

@@ -1,5 +1,5 @@
 /* Test: #elif support (fix #7) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define MODE 2
 

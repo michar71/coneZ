@@ -1,5 +1,5 @@
 /* Test: sizeof(long long) returns 8 (fix #1) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     long long x = 0;

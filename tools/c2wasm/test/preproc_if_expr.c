@@ -1,5 +1,5 @@
 /* Test: #if constant expression evaluation */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define VERSION 3
 #define LEVEL 10

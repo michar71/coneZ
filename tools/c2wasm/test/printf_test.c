@@ -1,5 +1,5 @@
 /* Test: printf builtin with various format specifiers */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Integer formats */

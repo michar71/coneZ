@@ -1,5 +1,5 @@
 /* Test: #undef removes a previously defined macro */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define FOO 42
 #undef FOO

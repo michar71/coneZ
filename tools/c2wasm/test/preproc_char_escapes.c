@@ -1,5 +1,5 @@
 /* Test: #if character escape parsing */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #if '\101' == 'A'
 int oct_ok = 1;

@@ -1,5 +1,5 @@
 /* Test: #if with multi-digit numbers */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #if 10
 #define VALUE_A 1

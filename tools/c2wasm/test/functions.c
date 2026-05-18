@@ -1,5 +1,5 @@
 /* Test: user functions, forward declarations, recursion, return types */
-#include "conez_api.h"
+#include <conez_api.h>
 
 /* Forward declaration */
 static int fib(int n);

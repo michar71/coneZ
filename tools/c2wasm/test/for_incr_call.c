@@ -1,5 +1,5 @@
 /* Test: for-loop increment with function call (exercises call fixup adjustment) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Increment expression contains a function call — fixups must be adjusted */

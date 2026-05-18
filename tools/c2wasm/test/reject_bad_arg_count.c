@@ -1,5 +1,5 @@
 /* Negative test: should fail — wrong number of arguments to function */
-#include "conez_api.h"
+#include <conez_api.h>
 
 static int add(int a, int b) {
     return a + b;

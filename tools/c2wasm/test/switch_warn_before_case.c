@@ -1,5 +1,5 @@
 /* Test: statements before first case — compiles with warning */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     int x = 1;

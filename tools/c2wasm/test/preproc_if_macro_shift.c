@@ -1,5 +1,5 @@
 /* Test: #if macro expressions with shifts and unary minus */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define HI (1ULL << 63)
 #define NEG_U64 (-1ULL)

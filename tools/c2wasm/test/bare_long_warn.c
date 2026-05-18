@@ -1,5 +1,5 @@
 /* Test: bare 'long' compiles with warning (fix #9) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 long x = 42;
 

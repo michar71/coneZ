@@ -1,5 +1,5 @@
 /* Test: mutual macro recursion doesn't cause infinite loop */
-#include "conez_api.h"
+#include <conez_api.h>
 
 /* These mutually reference each other — must not infinite loop */
 #define A B

@@ -1,5 +1,5 @@
 /* Test: default label can appear anywhere in switch */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define VAL_A 10
 #define VAL_B 20

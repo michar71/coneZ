@@ -1,5 +1,5 @@
 /* Test: #elif chain with first branch taken */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define X 1
 

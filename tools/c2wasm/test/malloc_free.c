@@ -1,5 +1,5 @@
 /* Test: host-backed malloc/free/calloc/realloc imports */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     int *p = (int *)malloc(2 * (int)sizeof(int));

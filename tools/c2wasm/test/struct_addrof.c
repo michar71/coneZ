@@ -1,6 +1,6 @@
 /* Use & on a struct local and pass to a host function.
  * file_stat expects (const char *path, file_stat_t *out). */
-#include "conez_api.h"
+#include <conez_api.h>
 
 struct file_stat_t {
     int size;

@@ -4,7 +4,7 @@
  * declared inline and passed by address to the host imports. We still
  * use literal mode/whence values since c2wasm intercepts conez_api.h
  * for imports and doesn't see its #define constants. */
-#include "conez_api.h"
+#include <conez_api.h>
 
 struct file_stat_t {
     int size;

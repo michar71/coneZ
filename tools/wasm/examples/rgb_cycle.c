@@ -12,7 +12,7 @@
  *     -I . -o examples/rgb_cycle.wasm examples/rgb_cycle.c
  */
 
-#include "conez_api.h"
+#include <conez_api.h>
 
 static int frame = 0;
 

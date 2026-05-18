@@ -1,5 +1,5 @@
 /* Test: basic types, globals, locals, initializers, const */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define MAGIC 42
 #define HALF  0.5f

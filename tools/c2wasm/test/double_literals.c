@@ -1,5 +1,5 @@
 /* Test: unsuffixed float literals are double (f64), f-suffixed are float (f32) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Unsuffixed = double (f64) — should preserve full precision */

@@ -1,6 +1,6 @@
 /* Test: for-loop with function calls in BOTH body and increment.
  * Exercises the call fixup sorting fix. */
-#include "conez_api.h"
+#include <conez_api.h>
 
 static int step(int x) {
     return x + 1;

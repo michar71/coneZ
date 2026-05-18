@@ -1,5 +1,5 @@
 /* Test: double % and %= operations */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     double a = 10.5;

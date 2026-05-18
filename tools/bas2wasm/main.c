@@ -33,6 +33,8 @@ int data_len;
 int ndata_items;
 
 char *source;
+int source_owned;   /* 1 = we bw_malloc'd `source` and must free it */
+char bw_include_dir[256];   /* dir prefix for $INCLUDE files ("" = none) */
 int src_len;
 int src_pos;
 char line_buf[512];
@@ -71,6 +73,7 @@ void bw_compile(void) {
     option_base = 1;
     line_num = 0;
     src_pos = 0;
+    bw_include_reset();
     fold_p.valid = 0;
     fold_a.valid = 0;
     fold_b.valid = 0;
@@ -131,7 +134,20 @@ Buf bas2wasm_compile_buffer(const char *src, int len) {
     }
 #endif
 
-    source = (char *)src;
+    /* Copy the caller's source into a buffer we own, so the $INCLUDE
+     * machinery in next_line() can realloc/splice into it safely. */
+    {
+        char *copy = (char *)bw_malloc(len + 1);
+        if (!copy) {
+            bw_error("bas2wasm: out of memory\n");
+            bas2wasm_reset();
+            return result;
+        }
+        memcpy(copy, src, len);
+        copy[len] = 0;
+        source = copy;
+        source_owned = 1;
+    }
     src_len = len;
 
     bw_compile();
@@ -180,6 +196,8 @@ void bas2wasm_reset(void) {
     fold_b.valid = 0;
     memset(imp_used, 0, sizeof(imp_used));
     stmt_reset();
+    if (source_owned && source) bw_free(source);
+    source_owned = 0;
     source = NULL;
     src_len = 0;
     src_pos = 0;
@@ -251,6 +269,18 @@ int main(int argc, char **argv) {
     }
     source[src_len] = 0;
     fclose(fp);
+    source_owned = 1;   /* so $INCLUDE splices can free intermediates */
+
+    /* $INCLUDE files resolve relative to the input file's directory. */
+    {
+        const char *slash = strrchr(inpath, '/');
+        if (slash) {
+            size_t dlen = (size_t)(slash - inpath + 1);
+            if (dlen >= sizeof(bw_include_dir)) dlen = sizeof(bw_include_dir) - 1;
+            memcpy(bw_include_dir, inpath, dlen);
+            bw_include_dir[dlen] = 0;
+        }
+    }
 
     printf("bas2wasm %d.%02d.%04d compiling %s...\n",
            BAS2WASM_VERSION_MAJOR, BAS2WASM_VERSION_MINOR, BUILD_NUMBER, inpath);

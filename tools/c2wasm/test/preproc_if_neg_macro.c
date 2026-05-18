@@ -1,5 +1,5 @@
 /* Test: #if negative macro values */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define NEG -1
 #define NEG2 (-2)

@@ -1,6 +1,6 @@
 /* Struct pointer as a function parameter — must correctly track struct_id
  * so that -> member access works inside the called function. */
-#include "conez_api.h"
+#include <conez_api.h>
 
 struct vec2 { int x; int y; };
 

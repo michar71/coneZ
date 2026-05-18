@@ -1,5 +1,5 @@
 /* Test: #if !0 and #if !1 preprocessor (fix #4) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 /* #if !0 should be true (include this block) */
 #if !0

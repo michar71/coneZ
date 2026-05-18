@@ -11,7 +11,7 @@
 //   // EXPECTED:
 //   // 42
 //   // 3.14
-//   #include "conez_api.h"
+//   #include <conez_api.h>
 //   void setup(void) { print_i32(42); print_f32(3.14f); }
 //   void loop(void) {}
 //

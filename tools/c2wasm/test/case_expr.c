@@ -1,5 +1,5 @@
 /* Test: case labels with constant expressions (fix #13) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define BASE 10
 #define FLAG 0x80

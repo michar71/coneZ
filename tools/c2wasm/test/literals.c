@@ -1,5 +1,5 @@
 /* Test: integer, float, char, string, hex, octal literals */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Decimal int */

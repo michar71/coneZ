@@ -1,5 +1,5 @@
 /* Test: sizeof(expr) doesn't evaluate the expression */
-#include "conez_api.h"
+#include <conez_api.h>
 
 static int counter = 0;
 

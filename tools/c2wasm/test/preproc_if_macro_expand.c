@@ -1,5 +1,5 @@
 /* Test: #if macro expansion of identifiers/expressions */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define A B
 #define B 1

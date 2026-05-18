@@ -1,5 +1,5 @@
 /* Negative test: should fail — missing semicolon */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     int x = 10

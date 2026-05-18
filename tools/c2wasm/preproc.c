@@ -2,7 +2,9 @@
  * preproc.c — minimal C preprocessor for c2wasm
  *
  * Handles:
- *   #include "conez_api.h"  → registers all ConeZ API imports
+ *   #include <conez_api.h>  → registers all ConeZ API imports
+ *   #include <anything.h>   → compiler-internal no-op (stdint.h, etc.)
+ *   #include "file.h"       → splices a real user file into the source
  *   #define NAME value      → macro table
  *   #ifdef / #ifndef / #else / #endif / #if 0
  */
@@ -818,9 +820,36 @@ int preproc_line(void) {
     }
 
     if (strcmp(directive, "include") == 0) {
-        /* Skip whitespace, read filename */
+        /* Skip whitespace, read filename.
+         *
+         * Convention:
+         *   #include <name>   — compiler-internal. <conez_api.h> registers
+         *                       the ConeZ host-API imports; <stdint.h>,
+         *                       <stdbool.h>, and any other angle-bracket
+         *                       header are silently ignored (their types are
+         *                       built in / not needed). Never opens a file.
+         *   #include "name"   — a real user file: its contents are loaded
+         *                       from disk and spliced into the source.
+         */
         while (src_pos < src_len && (source[src_pos] == ' ' || source[src_pos] == '\t'))
             src_pos++;
+        if (source[src_pos] == '<') {
+            src_pos++;
+            char fname[128]; int i = 0;
+            while (src_pos < src_len && source[src_pos] != '>' &&
+                   source[src_pos] != '\n' && i < 127)
+                fname[i++] = source[src_pos++];
+            fname[i] = 0;
+            if (src_pos < src_len && source[src_pos] == '>') src_pos++;
+
+            if (strcmp(fname, "conez_api.h") == 0) {
+                register_api_imports();
+            }
+            /* stdint.h, stdbool.h, and every other <...> header are
+             * compiler-internal no-ops. */
+            skip_to_eol();
+            return 1;
+        }
         if (source[src_pos] == '"') {
             src_pos++;
             char fname[128]; int i = 0;
@@ -829,12 +858,7 @@ int preproc_line(void) {
             fname[i] = 0;
             if (source[src_pos] == '"') src_pos++;
 
-            if (strcmp(fname, "conez_api.h") == 0) {
-                register_api_imports();
-            } else if (strcmp(fname, "stdint.h") == 0 ||
-                       strcmp(fname, "stdbool.h") == 0) {
-                /* silently ignore standard headers */
-            } else {
+            {
                 /* User header: load file and splice contents into source at
                  * the current position (same technique as macro expansion).
                  * Filename is resolved relative to the including source file's
@@ -921,12 +945,8 @@ int preproc_line(void) {
                  * now the first character of the header. */
                 return 1;
             }
-        } else if (source[src_pos] == '<') {
-            /* Skip <...> includes silently */
-            while (src_pos < src_len && source[src_pos] != '>' && source[src_pos] != '\n')
-                src_pos++;
-            if (source[src_pos] == '>') src_pos++;
         }
+        /* Malformed #include (no < or ") — just consume the line. */
         skip_to_eol();
         return 1;
     }

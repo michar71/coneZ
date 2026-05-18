@@ -1,5 +1,5 @@
 /* Test: bare return in non-void function (fix #6) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 int always_zero(void) {
     return;  /* bare return in non-void — should push 0 */

@@ -15,7 +15,7 @@
  *     -I . -o examples/sos_flash.wasm examples/sos_flash.c
  */
 
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define MS_PER_CYCLE   3000
 #define SOS_SPEED_SCALE 0.5f

@@ -1,5 +1,5 @@
 /* Struct defined in a #include'd user header. */
-#include "conez_api.h"
+#include <conez_api.h>
 #include "struct_header.h"
 
 void setup(void) {

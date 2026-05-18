@@ -1,5 +1,5 @@
 /* Test: double (f64) type support — arithmetic, comparisons, globals, casts */
-#include "conez_api.h"
+#include <conez_api.h>
 
 double global_d = 3.14f;
 static double offset = -1.0f;

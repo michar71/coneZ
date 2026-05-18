@@ -1,5 +1,5 @@
 /* Test that recursive macros don't cause infinite loop */
-#include "conez_api.h"
+#include <conez_api.h>
 
 /* These should not cause infinite recursion */
 #define FOO FOO

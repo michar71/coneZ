@@ -1,5 +1,5 @@
 /* Test: type casts, sizeof, type coercion */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Cast int to float */

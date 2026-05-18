@@ -33,8 +33,11 @@ if (!fs.existsSync(bas2wasm)) {
 }
 
 function parseExpected(src) {
-    // BASIC comments start with ' — match `' EXPECTED:` then consecutive `' ...` lines.
-    const m = src.match(/^'\s*EXPECTED:\s*\n((?:'.*\n)+)/m);
+    // BASIC comments start with ' — match `' EXPECTED:` then consecutive
+    // block lines. A block line is an apostrophe followed by a space (or a
+    // bare apostrophe). This deliberately excludes `'$INCLUDE:` and other
+    // `'<nonspace>` metacommands so they terminate the block.
+    const m = src.match(/^'\s*EXPECTED:\s*\n((?:'(?: [^\n]*)?\n)+)/m);
     if (!m) return null;
     return m[1].split('\n')
         .filter(l => l.startsWith("'"))

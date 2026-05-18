@@ -159,6 +159,10 @@ Data & Misc
   Feature           QuickBASIC 4.5    bas2wasm
   -------           --------------    --------
   DATA/READ/RESTORE Yes               Yes (compiler-only)
+  $INCLUDE          '$INCLUDE: 'f.bi' Yes — both '$INCLUDE: and
+                    REM $INCLUDE:     REM $INCLUDE: forms, .bi files
+                                      spliced inline, max depth 8,
+                                      no include guard (as in QB)
   PEEK/POKE         Yes               No
   DEF FN            Yes               No
 

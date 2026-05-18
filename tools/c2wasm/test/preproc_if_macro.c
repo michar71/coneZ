@@ -1,5 +1,5 @@
 /* Test: #if MACRO_NAME expansion */
-#include "conez_api.h"
+#include <conez_api.h>
 
 #define VERSION 3
 #define ZERO 0

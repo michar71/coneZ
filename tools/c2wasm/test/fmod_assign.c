@@ -1,5 +1,5 @@
 /* Test: %= with float, bitwise compound ops with float coercion */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     /* Float %= should use fmodf */

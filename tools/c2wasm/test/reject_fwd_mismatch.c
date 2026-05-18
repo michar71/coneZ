@@ -1,5 +1,5 @@
 /* Negative test: forward decl with mismatched params should error */
-#include "conez_api.h"
+#include <conez_api.h>
 
 int compute(int x, int y);
 

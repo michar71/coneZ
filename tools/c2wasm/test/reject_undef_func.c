@@ -1,5 +1,5 @@
 /* Reject test: forward-declared but undefined function */
-#include "conez_api.h"
+#include <conez_api.h>
 
 int helper(int x);  /* declared but never defined */
 

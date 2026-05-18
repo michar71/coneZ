@@ -1,6 +1,6 @@
 // Test stdint types: int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t,
 // int64_t, uint64_t, size_t
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup() {
     // 8-bit types (stored as i32)

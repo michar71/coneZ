@@ -1,5 +1,5 @@
 /* Test: address-of global float/double/long long scalars */
-#include "conez_api.h"
+#include <conez_api.h>
 
 long long gll = 10;
 float gf = 1.5f;

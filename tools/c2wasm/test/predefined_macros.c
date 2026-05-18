@@ -1,6 +1,6 @@
 /* Test: common predefined preprocessor macros */
 
-#include "conez_api.h"
+#include <conez_api.h>
 
 int g_line = __LINE__;
 int g_stdc = __STDC__;

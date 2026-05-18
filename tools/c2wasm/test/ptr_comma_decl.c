@@ -1,5 +1,5 @@
 /* Test: pointer comma-separated declarations (fix #5) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 /* Global pointer + non-pointer in same declaration */
 int *gp, gi;

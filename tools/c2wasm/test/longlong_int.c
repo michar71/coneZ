@@ -1,5 +1,5 @@
 /* Test: 'long long int' parses as CT_LONG_LONG (fix #3) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 long long int x = 10;
 unsigned long long int y = 20;

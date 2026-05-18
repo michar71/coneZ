@@ -1,5 +1,5 @@
 /* Test: additional character/string escape support */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     int a = '\a';

@@ -1,5 +1,5 @@
 /* Test: sizeof(type*) returns 4 (fix #23) */
-#include "conez_api.h"
+#include <conez_api.h>
 
 void setup(void) {
     print_i32(sizeof(int*));     /* 4 */
