@@ -1,4 +1,9 @@
 ' SWAP statement
+
+' EXPECTED:
+' 2 1
+' 2.5 1.5
+' right left
 A = 1
 B = 2
 SWAP A, B

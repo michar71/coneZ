@@ -1,4 +1,22 @@
 /* Test: if/else, while, do/while, for, switch/case, break, continue */
+
+// EXPECTED:
+// 1
+// 2
+// 3
+// 4
+// 5
+// 3
+// 99
+// 55
+// 6
+// 25
+// 3
+// 10
+// 11
+// 12
+// 5
+// 12
 #include "conez_api.h"
 
 void setup(void) {

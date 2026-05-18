@@ -1,4 +1,12 @@
 /* Test: ternary operator */
+
+// EXPECTED:
+// 10
+// 20
+// 100
+// 200
+// 11
+// 2
 #include "conez_api.h"
 
 void setup(void) {

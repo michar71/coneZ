@@ -18,10 +18,18 @@ main.o: main.c bas2wasm.h .buildnum
 	$(CC) $(CFLAGS) -DBUILD_NUMBER=$(NEXT_BUILDNUM) -c -o $@ $<
 
 .buildnum:
-.PHONY: all clean test verify .buildnum
+.PHONY: all clean test test-runtime verify .buildnum
 
 test: $(TARGET)
 	@test/run_tests.sh
+
+# Execution-based tests: compile each .bas file with an `' EXPECTED:` block,
+# run it under node's WebAssembly host with stub imports (FORMAT %/&/$
+# interpretation + basic_str_* string pool), diff captured output.
+# Catches semantic regressions that wasm-validate can't.
+test-runtime: $(TARGET)
+	@command -v node >/dev/null 2>&1 || { echo "node required for test-runtime"; exit 1; }
+	@node test/run_runtime.js
 
 %.o: %.c bas2wasm.h
 	$(CC) $(CFLAGS) -c -o $@ $<

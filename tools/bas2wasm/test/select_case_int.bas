@@ -1,4 +1,15 @@
 ' SELECT CASE with integer expression, including IS, comma list, and ELSE
+
+' EXPECTED:
+' big
+' 1: one
+' 2: two-three
+' 3: two-three
+' 4: middle
+' 5: middle
+' 6: ge6
+' 7: ge6
+' 8: ge6
 X = 7
 SELECT CASE X
   CASE 1

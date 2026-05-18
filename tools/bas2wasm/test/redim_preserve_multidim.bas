@@ -3,6 +3,16 @@
 ' realloc-based implementation only worked for 1D — multi-dim silently
 ' returned wrong values.
 
+' EXPECTED:
+' 11
+' 14
+' 21
+' 24
+' 34
+' 36
+' 110
+' 210
+
 ' 2D grow on the second dimension (stride change for first dim)
 DIM A(3, 4)
 A(1, 1) = 11

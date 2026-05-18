@@ -1,4 +1,7 @@
 ' Operator precedence: ^ > unary - > * / \ MOD > + - > comparisons > NOT > AND > OR > XOR
+
+' EXPECTED:
+' 14 20 18 4 -1 0 4 3
 A = 2 + 3 * 4
 B = (2 + 3) * 4
 C# = 2 * 3 ^ 2           ' ^ binds tighter than *; result f32 = 18.0

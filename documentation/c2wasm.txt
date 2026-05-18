@@ -721,6 +721,10 @@ The fold_basic/fold_nested/fold_unary/fold_compare/fold_mixed tests
 specifically pin down the constant-folding pass's behavior across
 i32/i64/f32/f64, arithmetic/bitwise/shift/comparison, mixed-type
 promotion, unary minus, and 3-slot nested-subexpression patterns.
+Currently 15 runtime tests — beyond the 5 fold tests, EXPECTED blocks
+have been added to arithmetic / assignment / bitwise / comparison /
+control_flow / comma_operator / scoping / switch_fallthrough / ternary
+/ unsigned_ops.
 
 Test files cover: basic types, arithmetic, bitwise ops, comparisons,
 control flow (if/while/do/for/switch/break/continue), assignment ops,

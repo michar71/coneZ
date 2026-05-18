@@ -1,4 +1,13 @@
 /* Test: variable scoping — block scope, for-loop init scope, shadowing */
+
+// EXPECTED:
+// 2
+// 1
+// 0
+// 1
+// 2
+// 99
+// 6
 #include "conez_api.h"
 
 void setup(void) {

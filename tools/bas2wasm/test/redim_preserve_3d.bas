@@ -1,4 +1,9 @@
 ' REDIM PRESERVE on a 3D array — stride changes through multiple levels
+
+' EXPECTED:
+' 111
+' 223
+' 122
 DIM D(2, 2, 3)
 D(1, 1, 1) = 111
 D(2, 2, 3) = 223

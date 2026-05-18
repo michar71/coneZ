@@ -1,4 +1,10 @@
 ' DATA / READ / RESTORE
+
+' EXPECTED:
+' 10 20 30
+' 42 3.14 hello
+' 10
+' 20 30
 DATA 10, 20, 30
 READ A, B, C
 FORMAT "% % %", A, B, C

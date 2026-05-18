@@ -1,4 +1,10 @@
 ' IF / ELSE / ELSEIF chains — multi-line form omits THEN
+
+' EXPECTED:
+' not one
+' five
+' positive
+' small positive
 X = 5
 
 IF X = 1

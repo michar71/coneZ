@@ -1,4 +1,7 @@
 ' Integer comparisons return -1 (true) or 0 (false)
+
+' EXPECTED:
+' 0 -1 -1 0 -1 -1
 X = 5
 Y = 10
 A = X = Y

@@ -1,4 +1,10 @@
 ' EXIT FOR / WHILE / DO / SELECT
+
+' EXPECTED:
+' exit_for=5
+' exit_while=3
+' exit_do=4
+' two
 FOR I = 1 TO 100
   IF I = 5 THEN EXIT FOR
 NEXT

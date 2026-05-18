@@ -43,11 +43,19 @@ function parseExpected(src) {
         .join('\n').trim();
 }
 
-// Format floats to match what print_f32/print_f64 typically render.
-// c2wasm prints via host_printf with %g-like behavior; JS Number.toString
-// renders 3.0 as "3", 1.5 as "1.5" — close enough for these tests if the
-// expected output uses the same rendering.
-function fmtFloat(v) { return String(v); }
+// Match firmware's printf("%f", val) then strip trailing zeros — effectively
+// printf "%g" rendering at f32 precision. Math.fround(3.14).toString() in JS
+// gives "3.140000104904175" which doesn't match what users see on the device,
+// so we round to 6 decimal places (default %f precision) and strip trailing
+// zeros to get back to the natural short form (3.14, 3.5, 6, etc.).
+function fmtFloat(v) {
+    v = Math.fround(v);
+    if (!isFinite(v)) return v.toString();
+    if (v === 0) return '0';
+    let s = v.toFixed(6);
+    if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    return s;
+}
 
 function makeImports(state) {
     const memU8 = () => new Uint8Array(state.instance.exports.memory.buffer);
@@ -102,7 +110,7 @@ function makeImports(state) {
             fmod: (a, b) => a % b,
             // timing / control
             delay_ms: noop, millis: () => 0, millis64: () => 0n,
-            get_epoch_ms: () => 0n,
+            get_epoch_ms: () => 0n, get_uptime_ms: () => 0n,
             should_stop: ret0, wait_pps: ret0, wait_param: ret0,
             // curve
             lerp: (a, b, t) => Math.round(a + (b - a) * t / 256),

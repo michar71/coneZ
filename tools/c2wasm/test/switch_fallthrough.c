@@ -1,4 +1,11 @@
 /* Test: switch with C-standard fall-through behavior */
+
+// EXPECTED:
+// 20
+// 30
+// 200
+// 300
+// 400
 #include "conez_api.h"
 
 void setup(void) {

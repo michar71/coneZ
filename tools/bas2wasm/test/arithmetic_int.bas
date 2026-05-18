@@ -1,4 +1,7 @@
 ' Integer arithmetic across all five basic operators
+
+' EXPECTED:
+' 13 7 30 3 3 1 -5 -20
 A = 10 + 3
 B = 10 - 3
 C = 10 * 3

@@ -1,4 +1,7 @@
 ' WASM-native math opcodes: SQRT, FLOOR, CEIL (no imports needed)
+
+' EXPECTED:
+' 4 3 4 -4 -3
 S# = SQRT(16.0)
 F# = FLOOR(3.7)
 C# = CEIL(3.2)

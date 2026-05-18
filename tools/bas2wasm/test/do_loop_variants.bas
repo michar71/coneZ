@@ -1,5 +1,12 @@
 ' All five DO/LOOP variants
 
+' EXPECTED:
+' infinite: 3
+' while: 5
+' until: 5
+' loopwhile: 3
+' loopuntil: 3
+
 ' Infinite + EXIT DO
 I = 0
 DO

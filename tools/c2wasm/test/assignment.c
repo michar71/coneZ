@@ -1,4 +1,30 @@
 /* Test: assignment operators, increment/decrement */
+
+// EXPECTED:
+// 15
+// 12
+// 24
+// 6
+// 2
+// 15
+// 255
+// 0
+// 16
+// 4
+// 12.5
+// 12
+// 24
+// 8
+// 6
+// 6
+// 5
+// 5
+// 10
+// 11
+// 11
+// 10
+// 2
+// 1
 #include "conez_api.h"
 
 void setup(void) {

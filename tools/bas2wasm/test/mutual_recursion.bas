@@ -1,4 +1,12 @@
 ' Mutual recursion via DECLARE
+
+' EXPECTED:
+' 0 even=-1 odd=0
+' 1 even=0 odd=-1
+' 2 even=-1 odd=0
+' 3 even=0 odd=-1
+' 4 even=-1 odd=0
+' 5 even=0 odd=-1
 DECLARE FUNCTION IS_ODD N
 
 FUNCTION IS_EVEN N

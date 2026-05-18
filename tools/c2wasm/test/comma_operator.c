@@ -1,4 +1,10 @@
 /* Test: comma operator in expressions */
+
+// EXPECTED:
+// 10
+// 20
+// 3
+// 97
 #include "conez_api.h"
 
 void setup(void) {

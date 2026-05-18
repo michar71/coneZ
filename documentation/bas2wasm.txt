@@ -1054,6 +1054,22 @@ A second target, `make verify`, does byte-for-byte comparison against
 the snapshots in test/baseline/ — useful for catching codegen drift
 when intentional changes are made (regenerate via test/make_baseline.sh).
 
+A third target, `make test-runtime`, is a node-based execution harness.
+It runs each .bas file that opens with an `' EXPECTED:` comment block,
+instantiates the WASM under node with stub imports (FORMAT %/&/$
+interpretation + basic_str_* string pool), captures printed output,
+and diffs it against the expected lines. Catches semantic regressions
+that wasm-validate's structural pass can't see — e.g. the multi-dim
+REDIM PRESERVE remap bug compiled to valid WASM that returned wrong
+values; only runtime execution caught it. Currently 21 runtime tests
+(files without an EXPECTED block are skipped). Sample:
+
+    ' EXPECTED:
+    ' 14
+    ' 21
+    > 2 + 3 * 4
+    > (1+2) * (3+4)
+
 
 Embedded Mode
 -------------

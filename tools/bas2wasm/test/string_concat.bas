@@ -1,4 +1,9 @@
 ' String concatenation
+
+' EXPECTED:
+' Hello World
+' Conepha
+' non-empty
 A$ = "Hello"
 B$ = " "
 C$ = "World"
