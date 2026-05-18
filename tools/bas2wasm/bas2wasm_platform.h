@@ -82,6 +82,10 @@ void     bw_psram_write(uint32_t addr, const void *src, size_t len);
 #define expr           bw_expr
 #define assemble_to_buf bw_assemble_to_buf
 #define assemble       bw_assemble
+#define fold_p         bw_fold_p
+#define fold_a         bw_fold_a
+#define fold_b         bw_fold_b
+#define source_owned   bw_source_owned
 
 #else /* standalone */
 

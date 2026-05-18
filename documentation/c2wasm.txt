@@ -844,9 +844,20 @@ Single-TU embedding:
 Symbol prefixing:
 
   In embedded mode, shared global names (source, had_error, func_bufs,
-  expr, assemble_to_buf, etc.) are macro-prefixed to cw_source,
-  cw_had_error, etc. This avoids link-time collisions when both
+  expr, assemble_to_buf, fold_a/fold_b/fold_p, etc.) are macro-prefixed
+  to cw_source, cw_had_error, etc. via the #define block in
+  c2wasm_platform.h. This avoids link-time collisions when both
   c2wasm and bas2wasm are linked into the same binary.
+
+  IMPORTANT: any NEW non-static global added to c2wasm whose name also
+  exists in bas2wasm MUST be added to that #define block (and the
+  matching one in bas2wasm_platform.h). Standalone CLIs and the
+  firmware tolerate a missing prefix (xtensa toolchain merges
+  duplicate tentative definitions), but the Qt simulator links both
+  embed libs into one binary under a strict -fno-common host linker
+  and fails with "multiple definition of '<name>'". Build the
+  simulator after changing compiler globals — it's the canonical
+  detector for this regression.
 
 Simulator usage:
 

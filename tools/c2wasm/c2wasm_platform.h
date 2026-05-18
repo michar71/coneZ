@@ -80,6 +80,9 @@ void  cw_fatal(const char *fmt, ...);    /* calls on_error + longjmp */
 #define type_had_const     cw_type_had_const
 #define type_had_unsigned  cw_type_had_unsigned
 #define src_file       cw_src_file
+#define fold_p         cw_fold_p
+#define fold_a         cw_fold_a
+#define fold_b         cw_fold_b
 
 #else /* standalone */
 
