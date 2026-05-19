@@ -41,3 +41,6 @@ tools/c2wasm/c2wasm
 tools/sewerpipe/sewerpipe
 tools/sewerpipe/test/__pycache__/
 simulator/conez/build/
+
+# Claude Code local session/agent files
+.claude/
