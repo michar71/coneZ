@@ -1,3 +1,6 @@
+' EXPECTED:
+' 0 1 0 2.718282 0.999999 3 0.785398 1.5
+
 ' Float math via host imports: SIN, COS, TAN, EXP, LOG, LOG2, ATAN2, FMOD
 S# = SIN(0.0)
 C# = COS(0.0)

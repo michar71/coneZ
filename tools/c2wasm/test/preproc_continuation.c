@@ -1,4 +1,6 @@
 /* Test: backslash line continuation in #define */
+// EXPECTED:
+// 600
 #include <conez_api.h>
 
 #define LONG_VALUE 100 + \

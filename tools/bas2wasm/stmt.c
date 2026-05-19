@@ -22,14 +22,32 @@ static void compile_format(void) {
     memcpy(raw, data_buf + raw_off, raw_len);
 #endif
     raw[raw_len] = 0;
+
+    /* Build the C-style format string. `%`/`&`/`$` translate to a printf
+     * conversion, but the FINAL conversion char is decided per-argument
+     * (once we know its actual type) — see the patching below. We emit a
+     * placeholder 'd' here and remember each spec's local offset + which
+     * BASIC spec char it was. The format buffer holds one 4-byte cell per
+     * arg; an i64 doesn't fit, so i64 args (and the silent-garbage
+     * type/spec mismatches like i32→&, f32→%) are coerced to the right
+     * representation rather than reinterpreting raw bits. */
     char cfmt[512];
     int ci = 0;
+    int spec_local[FMT_BUF_SIZE / 4];   /* cfmt index of each conversion char */
+    char spec_raw[FMT_BUF_SIZE / 4];    /* '%' / '&' / '$' per spec */
+    int nspec = 0;
     for (const char *p = raw; *p; p++) {
         if (ci >= (int)sizeof(cfmt) - 3) { error_at("FORMAT string too long"); return; }
-        if (*p == '%') { cfmt[ci++] = '%'; cfmt[ci++] = 'd'; }
-        else if (*p == '$') { cfmt[ci++] = '%'; cfmt[ci++] = 's'; }
-        else if (*p == '&') { cfmt[ci++] = '%'; cfmt[ci++] = 'f'; }
-        else cfmt[ci++] = *p;
+        if (*p == '%' || *p == '$' || *p == '&') {
+            if (nspec >= FMT_BUF_SIZE / 4) { error_at("too many FORMAT specifiers"); return; }
+            cfmt[ci++] = '%';
+            spec_raw[nspec] = *p;
+            spec_local[nspec] = ci;     /* conversion char goes here */
+            cfmt[ci++] = 'd';           /* placeholder, patched per arg */
+            nspec++;
+        } else {
+            cfmt[ci++] = *p;
+        }
     }
     cfmt[ci++] = '\n'; cfmt[ci] = 0;
     data_len = raw_off;
@@ -38,17 +56,33 @@ static void compile_format(void) {
     int nargs = 0;
     while (want(TOK_COMMA)) {
         if (nargs >= FMT_BUF_SIZE / 4) { error_at("too many FORMAT arguments"); return; }
+        char spec = (nargs < nspec) ? spec_raw[nargs] : '%';
+        char conv;
         emit_i32_const(0xF000);
         expr();
         VType t = vpop();
-        if (t == T_F32) {
+        if (t == T_I64) {
+            /* i64 can't fit a 4-byte cell — render to a pool string and
+             * print it with %s (exact, same as `>`/STR$). */
+            emit_call(IMP_STR_FROM_I64);
+            emit_i32_store(nargs * 4);
+            conv = 's';
+        } else if (t == T_STR) {
+            emit_i32_store(nargs * 4);
+            conv = 's';
+        } else if (spec == '&') {
+            /* float intent: ensure the cell really holds an f32 */
+            if (t != T_F32) emit_op(OP_F32_CONVERT_I32_S);
             buf_byte(CODE, OP_F32_STORE); buf_uleb(CODE, 2); buf_uleb(CODE, nargs * 4);
-        } else if (t == T_I64) {
-            emit_op(OP_I32_WRAP_I64);
-            emit_i32_store(nargs * 4);
+            conv = 'f';
         } else {
+            /* int intent (`%`, or `$` given a number): truncate f32 → i32 */
+            if (t == T_F32) emit_op(OP_I32_TRUNC_F32_S);
             emit_i32_store(nargs * 4);
+            conv = 'd';
         }
+        if (nargs < nspec)
+            dbuf_set(fmt_off + spec_local[nargs], conv);
         nargs++;
     }
 

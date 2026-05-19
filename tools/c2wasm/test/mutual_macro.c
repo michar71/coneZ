@@ -1,4 +1,7 @@
 /* Test: mutual macro recursion doesn't cause infinite loop */
+// EXPECTED:
+// 10
+// 20
 #include <conez_api.h>
 
 /* These mutually reference each other — must not infinite loop */

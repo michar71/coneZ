@@ -1,4 +1,8 @@
 /* Test: long long global init (fix #2) */
+// EXPECTED:
+// 42
+// -100
+// 999
 #include <conez_api.h>
 
 long long g1 = 42;

@@ -1,3 +1,7 @@
+' EXPECTED:
+' Hello World
+' 14
+
 ' DECLARE SUB with params, including the no-param case
 DECLARE SUB GREET NAME$
 DECLARE SUB SHOUT

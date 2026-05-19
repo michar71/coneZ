@@ -1,4 +1,12 @@
 /* Test: %= with float, bitwise compound ops with float coercion */
+// EXPECTED:
+// 1.5
+// 1
+// 15
+// 255
+// 240
+// 16
+// 16
 #include <conez_api.h>
 
 void setup(void) {

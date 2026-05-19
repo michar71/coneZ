@@ -1,4 +1,8 @@
 /* Test: implicit return for non-void functions without explicit return */
+// EXPECTED:
+// 5
+// 0
+// 0
 #include <conez_api.h>
 
 /* Function with return only on some paths — needs implicit return */

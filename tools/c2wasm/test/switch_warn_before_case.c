@@ -1,4 +1,6 @@
 /* Test: statements before first case — compiles with warning */
+// EXPECTED:
+// 10
 #include <conez_api.h>
 
 void setup(void) {

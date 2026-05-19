@@ -1,4 +1,7 @@
 /* sizeof(struct_variable) must return the actual struct size, not 4. */
+// EXPECTED:
+// 16
+// 16
 #include <conez_api.h>
 
 struct big { int a; int b; int c; int d; };

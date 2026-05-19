@@ -1,4 +1,6 @@
 /* Test: double pre/post increment/decrement */
+// EXPECTED:
+// 1
 #include <conez_api.h>
 
 void setup(void) {

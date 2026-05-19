@@ -1,4 +1,14 @@
 /* Test: math import functions */
+// EXPECTED:
+// 0
+// 1
+// 0
+// 0.785398
+// 1024
+// 1
+// 0
+// 3
+// 1.5
 #include <conez_api.h>
 
 void setup(void) {

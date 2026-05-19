@@ -1,4 +1,8 @@
 /* Test: curve helper imports */
+// EXPECTED:
+// 0
+// 1
+// 200
 #include <conez_api.h>
 
 void setup(void) {

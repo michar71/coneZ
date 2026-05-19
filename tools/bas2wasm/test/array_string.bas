@@ -1,3 +1,10 @@
+' EXPECTED:
+' hello world ConeZ
+' replaced
+' world
+' replaced world
+' alpha omega
+
 ' String arrays — each cell holds a pool-allocated string handle (i32 ptr)
 DIM S$(5)
 S$(1) = "hello"

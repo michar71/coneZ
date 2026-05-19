@@ -1,4 +1,13 @@
 /* Test: type casts, sizeof, type coercion */
+// EXPECTED:
+// 7
+// 3
+// 1
+// 4
+// 4
+// 1
+// 8
+// 42
 #include <conez_api.h>
 
 void setup(void) {

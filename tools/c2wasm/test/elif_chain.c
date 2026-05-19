@@ -1,4 +1,6 @@
 /* Test: #elif chain with first branch taken */
+// EXPECTED:
+// 10
 #include <conez_api.h>
 
 #define X 1

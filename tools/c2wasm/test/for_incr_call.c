@@ -1,4 +1,6 @@
 /* Test: for-loop increment with function call (exercises call fixup adjustment) */
+// EXPECTED:
+// 3
 #include <conez_api.h>
 
 void setup(void) {

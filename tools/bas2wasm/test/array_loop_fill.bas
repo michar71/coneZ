@@ -1,3 +1,6 @@
+' EXPECTED:
+' sum of squares 1..20 = 2870
+
 ' Loop-driven array fill + sum
 DIM A(20)
 FOR I = 1 TO 20

@@ -1,4 +1,6 @@
 /* Test: forward declaration with matching definition */
+// EXPECTED:
+// 30
 #include <conez_api.h>
 
 int compute(int x, int y);

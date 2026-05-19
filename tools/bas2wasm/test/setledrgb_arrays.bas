@@ -1,3 +1,6 @@
+' EXPECTED:
+' ok
+
 ' SETLEDRGB(aR, aG, aB) — loops over LED count, reads each array, writes pixels
 DIM AR(50)
 DIM AG(50)

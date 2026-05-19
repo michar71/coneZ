@@ -1,4 +1,8 @@
 /* Test: #if MACRO_NAME expansion */
+// EXPECTED:
+// 1
+// 0
+// 0
 #include <conez_api.h>
 
 #define VERSION 3

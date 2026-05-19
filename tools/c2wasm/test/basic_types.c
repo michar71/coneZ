@@ -1,4 +1,21 @@
 /* Test: basic types, globals, locals, initializers, const */
+// EXPECTED:
+// 1
+// 2.5
+// 65
+// 100
+// 200
+// 300
+// 10
+// 3.14
+// 99
+// -7
+// 42
+// 0.5
+// 255
+// 1
+// 2
+// 3
 #include <conez_api.h>
 
 #define MAGIC 42

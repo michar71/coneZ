@@ -1,3 +1,7 @@
+' EXPECTED:
+' 0 0 0 0 0 0 0 0 0
+' 0 0 0 0
+
 ' Sensor API smoke test (IMU + env, float-returning forms)
 P# = PITCH#
 R# = ROLL#

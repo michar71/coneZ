@@ -1,3 +1,10 @@
+' EXPECTED:
+' hello hello <>
+' abcdefgh
+' ABCxyz42
+' [one]
+' abcdabcd
+
 ' String concatenation edge cases
 
 ' Empty string on either side

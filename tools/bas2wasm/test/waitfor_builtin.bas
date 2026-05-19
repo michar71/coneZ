@@ -1,3 +1,7 @@
+' EXPECTED:
+' 1 1 1 0 0 0
+' x=7
+
 ' WAITFOR(event, source, condition, trigger, timeout) — 5-arg builtin
 ' that dispatches to delay_ms / wait_pps / wait_param based on event.
 ' All if-blocks must have void signature; result flows through a scratch local.

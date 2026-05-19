@@ -1,4 +1,7 @@
 /* Test: #if negative macro values */
+// EXPECTED:
+// 1
+// 1
 #include <conez_api.h>
 
 #define NEG -1

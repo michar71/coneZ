@@ -1,3 +1,6 @@
+' EXPECTED:
+' hello!
+
 ' SELECT CASE with string expression
 S$ = "hello"
 SELECT CASE S$

@@ -1,4 +1,8 @@
 /* Test: int const and const int at global scope (fix #8) */
+// EXPECTED:
+// 30
+// 3.14
+// 2.718
 #include <conez_api.h>
 
 const int A = 10;

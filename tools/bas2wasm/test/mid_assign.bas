@@ -1,3 +1,9 @@
+' EXPECTED:
+' Hello Earth
+' ABXXEF
+' ABC3456789
+' #ab#######
+
 ' MID$ assignment — in-place character replacement (never grows or shrinks)
 A$ = "Hello World"
 MID$(A$, 7, 5) = "Earth"

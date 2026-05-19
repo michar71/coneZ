@@ -175,6 +175,17 @@ static int64_t fold_slot_as_i64(const FoldSlot *s) {
     return 0;
 }
 
+/* True if the just-parsed expression compiled down to exactly one integer
+ * constant equal to 0 (i.e. a null pointer constant: `p = 0;` is legal,
+ * `p = 100;` is not). fold_b holds the newest emitted constant; it must be
+ * the tail of CODE for it to represent the whole RHS. */
+static int last_expr_is_const_zero(void) {
+    return (fold_b.valid == 1 || fold_b.valid == 2)
+        && fold_b.buf == CODE
+        && fold_b.buf_end == CODE->len
+        && fold_slot_as_i64(&fold_b) == 0;
+}
+
 /* Replace two adjacent constants in CODE with a single folded constant.
  * Returns 1 on success (op is consumed), 0 if not foldable.
  * *out_result is set to the wasm-stack type of the folded value.
@@ -901,6 +912,18 @@ static CType postfix_expr(void) {
                 expr_last_elem_size = type_element_size(expr_last_type);
                 t = CT_INT;
                 last_var_sym = NULL;
+            } else if (type_is_struct(elem_type)) {
+                /* a[i] where element is a struct: leave the element's base
+                 * address on the stack so a following .field can offset into
+                 * it (same contract as emit_member_access for nested structs).
+                 * Do NOT load and do NOT record a scalar lvalue. */
+                lvalue_addr_local = -1;
+                last_var_sym = NULL;
+                expr_last_has_type = 1;
+                expr_last_type = elem_type;
+                expr_last_is_ptr = 0;
+                expr_last_elem_size = struct_types[elem_type.struct_id].size;
+                t = CT_STRUCT;
             } else {
                 /* Scalar element: keep lvalue address and load value. */
                 lvalue_addr_local = alloc_local(WASM_I32);
@@ -1460,10 +1483,10 @@ static CType prec_expr_tail(CType left, int min_prec) {
             else emit_op(OP_I32_DIV_S);
             break;
         case TOK_PERCENT:
-            if (result == CT_DOUBLE) {
-                emit_call(IMP_FMOD);
-            } else if (result == CT_FLOAT) {
-                emit_call(IMP_FMODF);
+            if (result == CT_DOUBLE || result == CT_FLOAT) {
+                /* C11 6.5.5: the operands of '%' shall have integer type. */
+                error_at("invalid operands to binary '%' (floating-point; '%' requires integer operands)");
+                emit_call(result == CT_DOUBLE ? IMP_FMOD : IMP_FMODF);
             } else if (result == CT_ULONG_LONG) {
                 emit_op(OP_I64_REM_U);
             } else if (result == CT_LONG_LONG) {
@@ -1563,6 +1586,17 @@ CType assignment_expr(void) {
             if (type_is_struct(sym->type_info)) { error_fmt("struct assignment not supported (use field-by-field copy)"); return CT_INT; }
             if (sym->is_const) error_fmt("assignment to const variable '%s'", name);
             CType rhs = assignment_expr();
+            /* C11 6.5.16.1: assigning an integer to a pointer requires an
+             * explicit cast; the sole exception is a null pointer constant
+             * (integer constant 0). expr_last_is_ptr still reflects the RHS
+             * here (it is reassigned for the LHS below). */
+            if (type_is_pointer(sym->type_info) && !expr_last_is_ptr
+                && (rhs == CT_INT || rhs == CT_UINT || rhs == CT_CHAR
+                    || rhs == CT_UCHAR || rhs == CT_LONG_LONG
+                    || rhs == CT_ULONG_LONG)
+                && !last_expr_is_const_zero()) {
+                error_fmt("incompatible integer to pointer conversion assigning to '%s' (use an explicit cast)", name);
+            }
             emit_coerce(rhs, sym->ctype);
             emit_sym_store_and_reload(sym);
             expr_last_is_ptr = type_is_pointer(sym->type_info) || type_is_array(sym->type_info);
@@ -1615,7 +1649,10 @@ CType assignment_expr(void) {
             case TOK_MINUS_EQ:  emit_op(result == CT_DOUBLE ? OP_F64_SUB : result == CT_FLOAT ? OP_F32_SUB : (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_SUB : OP_I32_SUB); break;
             case TOK_STAR_EQ:   emit_op(result == CT_DOUBLE ? OP_F64_MUL : result == CT_FLOAT ? OP_F32_MUL : (result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_MUL : OP_I32_MUL); break;
             case TOK_SLASH_EQ:  if (result == CT_DOUBLE) emit_op(OP_F64_DIV); else if (result == CT_FLOAT) emit_op(OP_F32_DIV); else if (result == CT_ULONG_LONG) emit_op(OP_I64_DIV_U); else if (result == CT_LONG_LONG) emit_op(OP_I64_DIV_S); else if (result == CT_UINT) emit_op(OP_I32_DIV_U); else emit_op(OP_I32_DIV_S); break;
-            case TOK_PERCENT_EQ: if (result == CT_DOUBLE) emit_call(IMP_FMOD); else if (result == CT_FLOAT) emit_call(IMP_FMODF); else if (result == CT_ULONG_LONG) emit_op(OP_I64_REM_U); else if (result == CT_LONG_LONG) emit_op(OP_I64_REM_S); else if (result == CT_UINT) emit_op(OP_I32_REM_U); else emit_op(OP_I32_REM_S); break;
+            case TOK_PERCENT_EQ:
+                if (result == CT_DOUBLE || result == CT_FLOAT)
+                    error_at("invalid operands to '%=' (floating-point; '%' requires integer operands)");
+                if (result == CT_DOUBLE) emit_call(IMP_FMOD); else if (result == CT_FLOAT) emit_call(IMP_FMODF); else if (result == CT_ULONG_LONG) emit_op(OP_I64_REM_U); else if (result == CT_LONG_LONG) emit_op(OP_I64_REM_S); else if (result == CT_UINT) emit_op(OP_I32_REM_U); else emit_op(OP_I32_REM_S); break;
             case TOK_AMP_EQ:    emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_AND : OP_I32_AND); break;
             case TOK_PIPE_EQ:   emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_OR : OP_I32_OR); break;
             case TOK_CARET_EQ:  emit_op((result == CT_LONG_LONG || result == CT_ULONG_LONG) ? OP_I64_XOR : OP_I32_XOR); break;

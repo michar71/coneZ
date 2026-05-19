@@ -1,3 +1,7 @@
+' EXPECTED:
+' 5 3.5 -1 0 1 -1
+' 3 -3 42
+
 ' Integer/float conversion + ABS + SGN
 A = ABS(-5)
 B# = ABS(-3.5)

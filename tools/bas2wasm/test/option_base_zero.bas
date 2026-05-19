@@ -1,3 +1,6 @@
+' EXPECTED:
+' 0, 2, 10, 12
+
 OPTION BASE 0
 DIM A(2)
 A(0) = 10

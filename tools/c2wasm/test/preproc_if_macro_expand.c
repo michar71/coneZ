@@ -1,4 +1,8 @@
 /* Test: #if macro expansion of identifiers/expressions */
+// EXPECTED:
+// 1
+// 1
+// 0
 #include <conez_api.h>
 
 #define A B

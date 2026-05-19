@@ -1,4 +1,33 @@
 /* Test: integer, float, char, string, hex, octal literals */
+// EXPECTED:
+// 42
+// 0
+// -1
+// 255
+// 26
+// 57005
+// 493
+// 8
+// 3.14
+// 0.5
+// 1
+// 2.718
+// 5
+// 0.25
+// 65
+// 48
+// 32
+// 10
+// 9
+// 0
+// 92
+// hello
+//
+// with	tab
+//
+// with\backslash
+//
+// part1 part2
 #include <conez_api.h>
 
 void setup(void) {

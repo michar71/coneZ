@@ -1,3 +1,7 @@
+' EXPECTED:
+' total=36
+' sum=8
+
 ' Nested loops — exercises block_depth tracking
 TOTAL = 0
 FOR I = 1 TO 3

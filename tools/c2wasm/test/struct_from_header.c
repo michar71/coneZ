@@ -1,4 +1,7 @@
 /* Struct defined in a #include'd user header. */
+// EXPECTED:
+// 60
+// 12
 #include <conez_api.h>
 #include "struct_header.h"
 

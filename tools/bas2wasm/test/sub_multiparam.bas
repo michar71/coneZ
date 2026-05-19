@@ -1,3 +1,8 @@
+' EXPECTED:
+' Alice 30 1.65
+' Bob 25 1.8
+' clamp=10
+
 ' SUB and FUNCTION with mixed param types
 SUB SHOW NAME$, AGE, HEIGHT#
   FORMAT "$ % &", NAME$, AGE, HEIGHT#

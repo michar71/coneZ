@@ -1,3 +1,6 @@
+' EXPECTED:
+' loaded=0 size=0 v0=0 gamma128=128
+
 ' LUT API smoke test (LOADLUT/LUT/LUTSIZE/GAMMA256)
 LOADED = LOADLUT(0)
 N = LUTSIZE(0)

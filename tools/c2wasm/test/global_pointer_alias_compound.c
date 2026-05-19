@@ -1,4 +1,9 @@
 /* Test: compound ops through pointer aliases on globals */
+// EXPECTED:
+// 15
+// 16
+// 2.5
+// 2
 #include <conez_api.h>
 
 int gi = 10;

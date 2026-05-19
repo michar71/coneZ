@@ -1,4 +1,8 @@
 /* Test: #if with multi-digit numbers */
+// EXPECTED:
+// 1
+// 1
+// 1
 #include <conez_api.h>
 
 #if 10

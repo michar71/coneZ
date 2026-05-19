@@ -1,3 +1,11 @@
+' EXPECTED:
+' Hello World
+' Hello Alice
+' Result: Wow!
+' Inside: data processed
+' After: original
+' N=42 S=hello V=3.14
+
 ' Test string params in SUB
 SUB GREET NAME$
   FORMAT "Hello $", NAME$

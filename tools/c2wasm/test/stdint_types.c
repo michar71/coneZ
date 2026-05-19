@@ -1,5 +1,26 @@
 // Test stdint types: int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t,
 // int64_t, uint64_t, size_t
+// EXPECTED:
+// 42
+// 200
+// 1000
+// 50000
+// -1
+// 123456
+// 100
+// 200
+// 64
+// 1
+// 1
+// 2
+// 2
+// 4
+// 4
+// 8
+// 8
+// 4
+// 30
+// 1000000000000
 #include <conez_api.h>
 
 void setup() {

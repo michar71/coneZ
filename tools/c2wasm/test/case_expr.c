@@ -1,4 +1,6 @@
 /* Test: case labels with constant expressions (fix #13) */
+// EXPECTED:
+// 1
 #include <conez_api.h>
 
 #define BASE 10

@@ -1,4 +1,9 @@
 /* Test WASM-native math builtins (single opcode, no import) */
+// EXPECTED:
+// 2
+// 3.5
+// 2
+// 3
 #include <conez_api.h>
 
 void setup(void) {

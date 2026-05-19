@@ -1,4 +1,6 @@
 /* Test: program with only loop(), no setup() */
+// EXPECTED:
+// 1
 #include <conez_api.h>
 
 static int count = 0;

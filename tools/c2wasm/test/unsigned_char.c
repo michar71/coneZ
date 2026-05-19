@@ -1,4 +1,16 @@
 /* Test: unsigned char — sizeof, array element size, load/store, coercion */
+// EXPECTED:
+// 1
+// 255
+// 128
+// 0
+// 200
+// 255
+// 250
+// 127
+// 104
+// 105
+// 0
 #include <conez_api.h>
 
 static unsigned char buf[16];

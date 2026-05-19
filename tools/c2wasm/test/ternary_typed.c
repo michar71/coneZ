@@ -1,4 +1,12 @@
 /* Test: ternary with float and double result types (fix #1) */
+// EXPECTED:
+// 1.5
+// 2.5
+// 1.5
+// 2.5
+// 10
+// 2
+// 200
 #include <conez_api.h>
 
 void setup(void) {

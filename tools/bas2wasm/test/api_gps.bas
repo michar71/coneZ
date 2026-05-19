@@ -1,3 +1,7 @@
+' EXPECTED:
+' 0 0 0 0 0 0 0
+' 0 0 0 0
+
 ' GPS API smoke test
 LAT# = GPSLAT#()
 LON# = GPSLON#()

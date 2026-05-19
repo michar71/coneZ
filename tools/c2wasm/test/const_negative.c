@@ -1,4 +1,11 @@
 /* Test: const int with negative, char, and float initializers */
+// EXPECTED:
+// -1
+// -10
+// 65
+// 0
+// 3.14
+// -3.14
 #include <conez_api.h>
 
 const int NEG_ONE = -1;

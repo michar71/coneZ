@@ -1,4 +1,10 @@
 /* Test: short, signed, _Bool type keywords */
+// EXPECTED:
+// 42
+// -10
+// 1
+// 0
+// 65
 #include <conez_api.h>
 
 void setup(void) {

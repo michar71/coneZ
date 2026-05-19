@@ -1,3 +1,9 @@
+' EXPECTED:
+' -1 0 -1 0
+' 1 7 -1 -6
+' -1 -1 -1
+' 0 -1 6
+
 ' BASIC AND/OR are bitwise — combined with the -1/0 truth convention they
 ' double as logical operators. This test pins down the actual semantics.
 

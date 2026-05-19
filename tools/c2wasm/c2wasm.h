@@ -756,6 +756,21 @@ static inline void emit_br_if(int d) { buf_byte(CODE, OP_BR_IF); buf_uleb(CODE, 
 static inline void emit_drop(void)   { buf_byte(CODE, OP_DROP); }
 static inline void emit_return(void) { buf_byte(CODE, OP_RETURN); }
 
+/* Narrow the i32 on top of stack to 8 bits. unsigned char: zero-extend
+ * (x & 0xFF). signed char: sign-extend the low byte ((x<<24)>>24) — the
+ * shift idiom is used instead of i32.extend8_s so it works on wasm3
+ * builds without the sign-extension proposal. */
+static inline void emit_narrow_u8(void) {
+    buf_byte(CODE, OP_I32_CONST); buf_sleb(CODE, 0xFF);
+    emit_op(OP_I32_AND);
+}
+static inline void emit_narrow_s8(void) {
+    buf_byte(CODE, OP_I32_CONST); buf_sleb(CODE, 24);
+    emit_op(OP_I32_SHL);
+    buf_byte(CODE, OP_I32_CONST); buf_sleb(CODE, 24);
+    emit_op(OP_I32_SHR_S);
+}
+
 /* Coerce top of wasm stack to i32 (signed target) */
 static inline void emit_coerce_i32(CType from) {
     if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_S);
@@ -798,7 +813,20 @@ static inline void emit_promote_f64(CType from) {
 /* General coerce between any two types */
 static inline void emit_coerce(CType from, CType to) {
     if (from == to) return;
-    if (to == CT_UCHAR || to == CT_UINT) {
+    if (to == CT_UCHAR) {
+        /* Convert to i32, then narrow to 8 bits (mod 256). Previously
+         * uchar was lumped with uint and left 32-bit — so e.g.
+         * `unsigned char c = 255 + 128;` stored 383 instead of 127. */
+        if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_U);
+        else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_U);
+        else if (from == CT_LONG_LONG || from == CT_ULONG_LONG) emit_op(OP_I32_WRAP_I64);
+        emit_narrow_u8();
+    } else if (to == CT_CHAR) {
+        if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_S);
+        else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_S);
+        else if (from == CT_LONG_LONG || from == CT_ULONG_LONG) emit_op(OP_I32_WRAP_I64);
+        emit_narrow_s8();
+    } else if (to == CT_UINT) {
         /* float→uint: unsigned trunc */
         if (from == CT_FLOAT) emit_op(OP_I32_TRUNC_F32_U);
         else if (from == CT_DOUBLE) emit_op(OP_I32_TRUNC_F64_U);
@@ -811,7 +839,7 @@ static inline void emit_coerce(CType from, CType to) {
         else if (from == CT_FLOAT) emit_op(OP_I64_TRUNC_F32_U);
         else if (from == CT_DOUBLE) emit_op(OP_I64_TRUNC_F64_U);
         /* CT_LONG_LONG → already i64, same bit pattern */
-    } else if (to == CT_INT || to == CT_CHAR) {
+    } else if (to == CT_INT) {
         emit_coerce_i32(from);
     } else if (to == CT_LONG_LONG) {
         emit_coerce_i64(from);

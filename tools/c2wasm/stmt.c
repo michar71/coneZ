@@ -729,7 +729,11 @@ void parse_stmt(void) {
             CType ct = expr();
             emit_coerce(ct, ret);
         } else if (ret != CT_VOID) {
-            /* Bare return; in non-void function — push default value */
+            /* C11 6.8.6.4: `return;` with no expression in a value-returning
+             * function is a constraint violation. Still push a default so the
+             * wasm stack stays balanced for the remainder of the parse. */
+            error_fmt("non-void function '%s' must return a value",
+                      func_bufs[cur_func].name ? func_bufs[cur_func].name : "?");
             if (ret == CT_DOUBLE) emit_f64_const(0.0);
             else if (ret == CT_FLOAT) emit_f32_const(0.0f);
             else if (ret == CT_LONG_LONG || ret == CT_ULONG_LONG) emit_i64_const(0);
@@ -1129,6 +1133,7 @@ void parse_top_level(void) {
         if (type_had_pointer) s->type_info = type_pointer(s->type_info);
     } else {
         s->type_info = type_base(base_type);
+        if (type_had_pointer) s->type_info = type_pointer(s->type_info);
     }
     if (global_is_struct_val) {
         /* Allocate the struct instance in data; global holds the base pointer */
@@ -1259,7 +1264,8 @@ void parse_top_level(void) {
 
     /* Handle multiple declarations: static int a = 0, b = 0; or int *a, *b; */
     while (accept(TOK_COMMA)) {
-        while (tok == TOK_STAR) next_token();  /* skip pointer stars */
+        int decl_is_pointer = 0;
+        while (tok == TOK_STAR) { next_token(); decl_is_pointer = 1; }
         if (tok != TOK_NAME) { error_at("expected variable name"); break; }
         strncpy(name, tok_sval, sizeof(name) - 1); name[sizeof(name) - 1] = 0;
         next_token();
@@ -1295,6 +1301,7 @@ void parse_top_level(void) {
             s->type_info = type_base_struct(base_struct_id);
         else
             s->type_info = type_base(base_type);
+        if (decl_is_pointer) s->type_info = type_pointer(s->type_info);
         if (decl_is_struct_val) {
             int sz = struct_types[base_struct_id].size;
             int off = add_data_zeros(sz, 4);

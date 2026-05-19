@@ -1,4 +1,8 @@
 /* Test: #if macro expressions with shifts and unary minus */
+// EXPECTED:
+// 1
+// 0
+// 1
 #include <conez_api.h>
 
 #define HI (1ULL << 63)

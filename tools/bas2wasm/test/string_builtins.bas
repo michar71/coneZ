@@ -1,3 +1,8 @@
+' EXPECTED:
+' 5 one Con neZ CONEZ conez
+' 2 0 A 65 9999999999 3.14
+' 42 hi hi hi     XXXX FF 10
+
 ' String builtins
 S$ = "ConeZ"
 

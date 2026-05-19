@@ -1,4 +1,6 @@
 /* Test: #undef removes a previously defined macro */
+// EXPECTED:
+// 99
 #include <conez_api.h>
 
 #define FOO 42

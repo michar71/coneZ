@@ -1,4 +1,7 @@
 /* Test that recursive macros don't cause infinite loop */
+// EXPECTED:
+// 42
+// 99
 #include <conez_api.h>
 
 /* These should not cause infinite recursion */

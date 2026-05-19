@@ -1,3 +1,10 @@
+' EXPECTED:
+' 18
+' 12
+' 10
+' 24
+' 15
+
 ' Regression test: ^ inside a larger expression used to leak vstack entries
 ' and skip i32→f32 coercion on the outer operand.
 

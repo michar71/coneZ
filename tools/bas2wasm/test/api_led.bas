@@ -1,3 +1,6 @@
+' EXPECTED:
+' led_max=0
+
 ' LED API smoke test — SETLEDCOL takes (R,G,B), returns 0
 S = SETLEDCOL(255, 0, 0)
 S = SETLEDCOL(0, 255, 0)

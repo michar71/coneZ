@@ -1,3 +1,6 @@
+' EXPECTED:
+' 0 0 0
+
 ' Smoke test for statement-form builtins. Confirms vstack stays clean
 ' through SETLEDCOL/WAIT/USEGAMMA when chained inside an expression
 ' (where vsp doesn't reset between calls).

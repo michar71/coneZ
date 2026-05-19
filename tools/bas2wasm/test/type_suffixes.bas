@@ -1,3 +1,6 @@
+' EXPECTED:
+' hi 1.5 10000000000 42
+
 ' Type suffixes: $ (string), # (float), & (i64); plain = i32
 S$ = "hi"
 F# = 1.5

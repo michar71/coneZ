@@ -1,4 +1,6 @@
 /* Test: unsigned long long macro initializer parsing */
+// EXPECTED:
+// -1
 #include <conez_api.h>
 
 #define UMAX64 18446744073709551615ULL

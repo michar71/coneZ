@@ -1,4 +1,7 @@
 /* Test: #if character escape parsing */
+// EXPECTED:
+// 1
+// 1
 #include <conez_api.h>
 
 #if '\101' == 'A'

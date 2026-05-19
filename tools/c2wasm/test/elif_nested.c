@@ -1,4 +1,6 @@
 /* Test: nested #if inside #elif (fix #6/#7 combined) */
+// EXPECTED:
+// 2
 #include <conez_api.h>
 
 #define A 0

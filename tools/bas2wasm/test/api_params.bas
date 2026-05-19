@@ -1,3 +1,6 @@
+' EXPECTED:
+' 0 0 0
+
 ' Param + wait API smoke test
 V = GETPARAM(0)
 W = GETPARAM(1)

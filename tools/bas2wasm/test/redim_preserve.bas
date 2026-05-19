@@ -1,3 +1,7 @@
+' EXPECTED:
+' 99
+' 5
+
 DIM P(4, 3)
 P(2, 2) = 99
 REDIM PRESERVE P(4, 5)

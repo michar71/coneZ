@@ -1,3 +1,6 @@
+' EXPECTED:
+' outer: 100
+
 ' LOCAL inside SUB shadows the same-named global
 G = 100
 SUB INNER

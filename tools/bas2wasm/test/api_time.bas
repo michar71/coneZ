@@ -1,3 +1,6 @@
+' EXPECTED:
+' 0 0 0 0 0 0 0 0 0 0 0
+
 ' Time/calendar API smoke test
 S = SECOND
 M = MINUTE

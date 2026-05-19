@@ -1,4 +1,18 @@
 /* Test: printf builtin with various format specifiers */
+// EXPECTED:
+// int: %d
+// negative: %d
+// hex: %x
+// HEX: %X
+// float: %.2f
+// float: %f
+// %d + %d = %d
+// i=%d f=%.1f
+// char: %c
+// str: %s
+// 100%%
+// [%5d]
+// [%-5d]
 #include <conez_api.h>
 
 void setup(void) {

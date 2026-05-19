@@ -1,3 +1,6 @@
+' EXPECTED:
+' 42
+
 DIM B(4)
 B(1) = 10
 REDIM B(6, 2)

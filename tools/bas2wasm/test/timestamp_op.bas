@@ -1,3 +1,8 @@
+' EXPECTED:
+' ts=0 s=1
+' ts64=0 s64=1
+' x=1
+
 ' TIMESTAMP / TIMESTAMP& — uptime / divisor
 T = TIMESTAMP(1000)        ' i32 millis / 1000 = seconds
 S = T + 1

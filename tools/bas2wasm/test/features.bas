@@ -1,3 +1,18 @@
+' EXPECTED:
+' 17 \ 3 = 5, 17 MOD 3 = 2
+' I=1
+' I=2
+' I=3
+' J=3
+' J=2
+' J=1
+' DOUBLE(5)=10
+' PI=3.14159
+' hello  
+'   hello
+' HELLO
+' hello
+
 ' Test QuickBASIC-compatible features
 
 ' Integer division and MOD

@@ -1,4 +1,6 @@
 /* Array of structs: layout is contiguous, accessed via subscript + member. */
+// EXPECTED:
+// 66
 #include <conez_api.h>
 
 struct vec2 {

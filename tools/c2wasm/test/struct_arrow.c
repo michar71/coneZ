@@ -1,4 +1,6 @@
 /* Struct pointer with -> access, malloc, field types. */
+// EXPECTED:
+// 479
 #include <conez_api.h>
 
 struct rgba {

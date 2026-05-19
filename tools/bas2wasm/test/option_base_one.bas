@@ -1,3 +1,6 @@
+' EXPECTED:
+' 1, 2, 21, 22
+
 OPTION BASE 1
 DIM B(2)
 B(1) = 21

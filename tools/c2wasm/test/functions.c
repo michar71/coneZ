@@ -1,4 +1,18 @@
 /* Test: user functions, forward declarations, recursion, return types */
+// EXPECTED:
+// hello
+//
+// 25
+// 9
+// 3
+// 50
+// 0
+// 100
+// 0
+// 1
+// 13
+// 64
+// 100
 #include <conez_api.h>
 
 /* Forward declaration */
@@ -20,7 +34,7 @@ static float avg(float a, float b) {
 }
 
 /* Multiple parameters */
-static int clamp(int val, int lo, int hi) {
+static int clampi(int val, int lo, int hi) {
     if (val < lo) return lo;
     if (val > hi) return hi;
     return val;
@@ -35,7 +49,7 @@ static int fib(int n) {
 /* Function calling other functions */
 static int compute(int x) {
     int sq = square(x);
-    int cl = clamp(sq, 0, 100);
+    int cl = clampi(sq, 0, 100);
     return cl;
 }
 
@@ -47,16 +61,16 @@ void setup(void) {
 
     print_f32(avg(2.0f, 4.0f)); /* 3.0 */
 
-    print_i32(clamp(50, 0, 100));   /* 50 */
-    print_i32(clamp(-10, 0, 100));  /* 0 */
-    print_i32(clamp(200, 0, 100));  /* 100 */
+    print_i32(clampi(50, 0, 100));   /* 50 */
+    print_i32(clampi(-10, 0, 100));  /* 0 */
+    print_i32(clampi(200, 0, 100));  /* 100 */
 
     print_i32(fib(0));   /* 0 */
     print_i32(fib(1));   /* 1 */
     print_i32(fib(7));   /* 13 */
 
-    print_i32(compute(8));   /* clamp(64, 0, 100) = 64 */
-    print_i32(compute(12));  /* clamp(144, 0, 100) = 100 */
+    print_i32(compute(8));   /* clampi(64, 0, 100) = 64 */
+    print_i32(compute(12));  /* clampi(144, 0, 100) = 100 */
 }
 
 void loop(void) {

@@ -1,6 +1,12 @@
 /* Test: preprocessor directives */
 
 /* Standard header includes — silently ignored */
+// EXPECTED:
+// 99
+// 100
+// 1
+// 10
+// 42
 #include <stdint.h>
 
 #include <conez_api.h>

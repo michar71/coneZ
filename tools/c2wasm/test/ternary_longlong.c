@@ -1,4 +1,6 @@
 /* Test: ternary with long long produces correct block type (fix #4) */
+// EXPECTED:
+// 100
 #include <conez_api.h>
 
 void setup(void) {

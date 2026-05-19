@@ -1,3 +1,6 @@
+' EXPECTED:
+' 0 -1 -1 -1 -1 -1
+
 ' String comparisons (lexicographic)
 A$ = "apple"
 B$ = "banana"

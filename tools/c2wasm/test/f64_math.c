@@ -1,4 +1,17 @@
 /* Test: f64 (double) math import calls (fix #19) */
+// EXPECTED:
+// 0
+// 1
+// 0
+// 0
+// 0
+// 0
+// 0
+// 1024
+// 1.5
+// 1
+// 0
+// 3
 #include <conez_api.h>
 
 void setup(void) {

@@ -1,3 +1,13 @@
+' EXPECTED:
+' i=42 L=9999999999 f=3.14159 s=ConeZ
+' 1 2 3 4
+' 1.5 2.5 3.5
+' alpha beta
+' path: \foo\bar = 42
+' hello, world
+' sum=43 prod=84
+' func=CONEZ
+
 ' FORMAT specifiers: % (i32/i64), & (f32), $ (string). Exercise all forms.
 I = 42
 L& = 9999999999&

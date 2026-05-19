@@ -220,8 +220,11 @@ function makeImports(state) {
                 const s = readStr(src).replace(/\s+$/, '');
                 const p = strAlloc(s.length + 1); writeStr(p, s); return p;
             },
-            basic_str_repeat: (src, n) => {
-                const s = readStr(src).repeat(Math.max(0, n));
+            // basic_str_repeat(n, char_code) -> n copies of CHR$(char_code)
+            // (matches firmware m3_str_repeat; STRING$(n,code) maps here).
+            basic_str_repeat: (n, code) => {
+                const cnt = Math.max(0, Math.min(4096, n));
+                const s = String.fromCharCode(code & 0xFF).repeat(cnt);
                 const p = strAlloc(s.length + 1); writeStr(p, s); return p;
             },
             basic_str_space: (n) => {
@@ -320,6 +323,54 @@ function makeImports(state) {
     };
 }
 
+// Run a single test file; returns { ok, output } or { error }.
+function runFile(fullpath, name) {
+    const wasmPath = path.join(tmpDir, name + '.wasm');
+    try {
+        execFileSync(bas2wasm, [fullpath, '-o', wasmPath], { stdio: 'pipe' });
+    } catch (e) {
+        return { error: 'compile error' };
+    }
+    const bytes = fs.readFileSync(wasmPath);
+    const state = { output: '', instance: null, strBump: STR_POOL_START, dimBump: 0x100 };
+    try {
+        const module = new WebAssembly.Module(bytes);
+        const inst = new WebAssembly.Instance(module, makeImports(state));
+        state.instance = inst;
+        if (inst.exports.setup) inst.exports.setup();   // bas2wasm exports setup()
+    } catch (e) {
+        return { error: 'run error: ' + e.message };
+    }
+    return { ok: true, output: state.output.trim() };
+}
+
+// --generate: snapshot current output into a `' EXPECTED:` block for any
+// non-reject test that lacks one, runs cleanly, and prints something.
+// Inserted at the top of the file (BASIC has no __LINE__-style sensitivity).
+if (process.argv.includes('--generate')) {
+    let added = 0, skipped = 0;
+    const files = fs.readdirSync(testDir).filter(f => f.endsWith('.bas')).sort();
+    for (const file of files) {
+        if (file.startsWith('reject_')) continue;
+        const fullpath = path.join(testDir, file);
+        let src = fs.readFileSync(fullpath, 'utf8');
+        if (parseExpected(src) !== null) continue;
+        const name = path.basename(file, '.bas');
+        const r = runFile(fullpath, name);
+        if (r.error || !r.output) { skipped++; continue; }
+        const block = "' EXPECTED:\n" +
+            r.output.split('\n').map(l => l === '' ? "'" : "' " + l).join('\n') +
+            '\n';
+        // Blank line separates the block from the program's own leading
+        // `' comment`, so parseExpected's `'`-line run terminates there.
+        fs.writeFileSync(fullpath, block + '\n' + src);
+        console.log(`  ${GREEN}gen${NC}   ${name}`);
+        added++;
+    }
+    console.log(`\n=== Generated ${added} EXPECTED blocks; ${skipped} skipped (no clean output) ===`);
+    process.exit(0);
+}
+
 let pass = 0, fail = 0, skip = 0;
 
 console.log('=== bas2wasm runtime test suite ===\n');
@@ -333,43 +384,19 @@ for (const file of files) {
     if (expected === null) { skip++; continue; }
 
     const name = path.basename(file, '.bas');
-    const wasmPath = path.join(tmpDir, name + '.wasm');
-    try {
-        execFileSync(bas2wasm, [fullpath, '-o', wasmPath], { stdio: 'pipe' });
-    } catch (e) {
-        console.log(`  ${RED}FAIL${NC}  ${name}  (compile error)`);
+    const r = runFile(fullpath, name);
+    if (r.error) {
+        console.log(`  ${RED}FAIL${NC}  ${name}  (${r.error})`);
         fail++;
         continue;
     }
-
-    const bytes = fs.readFileSync(wasmPath);
-    const state = {
-        output: '',
-        instance: null,
-        strBump: STR_POOL_START,
-        dimBump: 0x100,   // DIM array storage starts after the data section
-    };
-    try {
-        const module = new WebAssembly.Module(bytes);
-        const imports = makeImports(state);
-        const inst = new WebAssembly.Instance(module, imports);
-        state.instance = inst;
-        // bas2wasm exports `setup` (the top-level program body).
-        if (inst.exports.setup) inst.exports.setup();
-    } catch (e) {
-        console.log(`  ${RED}FAIL${NC}  ${name}  (run error: ${e.message})`);
-        fail++;
-        continue;
-    }
-
-    const got = state.output.trim();
-    if (got === expected) {
+    if (r.output === expected) {
         console.log(`  ${GREEN}PASS${NC}  ${name}`);
         pass++;
     } else {
         console.log(`  ${RED}FAIL${NC}  ${name}`);
         console.log(`    expected: ${JSON.stringify(expected)}`);
-        console.log(`    got:      ${JSON.stringify(got)}`);
+        console.log(`    got:      ${JSON.stringify(r.output)}`);
         fail++;
     }
 }

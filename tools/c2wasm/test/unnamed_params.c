@@ -1,4 +1,7 @@
 /* Test: functions with unnamed parameters */
+// EXPECTED:
+// 42
+// 99
 #include <conez_api.h>
 
 int add(int a, int) {

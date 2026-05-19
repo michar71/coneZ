@@ -433,6 +433,17 @@ static inline int alloc_local_for_vtype(VType t) {
     return alloc_local();
 }
 
+/* Patch a single byte already written into the data section (PSRAM-aware).
+ * Used to fix up FORMAT conversion chars once an arg's type is known. */
+static inline void dbuf_set(int pos, char c) {
+#ifdef BAS2WASM_USE_PSRAM
+    uint8_t b = (uint8_t)c;
+    bw_psram_write(data_buf + pos, &b, 1);
+#else
+    data_buf[pos] = c;
+#endif
+}
+
 static inline int add_string(const char *s, int len) {
     if (data_len + len + 1 > MAX_STRINGS) { error_at("string table full"); return 0; }
     int off = data_len;

@@ -1,4 +1,21 @@
 /* Test: #if constant expression evaluation */
+// EXPECTED:
+// 1
+// 0
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
+// 1
 #include <conez_api.h>
 
 #define VERSION 3

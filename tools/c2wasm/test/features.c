@@ -1,4 +1,8 @@
 /* Feature test: exercises many C language features */
+// EXPECTED:
+// features test: starting
+//
+// frame %d, brightness %.2f
 #include <conez_api.h>
 
 #define MAX_STEPS 16

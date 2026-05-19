@@ -1,3 +1,7 @@
+' EXPECTED:
+' 100: 100
+' 500: 500
+
 ' Deep recursion — exercises WASM stack-size flag in linker (well, the WASM
 ' interpreter's host stack via wasm3). Compiles to a simple tail-shaped recursion.
 FUNCTION COUNT_DOWN N

@@ -1,4 +1,14 @@
 /* Test: default label can appear anywhere in switch */
+// EXPECTED:
+// 200
+// 600
+// 700
+// 800
+// 1000
+// 1100
+// 1500
+// 1700
+// 1900
 #include <conez_api.h>
 
 #define VAL_A 10

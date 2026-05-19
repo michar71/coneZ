@@ -1,3 +1,9 @@
+' EXPECTED:
+' after-erase
+' new1
+' keep1 keep2
+' first third
+
 ' String array memory lifecycle: ERASE, non-preserve REDIM, and PRESERVE
 ' shrink must free per-element pool strings (or they'd leak).
 

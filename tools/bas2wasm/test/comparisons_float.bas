@@ -1,3 +1,6 @@
+' EXPECTED:
+' 0 -1 -1 0 -1 -1
+
 ' Float comparisons
 X# = 1.5
 Y# = 2.5

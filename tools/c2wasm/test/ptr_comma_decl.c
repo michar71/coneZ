@@ -1,4 +1,8 @@
 /* Test: pointer comma-separated declarations (fix #5) */
+// EXPECTED:
+// 3.14
+// 42
+// 100
 #include <conez_api.h>
 
 /* Global pointer + non-pointer in same declaration */

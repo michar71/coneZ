@@ -1,4 +1,8 @@
 /* Test: address-of global float/double/long long scalars */
+// EXPECTED:
+// 17
+// 1.75
+// 4
 #include <conez_api.h>
 
 long long gll = 10;

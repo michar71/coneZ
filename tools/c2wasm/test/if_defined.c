@@ -1,4 +1,9 @@
 /* Test: #if defined() and #if !defined() */
+// EXPECTED:
+// 1
+// 2
+// 3
+// 4
 #include <conez_api.h>
 
 #define HAS_FEATURE 1

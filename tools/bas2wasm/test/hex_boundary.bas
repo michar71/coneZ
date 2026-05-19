@@ -1,3 +1,6 @@
+' EXPECTED:
+' 2147483647 2147483648 4294967295 4294967296 2147483647 2147483648 9223372036854775807
+
 ' Hex literals at int32/int64 boundaries — both &H and 0x forms
 ' &H without & suffix: auto-promotes to i64 if > 2^31-1
 A = &H7FFFFFFF             ' max i32

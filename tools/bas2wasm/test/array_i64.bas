@@ -1,3 +1,8 @@
+' EXPECTED:
+' 9999999999 -1 1234567890123
+' 100 200
+' 42 99 0
+
 ' i64 arrays (DIM A&) — element-size 8 path
 DIM L&(5)
 L&(1) = 9999999999&

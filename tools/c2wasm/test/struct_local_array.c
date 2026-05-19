@@ -1,4 +1,6 @@
 /* Local array of struct. */
+// EXPECTED:
+// 21
 #include <conez_api.h>
 
 struct pair { int a; int b; };

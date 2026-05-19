@@ -1,4 +1,6 @@
 /* Test: nested #ifdef/#else doesn't leak (fix #6) */
+// EXPECTED:
+// 2
 #include <conez_api.h>
 
 #define OUTER 1

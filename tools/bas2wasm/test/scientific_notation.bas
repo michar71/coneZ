@@ -1,3 +1,7 @@
+' EXPECTED:
+' 1000 1500 0.015 24999999488 50 1000 -0.0015
+' 42 7
+
 ' Float literals with exponent: [eE][+-]?digits, with or without a decimal point
 A# = 1e3            ' 1000.0 (no dot)
 B# = 1.5e3          ' 1500.0

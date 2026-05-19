@@ -1,4 +1,9 @@
 /* Test: sizeof(expr) doesn't evaluate the expression */
+// EXPECTED:
+// 4
+// 0
+// 4
+// 8
 #include <conez_api.h>
 
 static int counter = 0;

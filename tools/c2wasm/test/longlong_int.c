@@ -1,4 +1,8 @@
 /* Test: 'long long int' parses as CT_LONG_LONG (fix #3) */
+// EXPECTED:
+// 8
+// 10
+// 20
 #include <conez_api.h>
 
 long long int x = 10;

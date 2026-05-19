@@ -735,10 +735,14 @@ The fold_basic/fold_nested/fold_unary/fold_compare/fold_mixed tests
 specifically pin down the constant-folding pass's behavior across
 i32/i64/f32/f64, arithmetic/bitwise/shift/comparison, mixed-type
 promotion, unary minus, and 3-slot nested-subexpression patterns.
-Currently 15 runtime tests — beyond the 5 fold tests, EXPECTED blocks
-have been added to arithmetic / assignment / bitwise / comparison /
-control_flow / comma_operator / scoping / switch_fallthrough / ternary
-/ unsigned_ops.
+Currently 92 runtime tests. Most EXPECTED blocks were snapshotted from
+known-good compiler output via `node test/run_runtime.js --generate`
+(which writes a block for any clean-running test that lacks one) and
+then spot-checked against the inline `/* N */` intent comments;
+predefined_macros is intentionally excluded (it embeds __DATE__/
+__TIME__/__LINE__, so its output is non-deterministic — structural
+coverage only). Regenerate after an intentional behavior change with
+`--generate` on the affected files.
 
 Test files cover: basic types, arithmetic, bitwise ops, comparisons,
 control flow (if/while/do/for/switch/break/continue), assignment ops,

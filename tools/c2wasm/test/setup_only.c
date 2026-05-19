@@ -1,4 +1,8 @@
 /* Test: program with only setup(), no loop() */
+// EXPECTED:
+// setup only
+//
+// 42
 #include <conez_api.h>
 
 void setup(void) {

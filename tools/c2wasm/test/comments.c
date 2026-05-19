@@ -1,4 +1,8 @@
 /* Test: comments — line comments, block comments, nested contexts */
+// EXPECTED:
+// 1
+// 2
+// 3
 #include <conez_api.h>
 
 // This is a line comment

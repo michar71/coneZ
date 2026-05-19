@@ -19,7 +19,7 @@ $(TARGET): $(OBJS) .buildnum
 	$(CC) $(CFLAGS) -DBUILD_NUMBER=$(NEXT_BUILDNUM) -c -o $@ $<
 
 .buildnum:
-.PHONY: all clean test test-runtime verify .buildnum
+.PHONY: all clean test test-runtime diff verify .buildnum
 
 test: $(TARGET)
 	@test/run_tests.sh
@@ -31,6 +31,16 @@ test: $(TARGET)
 test-runtime: $(TARGET)
 	@command -v node >/dev/null 2>&1 || { echo "node required for test-runtime"; exit 1; }
 	@node test/run_runtime.js
+
+# Differential oracle: compile each test with c2wasm AND clang, run both
+# under the identical stub harness, diff. clang is an independent C
+# implementation, so AGREE = real correctness corroboration and DIFFER =
+# a real c2wasm codegen bug. The only check in the suite that isn't
+# self-referential. Requires clang + node.
+diff: $(TARGET)
+	@command -v node >/dev/null 2>&1 || { echo "node required for diff"; exit 1; }
+	@command -v clang >/dev/null 2>&1 || { echo "clang required for diff"; exit 1; }
+	@node test/run_differential.js
 
 verify: $(TARGET)
 	@fail=0; \

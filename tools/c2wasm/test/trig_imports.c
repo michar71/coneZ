@@ -1,4 +1,10 @@
 /* Test inverse trig and origin imports */
+// EXPECTED:
+// 0.523599
+// 1.047198
+// 0.785398
+// 0
+// 0
 #include <conez_api.h>
 
 void setup(void) {

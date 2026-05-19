@@ -1,4 +1,12 @@
 /* Test: additional character/string escape support */
+// EXPECTED:
+// 7
+// 8
+// 12
+// 11
+// 65
+// 63
+// 65
 #include <conez_api.h>
 
 void setup(void) {

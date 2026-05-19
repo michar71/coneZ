@@ -1,5 +1,9 @@
-/* Test: common predefined preprocessor macros */
-
+/* Test: common predefined preprocessor macros
+ *
+ * No EXPECTED: block — this test prints __DATE__/__TIME__ (and is
+ * sensitive to its own __LINE__), so its output is inherently
+ * non-deterministic. Structural (make test) coverage only.
+ */
 #include <conez_api.h>
 
 int g_line = __LINE__;

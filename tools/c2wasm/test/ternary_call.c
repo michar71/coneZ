@@ -1,4 +1,7 @@
 /* Test: ternary else-branch with function call (exercises call fixup adjustment) */
+// EXPECTED:
+// 42
+// 0
 #include <conez_api.h>
 
 void setup(void) {

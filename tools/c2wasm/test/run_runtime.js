@@ -157,6 +157,77 @@ function makeImports(state) {
     };
 }
 
+// Run a single test file; returns { ok, output } or { error }.
+function runFile(fullpath, name) {
+    const wasmPath = path.join(tmpDir, name + '.wasm');
+    try {
+        execFileSync(c2wasm, [fullpath, '-o', wasmPath], { stdio: 'pipe' });
+    } catch (e) {
+        return { error: 'compile error' };
+    }
+    const bytes = fs.readFileSync(wasmPath);
+    const state = { output: '', heap: 0xC000, instance: null };
+    try {
+        const module = new WebAssembly.Module(bytes);
+        const inst = new WebAssembly.Instance(module, makeImports(state));
+        state.instance = inst;
+        if (inst.exports.setup) inst.exports.setup();
+        if (inst.exports.loop) inst.exports.loop();
+    } catch (e) {
+        return { error: 'run error: ' + e.message };
+    }
+    return { ok: true, output: state.output.trim() };
+}
+
+// Instantiate a wasm binary under the SAME stub-import harness used for the
+// runtime suite and capture its output. Exported so the clang differential
+// (run_differential.js) runs c2wasm- and clang-compiled binaries in an
+// identical environment — the comparison is only valid if imports match.
+function runWasmBytes(bytes) {
+    const state = { output: '', heap: 0xC000, instance: null };
+    try {
+        const module = new WebAssembly.Module(bytes);
+        const inst = new WebAssembly.Instance(module, makeImports(state));
+        state.instance = inst;
+        if (inst.exports.setup) inst.exports.setup();
+        if (inst.exports.loop) inst.exports.loop();
+    } catch (e) {
+        return { error: 'run error: ' + e.message };
+    }
+    return { ok: true, output: state.output.trim() };
+}
+
+module.exports = { makeImports, runWasmBytes, fmtFloat, parseExpected };
+
+if (require.main !== module) return;
+
+// --generate: snapshot current output into an `// EXPECTED:` block for any
+// non-reject test that lacks one, runs cleanly, and prints something.
+// Inserted just before the first #include (matching the hand-written ones).
+if (process.argv.includes('--generate')) {
+    let added = 0, skipped = 0;
+    const files = fs.readdirSync(testDir).filter(f => f.endsWith('.c')).sort();
+    for (const file of files) {
+        if (file.startsWith('reject_')) continue;
+        const fullpath = path.join(testDir, file);
+        let src = fs.readFileSync(fullpath, 'utf8');
+        if (parseExpected(src) !== null) continue;             // already has one
+        const name = path.basename(file, '.c');
+        const r = runFile(fullpath, name);
+        if (r.error || !r.output) { skipped++; continue; }     // can't snapshot
+        const block = '// EXPECTED:\n' +
+            r.output.split('\n').map(l => l === '' ? '//' : '// ' + l).join('\n') +
+            '\n';
+        const inc = src.search(/^#include /m);
+        src = inc >= 0 ? src.slice(0, inc) + block + src.slice(inc) : block + src;
+        fs.writeFileSync(fullpath, src);
+        console.log(`  ${GREEN}gen${NC}   ${name}`);
+        added++;
+    }
+    console.log(`\n=== Generated ${added} EXPECTED blocks; ${skipped} skipped (no clean output) ===`);
+    process.exit(0);
+}
+
 let pass = 0, fail = 0, skip = 0;
 
 console.log('=== c2wasm runtime test suite ===\n');
@@ -170,38 +241,19 @@ for (const file of files) {
     if (expected === null) { skip++; continue; }
 
     const name = path.basename(file, '.c');
-    const wasmPath = path.join(tmpDir, name + '.wasm');
-    try {
-        execFileSync(c2wasm, [fullpath, '-o', wasmPath], { stdio: 'pipe' });
-    } catch (e) {
-        console.log(`  ${RED}FAIL${NC}  ${name}  (compile error)`);
+    const r = runFile(fullpath, name);
+    if (r.error) {
+        console.log(`  ${RED}FAIL${NC}  ${name}  (${r.error})`);
         fail++;
         continue;
     }
-
-    const bytes = fs.readFileSync(wasmPath);
-    const state = { output: '', heap: 0xC000, instance: null };
-    try {
-        const module = new WebAssembly.Module(bytes);
-        const imports = makeImports(state);
-        const inst = new WebAssembly.Instance(module, imports);
-        state.instance = inst;
-        if (inst.exports.setup) inst.exports.setup();
-        if (inst.exports.loop) inst.exports.loop();
-    } catch (e) {
-        console.log(`  ${RED}FAIL${NC}  ${name}  (run error: ${e.message})`);
-        fail++;
-        continue;
-    }
-
-    const got = state.output.trim();
-    if (got === expected) {
+    if (r.output === expected) {
         console.log(`  ${GREEN}PASS${NC}  ${name}`);
         pass++;
     } else {
         console.log(`  ${RED}FAIL${NC}  ${name}`);
         console.log(`    expected: ${JSON.stringify(expected)}`);
-        console.log(`    got:      ${JSON.stringify(got)}`);
+        console.log(`    got:      ${JSON.stringify(r.output)}`);
         fail++;
     }
 }

@@ -322,6 +322,20 @@ Output with Floats:
       LAT = GPSLAT#()
       FORMAT "Latitude: &", LAT
 
+      The conversion is chosen by the argument's actual type, not just
+      the placeholder character, so type/placeholder mismatches print
+      sensibly instead of garbage:
+        - An i64 argument under ANY placeholder prints its full exact
+          value as text (routed through STR$ → %s). The 4-byte format
+          cell can't hold a 64-bit value, so `FORMAT "%", BIG&` or
+          `FORMAT "&", BIG&` formerly printed truncated/garbage; both
+          now print the correct integer.
+        - An i32 under `&` is converted to float; an f32 under `%` is
+          truncated to int — no more raw-bit reinterpretation.
+      (Previously the placeholder char alone picked the printf
+      conversion, so e.g. `&` on an i64 reinterpreted wrapped bits as
+      f32 and produced NaN/garbage with no diagnostic.)
+
 
 String Support
 --------------
@@ -1062,9 +1076,14 @@ interpretation + basic_str_* string pool), captures printed output,
 and diffs it against the expected lines. Catches semantic regressions
 that wasm-validate's structural pass can't see — e.g. the multi-dim
 REDIM PRESERVE remap bug compiled to valid WASM that returned wrong
-values; only runtime execution caught it. Currently 21 runtime tests
-(files without an EXPECTED block are skipped; currently 22 runtime
-tests). Sample:
+values; only runtime execution caught it. Currently 67 runtime tests
+(files without an EXPECTED block are skipped). Most blocks were
+snapshotted from known-good output via
+`node test/run_runtime.js --generate`, then triaged: tests whose
+output is FORMAT-spec-misuse garbage (`&`/%f on i64, string-pool
+pointers printed as numbers) were reverted to structural-only rather
+than enshrine meaningless values. Regenerate after an intentional
+behavior change with `--generate`. Sample:
 
     ' EXPECTED:
     ' 14

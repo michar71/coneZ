@@ -1,3 +1,6 @@
+' EXPECTED:
+' 7 10 2.5
+
 ' Mixed int/float — float wins via promotion
 A = 5
 B# = 2.0

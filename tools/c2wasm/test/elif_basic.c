@@ -1,4 +1,6 @@
 /* Test: #elif support (fix #7) */
+// EXPECTED:
+// 2
 #include <conez_api.h>
 
 #define MODE 2

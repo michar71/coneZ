@@ -1,4 +1,7 @@
 /* Test: #if unsigned 64-bit literal behavior */
+// EXPECTED:
+// 1
+// 1
 #include <conez_api.h>
 
 #if 18446744073709551615ULL > 0

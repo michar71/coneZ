@@ -1,3 +1,9 @@
+' EXPECTED:
+' 1.5 2.25 -3.14 1000 0
+' 1.1 2.3
+' sum=27.5
+' 10.5 20.5
+
 ' Float arrays — DIM A#(...) with f32 cells
 DIM F#(5)
 F#(1) = 1.5

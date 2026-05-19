@@ -1,4 +1,13 @@
 /* Test: sizeof(type*) returns 4 (fix #23) */
+// EXPECTED:
+// 4
+// 4
+// 4
+// 4
+// 4
+// 4
+// 8
+// 1
 #include <conez_api.h>
 
 void setup(void) {

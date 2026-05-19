@@ -1,6 +1,11 @@
 /* Struct containing a char[] field — the dir_entry_t pattern.
  * Accessing the inner array decays to a pointer (i32), from which
  * we can read individual bytes via subscript. */
+// EXPECTED:
+// 260
+// 7
+// 104
+// 105
 #include <conez_api.h>
 
 struct dir_entry_t {

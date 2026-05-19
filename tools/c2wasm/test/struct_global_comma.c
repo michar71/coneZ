@@ -1,4 +1,6 @@
 /* Comma-separated global struct declarations. Both variables must work. */
+// EXPECTED:
+// 10
 #include <conez_api.h>
 
 struct pt { int x; int y; };

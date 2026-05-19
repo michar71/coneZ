@@ -4,6 +4,10 @@
  *   - member access via '.'
  *   - sizeof(struct)
  */
+// EXPECTED:
+// 3
+// 4
+// 8
 #include <conez_api.h>
 
 struct point {

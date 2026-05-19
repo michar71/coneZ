@@ -1,4 +1,7 @@
 /* Test: #if !0 and #if !1 preprocessor (fix #4) */
+// EXPECTED:
+// 1
+// 1
 #include <conez_api.h>
 
 /* #if !0 should be true (include this block) */

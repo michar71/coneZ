@@ -1,4 +1,6 @@
 /* Test: nested #ifdef with #else in skipped outer block */
+// EXPECTED:
+// 42
 #include <conez_api.h>
 
 #define DEFINED_MACRO 1
