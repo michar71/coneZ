@@ -78,7 +78,7 @@ Goal: a cone finds the master by scanning, then locks to the beacon's params.
 
 
 --------------------------------------------------------------------------------
-Phase 3 -- dist core (eventual consistency; no compression/FEC yet)
+Phase 3 -- dist core (eventual consistency; no compression/FEC yet)  (DONE)
 --------------------------------------------------------------------------------
 Goal: a file's contents converge cone-side; deletions propagate. (First dist
 phase -- pure downlink broadcast, no uplink needed.)

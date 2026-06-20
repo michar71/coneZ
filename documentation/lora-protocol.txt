@@ -461,16 +461,17 @@ Built (see documentation/lora-v1-implementation-plan.txt for phases):
     beacon (priority GPS > NTP > beacon). [Phase 1]
   * Scanlist & channel lock -- cone scans the scanlist (L/F format, section 15),
     locks on a beacon, re-scans on beacon loss. [Phase 2]
-  * Master: v1 beacon-only loop (lora-master/conez-master.py). The earlier
-    ad-hoc 16-byte-header broadcast carousel is retired pending the v1 dist
-    rewrite (dead helpers remain dormant).
+  * dist core -- master broadcasts the manifest + data files as DIST_DATA chunks
+    (round-robin carousel); cone reassembles, MD5-verifies vs the manifest,
+    writes /dist/<name>, and deletes local files no longer listed. No
+    compression/FEC yet; firmware images skipped. [Phase 3]
+  * Master: v1 beacon + dist carousel (lora-master/conez-master.py). The earlier
+    ad-hoc 16-byte-header broadcast is retired (dead helpers remain dormant).
   * Cone: LoRa RX (lora_rx) + TX via `lora send` (lora_tx, guarded by
     lora_tx_active -- no radio mutex yet).
   * Bidirectional link verified both directions on the default LoRa params.
 
 Designed here, NOT yet built (remaining phases):
-  * dist core -- manifest-driven fetch/delete, weighted carousel, block
-    reassembly + commit. [Phase 3]
   * Per-block compression [Phase 4]; systematic Reed-Solomon FEC [Phase 5];
     firmware-OTA-aware block commit [Phase 6].
   * Cues (fire-now / fire-at-time; groups). [Phase 7]
