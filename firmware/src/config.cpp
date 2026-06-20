@@ -55,6 +55,8 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY_R("lora", "sf",           CFG_INT,   lora_sf,        5, 12),
     CFG_ENTRY_R("lora", "cr",           CFG_INT,   lora_cr,        5, 8),
     CFG_ENTRY_R("lora", "preamble",     CFG_INT,   lora_preamble,  1, 65535),
+    CFG_ENTRY_R("lora", "scan_passes",  CFG_INT,   lora_scan_passes, 1, 1000),
+    CFG_ENTRY_R("lora", "scan_dwell",   CFG_INT,   lora_scan_dwell,  1, 600),
     CFG_ENTRY_R("lora", "tx_power",     CFG_INT,   lora_tx_power,  -9, 22),
     CFG_ENTRY("lora",   "sync_word",    CFG_HEX,   lora_sync_word),
     CFG_ENTRY("lora",   "callsign",     CFG_STR,   lora_callsign),
@@ -204,6 +206,8 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->lora_sf          = DEFAULT_LORA_SF;
     cfg->lora_cr          = DEFAULT_LORA_CR;
     cfg->lora_preamble    = DEFAULT_LORA_PREAMBLE;
+    cfg->lora_scan_passes = DEFAULT_LORA_SCAN_PASSES;
+    cfg->lora_scan_dwell  = DEFAULT_LORA_SCAN_DWELL;
     cfg->lora_tx_power    = DEFAULT_LORA_TX_POWER;
     cfg->lora_sync_word   = DEFAULT_LORA_SYNC_WORD;
     strlcpy(cfg->lora_ssid,       DEFAULT_LORA_SSID,      sizeof(cfg->lora_ssid));

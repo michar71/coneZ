@@ -26,6 +26,7 @@
 #include "sensors.h"
 #include "lora.h"
 #include "dist.h"
+#include "scan.h"
 #include "led.h"
 #include "config.h"
 #include "cue.h"

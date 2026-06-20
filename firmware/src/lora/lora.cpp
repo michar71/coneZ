@@ -12,6 +12,7 @@
 #include "lora.h"
 #include "lora_proto.h"
 #include "dist.h"
+#include "scan.h"
 #include "gps.h"
 
 static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
@@ -100,8 +101,6 @@ static void lora_apply_sync_word( void )
 }
 
 
-static void scan_init(void);          // load scanlist + start scanning (defined below)
-static void scan_notify_beacon(void); // called when a beacon is decoded
 
 int lora_setup( void )
 {
@@ -268,197 +267,8 @@ void lora_print_beacon( void )
 }
 
 
-// ===== Scanlist & channel lock (Phase 2) =====================================
-// The cone cycles through a scanlist, dwelling on each channel long enough to
-// hear a beacon (> the beacon period). On a beacon it LOCKS; if the beacon is
-// lost for a while it resumes scanning. Scanlist comes from /scanlist.txt
-// (LittleFS) if present, else a built-in default.
-
-#define SCAN_MAX_ENTRIES   48
-#define SCAN_DWELL_MS      12000   // listen per channel (> beacon period)
-#define SCAN_LOSS_MS       40000   // re-scan after this long locked with no beacon
-
-typedef struct {
-    uint8_t  mode;                 // LP_MODE_LORA / LP_MODE_FSK
-    uint32_t freq_hz;
-    uint32_t bw_hz;                // LoRa bandwidth
-    uint8_t  sf, cr;               // LoRa
-    uint16_t sync_word;            // LoRa 16-bit sync
-    uint32_t bitrate_bps, freqdev_hz, rxbw_hz;  // FSK
-    char     fsk_sync[17];         // FSK sync word as hex string
-} scan_entry_t;
-
-// Built-in default scanlist (used when /scanlist.txt is absent).
-static const scan_entry_t DEFAULT_SCANLIST[] = {
-    { LP_MODE_LORA, 431250000, 500000, 7, 5, 0xDEAD, 0, 0, 0, "" },
-    { LP_MODE_LORA, 431250000, 125000, 9, 5, 0x12,   0, 0, 0, "" },
-    { LP_MODE_LORA, 433000000, 500000, 7, 5, 0xDEAD, 0, 0, 0, "" },
-};
-
-static scan_entry_t scanlist[SCAN_MAX_ENTRIES];
-static int  scanlist_n   = 0;
-static bool scan_enabled = true;
-static enum { SCAN_LOCKED, SCAN_SCANNING } scan_state = SCAN_SCANNING;
-static int      scan_idx        = 0;
-static uint32_t scan_dwell_until = 0;
-
-// Parse one scanlist line. Returns 1=entry, 0=blank/comment, -1=malformed.
-static int scan_parse_line(const char *s, scan_entry_t *e)
-{
-    while (*s == ' ' || *s == '\t') s++;
-    if (*s == '#' || *s == '\0' || *s == '\r' || *s == '\n') return 0;
-    char mode = *s++;
-    memset(e, 0, sizeof(*e));
-    if (mode == 'L' || mode == 'l') {
-        unsigned long freq, bw; int sf, cr; char sync[16];
-        if (sscanf(s, "%lu %lu %d %d %15s", &freq, &bw, &sf, &cr, sync) != 5) return -1;
-        e->mode = LP_MODE_LORA; e->freq_hz = (uint32_t)freq; e->bw_hz = (uint32_t)bw;
-        e->sf = (uint8_t)sf; e->cr = (uint8_t)cr;
-        e->sync_word = (uint16_t)strtol(sync, NULL, 16);
-        return 1;
-    } else if (mode == 'F' || mode == 'f') {
-        unsigned long freq, br, fd, rxbw; char sync[17];
-        if (sscanf(s, "%lu %lu %lu %lu %16s", &freq, &br, &fd, &rxbw, sync) != 5) return -1;
-        e->mode = LP_MODE_FSK; e->freq_hz = (uint32_t)freq; e->bitrate_bps = (uint32_t)br;
-        e->freqdev_hz = (uint32_t)fd; e->rxbw_hz = (uint32_t)rxbw;
-        strlcpy(e->fsk_sync, sync, sizeof(e->fsk_sync));
-        return 1;
-    }
-    return -1;
-}
-
-// Append entries from a LittleFS scanlist file; returns the running count.
-static int scan_load_file(const char *logical)
-{
-    char path[80];
-    FILE *f = fopen(lfs_path(path, sizeof(path), logical), "r");
-    if (!f) return scanlist_n;
-    char line[160];
-    while (scanlist_n < SCAN_MAX_ENTRIES && fgets(line, sizeof(line), f)) {
-        scan_entry_t e;
-        if (scan_parse_line(line, &e) == 1) scanlist[scanlist_n++] = e;
-    }
-    fclose(f);
-    return scanlist_n;
-}
-
-static void scan_load(void)
-{
-    scanlist_n = 0;
-    // Prefer the dist-delivered scanlist, then a root override, then built-in.
-    const char *src = NULL;
-    if (scan_load_file("/dist/scanlist.txt") > 0)  src = "/dist/scanlist.txt";
-    else if (scan_load_file("/scanlist.txt") > 0)  src = "/scanlist.txt";
-    if (src) {
-        printfnl(SOURCE_LORA, "scanlist: loaded %d entries from %s\n", scanlist_n, src);
-        return;
-    }
-    int n = (int)(sizeof(DEFAULT_SCANLIST) / sizeof(DEFAULT_SCANLIST[0]));
-    for (int i = 0; i < n && i < SCAN_MAX_ENTRIES; i++) scanlist[scanlist_n++] = DEFAULT_SCANLIST[i];
-    printfnl(SOURCE_LORA, "scanlist: using %d built-in default entries\n", scanlist_n);
-}
-
-static void scan_describe(const scan_entry_t *e, char *buf, size_t n)
-{
-    if (e->mode == LP_MODE_FSK)
-        snprintf(buf, n, "FSK %.3f MHz %u bps", e->freq_hz / 1e6, (unsigned)e->bitrate_bps);
-    else
-        snprintf(buf, n, "LoRa %.3f MHz BW%u SF%u sync 0x%04X",
-                 e->freq_hz / 1e6, (unsigned)(e->bw_hz / 1000), (unsigned)e->sf, (unsigned)e->sync_word);
-}
-
-// Tune the radio to a scanlist entry by writing config.* and re-initialising.
-static void scan_apply(const scan_entry_t *e)
-{
-    config.lora_frequency = e->freq_hz / 1e6f;
-    if (e->mode == LP_MODE_FSK) {
-        strlcpy(config.lora_rf_mode, "fsk", sizeof(config.lora_rf_mode));
-        config.fsk_bitrate = e->bitrate_bps / 1000.0f;
-        config.fsk_freqdev = e->freqdev_hz / 1000.0f;
-        config.fsk_rxbw    = e->rxbw_hz / 1000.0f;
-        strlcpy(config.fsk_syncword, e->fsk_sync, sizeof(config.fsk_syncword));
-    } else {
-        strlcpy(config.lora_rf_mode, "lora", sizeof(config.lora_rf_mode));
-        config.lora_bandwidth = e->bw_hz / 1000.0f;
-        config.lora_sf        = e->sf;
-        config.lora_cr        = e->cr;
-        config.lora_sync_word = e->sync_word;
-    }
-    lora_reinit();
-}
-
-static void scan_init(void)
-{
-    scan_load();
-    if (scanlist_n > 0) {
-        scan_state = SCAN_SCANNING;
-        scan_idx   = 0;
-        scan_apply(&scanlist[scan_idx]);
-        scan_dwell_until = uptime_ms() + SCAN_DWELL_MS;
-        char d[72]; scan_describe(&scanlist[scan_idx], d, sizeof(d));
-        printfnl(SOURCE_LORA, "scan: start, entry 0/%d %s\n", scanlist_n, d);
-    }
-}
-
-static void scan_notify_beacon(void)
-{
-    if (scan_state == SCAN_SCANNING) {
-        scan_state = SCAN_LOCKED;
-        printfnl(SOURCE_LORA, "scan: LOCKED on entry %d/%d (%.3f MHz)\n",
-                 scan_idx, scanlist_n, config.lora_frequency);
-    }
-}
-
-void lora_scan_tick(void)   // called from loop() after lora_rx()
-{
-    if (!scan_enabled || scanlist_n == 0 || lora_tx_active) return;
-    uint32_t now = uptime_ms();
-
-    if (scan_state == SCAN_SCANNING) {
-        if ((int32_t)(now - scan_dwell_until) >= 0) {
-            scan_idx = (scan_idx + 1) % scanlist_n;
-            scan_apply(&scanlist[scan_idx]);
-            scan_dwell_until = now + SCAN_DWELL_MS;
-            char d[72]; scan_describe(&scanlist[scan_idx], d, sizeof(d));
-            printfnl(SOURCE_LORA, "scan: entry %d/%d %s\n", scan_idx, scanlist_n, d);
-        }
-    } else { // SCAN_LOCKED
-        if (g_beacon.valid && (now - g_beacon.uptime_ms) >= SCAN_LOSS_MS) {
-            printfnl(SOURCE_LORA, "scan: beacon lost (%us), re-scanning\n",
-                     (unsigned)((now - g_beacon.uptime_ms) / 1000));
-            scan_state = SCAN_SCANNING;
-            scan_idx   = 0;
-            scan_apply(&scanlist[scan_idx]);
-            scan_dwell_until = now + SCAN_DWELL_MS;
-        }
-    }
-}
-
-void lora_scan_set_enabled(bool en)   // `lora scan on|off`
-{
-    scan_enabled = en;
-    if (en) {
-        scan_state = SCAN_SCANNING;
-        scan_idx   = 0;
-        if (scanlist_n > 0) scan_apply(&scanlist[scan_idx]);
-        scan_dwell_until = uptime_ms() + SCAN_DWELL_MS;
-        printfnl(SOURCE_COMMANDS, "scan: enabled (scanning from entry 0)\n");
-    } else {
-        printfnl(SOURCE_COMMANDS, "scan: disabled (staying on current channel)\n");
-    }
-}
-
-void lora_scan_print(void)   // shown in `lora` status
-{
-    printfnl(SOURCE_COMMANDS, "  Scan: %s  (%d entries)\n",
-             !scan_enabled ? "off" : (scan_state == SCAN_LOCKED ? "LOCKED" : "scanning"),
-             scanlist_n);
-    if (scan_enabled && scanlist_n > 0) {
-        char d[72]; scan_describe(&scanlist[scan_idx], d, sizeof(d));
-        printfnl(SOURCE_COMMANDS, "    entry %d/%d: %s\n", scan_idx, scanlist_n, d);
-    }
-}
-
+// Accessor so the scan module can avoid touching the radio mid-TX.
+bool lora_tx_busy(void) { return lora_tx_active; }
 
 void lora_rx( void )
 {

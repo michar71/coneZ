@@ -41,6 +41,8 @@
 #define DEFAULT_LORA_SSID       "ConeZ"
 #define DEFAULT_LORA_CALLSIGN   ""
 #define DEFAULT_LORA_MODE       "lora"
+#define DEFAULT_LORA_SCAN_PASSES 5             // scanlist passes before widening the search
+#define DEFAULT_LORA_SCAN_DWELL  12            // seconds to listen on each channel while scanning
 #define DEFAULT_FSK_BITRATE     4.8f
 #define DEFAULT_FSK_FREQDEV     5.0f
 #define DEFAULT_FSK_RXBW        156.2f
@@ -120,6 +122,8 @@ typedef struct {
     bool    fsk_whitening;
     char    fsk_syncword[CONFIG_MAX_FSK_SYNCWORD];
     int     fsk_crc;
+    int     lora_scan_passes;   // passes through the active scanlist before adding the next source
+    int     lora_scan_dwell;    // seconds to dwell on each channel while scanning
 
     // [system]
     char    device_name[CONFIG_MAX_DEVICE_NAME];

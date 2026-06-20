@@ -8,9 +8,8 @@ void lora_rx( void );
 int lora_setup( void );
 int lora_tx( const uint8_t *data, size_t len );   // transmit, then return to RX
 void lora_print_beacon( void );                   // show last v1 BEACON in `lora` status
-void lora_scan_tick( void );                      // scanlist state machine (call from loop)
-void lora_scan_print( void );                     // show scan status in `lora` status
-void lora_scan_set_enabled( bool en );            // `lora scan on|off`
+bool lora_tx_busy( void );                        // true while a CLI TX is in progress (used by scan)
+// Scanlist & channel lock API lives in scan.h.
 
 float lora_get_rssi(void);
 float lora_get_snr(void);

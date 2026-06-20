@@ -32,6 +32,7 @@
 #include "wasm_wrapper.h"
 #endif
 #include "lora.h"
+#include "scan.h"
 #include "fwupdate.h"
 #include "http.h"
 #include "gps.h"
