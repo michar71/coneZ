@@ -327,25 +327,35 @@ static int scan_parse_line(const char *s, scan_entry_t *e)
     return -1;
 }
 
+// Append entries from a LittleFS scanlist file; returns the running count.
+static int scan_load_file(const char *logical)
+{
+    char path[80];
+    FILE *f = fopen(lfs_path(path, sizeof(path), logical), "r");
+    if (!f) return scanlist_n;
+    char line[160];
+    while (scanlist_n < SCAN_MAX_ENTRIES && fgets(line, sizeof(line), f)) {
+        scan_entry_t e;
+        if (scan_parse_line(line, &e) == 1) scanlist[scanlist_n++] = e;
+    }
+    fclose(f);
+    return scanlist_n;
+}
+
 static void scan_load(void)
 {
     scanlist_n = 0;
-    char path[80];
-    FILE *f = fopen(lfs_path(path, sizeof(path), "/scanlist.txt"), "r");
-    if (f) {
-        char line[160];
-        while (scanlist_n < SCAN_MAX_ENTRIES && fgets(line, sizeof(line), f)) {
-            scan_entry_t e;
-            if (scan_parse_line(line, &e) == 1) scanlist[scanlist_n++] = e;
-        }
-        fclose(f);
-        printfnl(SOURCE_LORA, "scanlist: loaded %d entries from /scanlist.txt\n", scanlist_n);
+    // Prefer the dist-delivered scanlist, then a root override, then built-in.
+    const char *src = NULL;
+    if (scan_load_file("/dist/scanlist.txt") > 0)  src = "/dist/scanlist.txt";
+    else if (scan_load_file("/scanlist.txt") > 0)  src = "/scanlist.txt";
+    if (src) {
+        printfnl(SOURCE_LORA, "scanlist: loaded %d entries from %s\n", scanlist_n, src);
+        return;
     }
-    if (scanlist_n == 0) {
-        int n = (int)(sizeof(DEFAULT_SCANLIST) / sizeof(DEFAULT_SCANLIST[0]));
-        for (int i = 0; i < n && i < SCAN_MAX_ENTRIES; i++) scanlist[scanlist_n++] = DEFAULT_SCANLIST[i];
-        printfnl(SOURCE_LORA, "scanlist: using %d built-in default entries\n", scanlist_n);
-    }
+    int n = (int)(sizeof(DEFAULT_SCANLIST) / sizeof(DEFAULT_SCANLIST[0]));
+    for (int i = 0; i < n && i < SCAN_MAX_ENTRIES; i++) scanlist[scanlist_n++] = DEFAULT_SCANLIST[i];
+    printfnl(SOURCE_LORA, "scanlist: using %d built-in default entries\n", scanlist_n);
 }
 
 static void scan_describe(const scan_entry_t *e, char *buf, size_t n)
