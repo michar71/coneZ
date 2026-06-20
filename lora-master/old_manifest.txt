@@ -1,0 +1,9 @@
+[firmware]
+1	ConeZ-Heltec-LoRa32v3	0.01.0027	794800	24755899
+
+[files]
+2	ledtest.bas	3629	9b0957d0
+3	LUT_0.csv	190	5ee51390
+4	scanlist.txt	720	f6c8cea2
+5	startup.bas	145	54ffe075
+6	test.bas	1779	918d1ff5

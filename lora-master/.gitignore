@@ -1,0 +1,2 @@
+# Firmware images distributed by the master node (build artifacts, not source)
+firmware/**/*.bin
