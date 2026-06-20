@@ -1,403 +1,455 @@
 ================================================================================
-ConeZ LoRa Distribution Protocol
+ConeZ LoRa Protocol  --  v1 (clean-slate design)
 ================================================================================
 
-Downstream (master -> cone) broadcast protocol used to distribute time beacons,
-manifests, scripts/data files, and firmware images over LoRa to ConeZ nodes in
-the field.
+A star-network RF link between one master node (Raspberry Pi + SX1262/SX1268)
+and many ConeZ / Heltec cones (ESP32 + SX1262/SX1268). The master owns time and
+the channel; cones find it, register, get polled, receive cues, and converge
+their local `dist/` directory (and firmware) to match the master's.
 
-This document is the authoritative specification for the wire format. The
-reference master-node implementation lives in `lora-master/conez-master.py`
-(runs on a Raspberry Pi with an SX1262/SX1268). The on-cone receiver runs in
-the ESP32-S3 firmware (`firmware/src/lora/`).
+This is the v1 protocol. There is no prior version to stay compatible with;
+where this spec and the current code disagree, this spec is the target (see
+Appendix B for what is actually built today).
 
-Status: early / evolving. The transmit path is implemented; the cone-side
-receive/assembly path and any uplink (cone -> master) protocol are not yet
-finalized. See "Known discrepancies & TODO" at the end.
+Conventions: multi-byte integers are BIG-ENDIAN. "Cone" = any remote node
+(ConeZ PCB with PSRAM, or Heltec without). Sizes/counts marked (tunable) are
+master-chosen and advertised, not hard constants.
 
 
 --------------------------------------------------------------------------------
-0. Regulatory / operating context
+1. Goals (what the link must do)
+--------------------------------------------------------------------------------
+
+  G1  Beacon so cones can find the master's channel + RF parameters.
+  G2  Cones register with the master to get a polling slot (contention join).
+  G3  Master polls registered cones for stats / data readback.
+  G4  Master broadcasts cues to a cone, a group, or all (run wasm, set config,
+      trigger, ...), with fire-now and fire-at-time variants.
+  G5  Eventual-consistency file distribution: cones' `dist/` dirs and firmware
+      converge to the master's, via spare-airtime broadcast (one-way in v1).
+  G6  Master manages the timeslots (a scheduled superframe).
+  G7  A scanlist guides cones on which channels/parameters to try.
+  G8  Support FSK as well as LoRa modes (higher throughput when the link allows).
+
+
+--------------------------------------------------------------------------------
+2. Regulatory / operating context
 --------------------------------------------------------------------------------
 
 This system operates under US FCC Part 97 AMATEUR RADIO rules. The default
-431.250 MHz downstream is in the 70 cm amateur band (420-450 MHz). Operation is
-under the control operator's amateur license; the callsign carried in the ConeZ
-header (section 4), currently "N1AF", is the operator's FCC amateur callsign and
-serves as station identification. The 10 s beacon comfortably satisfies the
-Part 97.119 requirement to identify at least every 10 minutes.
+431.250 MHz channel is in the 70 cm amateur band (420-450 MHz), under the control
+operator's amateur license.
 
-Consequences for the protocol:
-
-  * NO ENCRYPTION. Part 97.113 prohibits messages encoded to obscure their
-    meaning. Payloads must remain in the clear. (Data compression for
-    efficiency is fine - it does not obscure meaning - which is why the file
-    format reserves a compression field but no encryption field.)
-  * Content is limited to what amateur rules permit (no commercial/business
-    traffic, no music, etc.).
-  * The callsign field must reflect whoever is the licensed control operator of
-    a given master node; it is not a fixed protocol constant.
+  * STATION ID. The master's callsign rides in every BEACON (section 10); a
+    cone's callsign rides in every uplink it sends (REG_REQ, POLL_RESP). A cone
+    that only ever receives transmits nothing and needs no ID. This satisfies
+    Part 97.119 (identify at least every 10 min of, and at the end of, a
+    transmission) without putting a callsign in every packet.
+  * NO ENCRYPTION. Part 97.113 forbids messages encoded to obscure meaning.
+    Payloads stay in the clear. Data COMPRESSION is fine (it doesn't obscure
+    meaning) -- hence the file format has a compression field but no cipher.
+  * The callsign is per-control-operator, not a protocol constant.
+  * Content is limited to what amateur rules permit (no business traffic, music).
 
 
 --------------------------------------------------------------------------------
-1. Roles
+3. Topology, roles, addressing
 --------------------------------------------------------------------------------
 
-  Master node   A Raspberry Pi (lora-master/) that transmits on a single fixed
-                downstream channel. It is a blind broadcaster: it beacons and
-                cycles through manifest / file / firmware blocks on a timer with
-                no per-cone state or acknowledgements.
+Single master, up to ~254 cones, ~5 mi range (master on a high/ridge antenna).
+Half-duplex: only one station transmits at a time; the master schedules who.
 
-  Cone          An ESP32-S3 ConeZ node. Listens for the beacon to learn the
-                downstream RF parameters and time, then collects file/firmware
-                blocks to reconstruct distributed files.
+  Node address (1 byte):
+     0          master
+     1 .. 254   a registered cone (assigned at registration)
+     255        broadcast (all cones)
 
-All multi-byte integer fields are BIG-ENDIAN (network byte order). Python
-`struct` format strings are given alongside each packet for reference.
+  Groups (1 byte group id, 1..254; 0 = "none"): a cone may belong to one or
+  more groups (set by config or by a cue). Group-targeted cues are sent as radio
+  broadcast (dst=255) and filtered by group id in the cue body (section 13).
 
-
---------------------------------------------------------------------------------
-2. RF parameters & defaults
---------------------------------------------------------------------------------
-
-Downstream defaults (master, see DOWNSTREAM_* in conez-master.py):
-
-  Frequency      431.250 MHz
-  Bandwidth      500 kHz
-  Spreading      SF7
-  Coding rate    4/5
-  Preamble       8 symbols
-  Sync word      0xDEAD
-  TX power       +0 dBm  (bench default; raise for field range)
-  CRC            On
-  Header         Explicit
-  Beacon period  10 s
-
-The beacon advertises the downstream frequency and BW/SF/CR in-band (see
-section 6), so a cone can lock onto the master's parameters after a single
-successful beacon receive, independent of its own configured defaults.
+  Network id (1 byte): lets two independent ConeZ networks share a band without
+  cross-talk (in addition to the LoRa sync word). 0 = default network.
 
 
 --------------------------------------------------------------------------------
-3. Channel plan (scanlist.txt)
+4. Physical layer & channels
 --------------------------------------------------------------------------------
 
-`lora-master/rsync/scanlist.txt` defines the channel-search plan a cone uses to
-find the master. Each non-blank, non-header line is:
+The master sits on ONE channel and ONE mode (LoRa or FSK) at a time, advertised
+in the beacon and discoverable via the scanlist (section 14). It may switch
+channel/mode (e.g., drop to a fast FSK mode to push firmware, then return to a
+robust LoRa control mode) -- always pre-announced in the beacon so cones follow.
 
-  <bandwidth_kHz>,<spreading_factor>,<frequency_Hz>
+  Control plane (always robust): beacon, registration, polling, cues are meant
+  to run on a robust long-range LoRa mode so every cone, even distant ones, stays
+  reachable. Default: 431.250 MHz, BW 500 kHz, SF7, CR 4/5, sync word 0xDEAD.
 
-Two sections:
+  LoRa params: frequency, bandwidth, spreading factor, coding rate, preamble.
+     - LDRO (Low Data Rate Optimize) is COMPUTED, never hard-coded:
+       ldro = (2**SF / BW_Hz) > 0.016 . TX and RX must agree (Appendix A).
+  FSK params: bit rate, freq deviation, RX bandwidth, shaping, sync word, CRC.
 
-  [primary]    Channels to try first (SF7..SF12 at 431.250 MHz, 500/250 kHz).
-  [fallback]   Wider sweep across 430-434 MHz if the primary set is silent.
+  Airtime is the whole budget. Beacons + cues + the dist carousel + polling all
+  share one half-duplex channel; at low SF / long range / large fleet airtime is
+  the bottleneck, so the superframe (section 6) budgets it explicitly.
 
-NOTE: as of this writing the master transmits on ONE fixed channel only; the
-scanlist is consumed by the cone-side scanner, not the master.
-
-
---------------------------------------------------------------------------------
-4. Packet framing - ConeZ header
---------------------------------------------------------------------------------
-
-Every LoRa payload begins with a fixed 16-byte ConeZ header, followed by a
-packet-type-specific body.
-
-  Offset  Len  Value / meaning
-  ------  ---  ------------------------------------------------------------
-  0       2    Sync marker         0xDE 0xAD
-  2       1    0x00
-  3       6    Operator callsign   FCC amateur callsign of the control
-                                   operator, ASCII, space-padded to 6
-                                   (e.g. "N1AF  "). Serves as Part 97 station
-                                   identification - see section 0.
-  9       1    0x00
-  a       5    Magic               "ConeZ" (ASCII)
-  f       1    0x00
-  ------  ---  ------------------------------------------------------------
-  Total: 16 bytes (CONEZ_HEADER)
-
-The first body byte after the header is always the packet type.
+  Integrity/length come from the LoRa PHY (explicit header + hardware CRC), so
+  the v1 application header carries neither.
 
 
 --------------------------------------------------------------------------------
-5. Packet types
+5. Frame format -- the lean common header
 --------------------------------------------------------------------------------
 
-  Type  Name                     Direction   Status
-  ----  -----------------------  ----------  ------------------------------
-  0x01  Beacon                   downstream  implemented
-  0x10  File metadata            downstream  reserved (not implemented)
-  0x11  File distribution block  downstream  implemented
-  (uplink types)                 upstream    not yet defined
-
-
---------------------------------------------------------------------------------
-6. Beacon packet (0x01)
---------------------------------------------------------------------------------
-
-16-byte body after the ConeZ header.  struct: '>BBIHIHH'
+Every v1 packet begins with a 4-byte header (vs the legacy 16-byte header). The
+LoRa sync word + network id filter the network; the PHY gives length + CRC.
 
   Offset  Len  Field
-  ------  ---  ------------------------------------------------------------
-  0       1    Packet type = 0x01
-  1       1    ConeZ network number
-  2       4    UNIX timestamp, seconds (uint32)
-  6       2    UNIX timestamp, milliseconds (uint16)
-  8       4    Downstream frequency, Hz (uint32)
-  c       2    Downstream RF parameters (see section 8)
-  e       2    Reserved (0x0000)
-  ------  ---  ------------------------------------------------------------
+  ------  ---  --------------------------------------------------------------
+  0       1    Packet type (section 7)
+  1       1    Network id
+  2       1    Source addr   (0 = master)
+  3       1    Dest addr     (0 = master, 1-254 = cone, 255 = broadcast)
+  4       ..   Type-specific body
 
-The timestamp lets cones discipline their clocks from the master when no GPS
-fix is available.
+Callsign and magic are NOT in the header -- only the beacon and cone uplinks
+carry a callsign, in their bodies (section 2).
 
 
 --------------------------------------------------------------------------------
-7. File metadata packet (0x10) - RESERVED
+6. Superframe -- the master-scheduled time structure (G6)
 --------------------------------------------------------------------------------
 
-Reserved for a per-file metadata announcement separate from the data blocks
-(e.g. filename, total length, hash, block count). Not currently emitted by the
-master; cones derive the same information from the fields carried in each data
-block (section 9) and from the manifest (section 11).
+Time is divided into repeating superframes. The master starts each with a beacon
+whose FRAME MAP describes the rest, then transmits in the downlink window, then
+goes SILENT for the uplink windows so cones can talk.
 
+   |<---------------------------- superframe (tunable) ------------------------>|
+   [ BEACON ][ DOWNLINK: cues > dist carousel > poll requests ][ UPLINK: master silent ]
+                                                               |  reg contention | poll slots |
 
---------------------------------------------------------------------------------
-8. RF parameter word
---------------------------------------------------------------------------------
+  - BEACON: time, channel/params, frame map, manifest version, callsign.
+  - DOWNLINK (master TX), priority order:
+      1. Cues (lowest latency; fire-now repeated a few times).
+      2. dist carousel pages (background; section 13).
+      3. Poll requests (to the cone(s) scheduled this frame).
+  - UPLINK (master RX, silent):
+      * Registration contention window: K (tunable) slotted-Aloha sub-slots for
+        unregistered cones (section 11).
+      * Poll-response slot(s): the cone(s) polled this frame answer here
+        (section 12). Poll rate is master-configurable, default as low as 1
+        cone per superframe.
 
-The 16-bit RF-parameters field in the beacon packs bandwidth, spreading factor
-and coding rate as bitfields:
-
-  Bits   Field            Codes
-  -----  ---------------  ----------------------------------------------
-  0-2    Bandwidth        0 = 500 kHz
-                          1 = 250 kHz
-                          2 = 125 kHz
-                          3 = 62.5 kHz
-                          4-7 = reserved
-  3-5    Spreading factor 0 = SF7 ... 5 = SF12   (code = SF - 7)
-                          6-7 = reserved
-  6-7    Coding rate      0 = 4/5
-                          1 = 4/6
-                          2 = 4/7
-                          3 = 4/8
-  8-15   Reserved
-
-Encoding helpers in conez-master.py: _bw_code(), _sf_code(), _cr_code().
+The beacon's frame map tells cones where the silent windows are, which slot is
+the contention window, and which cone (if any) is being polled, so a cone only
+transmits in a slot the master granted it. That single rule is timeslot
+management (G6).
 
 
 --------------------------------------------------------------------------------
-9. File distribution block (0x11)
+7. Packet types
 --------------------------------------------------------------------------------
 
-16-byte header after the ConeZ header, then up to 128 bytes of file data.
-struct (header): '>BBHHIHBBH'
+  Type  Name         Dir         Purpose
+  ----  -----------  ----------  ------------------------------------------------
+  0x01  BEACON       M -> bcast  time, channel, frame map, manifest ver, callsign
+  0x10  REG_REQ      C -> M      join request (in contention slot)
+  0x11  REG_RESP     M -> C      assigned address + poll slot
+  0x20  POLL_REQ     M -> C      request stats / config readback
+  0x21  POLL_RESP    C -> M      stats / requested data (+ callsign)
+  0x30  CUE          M -> *      run/trigger/set, fire-now or fire-at-time
+  0x40  DIST_DATA    M -> bcast  a data chunk of a dist block
+  0x41  DIST_PARITY  M -> bcast  an RS parity chunk of a dist block
+  (0x50+ reserved: uplink gap-request, ACKed/critical cues, real-time FSK, ...)
 
-  Offset  Len  Field
-  ------  ---  ------------------------------------------------------------
-  0       1    Packet type = 0x11
-  1       1    File type byte (see section 10)
-  2       2    Manifest serial number
-  4       2    Manifest file number (file_id from the manifest)
-  6       4    Total file length, bytes (uint32)
-  a       2    Page number within the original file
-  c       1    Total blocks in this page
-  d       1    This block number (within the page)
-  e       2    Reserved (0x0000)
-  ------  ---  ------------------------------------------------------------
-  10      ..   File block data, up to FILE_CHUNK_SIZE (128) bytes
-
-Total on-air size: 16 (ConeZ header) + 16 (block header) + <=128 (data)
-                 = up to 160 bytes.
+The manifest is not a packet type -- it is a well-known dist file (section 13).
 
 
 --------------------------------------------------------------------------------
-10. File type byte
+8. Time synchronization (supports fire-at-time cues)
 --------------------------------------------------------------------------------
 
-  Bits   Field                 Codes
-  -----  --------------------  ----------------------------------------------
-  0-3    File type             0 = Manifest file
-                               1 = Firmware
-                               2 = LittleFS file
-  4-5    Compression type      0 = Uncompressed
-                               1-3 = reserved
-  6-7    Compression page size 0 = 1024 bytes
-                               1 = 8192 bytes
-                               2-3 = reserved
-
-The "compression page size" is the unit the original file is chunked into
-before (optional) compression; it is distinct from FILE_CHUNK_SIZE (the on-air
-data block size).
+  * ConeZ PCBs have GPS + PPS and keep their own precise epoch (firmware Time
+    System); they do not need the beacon for time.
+  * Non-GPS cones (Heltec) discipline their clock from the BEACON timestamp.
+    Reference convention: the beacon's time field is the master's epoch at
+    end-of-beacon-transmit; the cone stamps RX-done and corrects for the known
+    air time. Good to ~tens of ms -- fine for fire-now and coarse fire-at-time.
+  * The master clock is assumed good (Pi NTP- or GPS/PPS-disciplined).
+  * Fire-at-time cues (section 13/G4) carry an absolute epoch; all cones execute
+    at the same instant regardless of RX jitter. Precise sync is the GPS cones'
+    job; non-GPS cones are as good as the beacon transfer.
 
 
 --------------------------------------------------------------------------------
-11. Page / block chunking
+9. (reserved)
 --------------------------------------------------------------------------------
-
-Files are split into 8192-byte PAGES; each page is split into 128-byte BLOCKS
-(64 blocks per page). For an absolute byte offset within a file:
-
-  page_no     = offset / 8192
-  page_blocks = 8192 / 128            = 64
-  block_no    = (offset / 128) % 64
-
-These map to the page_no / total_blocks / block_no fields in the 0x11 header,
-letting the receiver place each block at offset (page_no*8192 + block_no*128)
-and know when a page (and the whole file, via total file length) is complete.
 
 
 --------------------------------------------------------------------------------
-12. Manifest file format
+10. BEACON (0x01)   M -> broadcast (G1, G6, G7)
 --------------------------------------------------------------------------------
 
-The manifest is the index of everything available for distribution. It is
-generated by `lora-master/build_manifest.py` and broadcast as file type 0
-(Manifest). Plain text, two TAB-separated sections:
+Body (after the 4-byte header):
+  - protocol version
+  - master epoch: seconds (u32) + millis (u16)  [end-of-TX reference, section 8]
+  - current channel descriptor: mode (LoRa/FSK), frequency, and the mode params
+    (BW/SF/CR or bitrate/fdev/rxbw/shaping), sync word
+  - frame map: superframe length, downlink length, uplink layout
+      (contention window slot count + position, poll slot position),
+      and which cone address (if any) is polled this frame
+  - manifest serial (u16): current dist manifest version, so a cone knows if its
+    dist/ dir is stale (section 13)
+  - registration policy: contention slot count, backoff parameters
+  - callsign (ASCII, e.g. 6 bytes space-padded) -- station ID (section 2)
 
-  [firmware]
-  <file_id>\t<product>\t<version>\t<size>\t<md5_8>
-  ...
-
-  [files]
-  <file_id>\t<filename>\t<size>\t<md5_8>
-  ...
-
-  file_id   Stable integer ID. Re-used across regenerations as long as the
-            file's content (md5_8) is unchanged; a changed/new file gets a
-            fresh ID. This is the "Manifest file number" in the 0x11 header.
-  md5_8     First 8 hex digits of the file's MD5.
-
-Manifests are versioned by SERIAL number and never overwritten: each
-regeneration that changes content writes a new `rsync/_manifest_<serial>.txt`.
-The master auto-selects the highest-numbered manifest at startup
-(latest_manifest() in conez-master.py).
-
-Counter state lives in `rsync/_serial.txt`:
-
-  next_file_id=<int>
-  next_manifest_serial=<int>
+Beacon cadence is tunable (the legacy 10 s is a fine starting point and easily
+meets the 10-minute ID rule).
 
 
 --------------------------------------------------------------------------------
-13. Distribution cycle
+11. Registration (G2)
 --------------------------------------------------------------------------------
 
-The master runs a fixed round-robin every BEACON_PERIOD (10 s), with a short
-DOWNSTREAM_DEADTIME (0.1 s) gap between transmissions:
+An unregistered cone, after locking to a beacon:
+  1. Reads the contention window from the frame map.
+  2. Picks a random sub-slot and sends REG_REQ in it:
+       cone unique id (efuse/MAC, ~6 bytes), board/capability flags
+       (PSRAM y/n, FSK y/n, ...), desired group(s), callsign.
+  3. Master replies REG_RESP (next downlink): echoes the unique id, assigns a
+     node address (1-254) and a poll-slot index.
+  4. Collisions (two cones, same sub-slot) -> no REG_RESP -> exponential backoff
+     and retry. Size the contention window for fleet-wide power-on (thundering
+     herd is the main scaling risk here).
 
-  Beacon (0x01)
-  Manifest block        (type 0, current serial)
-  File block  x2        (DIST_FILE)
-  Firmware block x2     (FIRMWARE_FILE)
-
-Each *_chunk() reader streams its file 128 bytes at a time, advancing a byte
-offset and wrapping back to the start at EOF, so successive cycles walk through
-the whole file over many beacon periods. There is no acknowledgement or
-retransmit-on-request; coverage relies on repetition.
-
-
---------------------------------------------------------------------------------
-14. Uplink (cone -> master) - PHY proven, protocol NOT YET DEFINED
---------------------------------------------------------------------------------
-
-The cone CAN now transmit: firmware `lora send <text>` -> lora_tx() ->
-radio.transmit() -> back to RX (firmware/src/lora/lora.cpp). First cone->master
-transmit verified 2026-06-20 (ConeZ board -> Pi RX, "CONEZTXTEST" decoded clean
-at -71 dBm / SNR 13 through the Pi's dummy load). So the uplink PHY and the
-cone's TX hardware work.
-
-What is still undefined: uplink packet TYPES, acknowledgements, and
-NACK/retransmit-request semantics. The master only listens in RX-continuous
-between transmissions and logs received packets (length, RSSI, SNR, hex). Adding
-a real uplink protocol is the next layer to turn blind broadcast into reliable,
-feedback-driven distribution.
+Re-registration recovers a dropped/forgotten assignment. The master keeps the
+registry (address -> unique id, groups, poll slot, last-seen).
 
 
 --------------------------------------------------------------------------------
-15. Known discrepancies & TODO
+12. Polling (G3)
 --------------------------------------------------------------------------------
 
-Things where the current implementation diverges from this spec, or is
-incomplete. Update this list as the protocol firms up.
-
-  * transmit_manifest() tags its blocks with FILE_TYPE_FIRMWARE (1) instead of
-    FILE_TYPE_MANIFEST (0). Receivers keying off the file-type byte will
-    misclassify the manifest.
-
-  * make_file_block() hard-codes the compression-page-size bits to 2 (a
-    reserved value) regardless of the page_size argument; per section 10 the
-    valid codes are 0 (1024) and 1 (8192). Marked FIXME in the source.
-
-  * File metadata packet (0x10) is specified but never emitted.
-
-  * No uplink / ACK / retransmit protocol (section 14).
-
-  * The master transmits on one fixed channel; the scanlist.txt channel plan
-    (section 3) is not exercised by the master.
+Master, at a configurable rate (default 1 cone/superframe, scaling down as the
+fleet grows), round-robins POLL_REQ to registered cones; the polled cone answers
+POLL_RESP in its uplink slot:
+  - stats: last RSSI/SNR, rx/tx packet counts, firmware version, status flags,
+    battery/solar voltage, temperature
+  - or requested config readback (key list -> values)
+  - callsign (station ID, section 2)
+Stats are not time-critical, so slow polling is fine. No ACK needed.
 
 
 --------------------------------------------------------------------------------
-16. Master radio configuration - hard-won notes (Waveshare SX1262 hat + LoRaRF)
+13. Cues (G4)
 --------------------------------------------------------------------------------
 
-First successful downstream link (master -> cone) was brought up 2026-06-20.
-The master runs on a Waveshare "SX1262 XXXM LoRaWAN/GNSS HAT" (433 MHz) with the
-bundled (Waveshare-example) LoRaRF Python library. Getting it to transmit a
-cone-decodable signal required fixing several non-obvious things; record here so
-they are not rediscovered the hard way.
+Broadcast control, NO acknowledgements (a missed cue is acceptable).
 
-  * RF SWITCH: handled by DIO2 via LoRa.setDio2RfSwitch(). TXEN/RXEN GPIOs are
-    left unused (txen=-1, rxen=-1), matching the known-working lora-aprs code.
-    (An earlier theory that TXEN=BCM6 had to be driven was a red herring.)
+CUE body:
+  - cue sequence number (u16) -- lets a cone notice it missed one (e.g. via a
+    later poll); not used for ACK/retransmit in v1
+  - target: type (unicast / group / broadcast) + id (cone addr or group id);
+    group/broadcast cues go out as radio broadcast and are filtered locally
+  - execution: FIRE_NOW or FIRE_AT_TIME(epoch sec+ms)
+      fire-now: low precision, repeated 2-3x for reliability
+      fire-at-time: precise, executed at the carried epoch (section 8)
+  - command: opcode + args, e.g.
+      RUN     <path> <params>     run a wasm/bas/c program already on LittleFS
+      STOP                        stop the running program
+      SETCFG  <key> <value>       set a config parameter
+      SETGRP  <group mask/op>     change group membership
+      TRIGGER <id>                generic trigger
+High-precision timing is always fire-at-time (cue files / wasm already resident
+on LittleFS, delivered earlier via dist); real-time streaming is future (FSK).
 
-  * TCXO: do NOT enable DIO3 TCXO control on this hat. The working lora-aprs
-    code issues no setDio3TcxoCtrl, and adding it (1.8 V) HUNG the transmit
-    (TxDone never fired). The cone (RadioLib) uses its own TCXO; the two radios
-    are independent.
 
-  * TX POWER / PA: LoRaRF's setTxPower() silently no-ops for the SX1262 at any
-    power below +14 dBm (a dead `else: return` -> SetPaConfig never issued -> PA
-    unconfigured -> essentially no RF radiated). This was the real reason +0 dBm
-    "transmitted nothing". Fix: set the PA directly from a per-power optimized
-    table ported from RadioLib 7.6.0 SX1262.cpp paOptTable (set_tx_power() in
-    conez-master.py), which gives a clean signal at any power -9..+22 dBm.
-    Symptom of the bug: TX completes (TxDone fires) but no receiver hears it.
+--------------------------------------------------------------------------------
+14. dist -- file & firmware distribution (G5)
+--------------------------------------------------------------------------------
 
-  * LDRO (Low Data Rate Optimize) - THE CRC KILLER: must be COMPUTED from symbol
-    time, never hard-coded. LDRO is required only when symbol time > 16 ms (high
-    SF / low BW). The cone's RadioLib AUTO-computes LDRO, so the master must
-    agree or the payload de-maps wrong and every packet fails CRC (readData ->
-    RADIOLIB_ERR_CRC_MISMATCH, -7) while the more robust explicit header still
-    decodes (so length looks correct). The master had inherited a hard-coded
-    LDRO=True from the lora-aprs code (correct there: SF12/BW125 = 32 ms symbols)
-    but applied it to SF7/BW500 (0.26 ms symbols), where it must be OFF.
-    Rule used: ldro = (2**SF / BW_Hz) > 0.016.
+Goal: each cone's `dist/` directory (and its firmware) becomes eventually
+consistent with the master's, via one-way broadcast in spare airtime -- the
+master fills daytime/idle airtime so the night's show files (cue programs, wasm,
+etc.) and firmware are present when needed. ("dist" replaces the misleading name
+"rsync"; this is one-way push with eventual consistency, not bidirectional sync.)
 
-  * FREQUENCY ACCURACY: excellent - the i-gate measured only ~308 Hz offset on
-    the Pi's TX at 7 miles. No frequency trimming needed.
+13.1  THREE GRANULARITIES
+  chunk  -- one on-air packet payload (<= ~240 B on LoRa's 255-byte cap; larger
+            on FSK). Also one Reed-Solomon symbol.
+  block  -- the compress + FEC + commit unit, ~32-64 KB (tunable). This is the
+            key sizing decision (13.6).
+  file   -- a manifest entry; = N blocks.
 
-  * RX SATURATION: at close bench range (~1 m) a +22 dBm signal overloads the
-    cone's RX (~-3 dBm at the antenna) -> no decode. For RF-quiet bench testing,
-    terminate the Pi in a 50 ohm dummy load: leakage lands the cone around
-    -80 dBm (vs ~-39 dBm with the antenna at +0 dBm) - decodable and not
-    sprayed for miles. ALWAYS sleep/standby the radio (PA off) before swapping
-    the antenna/load; hot-swapping a keyed PA into an open load can destroy it.
+13.2  MANIFEST (the source of truth; drives fetch AND delete)
+  A well-known high-priority dist file listing every file the master is serving.
+  Per entry:
+     file id (u16), path, uncompressed size, content hash,
+     compression algo (0=none, deflate), block size, chunks/block (N),
+     parity/block (R), total blocks, kind (data file | firmware | scanlist).
+  The beacon advertises the manifest serial; when it changes, cones refetch the
+  manifest, then: download files they lack or whose hash differs, and DELETE
+  local dist files no longer in the manifest. Firmware is a manifest entry whose
+  "kind" routes it to the OTA path (13.5).
 
-Cone-side firmware notes (firmware/src/lora/): the 16-bit LoRa sync word
-(0xDEAD) is set by inverting RadioLib's setSyncWord(syncWord, controlBits)
-packing; SF default reconciled to 7; readData() failures are logged with the
-RadioLib error code (added to diagnose the LDRO/CRC issue).
+13.3  ENCODING (master side)
+  Per block: compress (deflate) the block's bytes -> split the COMPRESSED bytes
+  into N data chunks -> append R systematic Reed-Solomon (GF(256)) parity chunks
+  (N + R <= 255). Per-block (not per-file) compression costs only ~1-3% vs
+  whole-file at >=32 KB blocks (measured on firmware.bin) while avoiding any
+  whole-file buffering -- so it is essentially free here. Compress THEN FEC.
 
-CONE TX (added 2026-06-20): the ConeZ board's transmit path was first brought up
-this day. firmware `lora send <text>` -> lora_tx() (lora.cpp) -> radio.transmit()
--> re-arm RX, guarded by a lora_tx_active flag so the loopTask RX poll doesn't
-race the TX on the shared SPI bus. The board's LoRa module is an Ebyte
-E22-400M22S (SX1268 + 22 dBm PA/LNA); its TXEN/RXEN T/R switch is driven from the
-SX1268 DIO2 (radio.setDio2AsRfSwitch(); no host TXEN/RXEN GPIOs) through an
-on-board N-channel MOSFET. Open question was whether 3.3 V logic on the FET gate
-would switch TXEN cleanly -> CONFIRMED YES: ConeZ -> Pi decoded clean (-71 dBm /
-SNR 13 at +14 dBm board TX through the Pi's dummy load). No radio mutex yet, so
-heavy concurrent RX + CLI TX could still race; the flag covers the common case.
+13.4  RECEPTION (cone side)
+  The carousel sends chunks in priority order (13.7), tagged file id + manifest
+  serial + block index + chunk index. A cone:
+    1. Buffers a block's chunks (one block needs <= ~50 KB for 64 KB blocks).
+    2. With all N data chunks -> use them directly. With gaps but >= N of the
+       N+R chunks -> Reed-Solomon ERASURE-recover the block (we know which chunks
+       are missing from the PHY CRC, so erasure decode, not error correction).
+    3. inflate_stream() the recovered compressed block straight to storage
+       (LittleFS file at the block's offset; or flash for firmware, 13.5).
+    4. Mark the block done in a per-file block bitmap; missing blocks are caught
+       on the next carousel cycle (eventual consistency). No gap-requests in v1.
+
+  FEC degrades gracefully by node class:
+    - ConeZ (PSRAM): buffers freely, uses parity whenever it has gaps.
+    - Heltec / no-PSRAM: it has RAM, just not megabytes. If it got all N data
+      chunks of a block it commits and IGNORES the parity (systematic code -> no
+      decode, no RAM cost). If it missed some it MAY RS-decode that one block
+      (one block fits its RAM) or simply wait for the next carousel cycle.
+
+13.5  FIRMWARE OTA (no PSRAM and no in-place hazard)
+  Firmware blocks decompress into the INACTIVE app/OTA partition at their block
+  offsets (erase sectors, write the inflate output as it streams). When the block
+  bitmap is full, verify the whole-image hash from the manifest, then mark the
+  OTA slot valid and reboot.
+  NOTE on why NOT in-place: storing the whole compressed image in the partition
+  and decompressing it in-place risks the decompress write-head overtaking the
+  unread compressed read-head (solvable with a precomputed safety offset like the
+  Linux self-extractor, but fragile -- a wrong margin bricks the image). The
+  block model sidesteps it: the compressed block lives in RAM and inflate streams
+  output to flash; we never decompress within the partition.
+
+13.6  BLOCK SIZE -- the one real knob
+  Trades: compression (bigger = marginally better, diminishing past ~64 KB),
+  FEC headroom (RS caps at 255 symbols/block, so SMALLER blocks leave room for
+  MORE parity -- a 32 KB block ~110 data chunks leaves ~145 for parity; a 64 KB
+  block ~210 data leaves ~45), and RAM (compressed block + ~43 KB inflate
+  working set). Starting point: ~32-48 KB compressed cap -> generous parity and a
+  comfortable Heltec footprint. Tunable per file kind; test with real files.
+
+13.7  CAROUSEL = WEIGHTED SCHEDULER (interleave firmware with small files)
+  Not a fixed round-robin. Each turn the master picks the next block/chunk by
+  priority: manifest and scanlist highest, then cue/show files (small -> complete
+  in minutes), then firmware at low weight filling leftover airtime (a full image
+  is hours). A cue file dropped in at 18:00 lands well before the firmware that
+  has trickled since noon.
+
+13.8  CONCURRENT TRANSFERS (files + firmware at once)
+  The carousel may interleave a new firmware image AND new files. A ConeZ with
+  PSRAM keeps several block-reassembly contexts in flight and absorbs both at
+  once. A Heltec / non-PSRAM node, under RAM pressure, may follow just ONE
+  transfer at a time (e.g. firmware OR data files) and pick up the deferred one
+  on later carousel cycles -- eventual consistency makes that safe.
+
+
+--------------------------------------------------------------------------------
+15. Channel discovery & scanlist (G7)
+--------------------------------------------------------------------------------
+
+A cone finds the master by trying channels from its scanlist until it hears a
+beacon, then locks to the beacon's advertised params.
+
+  * Built-in DEFAULT scanlist in firmware (so a fresh cone can always find a
+    master on the conventional channels).
+  * Override/extend via a scanlist FILE delivered through dist/ -- so the master
+    can update the fleet's scan plan over the air.
+  * Each scanlist entry specifies mode (LoRa/FSK) + frequency + that mode's
+    params, so the same plan covers both modes (G8). Primary entries tried first,
+    then a wider fallback sweep.
+  * The master may move channel or switch mode; it pre-announces in the beacon so
+    locked cones follow, and rejoin via scanlist if they lose it.
+
+
+--------------------------------------------------------------------------------
+16. FSK mode (G8)
+--------------------------------------------------------------------------------
+
+FSK is offered as an alternative mode, time-shared exactly like LoRa: the master
+is on either a LoRa or an FSK channel at any moment, and cones find it via the
+scanlist. FSK trades range for throughput -- useful to push firmware fast, and
+the intended carrier for future real-time cueing / DMX-ArtNet streaming. Same
+framing, addressing, and packet types apply; only the PHY changes.
+
+
+--------------------------------------------------------------------------------
+17. Open items / future
+--------------------------------------------------------------------------------
+
+  * Uplink gap-requests (a cone asking for specific missing blocks in its poll
+    slot) -- deliberately out of v1 (does not scale to a large fleet); cones
+    catch misses on the next carousel cycle.
+  * ACKed / critical cues; per-cue delivery confirmation via polling.
+  * Real-time cueing / DMX / ArtNet streaming over FSK.
+  * Cross-block / fountain FEC layered on top of the per-block RS, if the block
+    tail proves too long in practice.
+
+
+================================================================================
+Appendix A. Master radio configuration -- hard-won notes (Waveshare hat + LoRaRF)
+================================================================================
+
+First successful master->cone link was brought up 2026-06-20; first cone->master
+(ConeZ board TX) the same day. The master runs on a Waveshare "SX1262 XXXM
+LoRaWAN/GNSS HAT" (433 MHz) with the bundled (Waveshare-example) LoRaRF Python
+library. Non-obvious things that had to be right:
+
+  * RF SWITCH: handled by DIO2 via setDio2RfSwitch(). TXEN/RXEN GPIOs left unused
+    (txen=-1, rxen=-1), matching the known-working lora-aprs code. (The theory
+    that TXEN=BCM6 had to be host-driven was a red herring.)
+  * TCXO: do NOT enable DIO3 TCXO control on this hat -- adding it (1.8 V) HUNG
+    the transmit (TxDone never fired). The cone (RadioLib) uses its own TCXO.
+  * TX POWER / PA: LoRaRF setTxPower() silently no-ops for the SX1262 below
+    +14 dBm (dead `else: return` -> SetPaConfig never issued -> no RF). Fix:
+    set the PA from a per-power table ported from RadioLib 7.6.0 SX1262 paOptTable
+    (set_tx_power() in conez-master.py); clean output -9..+22 dBm. Bug symptom:
+    TX "completes" (TxDone fires) but nothing radiates.
+  * LDRO -- THE CRC KILLER: compute from symbol time, never hard-code. The cone's
+    RadioLib auto-computes LDRO; the master must agree or the payload de-maps and
+    every packet fails CRC (-7) while the robust explicit header still decodes
+    (length looks right). Rule: ldro = (2**SF / BW_Hz) > 0.016. (SF7/BW500 -> off;
+    SF12/BW125 -> on.)
+  * FREQUENCY ACCURACY: excellent -- ~308 Hz offset measured at 7 mi. No trim.
+  * RX SATURATION: at ~1 m bench range a +22 dBm signal overloads the cone RX
+    (no decode). For RF-quiet bench testing terminate the Pi in a 50 ohm dummy
+    load (leakage ~ -80 dBm at the cone). ALWAYS sleep/standby the radio (PA off)
+    before swapping antenna/load -- a keyed PA into an open load can be destroyed.
+
+Cone firmware (firmware/src/lora/): 16-bit sync word (0xDEAD) set by inverting
+RadioLib's setSyncWord(syncWord, controlBits) packing; SF default 7; readData()
+failures log the RadioLib error code. CONE TX: `lora send <text>` -> lora_tx()
+-> radio.transmit() -> re-arm RX, guarded by lora_tx_active so the loopTask RX
+poll does not race it on the SPI bus (no radio mutex yet). The board's Ebyte
+E22-400M22S (SX1268 + 22 dBm PA/LNA) drives its TXEN/RXEN T/R switch from DIO2
+through an on-board N-channel MOSFET -- CONFIRMED to switch cleanly at 3.3 V
+logic (ConeZ->Pi decoded clean at -71 dBm / SNR 13, +14 dBm board TX).
+
+
+================================================================================
+Appendix B. Implementation status (built vs. designed)
+================================================================================
+
+Built today (an earlier ad-hoc broadcast, to be migrated to v1 framing):
+  * Master: beacon TX, blind file/firmware/manifest broadcast carousel
+    (lora-master/conez-master.py), RX-continuous logging between TX.
+  * Cone: LoRa RX (firmware lora_rx), and TX via `lora send` (lora_tx).
+  * Bidirectional link verified both directions on the default LoRa params.
+
+Designed here, NOT yet built:
+  * v1 4-byte header and packet taxonomy (replacing the 16-byte legacy header).
+  * Superframe / timeslot scheduling; registration; polling.
+  * Cues (fire-now / fire-at-time; groups).
+  * Per-block compression + systematic Reed-Solomon FEC; manifest-driven
+    fetch/delete; firmware-OTA-aware block commit; weighted carousel scheduler.
+  * Scanlist following + master channel/mode switching; FSK mode.
