@@ -75,6 +75,11 @@ Goal: a cone finds the master by scanning, then locks to the beacon's params.
           heard; lock to advertised params; re-scan on prolonged beacon loss.
   Deps:   Phase 1.
   TEST:   start a cone whose default channel != master's; it scans, finds, locks.
+  DONE+:  extended beyond the base goal -- channels are TIERED (dist file / root
+          file / built-in default / exhaustive virtual sweep of all LoRa
+          freq x BW x SF), scanned ROUND-ROBIN and widened after scan_passes
+          fruitless primary sweeps; config knobs [lora] scan_dwell + scan_passes;
+          refactored into firmware/src/lora/scan.cpp. See spec section 15.
 
 
 --------------------------------------------------------------------------------

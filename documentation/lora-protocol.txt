@@ -359,14 +359,19 @@ etc.) and firmware are present when needed. ("dist" replaces the misleading name
 --------------------------------------------------------------------------------
 
 A cone finds the master by trying channels from its scanlist until it hears a
-beacon, then locks to the beacon's advertised params.
+beacon, then locks to the beacon's advertised params. Channels are organised in
+priority TIERS, scanned round-robin and widened over time.
 
-  * Built-in DEFAULT scanlist in firmware (so a fresh cone can always find a
-    master on the conventional channels).
-  * Override/extend via a scanlist FILE delivered through dist/ -- so the master
-    can update the fleet's scan plan over the air.
+  * Sources, in priority order -- each becomes a tier when present:
+      1. /dist/scanlist.txt -- delivered over the air via dist (master-managed)
+      2. /scanlist.txt      -- local root override
+      3. built-in DEFAULT   -- a few most-likely channels, ALWAYS present
+      4. EXHAUSTIVE sweep   -- a virtual tier covering every LoRa freq x BW x SF
+                               in band, computed on demand (not stored). The last
+                               resort, so a lost cone eventually finds a master
+                               on any channel given enough time.
   * The master may move channel or switch mode; it pre-announces in the beacon so
-    locked cones follow, and rejoin via scanlist if they lose it.
+    locked cones follow, and rejoin via the scanlist if they lose it.
 
 Scanlist file format (text; one channel per line, scan order = file order). The
 first token selects the mode -- L = LoRa, F = FSK -- so a single plan covers both
@@ -379,12 +384,24 @@ lines are ignored:
   e.g.  L 431250000 500000 7 5 0xDEAD
         F 431250000 4800 5000 9700 0x2D
 
-Put the most-likely (primary) channels first, then a wider fallback sweep.
-
-Scan behaviour: the cone dwells on each entry longer than the beacon period
-before advancing, LOCKS to the first entry on which it decodes a beacon, and
-resumes scanning from the top if the beacon is lost for a while. The canonical
+Within a file, put the most-likely (primary) channels first. The canonical
 example lives in the master's dist/scanlist.txt.
+
+Tiered escalation + round-robin: the cone starts on tier 0 (the highest-priority
+source). After scan_passes fruitless sweeps of the PRIMARY tier it widens the
+search by one tier, up to all tiers. The active tiers are then scanned
+ROUND-ROBIN -- one entry from each per step, each tier keeping its own cursor --
+so the small primary tier stays frequently scanned even while a huge backup tier
+(e.g. the exhaustive sweep) is also being swept; a master returning to a main
+channel is found quickly regardless of backup-list size. On a decoded beacon the
+cone LOCKS; after a prolonged beacon loss it re-scans from tier 0.
+
+Knobs (config [lora], read live): scan_dwell (seconds per channel, default 12 --
+must exceed the beacon period to reliably catch a beacon); scan_passes (primary
+sweeps before widening, default 5). CLI: `lora scan on|off`; `lora` status lists
+the tiers. Implemented in firmware/src/lora/scan.cpp. The exhaustive tier uses
+the default sync word (it cannot enumerate per-channel sync); file/built-in tiers
+carry real sync words. FSK-combo exhaustive is a future addition (section 16).
 
 
 --------------------------------------------------------------------------------
@@ -460,7 +477,9 @@ Built (see documentation/lora-v1-implementation-plan.txt for phases):
     BEACON (master emits, cone parses); non-GPS clock disciplined from the
     beacon (priority GPS > NTP > beacon). [Phase 1]
   * Scanlist & channel lock -- cone scans the scanlist (L/F format, section 15),
-    locks on a beacon, re-scans on beacon loss. [Phase 2]
+    locks on a beacon, re-scans on loss. Tiered (dist file / root file / built-in
+    default / exhaustive virtual sweep) with round-robin scanning + widen-on-
+    failure; scan_dwell + scan_passes config. firmware/src/lora/scan.cpp. [Phase 2]
   * dist core -- master broadcasts the manifest + data files as DIST_DATA chunks
     (round-robin carousel); cone reassembles, MD5-verifies vs the manifest,
     writes /dist/<name>, and deletes local files no longer listed. No
