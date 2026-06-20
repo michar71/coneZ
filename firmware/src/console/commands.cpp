@@ -2692,6 +2692,7 @@ int cmd_lora(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, "  RX Pkts:   %lu\n", (unsigned long)lora_get_rx_count());
     printfnl(SOURCE_COMMANDS, "  Last RSSI: %.1f dBm\n", lora_get_rssi());
     printfnl(SOURCE_COMMANDS, "  Last SNR:  %.1f dB\n", lora_get_snr());
+    lora_print_beacon();
 #else
     printfnl(SOURCE_COMMANDS, "LoRa not available on this board\n");
 #endif

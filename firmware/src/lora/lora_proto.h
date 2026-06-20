@@ -1,0 +1,71 @@
+#ifndef CONEZ_LORA_PROTO_H
+#define CONEZ_LORA_PROTO_H
+
+// ConeZ LoRa Protocol v1 -- wire format (firmware side).
+//
+// SHARED DEFINITION: keep byte-for-byte in sync with lora-master/lora_proto.py.
+// See documentation/lora-protocol.txt. All multi-byte fields are BIG-ENDIAN.
+//
+// Common header (4 bytes): type, network, src, dst.
+// Addresses: 0 = master, 1..254 = cone, 255 = broadcast.
+
+#include <stdint.h>
+#include <stddef.h>
+
+#define LORA_PROTO_VERSION   1
+
+// Packet types
+#define LP_PKT_BEACON        0x01
+#define LP_PKT_REG_REQ       0x10
+#define LP_PKT_REG_RESP      0x11
+#define LP_PKT_POLL_REQ      0x20
+#define LP_PKT_POLL_RESP     0x21
+#define LP_PKT_CUE           0x30
+#define LP_PKT_DIST_DATA     0x40
+#define LP_PKT_DIST_PARITY   0x41
+
+// Addresses
+#define LP_ADDR_MASTER       0
+#define LP_ADDR_BROADCAST    255
+
+// Channel modes
+#define LP_MODE_LORA         0
+#define LP_MODE_FSK          1
+
+// Common header (4 bytes)
+#define LP_HDR_LEN           4
+#define LP_HDR_TYPE          0
+#define LP_HDR_NET           1
+#define LP_HDR_SRC           2
+#define LP_HDR_DST           3
+
+// BEACON body offsets (absolute, from start of packet; header is 4 bytes).
+// Body layout (30 bytes): ver(1) epoch_s(4) epoch_ms(2) mode(1) freq(4) bw(4)
+//                         sf(1) cr(1) sync(2) manifest_serial(2) callsign(8)
+#define LP_BCN_VERSION       (LP_HDR_LEN + 0)   // u8
+#define LP_BCN_EPOCH_S       (LP_HDR_LEN + 1)   // u32
+#define LP_BCN_EPOCH_MS      (LP_HDR_LEN + 5)   // u16
+#define LP_BCN_MODE          (LP_HDR_LEN + 7)   // u8
+#define LP_BCN_FREQ          (LP_HDR_LEN + 8)   // u32
+#define LP_BCN_BW            (LP_HDR_LEN + 12)  // u32
+#define LP_BCN_SF            (LP_HDR_LEN + 16)  // u8
+#define LP_BCN_CR            (LP_HDR_LEN + 17)  // u8
+#define LP_BCN_SYNC          (LP_HDR_LEN + 18)  // u16
+#define LP_BCN_MANIFEST      (LP_HDR_LEN + 20)  // u16
+#define LP_BCN_CALLSIGN      (LP_HDR_LEN + 22)  // 8 bytes ASCII, space-padded
+#define LP_BCN_CALLSIGN_LEN  8
+#define LP_BCN_LEN           (LP_HDR_LEN + 30)  // total beacon packet length
+
+// Big-endian readers (wire is big-endian).
+static inline uint16_t lp_rd_u16(const uint8_t *p)
+{
+    return (uint16_t)((p[0] << 8) | p[1]);
+}
+
+static inline uint32_t lp_rd_u32(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8)  |  (uint32_t)p[3];
+}
+
+#endif // CONEZ_LORA_PROTO_H

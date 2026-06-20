@@ -7,6 +7,7 @@
 #include "config.h"
 #include "lora_hal.h"
 #include "conez_usb.h"
+#include "lora_proto.h"
 
 static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
 
@@ -188,50 +189,121 @@ int lora_setup( void )
 }
 
 
+// ---- v1 BEACON (0x01) tracking ----------------------------------------------
+static struct {
+    bool     valid;
+    uint32_t uptime_ms;
+    float    rssi, snr;
+    uint8_t  version, mode, sf, cr;
+    uint32_t epoch_s, freq_hz, bw_hz;
+    uint16_t epoch_ms, sync_word, manifest_serial;
+    char     callsign[LP_BCN_CALLSIGN_LEN + 1];
+} g_beacon;
+
+static void lora_handle_beacon( const uint8_t *p, size_t len, float rssi, float snr )
+{
+    if (len < LP_BCN_LEN) {
+        printfnl(SOURCE_LORA, "BEACON too short (%d B)\n", (int)len);
+        return;
+    }
+    g_beacon.valid           = true;
+    g_beacon.uptime_ms       = uptime_ms();
+    g_beacon.rssi            = rssi;
+    g_beacon.snr             = snr;
+    g_beacon.version         = p[LP_BCN_VERSION];
+    g_beacon.epoch_s         = lp_rd_u32(p + LP_BCN_EPOCH_S);
+    g_beacon.epoch_ms        = lp_rd_u16(p + LP_BCN_EPOCH_MS);
+    g_beacon.mode            = p[LP_BCN_MODE];
+    g_beacon.freq_hz         = lp_rd_u32(p + LP_BCN_FREQ);
+    g_beacon.bw_hz           = lp_rd_u32(p + LP_BCN_BW);
+    g_beacon.sf              = p[LP_BCN_SF];
+    g_beacon.cr              = p[LP_BCN_CR];
+    g_beacon.sync_word       = lp_rd_u16(p + LP_BCN_SYNC);
+    g_beacon.manifest_serial = lp_rd_u16(p + LP_BCN_MANIFEST);
+    memcpy(g_beacon.callsign, p + LP_BCN_CALLSIGN, LP_BCN_CALLSIGN_LEN);
+    g_beacon.callsign[LP_BCN_CALLSIGN_LEN] = '\0';
+    for (int i = LP_BCN_CALLSIGN_LEN - 1; i >= 0 && g_beacon.callsign[i] == ' '; i--)
+        g_beacon.callsign[i] = '\0';
+
+    printfnl(SOURCE_LORA,
+             "BEACON %s v%u %.3f MHz BW%u SF%u CR4/%u sync 0x%04X manifest %u  t=%u.%03u  RSSI %.0f SNR %.1f\n",
+             g_beacon.callsign, (unsigned)g_beacon.version, g_beacon.freq_hz / 1e6,
+             (unsigned)(g_beacon.bw_hz / 1000), (unsigned)g_beacon.sf, (unsigned)g_beacon.cr,
+             (unsigned)g_beacon.sync_word, (unsigned)g_beacon.manifest_serial,
+             (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, rssi, snr);
+}
+
+// Show the last beacon in the `lora` status command (SOURCE_COMMANDS).
+void lora_print_beacon( void )
+{
+    if (!g_beacon.valid) {
+        printfnl(SOURCE_COMMANDS, "  Master beacon: none heard yet\n");
+        return;
+    }
+    uint32_t age = (uptime_ms() - g_beacon.uptime_ms) / 1000;
+    printfnl(SOURCE_COMMANDS, "  Master beacon (%us ago): %s  v%u  manifest %u\n",
+             (unsigned)age, g_beacon.callsign, (unsigned)g_beacon.version,
+             (unsigned)g_beacon.manifest_serial);
+    printfnl(SOURCE_COMMANDS, "    chan: %.3f MHz  BW %u kHz  SF%u  CR4/%u  sync 0x%04X\n",
+             g_beacon.freq_hz / 1e6, (unsigned)(g_beacon.bw_hz / 1000),
+             (unsigned)g_beacon.sf, (unsigned)g_beacon.cr, (unsigned)g_beacon.sync_word);
+    printfnl(SOURCE_COMMANDS, "    master time %u.%03u  RSSI %.0f dBm  SNR %.1f dB\n",
+             (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, g_beacon.rssi, g_beacon.snr);
+}
+
+
 void lora_rx( void )
 {
     if( lora_tx_active )      // don't touch the radio mid-transmit
         return;
-
     if( !lora_rxdone_flag )
         return;
-
     lora_rxdone_flag = false;
 
-    printfnl(SOURCE_LORA, "\nWe have RX flag!\n" );
-    printfnl(SOURCE_LORA, "radio.available = %d\n", radio.available() );
-    printfnl(SOURCE_LORA, "radio.getRSSI = %f\n" , radio.getRSSI() );
-    printfnl(SOURCE_LORA, "radio.getSNR = %f\n" ,radio.getSNR() );
-    printfnl(SOURCE_LORA,  "radio.getPacketLength = %d\n" ,radio.getPacketLength() );
-
-        
     uint8_t rxbuf[256];
     size_t rxlen = radio.getPacketLength();
     if (rxlen > sizeof(rxbuf) - 1)
         rxlen = sizeof(rxbuf) - 1;
     int16_t state = radio.readData( rxbuf, rxlen );
+    float rssi = radio.getRSSI();
+    float snr  = radio.getSNR();
 
-    if( state == RADIOLIB_ERR_NONE )
+    if( state != RADIOLIB_ERR_NONE )
     {
-            rx_count++;
-            // Replace non-printable bytes with '.' for safe display
-            char display[256];
-            for (size_t i = 0; i < rxlen; i++)
-                display[i] = (rxbuf[i] >= 0x20 && rxbuf[i] < 0x7F) ? (char)rxbuf[i] : '.';
-            display[rxlen] = '\0';
-            printfnl(SOURCE_LORA, "Packet (%d bytes): %s\n", (int)rxlen, display);
+        const char *reason;
+        switch (state)
+        {
+            case RADIOLIB_ERR_CRC_MISMATCH:        reason = "CRC mismatch";   break;
+            case RADIOLIB_ERR_RX_TIMEOUT:          reason = "RX timeout";     break;
+            case RADIOLIB_ERR_LORA_HEADER_DAMAGED: reason = "header damaged"; break;
+            default:                               reason = "?";              break;
+        }
+        printfnl(SOURCE_LORA, "readData failed: state=%d (%s)\n", (int)state, reason);
+        radio.startReceive();
+        return;
+    }
+
+    rx_count++;
+
+    // v1 dispatch on the 4-byte common header (type, network, src, dst)
+    if (rxlen >= LP_HDR_LEN)
+    {
+        uint8_t ptype = rxbuf[LP_HDR_TYPE];
+        switch (ptype)
+        {
+            case LP_PKT_BEACON:
+                lora_handle_beacon(rxbuf, rxlen, rssi, snr);
+                break;
+            default:
+                printfnl(SOURCE_LORA, "RX type 0x%02X net %u src %u dst %u  %d B  RSSI %.0f SNR %.1f\n",
+                         (unsigned)ptype, (unsigned)rxbuf[LP_HDR_NET], (unsigned)rxbuf[LP_HDR_SRC],
+                         (unsigned)rxbuf[LP_HDR_DST], (int)rxlen, rssi, snr);
+                break;
+        }
     }
     else
     {
-            const char *reason;
-            switch (state)
-            {
-                case RADIOLIB_ERR_CRC_MISMATCH:        reason = "CRC mismatch";   break;
-                case RADIOLIB_ERR_RX_TIMEOUT:          reason = "RX timeout";     break;
-                case RADIOLIB_ERR_LORA_HEADER_DAMAGED: reason = "header damaged"; break;
-                default:                               reason = "?";              break;
-            }
-            printfnl(SOURCE_LORA, "readData failed: state=%d (%s)\n", (int)state, reason);
+        printfnl(SOURCE_LORA, "RX runt (%d B) RSSI %.0f\n", (int)rxlen, rssi);
     }
 
     // Re-enter receive mode for the next packet

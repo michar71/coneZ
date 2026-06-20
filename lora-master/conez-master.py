@@ -9,6 +9,7 @@ import struct
 import math
 from datetime import datetime
 from LoRaRF import SX126x
+import lora_proto as proto
 
 
 # --- Single-instance guard ---------------------------------------------------
@@ -47,6 +48,7 @@ DOWNSTREAM_TXPOWER = 0				# dBm (signed, -9..+22). Low for close-range
 						# ends for SX1262 powers <+14 -> no RF out)
 DOWNSTREAM_DEADTIME = 0.1			# Gap between transmissions
 LORA_SYNC_WORD = 0xDEAD
+CALLSIGN = "N1AF"				# FCC station ID (in the v1 beacon)
 
 # Firmware
 FIRMWARE_FILE = "firmware/ConeZ-v0/0.02.0376.bin"
@@ -183,36 +185,15 @@ def _cr_code(cr: int) -> int:
     return lookup.get(cr, 0)
 
 
-def make_beacon(
-    network: int = 0,
-    freq: int = DOWNSTREAM_FREQUENCY,
-    bw: int = DOWNSTREAM_BANDWIDTH,
-    sf: int = DOWNSTREAM_SF,
-    cr: int = DOWNSTREAM_CR
-) -> bytes:
-
-    # Translate RF parameters
-    rf_params = ( _bw_code(bw)		# Bandwidth
-        | (_sf_code(sf) << 3)		# Spreading factor
-        | ( _cr_code( cr ) << 6 ) )	# Coding rate
-
-    # Get current UNIX timestamp + millis
-    now = time.time()
-    seconds = int( now )
-    millis = int( (now - seconds) * 1000)
-
-    payload = struct.pack(
-        '>BBIHIHH',
-        0x01,                    # packet type
-        network & 0xFF,          # network number
-        seconds & 0xFFFFFFFF,    # timestamp seconds
-        millis & 0xFFFF,         # timestamp ms
-        freq   & 0xFFFFFFFF,     # downstream frequency
-        rf_params,               # RF parameters word
-        0                        # reserved (0x0000)
+def make_beacon(network: int = 0) -> bytes:
+    """v1 BEACON: channel/params + master time + manifest serial + callsign."""
+    return proto.make_beacon(
+        network=network,
+        freq=DOWNSTREAM_FREQUENCY, bw=DOWNSTREAM_BANDWIDTH,
+        sf=DOWNSTREAM_SF, cr=DOWNSTREAM_CR,
+        sync_word=LORA_SYNC_WORD, manifest_serial=manifest_serial,
+        callsign=CALLSIGN,
     )
-    
-    return CONEZ_HEADER + payload    
 
 
 # ------------------------------------------
@@ -591,44 +572,8 @@ try:
             beacon = make_beacon()
             transmit( beacon )
             last_tx = time.monotonic()
-            
-            time.sleep( DOWNSTREAM_DEADTIME )
-            
-            print( "TX Manifest" )
-            transmit_manifest()
-
-            time.sleep( DOWNSTREAM_DEADTIME )
-            
-            print( "TX File" )
-            transmit_file()
-            
-            time.sleep( DOWNSTREAM_DEADTIME )
-
-            print( "TX File" )
-            transmit_file()
-            
-            time.sleep( DOWNSTREAM_DEADTIME )
-            
-            print( "TX Firmware" )
-            transmit_firmware()
-
-            time.sleep( DOWNSTREAM_DEADTIME )
-
-            print( "TX Firmware" )
-            transmit_firmware()
-            
-            time.sleep( DOWNSTREAM_DEADTIME )
-
-#            print( "TX Firmware" )
-#            transmit_firmware()
-#            
-#            time.sleep( 0.5 )
-#
-#            print( "TX Firmware" )
-#            transmit_firmware()
-#            
-#            time.sleep( 0.5 )
-
+            # Phase 1: beacon-only. Legacy file/firmware/manifest carousel
+            # removed; the v1 dist carousel arrives in Phase 3.
         # Check for incoming packets
         if LoRa.available():
             t_rx = datetime.now()
