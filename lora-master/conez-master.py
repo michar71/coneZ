@@ -26,8 +26,8 @@ firmware_offset = 0
 
 # File distribution
 FILE_CHUNK_SIZE = 128
-MANIFEST_FILE = "rsync/_manifest_1.txt"
-manifest_serial = 1
+MANIFEST_FILE = "rsync/_manifest_2.txt"
+manifest_serial = 2
 manifest_len = os.path.getsize( MANIFEST_FILE )
 manifest_offset = 0
 

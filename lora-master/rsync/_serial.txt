@@ -1,2 +1,2 @@
-next_file_id=8
-next_manifest_serial=2
+next_file_id=9
+next_manifest_serial=3
