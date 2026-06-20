@@ -425,6 +425,7 @@ void setup()
 
   // Fire up the LoRa radio.
   lora_setup();
+  lora_start_task();   // RX + scanlist lock run on a dedicated task, off loopTask
 
 #ifdef BOARD_HAS_GPS
   // Fire up GPS UART.
@@ -554,9 +555,9 @@ void loop()
   else
     gpio_set_level( (gpio_num_t)LED_PIN, 0 );
 
-  // Check for LoRa packets
-  lora_rx();
-  lora_scan_tick();   // scanlist channel acquisition / lock
+  // LoRa RX + scanlist channel lock now run on the dedicated LoRa task
+  // (lora_start_task) -- off loopTask so heavy channel hops can't starve
+  // core-1 idle (the prior Task-WDT trigger).
 
 #ifdef BOARD_HAS_GPS
   // Process GPS messages

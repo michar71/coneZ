@@ -27,10 +27,13 @@ Appendix B). Phase 1 changes the wire format, so the old blind-broadcast /
 Cross-cutting prerequisites (do alongside the phases that need them)
 --------------------------------------------------------------------------------
 
-  * RADIO ACCESS MUTEX (cone). Today lora_tx() uses a `lora_tx_active` flag as a
-    stopgap. It is fine for RX-only dist, but once the cone does scheduled-slot
-    TX (registration/polling) concurrently with RX, replace the flag with a real
-    mutex around all radio access. Needed by the registration/polling phase.
+  * RADIO ACCESS MUTEX (cone). DONE. lora_rx() + scanning run on a dedicated LoRa
+    task (off loopTask), and a recursive mutex (lora_radio_lock/unlock) now
+    serializes all radio access -- RX read+re-arm, lora_reinit, lora_tx,
+    lora_set_* -- plus the scan state it drives. Replaced the old lora_tx_active
+    flag stopgap; this is the mutex the registration/polling phase needs. (Moving
+    LoRa off loopTask also fixed a Task-WDT from heavy lora_reinit channel hops
+    starving core-1 idle during fast scans.)
   * SHARED PACKET DEFINITIONS. One source of truth for header + packet layouts,
     mirrored in Python and C so the two code bases can't drift. Establish in
     Phase 1.

@@ -8,7 +8,7 @@
 
 void scan_init(void);                 // load scanlist + start scanning (from lora_setup)
 void scan_notify_beacon(void);        // a beacon was decoded (from lora_handle_beacon)
-void lora_scan_tick(void);            // drive the scan state machine (from loop())
+void lora_scan_tick(void);            // drive the scan state machine (from the LoRa task)
 void lora_scan_print(void);           // `lora` status
 void lora_scan_set_enabled(bool en);  // `lora scan on|off`
 

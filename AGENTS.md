@@ -196,6 +196,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | Task | Core | Priority | Stack | Source | Lifecycle |
 |------|------|----------|-------|--------|-----------|
 | loopTask | 1 | 1 | 4096 | `loop()` in `main.cpp` | Always running |
+| lora | any | 1 | 6144 | `lora_task_fn` in `lora/lora.cpp` | Always running |
 | ShellTask | any | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
 | httpd | 1 | 6 | 4096 | `esp_http_server` in `http/http.cpp` | Always running |
 | mqtt_task | 1 | 5 | 4096 | ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp` | Created when MQTT connects |
@@ -205,11 +206,12 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | WasmTask | any | 1 | 8192 | `wasm_task_fun` in `wasm/wasm_wrapper.cpp` | Always running (holds pre-allocated linear memory) |
 
 **Core 1 tasks (pinned):**
-- **loopTask** — Hardware polling: LoRa RX, GPS parsing, sensor polling, WiFi, NTP, cue engine, load average sampling, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task.)
+- **loopTask** — Hardware polling: GPS parsing, sensor polling, WiFi, NTP, cue engine, load average sampling, LED heartbeat blink. All non-blocking polling, yields via `vTaskDelay(1)` each iteration. (`http_loop()` is called but is a no-op — HTTP is handled by the httpd task. LoRa RX/scan moved to the dedicated LoRa task — see below.)
 - **httpd** — ESP-IDF `esp_http_server` task. Handles all HTTP requests autonomously (no polling needed). Pinned to core 1. Stack 4096 for HTML generation and OTA streaming.
 - **led_render** — Pushes LED data to hardware via RMT at ~30 FPS when dirty, at least 2/sec unconditionally. Priority 2 preempts both loopTask and ShellTask.
 
 **Floating tasks (`tskNO_AFFINITY` — scheduler places on whichever core has bandwidth):**
+- **lora** — `lora_rx()` (packet RX + dispatch to beacon/dist/etc.) and `lora_scan_tick()` (scanlist channel acquisition / lock). 2 ms poll loop (RX is IRQ-flagged via `lora_rxdone`). Moved off loopTask so heavy `lora_reinit()` channel hops during scanning can't saturate core 1 and starve its idle task — that was a Task-WDT (`TG1WDT_SYS_RST`) trigger on `config set` flash-writes during fast scans. A **recursive mutex** `lora_mutex` (`lora_radio_lock()`/`lora_radio_unlock()` in `lora.h`) serializes ALL radio access — RX read+re-arm, `lora_reinit`, `lora_tx`, `lora_set_*` — and the scan state it drives (`scan.cpp`), so CLI radio/scan commands on ShellTask can't race it. This is the radio-access mutex the registration/polling phase needs; it replaced the old `lora_tx_active` flag stopgap.
 - **ShellTask** — CLI input processing (`prepInput`), command execution, interactive apps (editor, game). Yields via `vTaskDelay(1)` each iteration. Blocking commands (editor, game) run here without blocking loopTask.
 - **BasicTask** — BASIC interpreter. Created on first script, not at boot.
 - **WasmTask** — WASM interpreter. Created at boot; persists between runs to hold pre-allocated linear memory in place. **DRAM path** (Heltec): 64KB pre-allocated at boot to prevent heap fragmentation. **PSRAM path** (ConeZ): lazy-allocated on first `.wasm` run — only a small DRAM header + 64KB in PSRAM, no boot-time cost if WASM is never used.

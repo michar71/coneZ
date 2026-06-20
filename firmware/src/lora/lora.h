@@ -6,13 +6,18 @@
 
 void lora_rx( void );
 int lora_setup( void );
+void lora_start_task( void );                     // spawn the dedicated LoRa task (RX + scan)
 int lora_tx( const uint8_t *data, size_t len );   // transmit, then return to RX
 void lora_print_beacon( void );                   // show last v1 BEACON in `lora` status
-bool lora_tx_busy( void );                        // true while a CLI TX is in progress (used by scan)
+// Recursive mutex serializing all radio access + the scan state it drives. Held
+// by the LoRa task around RX/scan; CLI radio/scan commands take it too.
+void lora_radio_lock( void );
+void lora_radio_unlock( void );
 // Scanlist & channel lock API lives in scan.h.
 
-float lora_get_rssi(void);
-float lora_get_snr(void);
+float lora_get_rssi(void);   // RSSI of the last received packet (see lora_have_rx)
+float lora_get_snr(void);    // SNR  of the last received packet (see lora_have_rx)
+bool  lora_have_rx(void);    // true once a genuine packet has been received since boot
 float lora_get_frequency(void);
 float lora_get_bandwidth(void);
 int lora_get_sf(void);

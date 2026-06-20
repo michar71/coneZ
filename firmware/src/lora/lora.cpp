@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <RadioLib.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "main.h"
 #include "util.h"
 #include "printManager.h"
@@ -32,9 +35,23 @@ static bool fsk_mode = false;
 static uint32_t rx_count = 0;
 static uint32_t tx_count = 0;
 
-// True while a CLI-triggered transmit is in progress, so the RX poll (loopTask)
-// skips the radio and doesn't race the TX on the shared SPI bus.
-static volatile bool lora_tx_active = false;
+// RSSI/SNR of the last GENUINELY-received packet. Invalid until the first real RX
+// since boot: the SX1268 packet-RSSI/SNR registers read garbage before any packet
+// arrives (e.g. -0.5 dBm / implausibly high SNR), so the `lora` status must not
+// report them as a "Last RSSI/SNR" until lora_have_rx() is true.
+static bool  rx_metrics_valid = false;
+static float last_rssi = 0.0f;
+static float last_snr  = 0.0f;
+
+// Dedicated LoRa task (RX poll + scan) + a recursive mutex serializing ALL radio
+// access (rx / reinit / tx / set_*) and the scan state it drives, so CLI radio
+// commands on ShellTask can't race the task. Replaces the old lora_tx_active
+// flag stopgap. Recursive because scan_step()->lora_reinit() nests the lock.
+static SemaphoreHandle_t lora_mutex       = NULL;
+static TaskHandle_t      lora_task_handle = NULL;
+
+void lora_radio_lock(void)   { if (lora_mutex) xSemaphoreTakeRecursive(lora_mutex, portMAX_DELAY); }
+void lora_radio_unlock(void) { if (lora_mutex) xSemaphoreGiveRecursive(lora_mutex); }
 
 // IRQ handler for LoRa RX
 volatile bool lora_rxdone_flag = false;
@@ -105,6 +122,9 @@ static void lora_apply_sync_word( void )
 int lora_setup( void )
 {
   usb_printf("Init LoRa...\n");
+
+  if (!lora_mutex)
+    lora_mutex = xSemaphoreCreateRecursiveMutex();
 
   radio.setTCXO( 1.8, 5000 );
   radio.setDio2AsRfSwitch();
@@ -192,6 +212,9 @@ int lora_setup( void )
      usb_printf("Failed to set LoRa to receive mode, status=%d\n", status);
   }
 
+  lora_rxdone_flag = false;   // drop any boot-time spurious RX-done so the first
+                              // lora_rx() doesn't count/parse a ghost packet
+
   scan_init();   // load scanlist + begin scanning for the master beacon
 
   return 0;
@@ -267,24 +290,29 @@ void lora_print_beacon( void )
 }
 
 
-// Accessor so the scan module can avoid touching the radio mid-TX.
-bool lora_tx_busy(void) { return lora_tx_active; }
-
 void lora_rx( void )
 {
-    if( lora_tx_active )      // don't touch the radio mid-transmit
-        return;
-    if( !lora_rxdone_flag )
+    if( !lora_rxdone_flag )      // nothing pending -- check the flag before locking
         return;
     lora_rxdone_flag = false;
 
     uint8_t rxbuf[256];
-    size_t rxlen = radio.getPacketLength();
+    size_t  rxlen;
+    int16_t state;
+    float   rssi, snr;
+
+    // Hold the radio only for the read + re-arm; the dispatch below (which may do
+    // a slow dist LittleFS commit) runs UNLOCKED so a CLI TX isn't blocked behind
+    // it. Re-arming RX before dispatch also avoids missing the next chunk.
+    lora_radio_lock();
+    rxlen = radio.getPacketLength();
     if (rxlen > sizeof(rxbuf) - 1)
         rxlen = sizeof(rxbuf) - 1;
-    int16_t state = radio.readData( rxbuf, rxlen );
-    float rssi = radio.getRSSI();
-    float snr  = radio.getSNR();
+    state = radio.readData( rxbuf, rxlen );
+    rssi  = radio.getRSSI();
+    snr   = radio.getSNR();
+    radio.startReceive();
+    lora_radio_unlock();
 
     if( state != RADIOLIB_ERR_NONE )
     {
@@ -297,11 +325,13 @@ void lora_rx( void )
             default:                               reason = "?";              break;
         }
         printfnl(SOURCE_LORA, "readData failed: state=%d (%s)\n", (int)state, reason);
-        radio.startReceive();
         return;
     }
 
     rx_count++;
+    last_rssi = rssi;            // a real packet -> these are now meaningful
+    last_snr  = snr;
+    rx_metrics_valid = true;
 
     // v1 dispatch on the 4-byte common header (type, network, src, dst)
     if (rxlen >= LP_HDR_LEN)
@@ -326,9 +356,28 @@ void lora_rx( void )
     {
         printfnl(SOURCE_LORA, "RX runt (%d B) RSSI %.0f\n", (int)rxlen, rssi);
     }
+}
 
-    // Re-enter receive mode for the next packet
-    radio.startReceive();
+
+// The dedicated LoRa task: poll RX + drive the scan state machine, OFF loopTask
+// so heavy lora_reinit() channel hops can't starve core-1 idle (was the WDT
+// trigger). No affinity -> the scheduler keeps it off a busy core 1. RX is
+// IRQ-flagged; a short delay bounds latency while yielding for idle/WDT.
+static void lora_task_fn( void *arg )
+{
+    (void)arg;
+    for (;;)
+    {
+        lora_rx();
+        lora_scan_tick();
+        vTaskDelay( pdMS_TO_TICKS(2) );
+    }
+}
+
+void lora_start_task( void )
+{
+    if (!lora_task_handle)
+        xTaskCreate( lora_task_fn, "lora", 6144, NULL, 1, &lora_task_handle );
 }
 
 
@@ -338,26 +387,34 @@ void lora_rx( void )
 // Returns 0 on success, else the RadioLib error code.
 int lora_tx( const uint8_t *data, size_t len )
 {
-    lora_tx_active = true;
+    lora_radio_lock();                    // serialize against the LoRa task's RX/scan
     int16_t state = radio.transmit( (uint8_t *)data, len );
     if( state == RADIOLIB_ERR_NONE )
         tx_count++;
     lora_rxdone_flag = false;             // discard any TxDone-triggered IRQ flag
     radio.setDio1Action( lora_rxdone );   // re-arm RX-done IRQ
     radio.startReceive();                 // back to RX continuous
-    lora_tx_active = false;
+    lora_radio_unlock();
     return ( state == RADIOLIB_ERR_NONE ) ? 0 : (int)state;
 }
 
 
+// RSSI/SNR of the LAST RECEIVED PACKET -- not a live channel read. Meaningless
+// until lora_have_rx() returns true (see rx_metrics_valid).
 float lora_get_rssi(void)
 {
-    return radio.getRSSI();
+    return last_rssi;
 }
 
 float lora_get_snr(void)
 {
-    return radio.getSNR();
+    return last_snr;
+}
+
+// True once at least one genuine packet has been received since boot.
+bool lora_have_rx(void)
+{
+    return rx_metrics_valid;
 }
 
 float lora_get_frequency(void)
@@ -427,55 +484,61 @@ float lora_get_datarate(void)
 
 int lora_set_frequency(float freq)
 {
+    lora_radio_lock();
     int status = radio.setFrequency(freq);
-    if (status != RADIOLIB_ERR_NONE)
-        return status;
-    radio.startReceive();
-    return 0;
+    if (status == RADIOLIB_ERR_NONE)
+        radio.startReceive();
+    lora_radio_unlock();
+    return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
 
 int lora_set_tx_power(int power)
 {
+    lora_radio_lock();
     int status = radio.setOutputPower(power);
-    if (status != RADIOLIB_ERR_NONE)
-        return status;
-    radio.startReceive();
-    return 0;
+    if (status == RADIOLIB_ERR_NONE)
+        radio.startReceive();
+    lora_radio_unlock();
+    return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
 
 int lora_set_bandwidth(float bw)
 {
+    lora_radio_lock();
     int status = radio.setBandwidth(bw);
-    if (status != RADIOLIB_ERR_NONE)
-        return status;
-    radio.startReceive();
-    return 0;
+    if (status == RADIOLIB_ERR_NONE)
+        radio.startReceive();
+    lora_radio_unlock();
+    return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
 
 int lora_set_sf(int sf)
 {
+    lora_radio_lock();
     int status = radio.setSpreadingFactor(sf);
-    if (status != RADIOLIB_ERR_NONE)
-        return status;
-    radio.startReceive();
-    return 0;
+    if (status == RADIOLIB_ERR_NONE)
+        radio.startReceive();
+    lora_radio_unlock();
+    return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
 
 int lora_set_cr(int cr)
 {
+    lora_radio_lock();
     int status = radio.setCodingRate(cr);
-    if (status != RADIOLIB_ERR_NONE)
-        return status;
-    radio.startReceive();
-    return 0;
+    if (status == RADIOLIB_ERR_NONE)
+        radio.startReceive();
+    lora_radio_unlock();
+    return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
 
 int lora_reinit(void)
 {
     fsk_mode = (strcasecmp(config.lora_rf_mode, "fsk") == 0);
 
-    int status;
+    lora_radio_lock();          // recursive: scan_step() may already hold it
 
+    int status;
     if (fsk_mode)
     {
         status = radio.beginFSK(
@@ -494,44 +557,47 @@ int lora_reinit(void)
         status = radio.begin(config.lora_frequency);
     }
 
-    if (status != RADIOLIB_ERR_NONE)
-        return status;
-
-    if (fsk_mode)
+    if (status == RADIOLIB_ERR_NONE)
     {
-        static const uint8_t shaping_map[] = {
-            RADIOLIB_SHAPING_NONE,
-            RADIOLIB_SHAPING_0_3,
-            RADIOLIB_SHAPING_0_5,
-            RADIOLIB_SHAPING_0_7,
-            RADIOLIB_SHAPING_1_0,
-        };
-        int idx = config.fsk_shaping;
-        if (idx < 0 || idx >= (int)(sizeof(shaping_map) / sizeof(shaping_map[0])))
-            idx = 0;
-        radio.setDataShaping(shaping_map[idx]);
+        if (fsk_mode)
+        {
+            static const uint8_t shaping_map[] = {
+                RADIOLIB_SHAPING_NONE,
+                RADIOLIB_SHAPING_0_3,
+                RADIOLIB_SHAPING_0_5,
+                RADIOLIB_SHAPING_0_7,
+                RADIOLIB_SHAPING_1_0,
+            };
+            int idx = config.fsk_shaping;
+            if (idx < 0 || idx >= (int)(sizeof(shaping_map) / sizeof(shaping_map[0])))
+                idx = 0;
+            radio.setDataShaping(shaping_map[idx]);
 
-        if (config.fsk_whitening)
-            radio.setWhitening(true);
+            if (config.fsk_whitening)
+                radio.setWhitening(true);
 
-        uint8_t sw_bytes[8];
-        int sw_len = parse_hex_syncword(config.fsk_syncword, sw_bytes, 8);
-        if (sw_len > 0)
-            radio.setSyncWord(sw_bytes, sw_len);
+            uint8_t sw_bytes[8];
+            int sw_len = parse_hex_syncword(config.fsk_syncword, sw_bytes, 8);
+            if (sw_len > 0)
+                radio.setSyncWord(sw_bytes, sw_len);
 
-        radio.setCRC(config.fsk_crc);
+            radio.setCRC(config.fsk_crc);
+        }
+        else
+        {
+            radio.setSpreadingFactor(config.lora_sf);
+            radio.setBandwidth(config.lora_bandwidth);
+            radio.setCodingRate(config.lora_cr);
+            radio.setPreambleLength(config.lora_preamble);
+            lora_apply_sync_word();
+            radio.setCRC(true);
+        }
+
+        radio.setDio1Action(lora_rxdone);
+        radio.startReceive();
+        lora_rxdone_flag = false;   // drop the spurious RX-done a channel hop can latch
     }
-    else
-    {
-        radio.setSpreadingFactor(config.lora_sf);
-        radio.setBandwidth(config.lora_bandwidth);
-        radio.setCodingRate(config.lora_cr);
-        radio.setPreambleLength(config.lora_preamble);
-        lora_apply_sync_word();
-        radio.setCRC(true);
-    }
 
-    radio.setDio1Action(lora_rxdone);
-    radio.startReceive();
-    return 0;
+    lora_radio_unlock();
+    return status;
 }

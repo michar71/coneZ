@@ -268,6 +268,7 @@ void scan_init(void)
 
 void scan_notify_beacon(void)
 {
+    lora_radio_lock();
     scan_last_beacon_ms = uptime_ms();
     scan_have_beacon    = true;
     if (scan_state == SCAN_SCANNING) {
@@ -275,27 +276,34 @@ void scan_notify_beacon(void)
         printfnl(SOURCE_LORA, "scan: LOCKED %.3f MHz (was scanning tier %d/%d)\n",
                  config.lora_frequency, active_tier, n_tiers - 1);
     }
+    lora_radio_unlock();
 }
 
-void lora_scan_tick(void)   // called from loop() after lora_rx()
+void lora_scan_tick(void)   // called from the LoRa task after lora_rx()
 {
-    if (!scan_enabled || n_tiers == 0 || lora_tx_busy()) return;
+    if (!scan_enabled || n_tiers == 0) return;   // cheap reads; lock only to act
     uint32_t now = uptime_ms();
 
     if (scan_state == SCAN_SCANNING) {
-        if ((int32_t)(now - scan_dwell_until) >= 0)
+        if ((int32_t)(now - scan_dwell_until) >= 0) {
+            lora_radio_lock();
             scan_step();
+            lora_radio_unlock();
+        }
     } else { // SCAN_LOCKED
         if (scan_have_beacon && (now - scan_last_beacon_ms) >= SCAN_LOSS_MS) {
+            lora_radio_lock();
             printfnl(SOURCE_LORA, "scan: beacon lost (%us), re-scanning from tier 0\n",
                      (unsigned)((now - scan_last_beacon_ms) / 1000));
             scan_restart();
+            lora_radio_unlock();
         }
     }
 }
 
 void lora_scan_set_enabled(bool en)   // `lora scan on|off`
 {
+    lora_radio_lock();
     scan_enabled = en;
     if (en) {
         scan_restart();
@@ -303,10 +311,12 @@ void lora_scan_set_enabled(bool en)   // `lora scan on|off`
     } else {
         printfnl(SOURCE_COMMANDS, "scan: disabled (staying on current channel)\n");
     }
+    lora_radio_unlock();
 }
 
 void lora_scan_print(void)   // shown in `lora` status
 {
+    lora_radio_lock();        // consistent snapshot vs the LoRa task's scan_step()
     int passes = config.lora_scan_passes; if (passes < 1) passes = 1;
     printfnl(SOURCE_COMMANDS, "  Scan: %s  (%d tiers, active 0..%d, %ds dwell, widen @ %d sweeps)\n",
              !scan_enabled ? "off" : (scan_state == SCAN_LOCKED ? "LOCKED" : "scanning"),
@@ -318,4 +328,5 @@ void lora_scan_print(void)   // shown in `lora` status
         char d[72]; scan_describe(&cur_entry, d, sizeof(d));
         printfnl(SOURCE_COMMANDS, "    primary sweep %d/%d, last: %s\n", scan_pass_count, passes, d);
     }
+    lora_radio_unlock();
 }

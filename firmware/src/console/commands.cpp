@@ -2703,8 +2703,16 @@ int cmd_lora(int argc, char **argv)
         printfnl(SOURCE_COMMANDS, "  Data Rate: %.0f bps\n", dr);
     printfnl(SOURCE_COMMANDS, "  TX Pkts:   %lu\n", (unsigned long)lora_get_tx_count());
     printfnl(SOURCE_COMMANDS, "  RX Pkts:   %lu\n", (unsigned long)lora_get_rx_count());
-    printfnl(SOURCE_COMMANDS, "  Last RSSI: %.1f dBm\n", lora_get_rssi());
-    printfnl(SOURCE_COMMANDS, "  Last SNR:  %.1f dB\n", lora_get_snr());
+    if (lora_have_rx())
+    {
+        printfnl(SOURCE_COMMANDS, "  Last RSSI: %.1f dBm\n", lora_get_rssi());
+        printfnl(SOURCE_COMMANDS, "  Last SNR:  %.1f dB\n", lora_get_snr());
+    }
+    else
+    {
+        printfnl(SOURCE_COMMANDS, "  Last RSSI: n/a (no packet received yet)\n");
+        printfnl(SOURCE_COMMANDS, "  Last SNR:  n/a\n");
+    }
     lora_print_beacon();
     lora_scan_print();
 #else
