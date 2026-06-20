@@ -3,12 +3,13 @@
 Create (or refresh) LoRa distribution manifest(s).
 
   • walks   firmware/   for  *.bin  files
-  • walks   rsync/       for regular files (skips names that start with '.' or '_')
-  • keeps   rsync/_serial.txt  with two counters:
+  • walks   dist/        for regular files (the distributable payload)
+  • keeps   dist-state/serial.txt  with two counters:
         next_file_id=<int>
         next_manifest_serial=<int>
   • re-uses file-IDs from the previous manifest so they stay stable
-  • only writes a new _manifest_<N>.txt when the contents actually change
+  • writes manifests to dist-state/ (NOT into dist/), so the contents of dist/
+    are exactly what gets distributed to the herd -- only when they change.
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ from typing import Dict, List, Tuple
 
 ROOT         = Path(__file__).resolve().parent
 FIRMWARE_DIR = ROOT / "firmware"
-DIST_DIR     = ROOT / "rsync"
-SERIAL_FILE  = DIST_DIR / "_serial.txt"
-MANIFEST_RE  = re.compile(r"_manifest_(\d+)\.txt$")
+DIST_DIR     = ROOT / "dist"          # distributable payload only
+STATE_DIR    = ROOT / "dist-state"    # manifests + serial counter (not distributed)
+SERIAL_FILE  = STATE_DIR / "serial.txt"
+MANIFEST_RE  = re.compile(r"manifest_(\d+)\.txt$")
 
 ###############################################################################
 # helpers
@@ -54,15 +56,18 @@ def load_serials() -> Tuple[int, int]:
 
 
 def save_serials(next_file_id: int, next_manifest_serial: int) -> None:
+    STATE_DIR.mkdir(exist_ok=True)
     SERIAL_FILE.write_text(
         f"next_file_id={next_file_id}\nnext_manifest_serial={next_manifest_serial}\n"
     )
 
 
 def latest_manifest() -> Tuple[Path | None, int]:
-    """Return (Path, serial) of the newest manifest, or (None, 0)."""
+    """Return (Path, serial) of the newest manifest in dist-state/, or (None, 0)."""
     best, best_n = None, 0
-    for p in DIST_DIR.iterdir():
+    if not STATE_DIR.exists():
+        return None, 0
+    for p in STATE_DIR.iterdir():
         m = MANIFEST_RE.fullmatch(p.name)
         if m:
             n = int(m.group(1))
@@ -101,7 +106,7 @@ def parse_existing_ids(manifest_path: Path | None) -> Dict[str, Tuple[int, str]]
             elif section == "files" and len(parts) >= 4:
                 fid = int(parts[0])
                 fname, md5 = parts[1], parts[3]
-                rel = f"rsync/{fname}"
+                rel = f"dist/{fname}"
                 out[rel] = (fid, md5)
     return out
 
@@ -129,14 +134,16 @@ def gather_firmware() -> List[Tuple[str, str, int, str, Path]]:
     return entries
 
 
-def gather_rsync_files() -> List[Tuple[str, int, str, Path]]:
+def gather_dist_files() -> List[Tuple[str, int, str, Path]]:
     """
     Return list of tuples:
         (filename, size, md5_8, path)
+    Distributable files live in dist/ (manifests/serial are in dist-state/, so
+    they are never picked up here). Dotfiles are still skipped defensively.
     """
     entries = []
     for p in DIST_DIR.iterdir():
-        if p.is_file() and not p.name.startswith(".") and not p.name.startswith("_"):
+        if p.is_file() and not p.name.startswith("."):
             size = p.stat().st_size
             md5 = md5_8(p)
             entries.append((p.name, size, md5, p))
@@ -157,12 +164,12 @@ def build_manifest() -> None:
 
     # collect new directory state
     fw_entries = gather_firmware()
-    file_entries = gather_rsync_files()
+    file_entries = gather_dist_files()
 
     # Build manifest text, assigning IDs (re-use known IDs, else allocate new)
     lines: List[str] = []
     lines.append("[firmware]")
-    
+
     for prod, ver, size, md5, p in fw_entries:
         rel = f"firmware/{prod}/{ver}.bin"
         old = id_lookup.get(rel)          # (fid, old_md5) or None
@@ -178,7 +185,7 @@ def build_manifest() -> None:
     lines.append("")  # blank line
     lines.append("[files]")
     for fname, size, md5, p in file_entries:
-        rel = f"rsync/{fname}"
+        rel = f"dist/{fname}"
         old = id_lookup.get(rel)
 
         if old and old[1] == md5:
@@ -196,9 +203,10 @@ def build_manifest() -> None:
         print("No changes detected – manifest not updated.")
         return
 
-    # write new manifest
+    # write new manifest into dist-state/ (never into dist/)
     serial = next_manifest_serial
-    man_path = DIST_DIR / f"_manifest_{serial}.txt"
+    STATE_DIR.mkdir(exist_ok=True)
+    man_path = STATE_DIR / f"manifest_{serial}.txt"
     man_path.write_text(manifest_text)
     timestamp = datetime.now().isoformat(sep=" ", timespec="seconds")
     print(f"[{timestamp}] Wrote {man_path.relative_to(ROOT)}")
@@ -218,4 +226,3 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
-

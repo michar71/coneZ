@@ -53,16 +53,18 @@ FIRMWARE_FILE = "firmware/ConeZ-v0/0.02.0376.bin"
 firmware_len = os.path.getsize( FIRMWARE_FILE )
 firmware_offset = 0
 
-# File distribution
+# File distribution. The distributable payload lives in dist/ (only what gets
+# sent to the herd); the generated manifest + serial counter live in dist-state/.
 FILE_CHUNK_SIZE = 128
-MANIFEST_DIR = "rsync"
-MANIFEST_RE = re.compile(r"_manifest_(\d+)\.txt$")
+DIST_DIR = "dist"
+MANIFEST_DIR = "dist-state"
+MANIFEST_RE = re.compile(r"manifest_(\d+)\.txt$")
 
 
 def latest_manifest(dir_path=MANIFEST_DIR):
-    """Return (path, serial) of the highest-numbered _manifest_<N>.txt, or (None, 0)."""
+    """Return (path, serial) of the highest-numbered manifest_<N>.txt, or (None, 0)."""
     best, best_n = None, 0
-    for p in glob.glob(os.path.join(dir_path, "_manifest_*.txt")):
+    for p in glob.glob(os.path.join(dir_path, "manifest_*.txt")):
         m = MANIFEST_RE.search(os.path.basename(p))
         if m:
             n = int(m.group(1))
@@ -73,14 +75,14 @@ def latest_manifest(dir_path=MANIFEST_DIR):
 
 MANIFEST_FILE, manifest_serial = latest_manifest()
 if MANIFEST_FILE is None:
-    raise RuntimeError(f"No _manifest_*.txt found in {MANIFEST_DIR}/ (run build_manifest.py)")
+    raise RuntimeError(f"No manifest_*.txt found in {MANIFEST_DIR}/ (run build_manifest.py)")
 print(f"Using manifest: {MANIFEST_FILE} (serial {manifest_serial})")
 manifest_len = os.path.getsize( MANIFEST_FILE )
 manifest_offset = 0
 
-DIST_FILE = "rsync/test.bas"
-rsync_file_len = os.path.getsize( DIST_FILE )
-rsync_file_offset = 0
+DIST_FILE = "dist/test.bas"
+dist_file_len = os.path.getsize( DIST_FILE )
+dist_file_offset = 0
 
 
 
@@ -513,8 +515,8 @@ def transmit_manifest():
 
 # -------------------------------------------------------
 
-def next_rsync_chunk(size: int = FILE_CHUNK_SIZE) -> bytes:
-    global rsync_file_offset
+def next_dist_chunk(size: int = FILE_CHUNK_SIZE) -> bytes:
+    global dist_file_offset
 
     """
     Return the next *size* bytes of the firmware file.
@@ -528,20 +530,20 @@ def next_rsync_chunk(size: int = FILE_CHUNK_SIZE) -> bytes:
     bytes  – the next chunk (0-length at end of file)
     """
     # Lazy-open on first use
-    fh = getattr(next_rsync_chunk, "_fh", None)
+    fh = getattr(next_dist_chunk, "_fh", None)
     if fh is None:
         fh = open(DIST_FILE, "rb")
-        next_rsync_chunk._fh = fh
+        next_dist_chunk._fh = fh
 
     chunk = fh.read(size)
 
-    rsync_file_offset = rsync_file_offset + size
+    dist_file_offset = dist_file_offset + size
 
     # Reached EOF → close & reset for future calls
     if not chunk:
         fh.close()
-        delattr(next_rsync_chunk, "_fh")
-        rsync_file_offset = 0
+        delattr(next_dist_chunk, "_fh")
+        dist_file_offset = 0
 
     return chunk
 
@@ -549,20 +551,20 @@ def next_rsync_chunk(size: int = FILE_CHUNK_SIZE) -> bytes:
 
 def transmit_file():
     # Grab the next manifest chunk
-    page_num = int( rsync_file_offset / 8192 )
+    page_num = int( dist_file_offset / 8192 )
     page_blocks = 8192 / FILE_CHUNK_SIZE
-    block_num = int( ( rsync_file_offset / FILE_CHUNK_SIZE ) % page_blocks ) 
+    block_num = int( ( dist_file_offset / FILE_CHUNK_SIZE ) % page_blocks ) 
 
-    data = next_rsync_chunk()
+    data = next_dist_chunk()
     
-    zzz_total_blocks = math.ceil( rsync_file_len / FILE_CHUNK_SIZE )
-    zzz_this_block = int( rsync_file_offset / FILE_CHUNK_SIZE )
+    zzz_total_blocks = math.ceil( dist_file_len / FILE_CHUNK_SIZE )
+    zzz_this_block = int( dist_file_offset / FILE_CHUNK_SIZE )
 
     packet = make_file_block(
         FILE_TYPE_LITTLEFS,		# File type
         manifest_serial,		# Manifest serial #
         2,				# Manifest file #
-        rsync_file_len,			# Total file size
+        dist_file_len,			# Total file size
         page_num,			# Page #
         page_blocks,			# Total blocks in this page
         block_num,			# This block #
@@ -571,7 +573,7 @@ def transmit_file():
         data
         )
         
-    print( f"  File: {DIST_FILE}  Size: {rsync_file_len}  Chunk: {zzz_this_block} / {zzz_total_blocks}  Page: {page_num}  Block: {block_num}" )
+    print( f"  File: {DIST_FILE}  Size: {dist_file_len}  Chunk: {zzz_this_block} / {zzz_total_blocks}  Page: {page_num}  Block: {block_num}" )
         
     transmit( packet )
 

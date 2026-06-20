@@ -753,12 +753,12 @@ Python LoRa master node that runs on a Raspberry Pi (SX1262/SX1268 via the bundl
 
 **Components:**
 - `conez-master.py` — beacon + chunked file/firmware broadcaster. Blind broadcaster: beacons every 10 s and cycles through manifest/file/firmware blocks on a timer (no per-cone ACKs). Auto-selects the highest-numbered manifest at startup via `latest_manifest()`. Downstream defaults: 431.250 MHz, 500 kHz BW, SF7, CR 4/5, sync word 0xDEAD, +0 dBm (bench default — raise for field range).
-- `build_manifest.py` — generates the distribution manifest. Walks `firmware/` for `*.bin` and `rsync/` for files, MD5-hashes each, assigns content-stable file IDs (reused while content is unchanged), and writes a new `rsync/_manifest_<serial>.txt` only when contents change. Counter state in `rsync/_serial.txt`.
+- `build_manifest.py` — generates the distribution manifest. Walks `firmware/` for `*.bin` and `dist/` for files, MD5-hashes each, assigns content-stable file IDs (reused while content is unchanged), and writes a new `dist-state/manifest_<serial>.txt` only when contents change. Counter state in `dist-state/serial.txt`. The manifest/serial live in `dist-state/` (not `dist/`) so `dist/` contains only what gets distributed to the herd.
 - `LoRaRF/` — bundled SX126x/SX127x Python driver library.
-- `rsync/` — distribution payload (test `.bas` scripts, `scanlist.txt` channel plan, generated manifest state).
+- `dist/` — distribution payload only (test `.bas` scripts, `scanlist.txt` channel plan, ...). `dist-state/` holds the generated manifest + serial counter, kept out of `dist/`.
 - `firmware/<product>/<version>.bin` — firmware images to distribute. **Gitignored** (`lora-master/.gitignore` excludes `firmware/**/*.bin`) — copy a build artifact in (e.g. `firmware/.pio/build/conez-v0-1/firmware.bin`) rather than committing the binary.
 
-**Workflow to publish a new firmware/file set:** drop the file(s) into `lora-master/firmware/<product>/` or `lora-master/rsync/`, run `python3 build_manifest.py` to regenerate the manifest, then run `conez-master.py` (it picks up the newest manifest automatically).
+**Workflow to publish a new firmware/file set:** drop the file(s) into `lora-master/firmware/<product>/` or `lora-master/dist/`, run `python3 build_manifest.py` to regenerate the manifest (written to `dist-state/`), then run `conez-master.py` (it picks up the newest manifest automatically).
 
 **Regulatory:** operates under US FCC Part 97 amateur radio rules (default 431.250 MHz is in the 70 cm amateur band). The callsign in the ConeZ header is the control operator's FCC amateur callsign and serves as Part 97 station identification; the 10 s beacon satisfies the 10-minute ID requirement. Implication for the protocol: **no encryption** (Part 97.113 prohibits obscuring message meaning) — compression is fine, ciphering is not.
 
