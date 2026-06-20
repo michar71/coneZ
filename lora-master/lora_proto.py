@@ -77,6 +77,29 @@ def make_beacon(*, network: int, freq: int, bw: int, sf: int, cr: int,
     return make_header(PKT_BEACON, network, ADDR_MASTER, ADDR_BROADCAST) + body
 
 
+# DIST_DATA body (after the header):
+#   H  manifest serial
+#   H  file id            (0 = the manifest itself)
+#   I  file length        (total uncompressed bytes)
+#   H  chunk index
+#   H  total chunks
+#   <payload>             (DIST_CHUNK_SIZE bytes; last chunk may be short)
+DIST_HDR_FMT    = ">HHIHH"
+DIST_HDR_LEN    = struct.calcsize(DIST_HDR_FMT)   # 12
+DIST_CHUNK_SIZE = 200                             # payload bytes per chunk
+DIST_MANIFEST_ID = 0                              # reserved file id for the manifest
+
+
+def make_dist_data(*, manifest_serial: int, file_id: int, file_len: int,
+                   chunk_index: int, total_chunks: int, payload: bytes,
+                   network: int = 0) -> bytes:
+    """Build a full DIST_DATA packet (header + dist header + payload)."""
+    body = struct.pack(DIST_HDR_FMT,
+                       manifest_serial & 0xFFFF, file_id & 0xFFFF,
+                       file_len & 0xFFFFFFFF, chunk_index & 0xFFFF, total_chunks & 0xFFFF)
+    return make_header(PKT_DIST_DATA, network, ADDR_MASTER, ADDR_BROADCAST) + body + payload
+
+
 def parse_header(pkt: bytes):
     """Return (type, network, src, dst) or None if too short."""
     if len(pkt) < HEADER_LEN:

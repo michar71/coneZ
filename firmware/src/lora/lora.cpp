@@ -11,6 +11,7 @@
 #include "conez_usb.h"
 #include "lora.h"
 #include "lora_proto.h"
+#include "dist.h"
 #include "gps.h"
 
 static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
@@ -490,6 +491,9 @@ void lora_rx( void )
         {
             case LP_PKT_BEACON:
                 lora_handle_beacon(rxbuf, rxlen, rssi, snr);
+                break;
+            case LP_PKT_DIST_DATA:
+                dist_handle_chunk(rxbuf, rxlen);
                 break;
             default:
                 printfnl(SOURCE_LORA, "RX type 0x%02X net %u src %u dst %u  %d B  RSSI %.0f SNR %.1f\n",

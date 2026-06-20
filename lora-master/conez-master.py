@@ -559,6 +559,65 @@ def transmit_file():
     transmit( packet )
 
 
+# --- Phase 3 dist carousel ---------------------------------------------------
+def parse_manifest_files(path):
+    """Return [(file_id, fname, size, md5)] from the manifest [files] section."""
+    out = []
+    section = None
+    with open(path) as fp:
+        for line in fp:
+            line = line.rstrip("\n")
+            if line == "[firmware]": section = "fw"; continue
+            if line == "[files]":    section = "files"; continue
+            if not line or line.startswith("#"): continue
+            parts = line.split("\t")
+            if section == "files" and len(parts) >= 4:
+                out.append((int(parts[0]), parts[1], int(parts[2]), parts[3]))
+    return out
+
+
+def _chunk_file(file_id, data):
+    """Slice bytes into DIST_CHUNK_SIZE chunk descriptors."""
+    csz = proto.DIST_CHUNK_SIZE
+    n = max(1, (len(data) + csz - 1) // csz)
+    return [dict(fid=file_id, idx=i, n=n, flen=len(data),
+                 payload=data[i * csz:(i + 1) * csz]) for i in range(n)]
+
+
+def build_dist_chunks():
+    """All chunks to broadcast: the manifest (file id 0) first, then data files."""
+    chunks = []
+    with open(MANIFEST_FILE, "rb") as fp:
+        chunks += _chunk_file(proto.DIST_MANIFEST_ID, fp.read())
+    for (fid, fname, size, md5) in parse_manifest_files(MANIFEST_FILE):
+        fpath = os.path.join(DIST_DIR, fname)
+        try:
+            with open(fpath, "rb") as fp:
+                chunks += _chunk_file(fid, fp.read())
+        except FileNotFoundError:
+            print(f"  dist: WARNING missing {fpath} (id {fid})")
+    return chunks
+
+
+dist_chunks = build_dist_chunks()
+dist_idx = 0
+print(f"dist: {len(dist_chunks)} chunks (manifest + {len(parse_manifest_files(MANIFEST_FILE))} files), "
+      f"chunk size {proto.DIST_CHUNK_SIZE}")
+
+
+def send_next_dist_chunk():
+    global dist_idx
+    if not dist_chunks:
+        return
+    c = dist_chunks[dist_idx]
+    pkt = proto.make_dist_data(manifest_serial=manifest_serial, file_id=c["fid"],
+                               file_len=c["flen"], chunk_index=c["idx"],
+                               total_chunks=c["n"], payload=c["payload"])
+    transmit(pkt)
+    print(f"TX dist id={c['fid']} chunk {c['idx']+1}/{c['n']} ({len(c['payload'])} B)")
+    dist_idx = (dist_idx + 1) % len(dist_chunks)
+
+
 # --- Main loop ---------------------------------------------------------------
 last_tx = time.monotonic() - BEACON_PERIOD         # force immediate beacon
 try:
@@ -572,8 +631,11 @@ try:
             beacon = make_beacon()
             transmit( beacon )
             last_tx = time.monotonic()
-            # Phase 1: beacon-only. Legacy file/firmware/manifest carousel
-            # removed; the v1 dist carousel arrives in Phase 3.
+        else:
+            # Phase 3 dist carousel: send the next chunk (manifest + data files)
+            send_next_dist_chunk()
+            time.sleep( DOWNSTREAM_DEADTIME )
+
         # Check for incoming packets
         if LoRa.available():
             t_rx = datetime.now()

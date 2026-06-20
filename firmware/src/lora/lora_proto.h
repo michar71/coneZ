@@ -56,6 +56,18 @@
 #define LP_BCN_CALLSIGN_LEN  8
 #define LP_BCN_LEN           (LP_HDR_LEN + 30)  // total beacon packet length
 
+// DIST_DATA body offsets (absolute, from start of packet; header is 4 bytes).
+// Body (12 bytes): manifest_serial(2) file_id(2) file_len(4) chunk_idx(2) total_chunks(2)
+#define LP_DIST_HDR_LEN       12
+#define LP_DIST_SERIAL        (LP_HDR_LEN + 0)    // u16 manifest serial
+#define LP_DIST_FILE_ID       (LP_HDR_LEN + 2)    // u16 file id (0 = manifest)
+#define LP_DIST_FILE_LEN      (LP_HDR_LEN + 4)    // u32 total uncompressed length
+#define LP_DIST_CHUNK_IDX     (LP_HDR_LEN + 8)    // u16 chunk index
+#define LP_DIST_TOTAL_CHUNKS  (LP_HDR_LEN + 10)   // u16 total chunks
+#define LP_DIST_PAYLOAD       (LP_HDR_LEN + 12)   // payload starts here
+#define LP_DIST_CHUNK_SIZE    200                 // payload bytes per chunk
+#define LP_DIST_MANIFEST_ID   0                   // reserved file id for the manifest
+
 // Big-endian readers (wire is big-endian).
 static inline uint16_t lp_rd_u16(const uint8_t *p)
 {

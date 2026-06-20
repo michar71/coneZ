@@ -25,6 +25,7 @@
 #include "gps.h"
 #include "sensors.h"
 #include "lora.h"
+#include "dist.h"
 #include "led.h"
 #include "config.h"
 #include "cue.h"
@@ -2712,6 +2713,17 @@ int cmd_lora(int argc, char **argv)
 }
 
 
+int cmd_dist(int argc, char **argv)
+{
+#ifdef BOARD_HAS_LORA
+    dist_print_status();
+#else
+    printfnl(SOURCE_COMMANDS, "LoRa not available on this board\n");
+#endif
+    return 0;
+}
+
+
 int cmd_sensors(int argc, char **argv)
 {
     if (argc != 1) { printfnl(SOURCE_COMMANDS, "Usage: sensors\n"); return 1; }
@@ -4067,6 +4079,7 @@ void init_commands(ConezStream *dev)
     shell.addCommand("load", loadFile, "*.bas;*.c;*.wasm");
     shell.addCommand("log", cmd_log, NULL, NULL, tc_log);
     shell.addCommand("lora", cmd_lora, NULL, NULL, tc_lora);
+    shell.addCommand("dist", cmd_dist, NULL, NULL, NULL);
     shell.addCommand("ls", listDir, "/");
     shell.addCommand("md5", cmd_md5, "*");
     shell.addCommand("md5sum", cmd_md5, "*");
