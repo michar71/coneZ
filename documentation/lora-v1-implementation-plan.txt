@@ -1,0 +1,199 @@
+================================================================================
+ConeZ LoRa Protocol v1 -- Phased Implementation Plan
+================================================================================
+
+Build order for the v1 design in `lora-protocol.txt`. Phases are ordered by
+dependency and by incremental value: each one ends at a bench-testable milestone
+on the existing setup (Pi master <-> ConeZ board, link already verified both
+directions), and each delivers something useful on its own.
+
+ORDERING NOTE: dist (file/firmware distribution) is sequenced BEFORE cues and
+before the registration/polling control plane. dist is pure downlink broadcast
+-- it needs no uplink, registration, or cues -- so it can be built right after
+the beacon/scanlist foundation, and once it works a firmware push can be left
+running UNATTENDED OVERNIGHT as a soak test. Cues and the managed control plane
+follow.
+
+Two code bases per phase:
+  MASTER -- Python on the Pi (lora-master/conez-master.py + helpers).
+  CONE   -- ESP32 firmware (firmware/src/lora/, console/commands.cpp, config).
+
+Clean-slate: v1 replaces the current ad-hoc broadcast (lora-protocol.txt
+Appendix B). Phase 1 changes the wire format, so the old blind-broadcast /
+`lora send` formats are retired as we go -- no compatibility shim needed.
+
+
+--------------------------------------------------------------------------------
+Cross-cutting prerequisites (do alongside the phases that need them)
+--------------------------------------------------------------------------------
+
+  * RADIO ACCESS MUTEX (cone). Today lora_tx() uses a `lora_tx_active` flag as a
+    stopgap. It is fine for RX-only dist, but once the cone does scheduled-slot
+    TX (registration/polling) concurrently with RX, replace the flag with a real
+    mutex around all radio access. Needed by the registration/polling phase.
+  * SHARED PACKET DEFINITIONS. One source of truth for header + packet layouts,
+    mirrored in Python and C so the two code bases can't drift. Establish in
+    Phase 1.
+  * MASTER DIST DIRECTORY LAYOUT. `dist/` holds ONLY distributable files (what
+    goes to the herd). The generated manifest + serial counter live OUTSIDE it
+    in `dist-state/`, so the contents of `dist/` are unambiguously "the payload".
+  * BENCH HARNESS. 50 ohm dummy load for RF-quiet testing; serial helper to drive
+    the cone CLI; Pi-side RX logger. Add a Heltec as a second node early to
+    exercise the no-PSRAM paths and (later) multi-node contention/groups.
+  * AIRTIME BUDGET. Track time-on-air per packet type; the superframe phase must
+    fit beacon + cues + carousel + polling within budget.
+
+
+--------------------------------------------------------------------------------
+Phase 0 -- Baseline (DONE)
+--------------------------------------------------------------------------------
+Bidirectional link verified on default LoRa params (431.250/SF7/BW500/0xDEAD):
+master beacon + blind file broadcast, cone RX, cone TX (`lora send`). Starting
+point; everything below migrates it to v1.
+
+
+--------------------------------------------------------------------------------
+Phase 1 -- v1 framing + beacon foundation
+--------------------------------------------------------------------------------
+Goal: the lean 4-byte header and a real v1 BEACON; cone parses it.
+  MASTER: define header + packet types (shared defs); emit BEACON (0x01) with
+          version, master epoch (end-of-TX reference), channel descriptor,
+          manifest serial, callsign. Retire the 16-byte legacy header.
+  CONE:   header parser + type dispatch; BEACON handler shown in `lora` status;
+          non-GPS cones set their clock from the beacon time.
+  Deps:   none.
+  TEST:   cone decodes master time + channel + callsign from the beacon; a Heltec
+          cone's clock tracks the master within ~tens of ms.
+
+
+--------------------------------------------------------------------------------
+Phase 2 -- Scanlist & channel lock
+--------------------------------------------------------------------------------
+Goal: a cone finds the master by scanning, then locks to the beacon's params.
+  MASTER: (no change; stays one channel.)
+  CONE:   built-in default scanlist; scan loop tries entries until a beacon is
+          heard; lock to advertised params; re-scan on prolonged beacon loss.
+  Deps:   Phase 1.
+  TEST:   start a cone whose default channel != master's; it scans, finds, locks.
+
+
+--------------------------------------------------------------------------------
+Phase 3 -- dist core (eventual consistency; no compression/FEC yet)
+--------------------------------------------------------------------------------
+Goal: a file's contents converge cone-side; deletions propagate. (First dist
+phase -- pure downlink broadcast, no uplink needed.)
+  MASTER: manifest (ids, paths, sizes, hashes, block geometry, kind) generated
+          into `dist-state/` from the `dist/` payload directory; serve the
+          manifest at high priority; weighted carousel emitting plain
+          (uncompressed) DIST_DATA chunks; bump manifest serial on change.
+  CONE:   on manifest-serial change (from the beacon), refetch manifest; per-file
+          block reassembly + per-block bitmap; commit completed blocks to a
+          LittleFS file at the block offset; verify file hash; DELETE local dist
+          files not in the manifest. Catch missed blocks next carousel cycle.
+          Keep RX responsive (yield during reassembly/flush).
+  Deps:   Phase 1 (Phase 2 helpful for discovery).
+  TEST:   drop a file in master `dist/` -> byte-identical in cone dist; remove it
+          on master -> removed on cone; force a missed chunk -> file completes on
+          the next cycle.
+
+
+--------------------------------------------------------------------------------
+Phase 4 -- dist compression
+--------------------------------------------------------------------------------
+Goal: cut airtime (~35% on firmware) with per-block deflate.
+  MASTER: per-block deflate (Python zlib); record algo + geometry in manifest.
+  CONE:   inflate_stream() each completed block on commit (auto-detects format).
+  Deps:   Phase 3.
+  TEST:   compressed file reconstructs byte-identical; measured airtime drops;
+          confirm Heltec RAM (compressed block + ~43 KB inflate) is OK.
+
+
+--------------------------------------------------------------------------------
+Phase 5 -- dist FEC (systematic Reed-Solomon)
+--------------------------------------------------------------------------------
+Goal: recover lost chunks without waiting a full carousel cycle.
+  MASTER: RS(GF256) systematic encode per block -> R DIST_PARITY chunks.
+  CONE:   RS erasure decode (missing chunks known from PHY CRC -> erasures);
+          no-PSRAM path: use all-data-chunks + ignore parity, OR decode one block
+          at a time, OR fall back to next-cycle.
+  Deps:   Phases 3-4.
+  TEST:   induce N missing data chunks/block -> recovers from parity same cycle
+          (ConeZ); Heltec either decodes one block or next-cycles.
+
+
+--------------------------------------------------------------------------------
+Phase 6 -- Firmware OTA via dist   [overnight soak test reachable here]
+--------------------------------------------------------------------------------
+Goal: over-the-air firmware, no PSRAM required, no in-place hazard.
+  MASTER: firmware as a manifest entry (kind=firmware); same carousel.
+  CONE:   route firmware blocks to the inactive app/OTA partition at block
+          offsets (erase sector, stream inflate output to flash); full-image hash
+          verify; set OTA valid + reboot. Interleave with data files per the
+          PSRAM/RAM concurrency rule. (esp_ota_ops already used by HTTP OTA.)
+  Deps:   Phases 3-5.
+  TEST:   push a new image over LoRa end-to-end on ConeZ and Heltec; boots the
+          new image; small cue files still arrive timely during the multi-hour
+          firmware push (carousel weighting). Good candidate for an UNATTENDED
+          overnight run.
+
+
+--------------------------------------------------------------------------------
+Phase 7 -- Cues (downlink broadcast)
+--------------------------------------------------------------------------------
+Goal: master commands the fleet; cones execute. Fire-now + fire-at-time + groups.
+  MASTER: CUE (0x30) builder; send RUN/STOP/SETCFG/SETGRP/TRIGGER to a cone /
+          group / broadcast; fire-now (repeat 2-3x) and fire-at-time.
+  CONE:   CUE handler -> existing cue/exec engine; fire-at-time via the unified
+          epoch clock; group filtering; cue sequence-number tracking.
+  Deps:   Phase 1 (header, beacon time). Groups in config.
+  TEST:   broadcast "RUN x.wasm"; group cue hits only that group; fire-at-time
+          fires a GPS cone and a beacon-timed Heltec simultaneously.
+
+
+--------------------------------------------------------------------------------
+Phase 8 -- Superframe + registration + polling (managed control plane)
+--------------------------------------------------------------------------------
+Goal: scheduled timeslots; cones join and get polled. (May split 8a/8b.)
+  MASTER: superframe scheduler -- downlink window then SILENT uplink windows;
+          publish the frame map in the beacon; REG_RESP + node registry; round-
+          robin POLL_REQ at a configurable rate; collect POLL_RESP.
+  CONE:   install the radio mutex (cross-cutting); REG_REQ in a random contention
+          sub-slot with backoff; accept assigned address + poll slot; answer
+          POLL_REQ in its slot with stats (RSSI/SNR/counts/version/status/V/temp)
+          + callsign; TX only in granted slots.
+  Deps:   Phases 1-2; radio mutex.
+  TEST:   cone registers and gets an address; master polls it and logs stats;
+          two cones register without livelock (contention/backoff works).
+
+
+--------------------------------------------------------------------------------
+Phase 9 -- FSK mode + master channel/mode switching
+--------------------------------------------------------------------------------
+Goal: faster bulk via FSK; master can move channel/mode.
+  MASTER: FSK PHY config; scanlist FSK entries; pre-announce a channel/mode
+          change in the beacon, then switch (e.g., FSK burst to push firmware).
+  CONE:   FSK PHY support (firmware already has an FSK config path); follow an
+          announced switch; re-acquire via scanlist if the link is lost.
+  Deps:   Phases 1-2.
+  TEST:   master switches to FSK, fleet follows, firmware push throughput rises;
+          cones recover to LoRa control mode afterward.
+
+
+--------------------------------------------------------------------------------
+Phase 10 -- Future / deferred
+--------------------------------------------------------------------------------
+  Uplink gap-requests (per-cone missing-block requests in the poll slot);
+  ACKed/critical cues with delivery confirmation; real-time cueing / DMX / ArtNet
+  over FSK; cross-block or fountain FEC if the carousel tail is too long.
+
+
+--------------------------------------------------------------------------------
+Suggested grouping for delivery
+--------------------------------------------------------------------------------
+  Milestone A (content):  Phases 1-6  -> beacon + scanlist + the full dist
+                          pipeline ending at firmware OTA (unattended-soak-able).
+  Milestone B (control):  Phase 7     -> the cue system.
+  Milestone C (managed):  Phase 8     -> registration + polling (fleet visibility
+                          and timeslot discipline).
+  Milestone D (speed):    Phase 9     -> FSK.
+  Each milestone is independently useful and bench-testable.
