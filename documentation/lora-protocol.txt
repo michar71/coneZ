@@ -1,0 +1,332 @@
+================================================================================
+ConeZ LoRa Distribution Protocol
+================================================================================
+
+Downstream (master -> cone) broadcast protocol used to distribute time beacons,
+manifests, scripts/data files, and firmware images over LoRa to ConeZ nodes in
+the field.
+
+This document is the authoritative specification for the wire format. The
+reference master-node implementation lives in `lora-master/conez-master.py`
+(runs on a Raspberry Pi with an SX1262/SX1268). The on-cone receiver runs in
+the ESP32-S3 firmware (`firmware/src/lora/`).
+
+Status: early / evolving. The transmit path is implemented; the cone-side
+receive/assembly path and any uplink (cone -> master) protocol are not yet
+finalized. See "Known discrepancies & TODO" at the end.
+
+
+--------------------------------------------------------------------------------
+0. Regulatory / operating context
+--------------------------------------------------------------------------------
+
+This system operates under US FCC Part 97 AMATEUR RADIO rules. The default
+431.250 MHz downstream is in the 70 cm amateur band (420-450 MHz). Operation is
+under the control operator's amateur license; the callsign carried in the ConeZ
+header (section 4), currently "N1AF", is the operator's FCC amateur callsign and
+serves as station identification. The 10 s beacon comfortably satisfies the
+Part 97.119 requirement to identify at least every 10 minutes.
+
+Consequences for the protocol:
+
+  * NO ENCRYPTION. Part 97.113 prohibits messages encoded to obscure their
+    meaning. Payloads must remain in the clear. (Data compression for
+    efficiency is fine - it does not obscure meaning - which is why the file
+    format reserves a compression field but no encryption field.)
+  * Content is limited to what amateur rules permit (no commercial/business
+    traffic, no music, etc.).
+  * The callsign field must reflect whoever is the licensed control operator of
+    a given master node; it is not a fixed protocol constant.
+
+
+--------------------------------------------------------------------------------
+1. Roles
+--------------------------------------------------------------------------------
+
+  Master node   A Raspberry Pi (lora-master/) that transmits on a single fixed
+                downstream channel. It is a blind broadcaster: it beacons and
+                cycles through manifest / file / firmware blocks on a timer with
+                no per-cone state or acknowledgements.
+
+  Cone          An ESP32-S3 ConeZ node. Listens for the beacon to learn the
+                downstream RF parameters and time, then collects file/firmware
+                blocks to reconstruct distributed files.
+
+All multi-byte integer fields are BIG-ENDIAN (network byte order). Python
+`struct` format strings are given alongside each packet for reference.
+
+
+--------------------------------------------------------------------------------
+2. RF parameters & defaults
+--------------------------------------------------------------------------------
+
+Downstream defaults (master, see DOWNSTREAM_* in conez-master.py):
+
+  Frequency      431.250 MHz
+  Bandwidth      500 kHz
+  Spreading      SF7
+  Coding rate    4/5
+  Preamble       8 symbols
+  Sync word      0xDEAD
+  TX power       +0 dBm  (bench default; raise for field range)
+  CRC            On
+  Header         Explicit
+  Beacon period  10 s
+
+The beacon advertises the downstream frequency and BW/SF/CR in-band (see
+section 6), so a cone can lock onto the master's parameters after a single
+successful beacon receive, independent of its own configured defaults.
+
+
+--------------------------------------------------------------------------------
+3. Channel plan (scanlist.txt)
+--------------------------------------------------------------------------------
+
+`lora-master/rsync/scanlist.txt` defines the channel-search plan a cone uses to
+find the master. Each non-blank, non-header line is:
+
+  <bandwidth_kHz>,<spreading_factor>,<frequency_Hz>
+
+Two sections:
+
+  [primary]    Channels to try first (SF7..SF12 at 431.250 MHz, 500/250 kHz).
+  [fallback]   Wider sweep across 430-434 MHz if the primary set is silent.
+
+NOTE: as of this writing the master transmits on ONE fixed channel only; the
+scanlist is consumed by the cone-side scanner, not the master.
+
+
+--------------------------------------------------------------------------------
+4. Packet framing - ConeZ header
+--------------------------------------------------------------------------------
+
+Every LoRa payload begins with a fixed 16-byte ConeZ header, followed by a
+packet-type-specific body.
+
+  Offset  Len  Value / meaning
+  ------  ---  ------------------------------------------------------------
+  0       2    Sync marker         0xDE 0xAD
+  2       1    0x00
+  3       6    Operator callsign   FCC amateur callsign of the control
+                                   operator, ASCII, space-padded to 6
+                                   (e.g. "N1AF  "). Serves as Part 97 station
+                                   identification - see section 0.
+  9       1    0x00
+  a       5    Magic               "ConeZ" (ASCII)
+  f       1    0x00
+  ------  ---  ------------------------------------------------------------
+  Total: 16 bytes (CONEZ_HEADER)
+
+The first body byte after the header is always the packet type.
+
+
+--------------------------------------------------------------------------------
+5. Packet types
+--------------------------------------------------------------------------------
+
+  Type  Name                     Direction   Status
+  ----  -----------------------  ----------  ------------------------------
+  0x01  Beacon                   downstream  implemented
+  0x10  File metadata            downstream  reserved (not implemented)
+  0x11  File distribution block  downstream  implemented
+  (uplink types)                 upstream    not yet defined
+
+
+--------------------------------------------------------------------------------
+6. Beacon packet (0x01)
+--------------------------------------------------------------------------------
+
+16-byte body after the ConeZ header.  struct: '>BBIHIHH'
+
+  Offset  Len  Field
+  ------  ---  ------------------------------------------------------------
+  0       1    Packet type = 0x01
+  1       1    ConeZ network number
+  2       4    UNIX timestamp, seconds (uint32)
+  6       2    UNIX timestamp, milliseconds (uint16)
+  8       4    Downstream frequency, Hz (uint32)
+  c       2    Downstream RF parameters (see section 8)
+  e       2    Reserved (0x0000)
+  ------  ---  ------------------------------------------------------------
+
+The timestamp lets cones discipline their clocks from the master when no GPS
+fix is available.
+
+
+--------------------------------------------------------------------------------
+7. File metadata packet (0x10) - RESERVED
+--------------------------------------------------------------------------------
+
+Reserved for a per-file metadata announcement separate from the data blocks
+(e.g. filename, total length, hash, block count). Not currently emitted by the
+master; cones derive the same information from the fields carried in each data
+block (section 9) and from the manifest (section 11).
+
+
+--------------------------------------------------------------------------------
+8. RF parameter word
+--------------------------------------------------------------------------------
+
+The 16-bit RF-parameters field in the beacon packs bandwidth, spreading factor
+and coding rate as bitfields:
+
+  Bits   Field            Codes
+  -----  ---------------  ----------------------------------------------
+  0-2    Bandwidth        0 = 500 kHz
+                          1 = 250 kHz
+                          2 = 125 kHz
+                          3 = 62.5 kHz
+                          4-7 = reserved
+  3-5    Spreading factor 0 = SF7 ... 5 = SF12   (code = SF - 7)
+                          6-7 = reserved
+  6-7    Coding rate      0 = 4/5
+                          1 = 4/6
+                          2 = 4/7
+                          3 = 4/8
+  8-15   Reserved
+
+Encoding helpers in conez-master.py: _bw_code(), _sf_code(), _cr_code().
+
+
+--------------------------------------------------------------------------------
+9. File distribution block (0x11)
+--------------------------------------------------------------------------------
+
+16-byte header after the ConeZ header, then up to 128 bytes of file data.
+struct (header): '>BBHHIHBBH'
+
+  Offset  Len  Field
+  ------  ---  ------------------------------------------------------------
+  0       1    Packet type = 0x11
+  1       1    File type byte (see section 10)
+  2       2    Manifest serial number
+  4       2    Manifest file number (file_id from the manifest)
+  6       4    Total file length, bytes (uint32)
+  a       2    Page number within the original file
+  c       1    Total blocks in this page
+  d       1    This block number (within the page)
+  e       2    Reserved (0x0000)
+  ------  ---  ------------------------------------------------------------
+  10      ..   File block data, up to FILE_CHUNK_SIZE (128) bytes
+
+Total on-air size: 16 (ConeZ header) + 16 (block header) + <=128 (data)
+                 = up to 160 bytes.
+
+
+--------------------------------------------------------------------------------
+10. File type byte
+--------------------------------------------------------------------------------
+
+  Bits   Field                 Codes
+  -----  --------------------  ----------------------------------------------
+  0-3    File type             0 = Manifest file
+                               1 = Firmware
+                               2 = LittleFS file
+  4-5    Compression type      0 = Uncompressed
+                               1-3 = reserved
+  6-7    Compression page size 0 = 1024 bytes
+                               1 = 8192 bytes
+                               2-3 = reserved
+
+The "compression page size" is the unit the original file is chunked into
+before (optional) compression; it is distinct from FILE_CHUNK_SIZE (the on-air
+data block size).
+
+
+--------------------------------------------------------------------------------
+11. Page / block chunking
+--------------------------------------------------------------------------------
+
+Files are split into 8192-byte PAGES; each page is split into 128-byte BLOCKS
+(64 blocks per page). For an absolute byte offset within a file:
+
+  page_no     = offset / 8192
+  page_blocks = 8192 / 128            = 64
+  block_no    = (offset / 128) % 64
+
+These map to the page_no / total_blocks / block_no fields in the 0x11 header,
+letting the receiver place each block at offset (page_no*8192 + block_no*128)
+and know when a page (and the whole file, via total file length) is complete.
+
+
+--------------------------------------------------------------------------------
+12. Manifest file format
+--------------------------------------------------------------------------------
+
+The manifest is the index of everything available for distribution. It is
+generated by `lora-master/build_manifest.py` and broadcast as file type 0
+(Manifest). Plain text, two TAB-separated sections:
+
+  [firmware]
+  <file_id>\t<product>\t<version>\t<size>\t<md5_8>
+  ...
+
+  [files]
+  <file_id>\t<filename>\t<size>\t<md5_8>
+  ...
+
+  file_id   Stable integer ID. Re-used across regenerations as long as the
+            file's content (md5_8) is unchanged; a changed/new file gets a
+            fresh ID. This is the "Manifest file number" in the 0x11 header.
+  md5_8     First 8 hex digits of the file's MD5.
+
+Manifests are versioned by SERIAL number and never overwritten: each
+regeneration that changes content writes a new `rsync/_manifest_<serial>.txt`.
+The master auto-selects the highest-numbered manifest at startup
+(latest_manifest() in conez-master.py).
+
+Counter state lives in `rsync/_serial.txt`:
+
+  next_file_id=<int>
+  next_manifest_serial=<int>
+
+
+--------------------------------------------------------------------------------
+13. Distribution cycle
+--------------------------------------------------------------------------------
+
+The master runs a fixed round-robin every BEACON_PERIOD (10 s), with a short
+DOWNSTREAM_DEADTIME (0.1 s) gap between transmissions:
+
+  Beacon (0x01)
+  Manifest block        (type 0, current serial)
+  File block  x2        (DIST_FILE)
+  Firmware block x2     (FIRMWARE_FILE)
+
+Each *_chunk() reader streams its file 128 bytes at a time, advancing a byte
+offset and wrapping back to the start at EOF, so successive cycles walk through
+the whole file over many beacon periods. There is no acknowledgement or
+retransmit-on-request; coverage relies on repetition.
+
+
+--------------------------------------------------------------------------------
+14. Uplink (cone -> master) - NOT YET DEFINED
+--------------------------------------------------------------------------------
+
+The master listens in RX-continuous between transmissions and logs any received
+packet (length, RSSI, SNR, hex), but no uplink packet types, acknowledgements,
+or NACK/retransmit-request semantics are defined yet. This is the natural next
+layer to turn blind broadcast into reliable, feedback-driven distribution.
+
+
+--------------------------------------------------------------------------------
+15. Known discrepancies & TODO
+--------------------------------------------------------------------------------
+
+Things where the current implementation diverges from this spec, or is
+incomplete. Update this list as the protocol firms up.
+
+  * transmit_manifest() tags its blocks with FILE_TYPE_FIRMWARE (1) instead of
+    FILE_TYPE_MANIFEST (0). Receivers keying off the file-type byte will
+    misclassify the manifest.
+
+  * make_file_block() hard-codes the compression-page-size bits to 2 (a
+    reserved value) regardless of the page_size argument; per section 10 the
+    valid codes are 0 (1024) and 1 (8192). Marked FIXME in the source.
+
+  * File metadata packet (0x10) is specified but never emitted.
+
+  * No uplink / ACK / retransmit protocol (section 14).
+
+  * The master transmits on one fixed channel; the scanlist.txt channel plan
+    (section 3) is not exercised by the master.

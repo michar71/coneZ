@@ -1,2 +1,6 @@
 # Firmware images distributed by the master node (build artifacts, not source)
 firmware/**/*.bin
+
+# Python bytecode cache
+__pycache__/
+*.pyc
