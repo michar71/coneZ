@@ -53,7 +53,7 @@ point; everything below migrates it to v1.
 
 
 --------------------------------------------------------------------------------
-Phase 1 -- v1 framing + beacon foundation
+Phase 1 -- v1 framing + beacon foundation  (DONE)
 --------------------------------------------------------------------------------
 Goal: the lean 4-byte header and a real v1 BEACON; cone parses it.
   MASTER: define header + packet types (shared defs); emit BEACON (0x01) with
@@ -67,7 +67,7 @@ Goal: the lean 4-byte header and a real v1 BEACON; cone parses it.
 
 
 --------------------------------------------------------------------------------
-Phase 2 -- Scanlist & channel lock
+Phase 2 -- Scanlist & channel lock  (DONE)
 --------------------------------------------------------------------------------
 Goal: a cone finds the master by scanning, then locks to the beacon's params.
   MASTER: (no change; stays one channel.)

@@ -365,11 +365,26 @@ beacon, then locks to the beacon's advertised params.
     master on the conventional channels).
   * Override/extend via a scanlist FILE delivered through dist/ -- so the master
     can update the fleet's scan plan over the air.
-  * Each scanlist entry specifies mode (LoRa/FSK) + frequency + that mode's
-    params, so the same plan covers both modes (G8). Primary entries tried first,
-    then a wider fallback sweep.
   * The master may move channel or switch mode; it pre-announces in the beacon so
     locked cones follow, and rejoin via scanlist if they lose it.
+
+Scanlist file format (text; one channel per line, scan order = file order). The
+first token selects the mode -- L = LoRa, F = FSK -- so a single plan covers both
+(G8). All frequencies are in Hz and sync words in hex; '#' comments and blank
+lines are ignored:
+
+    L <freq_hz> <bw_hz> <sf> <cr> <sync_hex>
+    F <freq_hz> <bitrate_bps> <freqdev_hz> <rxbw_hz> <sync_hex>
+
+  e.g.  L 431250000 500000 7 5 0xDEAD
+        F 431250000 4800 5000 9700 0x2D
+
+Put the most-likely (primary) channels first, then a wider fallback sweep.
+
+Scan behaviour: the cone dwells on each entry longer than the beacon period
+before advancing, LOCKS to the first entry on which it decodes a beacon, and
+resumes scanning from the top if the beacon is lost for a while. The canonical
+example lives in the master's dist/scanlist.txt.
 
 
 --------------------------------------------------------------------------------
@@ -440,16 +455,24 @@ logic (ConeZ->Pi decoded clean at -71 dBm / SNR 13, +14 dBm board TX).
 Appendix B. Implementation status (built vs. designed)
 ================================================================================
 
-Built today (an earlier ad-hoc broadcast, to be migrated to v1 framing):
-  * Master: beacon TX, blind file/firmware/manifest broadcast carousel
-    (lora-master/conez-master.py), RX-continuous logging between TX.
-  * Cone: LoRa RX (firmware lora_rx), and TX via `lora send` (lora_tx).
+Built (see documentation/lora-v1-implementation-plan.txt for phases):
+  * v1 framing -- 4-byte header [type,network,src,dst] + packet dispatch; v1
+    BEACON (master emits, cone parses); non-GPS clock disciplined from the
+    beacon (priority GPS > NTP > beacon). [Phase 1]
+  * Scanlist & channel lock -- cone scans the scanlist (L/F format, section 15),
+    locks on a beacon, re-scans on beacon loss. [Phase 2]
+  * Master: v1 beacon-only loop (lora-master/conez-master.py). The earlier
+    ad-hoc 16-byte-header broadcast carousel is retired pending the v1 dist
+    rewrite (dead helpers remain dormant).
+  * Cone: LoRa RX (lora_rx) + TX via `lora send` (lora_tx, guarded by
+    lora_tx_active -- no radio mutex yet).
   * Bidirectional link verified both directions on the default LoRa params.
 
-Designed here, NOT yet built:
-  * v1 4-byte header and packet taxonomy (replacing the 16-byte legacy header).
-  * Superframe / timeslot scheduling; registration; polling.
-  * Cues (fire-now / fire-at-time; groups).
-  * Per-block compression + systematic Reed-Solomon FEC; manifest-driven
-    fetch/delete; firmware-OTA-aware block commit; weighted carousel scheduler.
-  * Scanlist following + master channel/mode switching; FSK mode.
+Designed here, NOT yet built (remaining phases):
+  * dist core -- manifest-driven fetch/delete, weighted carousel, block
+    reassembly + commit. [Phase 3]
+  * Per-block compression [Phase 4]; systematic Reed-Solomon FEC [Phase 5];
+    firmware-OTA-aware block commit [Phase 6].
+  * Cues (fire-now / fire-at-time; groups). [Phase 7]
+  * Superframe / timeslot scheduling; registration; polling; radio mutex. [Phase 8]
+  * Master channel/mode switching; FSK mode. [Phase 9]
