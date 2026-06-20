@@ -1,12 +1,30 @@
 #!/usr/bin/env python3
 import os
 import re
+import sys
 import glob
+import fcntl
 import time, binascii
 import struct
 import math
 from datetime import datetime
 from LoRaRF import SX126x
+
+
+# --- Single-instance guard ---------------------------------------------------
+# Only one master may drive the single LoRa radio; concurrent instances corrupt
+# the SPI/radio state. Hold an exclusive flock for the process lifetime. The OS
+# releases it automatically on exit/crash/kill, so there is no stale lock to
+# clean up.
+_LOCK_PATH = "/tmp/conez-master.lock"
+_lock_fh = open(_LOCK_PATH, "w")
+try:
+    fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    sys.stderr.write("conez-master: another instance is already running; exiting.\n")
+    sys.exit(1)
+_lock_fh.write(f"{os.getpid()}\n")
+_lock_fh.flush()
 
 
 # Misc
@@ -17,7 +35,16 @@ DOWNSTREAM_BANDWIDTH = 500000			# 500kHz
 DOWNSTREAM_SF = 7				# SF7...SF12
 DOWNSTREAM_CR = 5				# 4/5 coding rate
 DOWNSTREAM_PREAMBLE = 8				# 8 preamble symbols
-DOWNSTREAM_TXPOWER = 0				# Transmit power (+0 dBm; Pi is feet from test board)
+# Low Data Rate Optimize: required ONLY when symbol time > 16 ms (high SF / low
+# BW). Must be computed, NOT hard-coded: the on-cone RadioLib auto-computes LDRO
+# from symbol time, so if we disagree the payload demaps wrong (CRC mismatch).
+# Was hard-coded True (correct for SF12/BW125, wrong for SF7/BW500). SF7/BW500
+# symbol time = 128/500000 = 0.26 ms -> LDRO off.
+DOWNSTREAM_LDRO = ((1 << DOWNSTREAM_SF) / DOWNSTREAM_BANDWIDTH) > 0.016
+DOWNSTREAM_TXPOWER = 0				# dBm (signed, -9..+22). Low for close-range
+						# bench use. Set via setPaConfig+setTxParams
+						# below, NOT LoRaRF setTxPower() (which dead-
+						# ends for SX1262 powers <+14 -> no RF out)
 DOWNSTREAM_DEADTIME = 0.1			# Gap between transmissions
 LORA_SYNC_WORD = 0xDEAD
 
@@ -250,8 +277,39 @@ def hex_dump(data):
     return f"{hex_data}\nASCII: {ascii_data}"
 
 
+# SX1262 optimized PA settings indexed by output power (-9..+22 dBm); index =
+# power+9. Ported from RadioLib 7.6.0 (firmware's copy) SX1262.cpp paOptTable
+# (empirically measured: https://github.com/radiolib-org/power-tests). Each entry
+# is (paDutyCycle, hpMax, paVal); paVal is the signed value for SetTxParams. Using
+# the matched config per power gives a CLEAN signal at low power, instead of the
+# spectrally poor result of throttling the +22 dBm PA config to near-zero output.
+PA_OPT_TABLE = [
+    (2, 2, -5), (2, 1, 0), (1, 1, 3), (1, 2, 0), (1, 1, 6), (1, 2, 3),     # -9..-4
+    (2, 2, 2), (4, 1, 6), (1, 1, 11), (2, 1, 11), (1, 1, 14), (2, 1, 14),  # -3..2
+    (1, 1, 20), (1, 1, 22), (2, 2, 11), (3, 1, 21), (1, 2, 17), (4, 2, 13),# 3..8
+    (1, 2, 20), (1, 2, 22), (2, 2, 21), (3, 2, 21), (1, 4, 19), (1, 4, 20),# 9..14
+    (3, 3, 20), (2, 5, 19), (1, 6, 22), (2, 5, 22), (3, 5, 22), (3, 6, 22),# 15..20
+    (4, 6, 22), (4, 7, 22),                                                # 21..22
+]
+
+
+def set_tx_power(power_dbm):
+    """Set a clean TX power (-9..+22 dBm) using the per-power optimized PA config,
+    mirroring RadioLib's SX1262 setOutputPower. Avoids LoRaRF setTxPower()'s dead
+    branch for <+14 dBm and the dirty signal from throttling the +22 PA config."""
+    power_dbm = max(-9, min(22, int(power_dbm)))
+    duty, hpmax, paval = PA_OPT_TABLE[power_dbm + 9]
+    LoRa.setPaConfig(duty, hpmax, 0x00, 0x01)   # paDutyCycle, hpMax, deviceSel=SX1262, paLut
+    LoRa.setTxParams(paval & 0xFF, LoRa.PA_RAMP_200U)
+    return power_dbm
+
+
 # --- Radio bring-up ----------------------------------------------------------
 busId, csId  = 0, 0
+# RF switch is handled by DIO2 (setDio2RfSwitch below); TXEN/RXEN GPIOs unused
+# (-1), matching the known-working lora-aprs code. (txen=6 was a red herring; the
+# real TX failure was the unconfigured PA at low power via LoRaRF setTxPower(),
+# now fixed by set_tx_power()'s per-power PA table.)
 resetPin, busyPin, irqPin, txenPin, rxenPin = 18, 20, 16, -1, -1
 LoRa = SX126x()
 print("Start LoRa radio")
@@ -265,8 +323,8 @@ LoRa.setFrequency( DOWNSTREAM_FREQUENCY )
 
 LoRa.setRxGain( LoRa.RX_GAIN_BOOSTED )
 
-print( f"  Set modulation parameters:\n    Spreading factor = {DOWNSTREAM_SF}\n    Bandwidth = {DOWNSTREAM_BANDWIDTH/1000} kHz\n    Coding rate = 4/{DOWNSTREAM_CR}" )
-LoRa.setLoRaModulation( DOWNSTREAM_SF, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_CR, True )
+print( f"  Set modulation parameters:\n    Spreading factor = {DOWNSTREAM_SF}\n    Bandwidth = {DOWNSTREAM_BANDWIDTH/1000} kHz\n    Coding rate = 4/{DOWNSTREAM_CR}\n    LDRO = {'on' if DOWNSTREAM_LDRO else 'off'}" )
+LoRa.setLoRaModulation( DOWNSTREAM_SF, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_CR, DOWNSTREAM_LDRO )
 
 print( f"  Set packet parameters:\n    Preamble = {DOWNSTREAM_PREAMBLE}  CRC: On" )
 LoRa.setLoRaPacket( LoRa.HEADER_EXPLICIT, DOWNSTREAM_PREAMBLE, 200, True, False )
@@ -274,9 +332,11 @@ LoRa.setLoRaPacket( LoRa.HEADER_EXPLICIT, DOWNSTREAM_PREAMBLE, 200, True, False 
 print( f"  Set LoRa sync word: 0x{LORA_SYNC_WORD:04X}" )
 LoRa.setSyncWord( LORA_SYNC_WORD )
 
-print( f"  Set TX power: +{DOWNSTREAM_TXPOWER} dBm" )
-LoRa.setTxParams( DOWNSTREAM_TXPOWER, LoRa.PA_RAMP_200U )    # 22 dBm, 200 µs ramp
-LoRa.setTxPower( DOWNSTREAM_TXPOWER, LoRa.TX_POWER_SX1262 )
+# Set TX power via the per-power optimized PA table (set_tx_power above). LoRaRF's
+# own setTxPower() dead-ends for SX1262 <+14 dBm; this gives a clean signal at any
+# power -9..+22 dBm.
+_actual_power = set_tx_power( DOWNSTREAM_TXPOWER )
+print( f"  Set TX power: {_actual_power:+d} dBm (matched PA config)" )
 
 
 print("\n--- LoRa RX Continuous ---\n")

@@ -330,3 +330,56 @@ incomplete. Update this list as the protocol firms up.
 
   * The master transmits on one fixed channel; the scanlist.txt channel plan
     (section 3) is not exercised by the master.
+
+
+--------------------------------------------------------------------------------
+16. Master radio configuration - hard-won notes (Waveshare SX1262 hat + LoRaRF)
+--------------------------------------------------------------------------------
+
+First successful downstream link (master -> cone) was brought up 2026-06-20.
+The master runs on a Waveshare "SX1262 XXXM LoRaWAN/GNSS HAT" (433 MHz) with the
+bundled (Waveshare-example) LoRaRF Python library. Getting it to transmit a
+cone-decodable signal required fixing several non-obvious things; record here so
+they are not rediscovered the hard way.
+
+  * RF SWITCH: handled by DIO2 via LoRa.setDio2RfSwitch(). TXEN/RXEN GPIOs are
+    left unused (txen=-1, rxen=-1), matching the known-working lora-aprs code.
+    (An earlier theory that TXEN=BCM6 had to be driven was a red herring.)
+
+  * TCXO: do NOT enable DIO3 TCXO control on this hat. The working lora-aprs
+    code issues no setDio3TcxoCtrl, and adding it (1.8 V) HUNG the transmit
+    (TxDone never fired). The cone (RadioLib) uses its own TCXO; the two radios
+    are independent.
+
+  * TX POWER / PA: LoRaRF's setTxPower() silently no-ops for the SX1262 at any
+    power below +14 dBm (a dead `else: return` -> SetPaConfig never issued -> PA
+    unconfigured -> essentially no RF radiated). This was the real reason +0 dBm
+    "transmitted nothing". Fix: set the PA directly from a per-power optimized
+    table ported from RadioLib 7.6.0 SX1262.cpp paOptTable (set_tx_power() in
+    conez-master.py), which gives a clean signal at any power -9..+22 dBm.
+    Symptom of the bug: TX completes (TxDone fires) but no receiver hears it.
+
+  * LDRO (Low Data Rate Optimize) - THE CRC KILLER: must be COMPUTED from symbol
+    time, never hard-coded. LDRO is required only when symbol time > 16 ms (high
+    SF / low BW). The cone's RadioLib AUTO-computes LDRO, so the master must
+    agree or the payload de-maps wrong and every packet fails CRC (readData ->
+    RADIOLIB_ERR_CRC_MISMATCH, -7) while the more robust explicit header still
+    decodes (so length looks correct). The master had inherited a hard-coded
+    LDRO=True from the lora-aprs code (correct there: SF12/BW125 = 32 ms symbols)
+    but applied it to SF7/BW500 (0.26 ms symbols), where it must be OFF.
+    Rule used: ldro = (2**SF / BW_Hz) > 0.016.
+
+  * FREQUENCY ACCURACY: excellent - the i-gate measured only ~308 Hz offset on
+    the Pi's TX at 7 miles. No frequency trimming needed.
+
+  * RX SATURATION: at close bench range (~1 m) a +22 dBm signal overloads the
+    cone's RX (~-3 dBm at the antenna) -> no decode. For RF-quiet bench testing,
+    terminate the Pi in a 50 ohm dummy load: leakage lands the cone around
+    -80 dBm (vs ~-39 dBm with the antenna at +0 dBm) - decodable and not
+    sprayed for miles. ALWAYS sleep/standby the radio (PA off) before swapping
+    the antenna/load; hot-swapping a keyed PA into an open load can destroy it.
+
+Cone-side firmware notes (firmware/src/lora/): the 16-bit LoRa sync word
+(0xDEAD) is set by inverting RadioLib's setSyncWord(syncWord, controlBits)
+packing; SF default reconciled to 7; readData() failures are logged with the
+RadioLib error code (added to diagnose the LDRO/CRC issue).

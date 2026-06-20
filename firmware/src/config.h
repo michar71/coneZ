@@ -30,11 +30,14 @@
 // LoRa radio
 #define DEFAULT_LORA_FREQUENCY  431.250f
 #define DEFAULT_LORA_BANDWIDTH  500.0f
-#define DEFAULT_LORA_SF         9
+#define DEFAULT_LORA_SF         7               // matches lora-master downstream spec
 #define DEFAULT_LORA_CR         6
 #define DEFAULT_LORA_PREAMBLE   8
 #define DEFAULT_LORA_TX_POWER   10
-#define DEFAULT_LORA_SYNC_WORD  0x12            // 0x12 = default, 0x1424 = private
+// Full 16-bit LoRa sync word. Values <=0xFF use the single-byte convention
+// (0xXY -> register 0xX4Y4, e.g. 0x12 = 0x1424 LoRaWAN private); values >0xFF
+// are written as the raw 16-bit register. 0xDEAD matches the lora-master spec.
+#define DEFAULT_LORA_SYNC_WORD  0xDEAD
 #define DEFAULT_LORA_SSID       "ConeZ"
 #define DEFAULT_LORA_CALLSIGN   ""
 #define DEFAULT_LORA_MODE       "lora"

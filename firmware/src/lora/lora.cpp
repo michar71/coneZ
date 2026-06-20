@@ -61,6 +61,35 @@ static int parse_hex_syncword(const char *hex, uint8_t *out, int maxlen)
 }
 
 
+// Apply the configured LoRa sync word, supporting a full 16-bit register value.
+//
+// config.lora_sync_word is interpreted exactly like the Python LoRaRF master:
+//   <= 0xFF : single-byte convention, 0xXY expands to register 0xX4Y4
+//             (e.g. 0x12 -> 0x1424, the LoRaWAN "private network" value)
+//   >  0xFF : raw 16-bit register value (e.g. 0xDEAD)
+//
+// RadioLib's setSyncWord(syncWord, controlBits) packs the two register bytes as
+//   MSB = (syncWord & 0xF0) | ((controlBits & 0xF0) >> 4)
+//   LSB = ((syncWord & 0x0F) << 4) | (controlBits & 0x0F)
+// so we invert that mapping to hit an arbitrary 16-bit register value.
+static void lora_apply_sync_word( void )
+{
+    uint32_t sw = (uint32_t)config.lora_sync_word;
+
+    uint16_t reg;
+    if (sw <= 0xFF)
+        reg = (uint16_t)((((sw & 0xF0) | 0x04) << 8) | (((sw << 4) | 0x04) & 0xFF));
+    else
+        reg = (uint16_t)(sw & 0xFFFF);
+
+    uint8_t msb = (reg >> 8) & 0xFF;
+    uint8_t lsb = reg & 0xFF;
+    uint8_t sync_byte    = (msb & 0xF0) | ((lsb & 0xF0) >> 4);
+    uint8_t control_bits = ((msb & 0x0F) << 4) | (lsb & 0x0F);
+    radio.setSyncWord(sync_byte, control_bits);
+}
+
+
 int lora_setup( void )
 {
   usb_printf("Init LoRa...\n");
@@ -135,7 +164,7 @@ int lora_setup( void )
     radio.setBandwidth( config.lora_bandwidth );
     radio.setCodingRate( config.lora_cr );
     radio.setPreambleLength( config.lora_preamble );
-    radio.setSyncWord( config.lora_sync_word );
+    lora_apply_sync_word();
     radio.setCRC( true );
   }
 
@@ -184,6 +213,18 @@ void lora_rx( void )
                 display[i] = (rxbuf[i] >= 0x20 && rxbuf[i] < 0x7F) ? (char)rxbuf[i] : '.';
             display[rxlen] = '\0';
             printfnl(SOURCE_LORA, "Packet (%d bytes): %s\n", (int)rxlen, display);
+    }
+    else
+    {
+            const char *reason;
+            switch (state)
+            {
+                case RADIOLIB_ERR_CRC_MISMATCH:        reason = "CRC mismatch";   break;
+                case RADIOLIB_ERR_RX_TIMEOUT:          reason = "RX timeout";     break;
+                case RADIOLIB_ERR_LORA_HEADER_DAMAGED: reason = "header damaged"; break;
+                default:                               reason = "?";              break;
+            }
+            printfnl(SOURCE_LORA, "readData failed: state=%d (%s)\n", (int)state, reason);
     }
 
     // Re-enter receive mode for the next packet
@@ -368,7 +409,7 @@ int lora_reinit(void)
         radio.setBandwidth(config.lora_bandwidth);
         radio.setCodingRate(config.lora_cr);
         radio.setPreambleLength(config.lora_preamble);
-        radio.setSyncWord(config.lora_sync_word);
+        lora_apply_sync_word();
         radio.setCRC(true);
     }
 
