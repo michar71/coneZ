@@ -12,6 +12,8 @@ origin_lat=40.762173
 origin_lon=-119.193672
 
 [lora]
+enabled=on                 ; master on/off for the LoRa subsystem (default on)
+rx_only=off                ; listen-only: inhibit ALL transmit (default off)
 ssid=ConeZ
 frequency=431.250
 bandwidth=500.0

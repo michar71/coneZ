@@ -7,6 +7,13 @@
 void lora_rx( void );
 int lora_setup( void );
 void lora_start_task( void );                     // spawn the dedicated LoRa task (RX + scan)
+void lora_set_active( bool on );                  // master on/off (`lora on|off`); sleeps/wakes radio
+bool lora_is_active( void );                       // true while the LoRa subsystem is on
+void lora_set_channel_rx_only( bool ro );         // scanner marks the tuned channel RX-only
+bool lora_tx_allowed( void );                      // false on RX-only channel / [lora] rx_only / off
+
+// lora_tx() return code when TX is refused (RX-only channel, [lora] rx_only, or LoRa off).
+#define LORA_TX_INHIBITED  1
 int lora_tx( const uint8_t *data, size_t len );   // transmit, then return to RX
 void lora_print_beacon( void );                   // show last v1 BEACON in `lora` status
 // Recursive mutex serializing all radio access + the scan state it drives. Held

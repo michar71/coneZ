@@ -83,6 +83,14 @@ Goal: a cone finds the master by scanning, then locks to the beacon's params.
           freq x BW x SF), scanned ROUND-ROBIN and widened after scan_passes
           fruitless primary sweeps; config knobs [lora] scan_dwell + scan_passes;
           refactored into firmware/src/lora/scan.cpp. See spec section 15.
+          Further (2026-06-20): scanlist files are STREAMED open-per-step (never
+          cached in RAM, never held open, so they can be edited/deleted live);
+          each step re-stats the files and rebuilds on edit/delete/appear; files
+          with no valid entries are skipped. RX-ONLY channels (scanlist LX/FX,
+          built-in LORA_RX/FSK_RX, or config [lora] rx_only) inhibit all TX via
+          one lora_tx_allowed() gate. Master on/off via [lora] enabled + `lora
+          on|off`. (lora_setup no longer hangs on a radio-init failure; scan_apply
+          no longer persists the transient scanned channel into saved config.)
 
 
 --------------------------------------------------------------------------------

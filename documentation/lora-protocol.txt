@@ -384,6 +384,22 @@ lines are ignored:
   e.g.  L 431250000 500000 7 5 0xDEAD
         F 431250000 4800 5000 9700 0x2D
 
+Receive-only channels: suffix the mode token with X -- LX / FX -- to mark a
+channel LISTEN-ONLY. The cone may lock to a master heard there but will NEVER
+transmit on it -- e.g. GMRS / business / itinerant frequencies (462/467 MHz)
+outside the amateur allocation, where we may listen but not key up:
+
+    LX <freq_hz> <bw_hz> <sf> <cr> <sync_hex>                      # receive-only LoRa
+    FX <freq_hz> <bitrate_bps> <freqdev_hz> <rxbw_hz> <sync_hex>   # receive-only FSK
+
+The built-in default table marks channels the same way via LORA_RX / FSK_RX. A
+receive-only lock skips registration/polling (it goes straight to a listen-only
+state -- no uplink, no poll responses) but still acts on received packets (cues,
+dist, beacons) as normal. The config key [lora] rx_only=on forces this listen-only
+behaviour on EVERY channel, and `lora off` / [lora] enabled=off disables the radio
+entirely. All transmit funnels through one gate (lora_tx_allowed), so a marked
+channel, rx_only, or a disabled radio inhibits every uplink uniformly.
+
 Within a file, put the most-likely (primary) channels first. The canonical
 example lives in the master's dist/scanlist.txt.
 

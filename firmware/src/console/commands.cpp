@@ -2547,10 +2547,36 @@ int cmd_gps(int argc, char **argv)
 int cmd_lora(int argc, char **argv)
 {
 #ifdef BOARD_HAS_LORA
+    if (argc == 2 &&
+        (!strcasecmp(argv[1], "on") || !strcasecmp(argv[1], "off")))
+    {
+        bool on = !strcasecmp(argv[1], "on");
+        config.lora_enabled = on;
+        config_save();
+        lora_set_active(on);
+        printfnl(SOURCE_COMMANDS, "LoRa %s\n", on ? "enabled" : "disabled (radio asleep)");
+        return 0;
+    }
+
     if (argc >= 3)
     {
         const char *sub = argv[1];
         const char *val = argv[2];
+
+        if (!lora_is_active())
+        {
+            printfnl(SOURCE_COMMANDS, "LoRa is off -- use 'lora on' first\n");
+            return 0;
+        }
+
+        // A manual channel/mode override takes over the radio, so stop the
+        // scanner first (otherwise it overrides the setting on the next step) --
+        // this also closes the streamed scanlist files.
+        if (lora_scan_is_enabled() &&
+            (!strcasecmp(sub, "freq") || !strcasecmp(sub, "bw") ||
+             !strcasecmp(sub, "sf")   || !strcasecmp(sub, "cr") ||
+             !strcasecmp(sub, "mode")))
+            lora_scan_set_enabled(false);
 
         if (strcasecmp(sub, "freq") == 0)
         {
@@ -2655,7 +2681,9 @@ int cmd_lora(int argc, char **argv)
                 strlcat(msg, argv[i], sizeof(msg));
             }
             int rc = lora_tx((const uint8_t *)msg, strlen(msg));
-            if (rc != 0)
+            if (rc == LORA_TX_INHIBITED)
+                printfnl(SOURCE_COMMANDS, "TX inhibited (RX-only channel or [lora] rx_only)\n");
+            else if (rc != 0)
                 printfnl(SOURCE_COMMANDS, "TX failed (code %d)\n", rc);
             else
                 printfnl(SOURCE_COMMANDS, "Sent %d bytes: \"%s\"\n", (int)strlen(msg), msg);
@@ -2663,10 +2691,15 @@ int cmd_lora(int argc, char **argv)
         }
     }
 
-    printfnl(SOURCE_COMMANDS, "LoRa Radio:\n");
+    printfnl(SOURCE_COMMANDS, "LoRa Radio:%s\n", lora_is_active() ? "" : "  [OFF]");
     printfnl(SOURCE_COMMANDS, "  Mode:      %s\n", lora_get_mode());
     printfnl(SOURCE_COMMANDS, "  Frequency: %.3f MHz\n", lora_get_frequency());
     printfnl(SOURCE_COMMANDS, "  TX Power:  %d dBm\n", config.lora_tx_power);
+    printfnl(SOURCE_COMMANDS, "  TX:        %s\n",
+             lora_tx_allowed()      ? "allowed" :
+             !lora_is_active()      ? "inhibited (LoRa off)" :
+             config.lora_rx_only    ? "inhibited ([lora] rx_only)" :
+                                      "inhibited (RX-only channel)");
 
     if (lora_is_fsk())
     {
@@ -3805,7 +3838,7 @@ static const char * const subs_gps_restart[] = { "hot", "warm", "cold", "factory
 static const char * const subs_gps_mode[] = { "gps", "bds", "glonass", "gps+bds",
                                               "gps+glonass", "bds+glonass", "all", NULL };
 static const char * const subs_led[]    = { "set", "clear", "count", NULL };
-static const char * const subs_lora[]   = { "freq", "power", "bw", "sf", "cr", "mode",
+static const char * const subs_lora[]   = { "on", "off", "scan", "freq", "power", "bw", "sf", "cr", "mode",
                                             "save", "restart", "send", NULL };
 static const char * const subs_lora_mode[] = { "lora", "fsk", NULL };
 static const char * const subs_log[]    = { "to", "save", "close", "stop", NULL };

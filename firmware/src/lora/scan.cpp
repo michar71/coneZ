@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "main.h"
 #include "config.h"
 #include "printManager.h"
@@ -12,16 +13,25 @@
 // ===== Scanlist & channel lock (Phase 2/3) ===================================
 // The cone scans channels to find the master's beacon, dwelling on each long
 // enough to hear one. Channels come in TIERS, in priority order:
-//   tier 0.. : /dist/scanlist.txt, /scanlist.txt (each if present)
+//   tier 0.. : /dist/scanlist.txt, /scanlist.txt (each if present & non-empty)
 //   then     : the built-in default (a few most-likely channels)
 //   last     : an EXHAUSTIVE virtual sweep of every LoRa freq x BW x SF in band
 // The scan starts on tier 0 and, after scan_passes fruitless sweeps of the
 // PRIMARY tier, widens by one tier -- up to all tiers. Active tiers are scanned
-// ROUND-ROBIN (one entry per tier per step), each with its own cursor, so the
+// ROUND-ROBIN (one entry per tier per step, each with its own cursor) so the
 // small primary tier stays frequently scanned even while the huge exhaustive
 // tier is also swept. On a beacon it LOCKS; after a long loss it re-scans.
+//
+// STREAMING: scanlist FILES are never cached in RAM. Each file tier reads the
+// next entry OPEN-PER-STEP -- open, seek to a saved byte offset, read one entry,
+// close -- so the file is never held open and can be deleted or edited at any
+// time. Malformed lines are skipped, and a file with NO valid entries (empty,
+// all-comment, or all-malformed) is skipped entirely -- the scan falls back to
+// the next tier. While scanning we also watch the scanlist files: each step we
+// stat the candidate paths and, if the set changed at all -- a file was EDITED
+// (mtime/size), DELETED, newly APPEARED, or emptied -- we rebuild the tier list
+// and restart scanning from tier 0.
 
-#define SCAN_MAX_ENTRIES   48      // concrete entries (files + built-in default)
 #define SCAN_MAX_TIERS     5
 #define SCAN_LOSS_MS       40000   // re-scan after this long locked with no beacon
 // Dwell per channel = config.lora_scan_dwell (s); sweeps before widening =
@@ -29,6 +39,7 @@
 
 typedef struct {
     uint8_t  mode;                 // LP_MODE_LORA / LP_MODE_FSK
+    bool     rx_only;              // LX/FX (or *_RX built-in): listen only, never TX here
     uint32_t freq_hz;
     uint32_t bw_hz;                // LoRa bandwidth
     uint8_t  sf, cr;               // LoRa
@@ -37,12 +48,25 @@ typedef struct {
     char     fsk_sync[17];         // FSK sync word as hex string
 } scan_entry_t;
 
-// Built-in default: the few most-likely channels (used even with no files).
+// Built-in default: the few most-likely channels (const -> lives in flash, never
+// copied to RAM). Used even with no scanlist files present. Use the *_RX mode to
+// mark a channel RECEIVE-ONLY (listen for the master, never transmit there -- e.g.
+// GMRS / business-band frequencies outside the amateur allocation).
+#define LORA     LP_MODE_LORA, false
+#define LORA_RX  LP_MODE_LORA, true
+#define FSK      LP_MODE_FSK,  false
+#define FSK_RX   LP_MODE_FSK,  true
 static const scan_entry_t DEFAULT_SCANLIST[] = {
-    { LP_MODE_LORA, 431250000, 500000, 7, 5, 0xDEAD, 0, 0, 0, "" },
-    { LP_MODE_LORA, 431250000, 125000, 9, 5, 0x12,   0, 0, 0, "" },
-    { LP_MODE_LORA, 433000000, 500000, 7, 5, 0xDEAD, 0, 0, 0, "" },
+    //  mode     freq_hz     bw_hz   sf cr  sync   br fd rxbw  fsk_sync
+    { LORA,    431250000, 500000, 7, 5, 0xDEAD, 0, 0, 0, "" },
+    { LORA,    431250000, 125000, 9, 5, 0x12,   0, 0, 0, "" },
+    { LORA,    433000000, 500000, 7, 5, 0xDEAD, 0, 0, 0, "" },
 };
+#undef LORA
+#undef LORA_RX
+#undef FSK
+#undef FSK_RX
+#define DEFAULT_SCANLIST_N ((int)(sizeof(DEFAULT_SCANLIST) / sizeof(DEFAULT_SCANLIST[0])))
 
 // Exhaustive virtual tier: every LoRa freq x BW x SF across the sub-band,
 // computed on demand (too large to store). Sync word is unknowable here so it
@@ -56,17 +80,30 @@ static const uint8_t  EX_SF[] = { 7, 8, 9, 10, 11, 12 };
 #define EX_N_SF   ((int)(sizeof(EX_SF) / sizeof(EX_SF[0])))
 #define EX_COUNT  (EX_FREQ_COUNT * EX_N_BW * EX_N_SF)
 
+// Tier source kinds. SRC_FILE streams entries from LittleFS OPEN-PER-STEP (the
+// file is never held open between steps, so it can be deleted or edited at any
+// time); SRC_BUILTIN indexes the const array; SRC_EXHAUSTIVE is computed.
+typedef enum { SRC_FILE, SRC_BUILTIN, SRC_EXHAUSTIVE } tier_src_t;
+
 typedef struct {
-    bool exhaustive;   // true = computed sweep; false = scanlist[] slice
-    int  base;         // offset into scanlist[] (concrete tiers)
-    int  count;        // entries in this tier
-    const char *src;
+    tier_src_t  src;
+    const char *name;     // display name; also the logical path for SRC_FILE
+    int         count;    // entries (SRC_FILE: counted at open, for display/skip)
+    int         cursor;   // SRC_BUILTIN / SRC_EXHAUSTIVE position
+    bool        primed;   // SRC_BUILTIN / SRC_EXHAUSTIVE: served at least one entry
+    long        offset;   // SRC_FILE: byte offset of the next entry to read
 } scan_tier_t;
 
-static scan_entry_t scanlist[SCAN_MAX_ENTRIES];
-static int  scanlist_n = 0;
+// The scanlist files streamed as the highest-priority tiers, in priority order.
+static const char *SCAN_FILES[] = { "/dist/scanlist.txt", "/scanlist.txt" };
+#define SCAN_N_FILES ((int)(sizeof(SCAN_FILES) / sizeof(SCAN_FILES[0])))
+
+// Per-candidate-file fingerprint, snapshotted when we (re)build the tier list.
+// Comparing it each step detects edits/deletes/appearances.
+typedef struct { bool present; time_t mtime; off_t size; } file_sig_t;
+static file_sig_t scan_sig[SCAN_N_FILES];
+
 static scan_tier_t tiers[SCAN_MAX_TIERS];
-static int  tier_cursor[SCAN_MAX_TIERS] = {0};   // per-tier cursor (0..count-1)
 static int  n_tiers     = 0;
 static int  active_tier = 0;          // widest active tier
 static int  rr_tier     = 0;          // round-robin selector over active tiers
@@ -84,6 +121,8 @@ static int scan_parse_line(const char *s, scan_entry_t *e)
     while (*s == ' ' || *s == '\t') s++;
     if (*s == '#' || *s == '\0' || *s == '\r' || *s == '\n') return 0;
     char mode = *s++;
+    bool rx_only = false;
+    if (*s == 'X' || *s == 'x') { rx_only = true; s++; }   // LX / FX = receive-only
     memset(e, 0, sizeof(*e));
     if (mode == 'L' || mode == 'l') {
         unsigned long freq, bw; int sf, cr; char sync[16];
@@ -91,6 +130,7 @@ static int scan_parse_line(const char *s, scan_entry_t *e)
         e->mode = LP_MODE_LORA; e->freq_hz = (uint32_t)freq; e->bw_hz = (uint32_t)bw;
         e->sf = (uint8_t)sf; e->cr = (uint8_t)cr;
         e->sync_word = (uint16_t)strtol(sync, NULL, 16);
+        e->rx_only = rx_only;
         return 1;
     } else if (mode == 'F' || mode == 'f') {
         unsigned long freq, br, fd, rxbw; char sync[17];
@@ -98,24 +138,10 @@ static int scan_parse_line(const char *s, scan_entry_t *e)
         e->mode = LP_MODE_FSK; e->freq_hz = (uint32_t)freq; e->bitrate_bps = (uint32_t)br;
         e->freqdev_hz = (uint32_t)fd; e->rxbw_hz = (uint32_t)rxbw;
         strlcpy(e->fsk_sync, sync, sizeof(e->fsk_sync));
+        e->rx_only = rx_only;
         return 1;
     }
     return -1;
-}
-
-// Append entries from a LittleFS scanlist file; returns the running count.
-static int scan_load_file(const char *logical)
-{
-    char path[80];
-    FILE *f = fopen(lfs_path(path, sizeof(path), logical), "r");
-    if (!f) return scanlist_n;
-    char line[160];
-    while (scanlist_n < SCAN_MAX_ENTRIES && fgets(line, sizeof(line), f)) {
-        scan_entry_t e;
-        if (scan_parse_line(line, &e) == 1) scanlist[scanlist_n++] = e;
-    }
-    fclose(f);
-    return scanlist_n;
 }
 
 // Compute the exhaustive virtual entry for index c (sf fastest, then bw, freq).
@@ -134,58 +160,156 @@ static scan_entry_t exhaustive_entry(int c)
     return e;
 }
 
-// The scan_entry for (tier, cursor) -- a scanlist[] slice, or a computed sweep.
-static scan_entry_t tier_entry(int t, int cursor)
+// Read the next valid (L/F) entry from an open file, skipping comment/blank and
+// MALFORMED lines (so a syntax error never aborts the scan -- we just continue).
+// Returns true with *e filled, or false at EOF (caller decides whether to rewind).
+static bool file_read_next(FILE *f, scan_entry_t *e)
 {
-    if (tiers[t].exhaustive) return exhaustive_entry(cursor);
-    return scanlist[tiers[t].base + cursor];
-}
-
-static void add_tier(bool ex, int base, int count, const char *src)
-{
-    if (n_tiers >= SCAN_MAX_TIERS || count <= 0) return;
-    tiers[n_tiers].exhaustive = ex;
-    tiers[n_tiers].base       = base;
-    tiers[n_tiers].count      = count;
-    tiers[n_tiers].src        = src;
-    n_tiers++;
-}
-
-static void scan_load(void)
-{
-    scanlist_n = 0;
-    n_tiers = 0;
-    // Concrete tiers in priority order: dist-delivered, root override, built-in.
-    const char *files[] = { "/dist/scanlist.txt", "/scanlist.txt" };
-    for (int s = 0; s < 2; s++) {
-        int before = scanlist_n;
-        scan_load_file(files[s]);
-        add_tier(false, before, scanlist_n - before, files[s]);
+    char line[160];
+    while (fgets(line, sizeof(line), f)) {
+        if (scan_parse_line(line, e) == 1) return true;
     }
-    int before = scanlist_n;
-    int n = (int)(sizeof(DEFAULT_SCANLIST) / sizeof(DEFAULT_SCANLIST[0]));
-    for (int i = 0; i < n && scanlist_n < SCAN_MAX_ENTRIES; i++) scanlist[scanlist_n++] = DEFAULT_SCANLIST[i];
-    add_tier(false, before, scanlist_n - before, "built-in");
-    // Always-present last resort: the exhaustive virtual sweep.
-    add_tier(true, 0, EX_COUNT, "exhaustive");
+    return false;   // EOF
+}
 
-    printfnl(SOURCE_LORA, "scanlist: %d concrete entries, %d tiers:\n", scanlist_n, n_tiers);
+// Count the valid entries in an open file, leaving it rewound to the start.
+static int file_count(FILE *f)
+{
+    int n = 0; scan_entry_t e;
+    rewind(f);
+    while (file_read_next(f, &e)) n++;
+    rewind(f);
+    return n;
+}
+
+// Snapshot one candidate file's existence/mtime/size.
+static file_sig_t stat_sig(const char *logical)
+{
+    file_sig_t s = { false, 0, 0 };
+    char path[80]; struct stat st;
+    if (stat(lfs_path(path, sizeof(path), logical), &st) == 0) {
+        s.present = true; s.mtime = st.st_mtime; s.size = st.st_size;
+    }
+    return s;
+}
+
+// True if any candidate scanlist file changed since scan_open() -- edited
+// (mtime/size), deleted (present->absent), or newly appeared (absent->present).
+static bool scanlist_changed(void)
+{
+    for (int i = 0; i < SCAN_N_FILES; i++) {
+        file_sig_t now = stat_sig(SCAN_FILES[i]);
+        if (now.present != scan_sig[i].present ||
+            now.mtime   != scan_sig[i].mtime   ||
+            now.size    != scan_sig[i].size)
+            return true;
+    }
+    return false;
+}
+
+// Read the next entry from a file tier WITHOUT holding the file open between steps
+// (so it can be deleted/edited at any time). Seeks to the saved byte offset, reads
+// one entry, records the new offset; rewinds (and sets *wrapped) at EOF. Returns
+// false if the file is gone or has no valid entries.
+static bool file_tier_next(scan_tier_t *t, scan_entry_t *e, bool *wrapped)
+{
+    char path[80];
+    FILE *f = fopen(lfs_path(path, sizeof(path), t->name), "r");
+    if (!f) { memset(e, 0, sizeof(*e)); return false; }   // deleted out from under us
+    if (t->offset > 0) fseek(f, t->offset, SEEK_SET);
+    if (!file_read_next(f, e)) {            // at/past EOF -> rewind to the first entry
+        rewind(f);
+        if (!file_read_next(f, e)) { fclose(f); memset(e, 0, sizeof(*e)); return false; }
+        *wrapped = true;
+    }
+    t->offset = ftell(f);                   // next step resumes here
+    fclose(f);
+    return true;
+}
+
+// Fetch the next entry from a tier. Sets *wrapped when the tier loops back to its
+// first entry (drives tier-widening). Returns false only if the tier is empty.
+static bool tier_next(scan_tier_t *t, scan_entry_t *e, bool *wrapped)
+{
+    *wrapped = false;
+
+    if (t->src == SRC_FILE) return file_tier_next(t, e, wrapped);
+
+    // SRC_BUILTIN / SRC_EXHAUSTIVE: index by cursor.
+    int count = (t->src == SRC_EXHAUSTIVE) ? EX_COUNT : DEFAULT_SCANLIST_N;
+    if (count <= 0) { memset(e, 0, sizeof(*e)); return false; }
+    if (t->cursor == 0 && t->primed) *wrapped = true;  // first entry of a new sweep
+    *e = (t->src == SRC_EXHAUSTIVE) ? exhaustive_entry(t->cursor)
+                                    : DEFAULT_SCANLIST[t->cursor];
+    t->primed = true;
+    if (++t->cursor >= count) t->cursor = 0;
+    return true;
+}
+
+// (Re)build the tier list for a fresh scan: include each scanlist file that exists
+// and has >=1 valid entry (counted now, then closed -- read open-per-step while
+// scanning), then the built-in and exhaustive virtual tiers. Snapshots every
+// candidate file's signature so later appearances/deletions/edits are detected.
+static void scan_open(void)
+{
+    n_tiers = 0;
+
+    for (int i = 0; i < SCAN_N_FILES && n_tiers < SCAN_MAX_TIERS; i++) {
+        char path[80];
+        FILE *f = fopen(lfs_path(path, sizeof(path), SCAN_FILES[i]), "r");
+        if (!f) continue;
+        int c = file_count(f);                 // counts valid entries, rewinds
+        fclose(f);                             // don't hold it open (open-per-step)
+        if (c <= 0) {                          // empty / all-comment / all-malformed
+            printfnl(SOURCE_LORA, "scan: %s has no valid entries, skipped\n", SCAN_FILES[i]);
+            continue;                          // fall back to the next tier
+        }
+        scan_tier_t *t = &tiers[n_tiers++];
+        memset(t, 0, sizeof(*t));              // offset = 0 -> start at first entry
+        t->src = SRC_FILE; t->name = SCAN_FILES[i]; t->count = c;
+    }
+    if (n_tiers < SCAN_MAX_TIERS) {
+        scan_tier_t *t = &tiers[n_tiers++];
+        memset(t, 0, sizeof(*t));
+        t->src = SRC_BUILTIN; t->name = "built-in"; t->count = DEFAULT_SCANLIST_N;
+    }
+    if (n_tiers < SCAN_MAX_TIERS) {
+        scan_tier_t *t = &tiers[n_tiers++];
+        memset(t, 0, sizeof(*t));
+        t->src = SRC_EXHAUSTIVE; t->name = "exhaustive"; t->count = EX_COUNT;
+    }
+
+    for (int i = 0; i < SCAN_N_FILES; i++) scan_sig[i] = stat_sig(SCAN_FILES[i]);
+
+    printfnl(SOURCE_LORA, "scanlist: %d tiers (files streamed, not cached):\n", n_tiers);
     for (int t = 0; t < n_tiers; t++)
-        printfnl(SOURCE_LORA, "  tier %d: %s (%d entries)\n", t, tiers[t].src, tiers[t].count);
+        printfnl(SOURCE_LORA, "  tier %d: %s (%d entries)\n", t, tiers[t].name, tiers[t].count);
 }
 
 static void scan_describe(const scan_entry_t *e, char *buf, size_t n)
 {
+    const char *ro = e->rx_only ? " [RX-only]" : "";
     if (e->mode == LP_MODE_FSK)
-        snprintf(buf, n, "FSK %.3f MHz %u bps", e->freq_hz / 1e6, (unsigned)e->bitrate_bps);
+        snprintf(buf, n, "FSK %.3f MHz %u bps%s", e->freq_hz / 1e6, (unsigned)e->bitrate_bps, ro);
     else
-        snprintf(buf, n, "LoRa %.3f MHz BW%u SF%u sync 0x%04X",
-                 e->freq_hz / 1e6, (unsigned)(e->bw_hz / 1000), (unsigned)e->sf, (unsigned)e->sync_word);
+        snprintf(buf, n, "LoRa %.3f MHz BW%u SF%u sync 0x%04X%s",
+                 e->freq_hz / 1e6, (unsigned)(e->bw_hz / 1000), (unsigned)e->sf, (unsigned)e->sync_word, ro);
 }
 
-// Tune the radio to a scanlist entry by writing config.* and re-initialising.
+// Tune the radio to a scanlist entry. We BORROW config.* to feed lora_reinit(),
+// then RESTORE it: the scanner must never persist a transient scanned channel into
+// the user's saved config (a config_save() mid-scan would otherwise pin a random
+// channel and could brick the next boot). The user's configured channel is the
+// default the scan starts from; the live tuned channel is shown via the scan
+// status / beacon, not the saved config.
 static void scan_apply(const scan_entry_t *e)
 {
+    char  s_mode[sizeof(config.lora_rf_mode)];  strlcpy(s_mode, config.lora_rf_mode, sizeof(s_mode));
+    char  s_fsync[sizeof(config.fsk_syncword)]; strlcpy(s_fsync, config.fsk_syncword, sizeof(s_fsync));
+    float s_freq = config.lora_frequency, s_bw = config.lora_bandwidth;
+    int   s_sf = config.lora_sf, s_cr = config.lora_cr, s_sync = config.lora_sync_word;
+    float s_br = config.fsk_bitrate, s_fd = config.fsk_freqdev, s_rxbw = config.fsk_rxbw;
+
     config.lora_frequency = e->freq_hz / 1e6f;
     if (e->mode == LP_MODE_FSK) {
         strlcpy(config.lora_rf_mode, "fsk", sizeof(config.lora_rf_mode));
@@ -200,7 +324,15 @@ static void scan_apply(const scan_entry_t *e)
         config.lora_cr        = e->cr;
         config.lora_sync_word = e->sync_word;
     }
+    lora_set_channel_rx_only(e->rx_only);   // gate TX on receive-only channels
     lora_reinit();
+
+    // restore the user's configured channel
+    config.lora_frequency = s_freq; config.lora_bandwidth = s_bw;
+    config.lora_sf = s_sf; config.lora_cr = s_cr; config.lora_sync_word = s_sync;
+    config.fsk_bitrate = s_br; config.fsk_freqdev = s_fd; config.fsk_rxbw = s_rxbw;
+    strlcpy(config.lora_rf_mode, s_mode, sizeof(config.lora_rf_mode));
+    strlcpy(config.fsk_syncword, s_fsync, sizeof(config.fsk_syncword));
 }
 
 static uint32_t scan_dwell_ms(void)
@@ -210,25 +342,24 @@ static uint32_t scan_dwell_ms(void)
     return (uint32_t)s * 1000;
 }
 
-// One round-robin step: scan tier rr_tier's current entry, advance that tier's
-// cursor, then rotate rr_tier across the active tiers (0..active_tier). Widen by
-// one tier after the primary is swept scan_passes times with no master found.
+// One round-robin step: scan tier rr_tier's next entry, then rotate rr_tier
+// across the active tiers (0..active_tier). Widen by one tier after the primary
+// is swept scan_passes times with no master found.
 static void scan_step(void)
 {
     if (n_tiers == 0) return;
-    int t = rr_tier;                              // round-robin: this step's tier
-    cur_entry = tier_entry(t, tier_cursor[t]);
+    int t = rr_tier;
+    bool wrapped = false;
+    if (!tier_next(&tiers[t], &cur_entry, &wrapped)) {  // tier yielded nothing
+        if (++rr_tier > active_tier) rr_tier = 0;
+        return;
+    }
     scan_apply(&cur_entry);
     scan_dwell_until = uptime_ms() + scan_dwell_ms();
     char d[72]; scan_describe(&cur_entry, d, sizeof(d));
-    printfnl(SOURCE_LORA, "scan: tier %d/%d entry %d %s\n", t, active_tier, tier_cursor[t], d);
+    printfnl(SOURCE_LORA, "scan: tier %d/%d %s\n", t, active_tier, d);
 
-    // advance this tier's cursor (wraps within its own tier)
-    bool primary_wrapped = false;
-    if (++tier_cursor[t] >= tiers[t].count) {
-        tier_cursor[t] = 0;
-        if (t == 0) primary_wrapped = true;
-    }
+    bool primary_wrapped = (t == 0 && wrapped);
     // rotate to the next active tier
     if (++rr_tier > active_tier) rr_tier = 0;
     // widen after the primary tier has been swept scan_passes times
@@ -238,32 +369,31 @@ static void scan_step(void)
         if (passes < 1) passes = 1;
         if (scan_pass_count >= passes && active_tier < n_tiers - 1) {
             active_tier++;
-            tier_cursor[active_tier] = 0;
             scan_pass_count = 0;
             printfnl(SOURCE_LORA, "scan: primary swept %dx, no master -> widen to tier %d/%d (+%s, %d entries)\n",
-                     passes, active_tier, n_tiers - 1, tiers[active_tier].src, tiers[active_tier].count);
+                     passes, active_tier, n_tiers - 1, tiers[active_tier].name, tiers[active_tier].count);
         }
     }
 }
 
-// (Re)start scanning from tier 0, all cursors reset.
+// (Re)start scanning from tier 0 -- reopens scanlist files (picking up any edits,
+// deletions, appearances or a freshly dist-delivered scanlist) and resets the
+// round-robin.
 static void scan_restart(void)
 {
     scan_state = SCAN_SCANNING;
     active_tier = 0;
     scan_pass_count = 0;
     rr_tier = 0;
-    for (int t = 0; t < n_tiers; t++) tier_cursor[t] = 0;
+    scan_open();
     if (n_tiers > 0) scan_step();
 }
 
 void scan_init(void)
 {
-    scan_load();
-    if (n_tiers > 0) {
+    scan_restart();
+    if (n_tiers > 0)
         printfnl(SOURCE_LORA, "scan: starting across %d tier(s)\n", n_tiers);
-        scan_restart();
-    }
 }
 
 void scan_notify_beacon(void)
@@ -287,7 +417,12 @@ void lora_scan_tick(void)   // called from the LoRa task after lora_rx()
     if (scan_state == SCAN_SCANNING) {
         if ((int32_t)(now - scan_dwell_until) >= 0) {
             lora_radio_lock();
-            scan_step();
+            if (scanlist_changed()) {   // edited / deleted / appeared -> rebuild
+                printfnl(SOURCE_LORA, "scan: scanlist files changed, rescanning from tier 0\n");
+                scan_restart();
+            } else {
+                scan_step();
+            }
             lora_radio_unlock();
         }
     } else { // SCAN_LOCKED
@@ -314,6 +449,8 @@ void lora_scan_set_enabled(bool en)   // `lora scan on|off`
     lora_radio_unlock();
 }
 
+bool lora_scan_is_enabled(void) { return scan_enabled; }
+
 void lora_scan_print(void)   // shown in `lora` status
 {
     lora_radio_lock();        // consistent snapshot vs the LoRa task's scan_step()
@@ -323,7 +460,7 @@ void lora_scan_print(void)   // shown in `lora` status
              n_tiers, active_tier, config.lora_scan_dwell, passes);
     for (int t = 0; t < n_tiers; t++)
         printfnl(SOURCE_COMMANDS, "    tier %d %-18s %5d entries%s\n",
-                 t, tiers[t].src, tiers[t].count, t <= active_tier ? "  [active]" : "");
+                 t, tiers[t].name, tiers[t].count, t <= active_tier ? "  [active]" : "");
     if (scan_enabled) {
         char d[72]; scan_describe(&cur_entry, d, sizeof(d));
         printfnl(SOURCE_COMMANDS, "    primary sweep %d/%d, last: %s\n", scan_pass_count, passes, d);

@@ -50,6 +50,14 @@ static float last_snr  = 0.0f;
 static SemaphoreHandle_t lora_mutex       = NULL;
 static TaskHandle_t      lora_task_handle = NULL;
 
+// Master on/off for the whole LoRa subsystem (config [lora] enabled, `lora on|off`).
+// When false the radio is asleep and the LoRa task idles (no RX, no scan).
+static bool lora_active = false;
+
+// True when the current channel is marked receive-only (scanlist LX/FX or built-in
+// *_RX). With config.lora_rx_only it gates all TX via lora_tx_allowed().
+static bool chan_rx_only = false;
+
 void lora_radio_lock(void)   { if (lora_mutex) xSemaphoreTakeRecursive(lora_mutex, portMAX_DELAY); }
 void lora_radio_unlock(void) { if (lora_mutex) xSemaphoreGiveRecursive(lora_mutex); }
 
@@ -126,6 +134,9 @@ int lora_setup( void )
   if (!lora_mutex)
     lora_mutex = xSemaphoreCreateRecursiveMutex();
 
+  // Always do the hardware init (TCXO, RF switch, begin) even when disabled, so
+  // RadioLib remembers the TCXO/board config for later begin() calls; if disabled
+  // we just sleep the radio at the end instead of scanning.
   radio.setTCXO( 1.8, 5000 );
   radio.setDio2AsRfSwitch();
 
@@ -155,8 +166,12 @@ int lora_setup( void )
 
   if( status != RADIOLIB_ERR_NONE )
   {
-     usb_printf("Failed, status=%d\n", status);
-    blinkloop( 3 );
+    // Don't hang the whole boot on a radio-init failure (e.g. a bad [lora]
+    // channel in config) -- leave LoRa OFF, keep booting so the CLI is reachable
+    // to fix it; `lora on` retries after the config is corrected.
+    usb_printf("LoRa radio init FAILED, status=%d -- LoRa left OFF (check [lora] config)\n", status);
+    lora_active = false;
+    return 0;
   }
 
   usb_printf("OK\n");
@@ -215,7 +230,14 @@ int lora_setup( void )
   lora_rxdone_flag = false;   // drop any boot-time spurious RX-done so the first
                               // lora_rx() doesn't count/parse a ghost packet
 
-  scan_init();   // load scanlist + begin scanning for the master beacon
+  if (config.lora_enabled) {
+    lora_active = true;
+    scan_init();              // load scanlist + begin scanning for the master beacon
+  } else {
+    lora_active = false;
+    radio.sleep();            // configured but parked; `lora on` wakes + scans
+    usb_printf("LoRa disabled (config [lora] enabled=off), radio asleep\n");
+  }
 
   return 0;
 }
@@ -368,9 +390,13 @@ static void lora_task_fn( void *arg )
     (void)arg;
     for (;;)
     {
-        lora_rx();
-        lora_scan_tick();
-        vTaskDelay( pdMS_TO_TICKS(2) );
+        if (lora_active) {
+            lora_rx();
+            lora_scan_tick();
+            vTaskDelay( pdMS_TO_TICKS(2) );
+        } else {
+            vTaskDelay( pdMS_TO_TICKS(50) );   // idle while LoRa is off
+        }
     }
 }
 
@@ -380,6 +406,36 @@ void lora_start_task( void )
         xTaskCreate( lora_task_fn, "lora", 6144, NULL, 1, &lora_task_handle );
 }
 
+// Master on/off for the LoRa subsystem (`lora on|off`, [lora] enabled). Off stops
+// scanning, closes the streamed scanlist files and sleeps the radio; on wakes +
+// reconfigures the radio (via scan's lora_reinit) and restarts scanning.
+void lora_set_active( bool on )
+{
+    lora_radio_lock();
+    if (on && !lora_active) {
+        lora_active = true;
+        lora_scan_set_enabled(true);   // reinits the radio (scan_apply) + scans
+    } else if (!on && lora_active) {
+        lora_scan_set_enabled(false);  // stop scanning + close scanlist files
+        radio.sleep();                 // low power; woken by begin() on `lora on`
+        lora_active = false;
+    }
+    lora_radio_unlock();
+}
+
+bool lora_is_active( void ) { return lora_active; }
+
+// Mark the current channel receive-only (called by the scanner per tuned entry).
+void lora_set_channel_rx_only( bool ro ) { chan_rx_only = ro; }
+
+// TX is permitted only when the subsystem is on, the config isn't in listen-only
+// mode, and the current channel isn't marked receive-only. All TX (CLI send and,
+// later, registration/polling) funnels through lora_tx(), which enforces this.
+bool lora_tx_allowed( void )
+{
+    return lora_active && !config.lora_rx_only && !chan_rx_only;
+}
+
 
 // Transmit a LoRa packet (blocking), then return to RX-continuous. This is the
 // first TX path on the ConeZ board; it exercises the E22-400M22S TXEN/RXEN
@@ -387,6 +443,8 @@ void lora_start_task( void )
 // Returns 0 on success, else the RadioLib error code.
 int lora_tx( const uint8_t *data, size_t len )
 {
+    if (!lora_tx_allowed())               // RX-only channel / [lora] rx_only / LoRa off
+        return LORA_TX_INHIBITED;
     lora_radio_lock();                    // serialize against the LoRa task's RX/scan
     int16_t state = radio.transmit( (uint8_t *)data, len );
     if( state == RADIOLIB_ERR_NONE )
@@ -485,6 +543,7 @@ float lora_get_datarate(void)
 int lora_set_frequency(float freq)
 {
     lora_radio_lock();
+    chan_rx_only = false;   // manual tune: no longer on a marked RX-only scanlist channel
     int status = radio.setFrequency(freq);
     if (status == RADIOLIB_ERR_NONE)
         radio.startReceive();

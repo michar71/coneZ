@@ -11,5 +11,6 @@ void scan_notify_beacon(void);        // a beacon was decoded (from lora_handle_
 void lora_scan_tick(void);            // drive the scan state machine (from the LoRa task)
 void lora_scan_print(void);           // `lora` status
 void lora_scan_set_enabled(bool en);  // `lora scan on|off`
+bool lora_scan_is_enabled(void);      // true while scanning is enabled
 
 #endif // CONEZ_SCAN_H

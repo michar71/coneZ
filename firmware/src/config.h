@@ -28,6 +28,8 @@
 #define DEFAULT_ORIGIN_LON      -119.193672f
 
 // LoRa radio
+#define DEFAULT_LORA_ENABLED    true            // master on/off for the LoRa subsystem
+#define DEFAULT_LORA_RX_ONLY    false           // listen-only: inhibit ALL transmit
 #define DEFAULT_LORA_FREQUENCY  431.250f
 #define DEFAULT_LORA_BANDWIDTH  500.0f
 #define DEFAULT_LORA_SF         7               // matches lora-master downstream spec
@@ -105,6 +107,8 @@ typedef struct {
     float   origin_lon;
 
     // [lora]
+    bool    lora_enabled;
+    bool    lora_rx_only;
     float   lora_frequency;
     float   lora_bandwidth;
     int     lora_sf;
