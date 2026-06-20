@@ -1,0 +1,10 @@
+[firmware]
+8	ConeZ-v0	0.02.0376	1213616	e952a13f
+
+[files]
+2	format.bas	138	907e33ab
+9	scanlist.txt	949	2c8d8ead
+4	sol.bas	358	6a0d3395
+5	test.bas	301	ecad9bfa
+6	test.txt	346	69f78bb1
+7	test255.bas	212	2a042b66

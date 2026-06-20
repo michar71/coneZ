@@ -1,50 +1,22 @@
-[primary]
-500,7,431250000
-500,8,431250000
-500,9,431250000
-500,10,431250000
-500,11,431250000
-500,12,431250000
-250,7,431250000
-250,8,431250000
-250,9,431250000
-250,10,431250000
-250,11,431250000
-250,12,431250000
+# ConeZ scanlist v1 -- channels a cone scans to find the master's beacon.
+#
+# One entry per line. The first token selects the mode; all frequencies are in
+# Hz and sync words in hex:
+#   L <freq_hz> <bw_hz> <sf> <cr> <sync_hex>                       LoRa
+#   F <freq_hz> <bitrate_bps> <freqdev_hz> <rxbw_hz> <sync_hex>    FSK
+#
+# '#' comments and blank lines are ignored. Scan order = file order. The cone
+# dwells on each entry longer than the beacon period before advancing, and
+# locks to the first entry where it hears a master beacon.
 
-[fallback]
-500,7,430000000
-500,7,431000000
-500,7,432000000
-500,7,433000000
-500,7,434000000
+# Default channel first (most likely):
+L 431250000 500000 7 5 0xDEAD
 
-500,8,430000000
-500,8,431000000
-500,8,432000000
-500,8,433000000
-500,8,434000000
+# LoRa fallbacks (other BW/SF on the 70 cm amateur band):
+L 431250000 125000 9 5 0x12
+L 433000000 500000 7 5 0xDEAD
+L 432000000 250000 9 5 0x12
 
-500,9,430000000
-500,9,431000000
-500,9,432000000
-500,9,433000000
-500,9,434000000
-
-500,10,430000000
-500,10,431000000
-500,10,432000000
-500,10,433000000
-500,10,434000000
-
-500,11,430000000
-500,11,431000000
-500,11,432000000
-500,11,433000000
-500,11,434000000
-
-500,12,430000000
-500,12,431000000
-500,12,432000000
-500,12,433000000
-500,12,434000000
+# FSK example -- not yet emitted by the master (placeholder for the Phase 9 FSK
+# mode); shows the parameter layout: bitrate 4800 bps, dev 5 kHz, RX BW 9.7 kHz.
+F 431250000 4800 5000 9700 0x2D

@@ -555,6 +555,7 @@ void loop()
 
   // Check for LoRa packets
   lora_rx();
+  lora_scan_tick();   // scanlist channel acquisition / lock
 
 #ifdef BOARD_HAS_GPS
   // Process GPS messages

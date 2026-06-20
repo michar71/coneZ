@@ -2561,6 +2561,17 @@ int cmd_lora(int argc, char **argv)
                 printfnl(SOURCE_COMMANDS, "Frequency set to %.3f MHz\n", freq);
             return 0;
         }
+        else if (strcasecmp(sub, "scan") == 0)
+        {
+            bool on  = !strcasecmp(val, "on")  || !strcasecmp(val, "enable")  || !strcasecmp(val, "1");
+            bool off = !strcasecmp(val, "off") || !strcasecmp(val, "disable") || !strcasecmp(val, "0");
+            if (!on && !off) {
+                printfnl(SOURCE_COMMANDS, "Usage: lora scan on|off\n");
+                return 1;
+            }
+            lora_scan_set_enabled(on);
+            return 0;
+        }
         else if (strcasecmp(sub, "power") == 0)
         {
             int power = parse_int(val);
@@ -2693,6 +2704,7 @@ int cmd_lora(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, "  Last RSSI: %.1f dBm\n", lora_get_rssi());
     printfnl(SOURCE_COMMANDS, "  Last SNR:  %.1f dB\n", lora_get_snr());
     lora_print_beacon();
+    lora_scan_print();
 #else
     printfnl(SOURCE_COMMANDS, "LoRa not available on this board\n");
 #endif
