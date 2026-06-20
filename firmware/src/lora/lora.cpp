@@ -25,6 +25,10 @@ static bool fsk_mode = false;
 static uint32_t rx_count = 0;
 static uint32_t tx_count = 0;
 
+// True while a CLI-triggered transmit is in progress, so the RX poll (loopTask)
+// skips the radio and doesn't race the TX on the shared SPI bus.
+static volatile bool lora_tx_active = false;
+
 // IRQ handler for LoRa RX
 volatile bool lora_rxdone_flag = false;
 
@@ -186,6 +190,9 @@ int lora_setup( void )
 
 void lora_rx( void )
 {
+    if( lora_tx_active )      // don't touch the radio mid-transmit
+        return;
+
     if( !lora_rxdone_flag )
         return;
 
@@ -229,6 +236,24 @@ void lora_rx( void )
 
     // Re-enter receive mode for the next packet
     radio.startReceive();
+}
+
+
+// Transmit a LoRa packet (blocking), then return to RX-continuous. This is the
+// first TX path on the ConeZ board; it exercises the E22-400M22S TXEN/RXEN
+// switch, which is driven from the SX1268 DIO2 (3.3 V) via the board's MOSFET.
+// Returns 0 on success, else the RadioLib error code.
+int lora_tx( const uint8_t *data, size_t len )
+{
+    lora_tx_active = true;
+    int16_t state = radio.transmit( (uint8_t *)data, len );
+    if( state == RADIOLIB_ERR_NONE )
+        tx_count++;
+    lora_rxdone_flag = false;             // discard any TxDone-triggered IRQ flag
+    radio.setDio1Action( lora_rxdone );   // re-arm RX-done IRQ
+    radio.startReceive();                 // back to RX continuous
+    lora_tx_active = false;
+    return ( state == RADIOLIB_ERR_NONE ) ? 0 : (int)state;
 }
 
 

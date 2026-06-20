@@ -1,8 +1,12 @@
 #ifndef _conez_lora_h
 #define _conez_lora_h
 
+#include <stddef.h>
+#include <stdint.h>
+
 void lora_rx( void );
 int lora_setup( void );
+int lora_tx( const uint8_t *data, size_t len );   // transmit, then return to RX
 
 float lora_get_rssi(void);
 float lora_get_snr(void);

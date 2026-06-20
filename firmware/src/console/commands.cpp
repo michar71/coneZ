@@ -2632,6 +2632,22 @@ int cmd_lora(int argc, char **argv)
                 printfnl(SOURCE_COMMANDS, "Mode set to %s\n", lora_get_mode());
             return 0;
         }
+        else if (strcasecmp(sub, "send") == 0)
+        {
+            // Join argv[2..] into one payload (space-separated; quote for spaces)
+            char msg[160];
+            msg[0] = '\0';
+            for (int i = 2; i < argc; i++) {
+                if (i > 2) strlcat(msg, " ", sizeof(msg));
+                strlcat(msg, argv[i], sizeof(msg));
+            }
+            int rc = lora_tx((const uint8_t *)msg, strlen(msg));
+            if (rc != 0)
+                printfnl(SOURCE_COMMANDS, "TX failed (code %d)\n", rc);
+            else
+                printfnl(SOURCE_COMMANDS, "Sent %d bytes: \"%s\"\n", (int)strlen(msg), msg);
+            return 0;
+        }
     }
 
     printfnl(SOURCE_COMMANDS, "LoRa Radio:\n");

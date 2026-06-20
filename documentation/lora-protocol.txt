@@ -300,13 +300,20 @@ retransmit-on-request; coverage relies on repetition.
 
 
 --------------------------------------------------------------------------------
-14. Uplink (cone -> master) - NOT YET DEFINED
+14. Uplink (cone -> master) - PHY proven, protocol NOT YET DEFINED
 --------------------------------------------------------------------------------
 
-The master listens in RX-continuous between transmissions and logs any received
-packet (length, RSSI, SNR, hex), but no uplink packet types, acknowledgements,
-or NACK/retransmit-request semantics are defined yet. This is the natural next
-layer to turn blind broadcast into reliable, feedback-driven distribution.
+The cone CAN now transmit: firmware `lora send <text>` -> lora_tx() ->
+radio.transmit() -> back to RX (firmware/src/lora/lora.cpp). First cone->master
+transmit verified 2026-06-20 (ConeZ board -> Pi RX, "CONEZTXTEST" decoded clean
+at -71 dBm / SNR 13 through the Pi's dummy load). So the uplink PHY and the
+cone's TX hardware work.
+
+What is still undefined: uplink packet TYPES, acknowledgements, and
+NACK/retransmit-request semantics. The master only listens in RX-continuous
+between transmissions and logs received packets (length, RSSI, SNR, hex). Adding
+a real uplink protocol is the next layer to turn blind broadcast into reliable,
+feedback-driven distribution.
 
 
 --------------------------------------------------------------------------------
@@ -383,3 +390,14 @@ Cone-side firmware notes (firmware/src/lora/): the 16-bit LoRa sync word
 (0xDEAD) is set by inverting RadioLib's setSyncWord(syncWord, controlBits)
 packing; SF default reconciled to 7; readData() failures are logged with the
 RadioLib error code (added to diagnose the LDRO/CRC issue).
+
+CONE TX (added 2026-06-20): the ConeZ board's transmit path was first brought up
+this day. firmware `lora send <text>` -> lora_tx() (lora.cpp) -> radio.transmit()
+-> re-arm RX, guarded by a lora_tx_active flag so the loopTask RX poll doesn't
+race the TX on the shared SPI bus. The board's LoRa module is an Ebyte
+E22-400M22S (SX1268 + 22 dBm PA/LNA); its TXEN/RXEN T/R switch is driven from the
+SX1268 DIO2 (radio.setDio2AsRfSwitch(); no host TXEN/RXEN GPIOs) through an
+on-board N-channel MOSFET. Open question was whether 3.3 V logic on the FET gate
+would switch TXEN cleanly -> CONFIRMED YES: ConeZ -> Pi decoded clean (-71 dBm /
+SNR 13 at +14 dBm board TX through the Pi's dummy load). No radio mutex yet, so
+heavy concurrent RX + CLI TX could still race; the flag covers the common case.
