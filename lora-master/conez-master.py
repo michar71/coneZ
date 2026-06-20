@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+import re
+import glob
 import time, binascii
 import struct
 import math
@@ -15,7 +17,7 @@ DOWNSTREAM_BANDWIDTH = 500000			# 500kHz
 DOWNSTREAM_SF = 7				# SF7...SF12
 DOWNSTREAM_CR = 5				# 4/5 coding rate
 DOWNSTREAM_PREAMBLE = 8				# 8 preamble symbols
-DOWNSTREAM_TXPOWER = 5				# Transmit power
+DOWNSTREAM_TXPOWER = 0				# Transmit power (+0 dBm; Pi is feet from test board)
 DOWNSTREAM_DEADTIME = 0.1			# Gap between transmissions
 LORA_SYNC_WORD = 0xDEAD
 
@@ -26,8 +28,26 @@ firmware_offset = 0
 
 # File distribution
 FILE_CHUNK_SIZE = 128
-MANIFEST_FILE = "rsync/_manifest_2.txt"
-manifest_serial = 2
+MANIFEST_DIR = "rsync"
+MANIFEST_RE = re.compile(r"_manifest_(\d+)\.txt$")
+
+
+def latest_manifest(dir_path=MANIFEST_DIR):
+    """Return (path, serial) of the highest-numbered _manifest_<N>.txt, or (None, 0)."""
+    best, best_n = None, 0
+    for p in glob.glob(os.path.join(dir_path, "_manifest_*.txt")):
+        m = MANIFEST_RE.search(os.path.basename(p))
+        if m:
+            n = int(m.group(1))
+            if n > best_n:
+                best, best_n = p, n
+    return best, best_n
+
+
+MANIFEST_FILE, manifest_serial = latest_manifest()
+if MANIFEST_FILE is None:
+    raise RuntimeError(f"No _manifest_*.txt found in {MANIFEST_DIR}/ (run build_manifest.py)")
+print(f"Using manifest: {MANIFEST_FILE} (serial {manifest_serial})")
 manifest_len = os.path.getsize( MANIFEST_FILE )
 manifest_offset = 0
 
