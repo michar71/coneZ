@@ -44,6 +44,7 @@ void     pps_isr_init(void);     // attach PPS interrupt (called from gps_setup)
 bool     get_time_valid(void);   // true if any time source (GPS+PPS or NTP) is active
 uint64_t get_epoch_ms(void);     // ms since Unix epoch, interpolated between updates
 uint8_t  get_time_source(void);  // 0=compile/none, 1=NTP, 2=GPS+PPS
+bool     time_set_from_beacon(uint64_t epoch_ms); // discipline clock from master BEACON if no GPS/NTP; true if applied
 uint32_t get_ntp_last_sync_ms(void); // millis() at last NTP sync (0 = never)
 bool     get_pps_flag(void);     // rising-edge flag, clear-on-read
 void     ntp_setup(void);        // call after WiFi connects

@@ -8,6 +8,7 @@
 #include "lora_hal.h"
 #include "conez_usb.h"
 #include "lora_proto.h"
+#include "gps.h"
 
 static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
 
@@ -225,12 +226,16 @@ static void lora_handle_beacon( const uint8_t *p, size_t len, float rssi, float 
     for (int i = LP_BCN_CALLSIGN_LEN - 1; i >= 0 && g_beacon.callsign[i] == ' '; i--)
         g_beacon.callsign[i] = '\0';
 
+    // Discipline our clock from the beacon when we have no GPS/NTP of our own.
+    bool t_applied = time_set_from_beacon((uint64_t)g_beacon.epoch_s * 1000ULL + g_beacon.epoch_ms);
+
     printfnl(SOURCE_LORA,
-             "BEACON %s v%u %.3f MHz BW%u SF%u CR4/%u sync 0x%04X manifest %u  t=%u.%03u  RSSI %.0f SNR %.1f\n",
+             "BEACON %s v%u %.3f MHz BW%u SF%u CR4/%u sync 0x%04X manifest %u  t=%u.%03u  RSSI %.0f SNR %.1f  clock:%s\n",
              g_beacon.callsign, (unsigned)g_beacon.version, g_beacon.freq_hz / 1e6,
              (unsigned)(g_beacon.bw_hz / 1000), (unsigned)g_beacon.sf, (unsigned)g_beacon.cr,
              (unsigned)g_beacon.sync_word, (unsigned)g_beacon.manifest_serial,
-             (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, rssi, snr);
+             (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, rssi, snr,
+             t_applied ? "set" : "kept");
 }
 
 // Show the last beacon in the `lora` status command (SOURCE_COMMANDS).

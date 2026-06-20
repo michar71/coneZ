@@ -64,6 +64,26 @@ void time_seed_compile(void)
 #endif
 }
 
+// --- Beacon time (from a master BEACON timestamp) ---
+// Discipline the clock from a master BEACON, but ONLY when there is no better
+// local source: no GPS+PPS (time_source < 2) and no real NTP sync ever
+// (ntp_last_sync == 0). For non-GPS cones the beacon is their time source; for
+// GPS cones it's a fallback until they get a fix. Returns true if it updated.
+bool time_set_from_beacon(uint64_t epoch_ms)
+{
+    uint32_t now_m = uptime_ms();
+    bool applied = false;
+    portENTER_CRITICAL(&time_mux);
+    if (time_source < 2 && ntp_last_sync == 0) {
+        epoch_at_pps  = epoch_ms;
+        millis_at_pps = now_m;
+        epoch_valid   = true;
+        applied = true;
+    }
+    portEXIT_CRITICAL(&time_mux);
+    return applied;
+}
+
 #ifdef BOARD_HAS_GPS
 
 #include "driver/uart.h"
