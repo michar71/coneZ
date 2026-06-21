@@ -30,6 +30,8 @@
 // LoRa radio
 #define DEFAULT_LORA_ENABLED    true            // master on/off for the LoRa subsystem
 #define DEFAULT_LORA_RX_ONLY    false           // listen-only: inhibit ALL transmit
+#define DEFAULT_LORA_OTA_DOWNGRADE false        // dist firmware OTA: accept older/=
+                                                // versions too (default: newer only)
 #define DEFAULT_LORA_FREQUENCY  431.250f
 #define DEFAULT_LORA_BANDWIDTH  500.0f
 #define DEFAULT_LORA_SF         7               // matches lora-master downstream spec
@@ -109,6 +111,7 @@ typedef struct {
     // [lora]
     bool    lora_enabled;
     bool    lora_rx_only;
+    bool    lora_ota_downgrade;
     float   lora_frequency;
     float   lora_bandwidth;
     int     lora_sf;

@@ -51,6 +51,7 @@ static const cfg_descriptor_t cfg_table[] = {
     // [lora]
     CFG_ENTRY("lora",   "enabled",      CFG_BOOL,  lora_enabled),
     CFG_ENTRY("lora",   "rx_only",      CFG_BOOL,  lora_rx_only),
+    CFG_ENTRY("lora",   "ota_downgrade",CFG_BOOL,  lora_ota_downgrade),
     CFG_ENTRY("lora",   "ssid",         CFG_STR,   lora_ssid),
     CFG_ENTRY("lora",   "frequency",    CFG_FLOAT, lora_frequency),
     CFG_ENTRY("lora",   "bandwidth",    CFG_FLOAT, lora_bandwidth),
@@ -205,6 +206,7 @@ static void config_fill_defaults(conez_config_t *cfg)
 
     cfg->lora_enabled     = DEFAULT_LORA_ENABLED;
     cfg->lora_rx_only     = DEFAULT_LORA_RX_ONLY;
+    cfg->lora_ota_downgrade = DEFAULT_LORA_OTA_DOWNGRADE;
     cfg->lora_frequency   = DEFAULT_LORA_FREQUENCY;
     cfg->lora_bandwidth   = DEFAULT_LORA_BANDWIDTH;
     cfg->lora_sf          = DEFAULT_LORA_SF;

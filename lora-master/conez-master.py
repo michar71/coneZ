@@ -51,13 +51,15 @@ DOWNSTREAM_TXPOWER = 0				# dBm (signed, -9..+22). Low for close-range
 						# bench use. Set via setPaConfig+setTxParams
 						# below, NOT LoRaRF setTxPower() (which dead-
 						# ends for SX1262 powers <+14 -> no RF out)
-DOWNSTREAM_DEADTIME = 0.1			# Gap between transmissions
+DOWNSTREAM_DEADTIME = float(os.environ.get("DEADTIME", "0.1"))	# Gap between transmissions (env-tunable for bench)
 LORA_SYNC_WORD = 0xDEAD
 CALLSIGN = "N1AF"				# FCC station ID (in the v1 beacon)
 
-# Firmware
+# Firmware (legacy Phase-0 globals, used only by the dormant transmit_firmware()
+# helper; the v1 carousel serves firmware via build_dist_chunks()). Tolerant of a
+# missing file so removing an old image can't crash startup.
 FIRMWARE_FILE = "firmware/ConeZ-v0/0.02.0376.bin"
-firmware_len = os.path.getsize( FIRMWARE_FILE )
+firmware_len = os.path.getsize(FIRMWARE_FILE) if os.path.exists(FIRMWARE_FILE) else 0
 firmware_offset = 0
 
 # File distribution. The distributable payload lives in dist/ (only what gets
@@ -87,8 +89,8 @@ print(f"Using manifest: {MANIFEST_FILE} (serial {manifest_serial})")
 manifest_len = os.path.getsize( MANIFEST_FILE )
 manifest_offset = 0
 
-DIST_FILE = "dist/test.bas"
-dist_file_len = os.path.getsize( DIST_FILE )
+DIST_FILE = "dist/test.bas"   # legacy Phase-0 global (dormant transmit_file() helper)
+dist_file_len = os.path.getsize(DIST_FILE) if os.path.exists(DIST_FILE) else 0
 dist_file_offset = 0
 
 
@@ -581,6 +583,24 @@ def parse_manifest_files(path):
     return out
 
 
+def parse_manifest_firmware(path):
+    """Return [(file_id, product, version, size, block_size)] from [firmware]
+    (Phase 6 -- firmware is dist-able). Skips legacy lines lacking block geometry."""
+    out = []
+    section = None
+    with open(path) as fp:
+        for line in fp:
+            line = line.rstrip("\n")
+            if line == "[firmware]": section = "fw"; continue
+            if line == "[files]":    section = "files"; continue
+            if not line or line.startswith("#"): continue
+            parts = line.split("\t")
+            # id product version size md5 algo block_size total_blocks
+            if section == "fw" and len(parts) >= 8:
+                out.append((int(parts[0]), parts[1], parts[2], int(parts[3]), int(parts[6])))
+    return out
+
+
 def _file_to_chunks(file_id, file_len, algo, blocks):
     """Slice a file's per-block (compressed) byte strings into chunk descriptors:
     N DATA chunks then R systematic-RS PARITY chunks per block (Phase 5).
@@ -629,23 +649,41 @@ def build_dist_chunks():
             continue
         algo, blocks = proto.encode_file(data)
         chunks += _file_to_chunks(fid, len(data), algo, blocks)
+    # Phase 6: firmware images, chunked at the firmware block size (sent last so the
+    # small files keep flowing each carousel pass while the big image trickles).
+    for (fid, prod, ver, size, bsz) in parse_manifest_firmware(MANIFEST_FILE):
+        fpath = os.path.join("firmware", prod, ver + ".bin")
+        try:
+            with open(fpath, "rb") as fp:
+                data = fp.read()
+        except FileNotFoundError:
+            print(f"  dist: WARNING missing firmware {fpath} (id {fid})")
+            continue
+        algo, blocks = proto.encode_file(data, bsz)
+        chunks += _file_to_chunks(fid, len(data), algo, blocks)
+        print(f"  dist: firmware {prod} {ver} ({len(data)} B) -> {len(blocks)} blocks, "
+              f"{'deflate' if algo else 'store'}")
     return chunks
 
 
 dist_chunks = build_dist_chunks()
-dist_idx = 0
+# The MANIFEST (file id 0) is the entry point: a cone can't act on any data/firmware
+# chunk until it holds the matching manifest. With a large firmware a full carousel
+# pass is many minutes, so sending the manifest only once per pass strands a cone
+# that locks mid-pass. Broadcast it after EVERY beacon instead (spec 13.7: manifest
+# = highest priority); the big payload cycles in between.
+manifest_chunks = [c for c in dist_chunks if c["fid"] == proto.DIST_MANIFEST_ID]
+payload_chunks  = [c for c in dist_chunks if c["fid"] != proto.DIST_MANIFEST_ID]
+payload_idx = 0
 _comp = sum(len(c["payload"]) for c in dist_chunks)
 _par = sum(1 for c in dist_chunks if c["parity"])
-print(f"dist: {len(dist_chunks)} chunks ({_par} parity) (manifest + "
-      f"{len(parse_manifest_files(MANIFEST_FILE))} files), chunk size {proto.DIST_CHUNK_SIZE}, "
-      f"{_comp} on-air payload bytes" + (f"  [TEST drop {DIST_TEST_DROP_DATA} data/blk]" if DIST_TEST_DROP_DATA else ""))
+print(f"dist: {len(dist_chunks)} chunks ({_par} parity) ({len(manifest_chunks)} manifest + "
+      f"{len(parse_manifest_files(MANIFEST_FILE))} files + {len(parse_manifest_firmware(MANIFEST_FILE))} fw), "
+      f"chunk size {proto.DIST_CHUNK_SIZE}, {_comp} on-air payload bytes"
+      + (f"  [TEST drop {DIST_TEST_DROP_DATA} data/blk]" if DIST_TEST_DROP_DATA else ""))
 
 
-def send_next_dist_chunk():
-    global dist_idx
-    if not dist_chunks:
-        return
-    c = dist_chunks[dist_idx]
+def send_chunk(c):
     mk = proto.make_dist_parity if c["parity"] else proto.make_dist_data
     pkt = mk(manifest_serial=manifest_serial, file_id=c["fid"], file_len=c["flen"],
              block_index=c["bidx"], total_blocks=c["tb"], chunk_index=c["idx"],
@@ -657,7 +695,20 @@ def send_next_dist_chunk():
     _tot = c["R"] if c["parity"] else c["N"]
     print(f"TX dist id={c['fid']} blk {c['bidx']+1}/{c['tb']} "
           f"{_k} {c['idx']+1}/{_tot} ({len(c['payload'])} B, {_a})")
-    dist_idx = (dist_idx + 1) % len(dist_chunks)
+
+
+def send_manifest():
+    for c in manifest_chunks:
+        send_chunk(c)
+        time.sleep(DOWNSTREAM_DEADTIME)
+
+
+def send_next_payload_chunk():
+    global payload_idx
+    if not payload_chunks:
+        return
+    send_chunk(payload_chunks[payload_idx])
+    payload_idx = (payload_idx + 1) % len(payload_chunks)
 
 
 # --- Main loop ---------------------------------------------------------------
@@ -673,9 +724,12 @@ try:
             beacon = make_beacon()
             transmit( beacon )
             last_tx = time.monotonic()
+            # Manifest right after each beacon so a freshly-locked cone can act
+            # immediately (highest priority); the payload cycles between beacons.
+            send_manifest()
         else:
-            # Phase 3 dist carousel: send the next chunk (manifest + data files)
-            send_next_dist_chunk()
+            # dist carousel: next data/firmware chunk (manifest sent post-beacon)
+            send_next_payload_chunk()
             time.sleep( DOWNSTREAM_DEADTIME )
 
         # Check for incoming packets

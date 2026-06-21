@@ -182,7 +182,12 @@ def build_manifest() -> None:
             file_id = next_file_id
             next_file_id += 1
 
-        lines.append(f"{file_id}\t{prod}\t{ver}\t{size}\t{md5}")
+        # Phase 6: firmware is dist-able -> record block geometry like a file, but
+        # at the firmware block size (flash-sector multiple). kind is implied by
+        # the [firmware] section.
+        algo, blocks = lp.encode_file(p.read_bytes(), lp.DIST_FW_BLOCK_SIZE)
+        lines.append(f"{file_id}\t{prod}\t{ver}\t{size}\t{md5}\t"
+                     f"{algo}\t{lp.DIST_FW_BLOCK_SIZE}\t{len(blocks)}")
 
     lines.append("")  # blank line
     lines.append("[files]")

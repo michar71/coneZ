@@ -176,7 +176,7 @@ Goal: recover lost chunks without waiting a full carousel cycle.
 
 
 --------------------------------------------------------------------------------
-Phase 6 -- Firmware OTA via dist   [overnight soak test reachable here]
+Phase 6 -- Firmware OTA via dist   [overnight soak test reachable here]  (DONE)
 --------------------------------------------------------------------------------
 Goal: over-the-air firmware, no PSRAM required, no in-place hazard.
   MASTER: firmware as a manifest entry (kind=firmware); same carousel.
@@ -189,6 +189,28 @@ Goal: over-the-air firmware, no PSRAM required, no in-place hazard.
           new image; small cue files still arrive timely during the multi-hour
           firmware push (carousel weighting). Good candidate for an UNATTENDED
           overnight run.
+  DONE:   Firmware is a dist entry like any file. MASTER: build_manifest.py records
+          algo/block_size(DIST_FW_BLOCK_SIZE=16384)/total_blocks for each [firmware]
+          .bin; conez-master.py parse_manifest_firmware + the carousel chunk it
+          (deflate + RS) and broadcast the MANIFEST after every beacon (so a cone
+          locking mid-cycle isn't stranded waiting a full ~18-min carousel pass).
+          CONE (dist.cpp): parses [firmware], matches its own esp_app_get_description
+          project_name/version, refuses DOWNGRADES unless [lora] ota_downgrade=on;
+          a firmware entry streams to the INACTIVE OTA partition (no whole-file RAM
+          buffer) -- per block: RS-recover if needed, inflate, then erase+write the
+          partition at block_idx*block_size; on the last block esp_ota_set_boot_-
+          partition (validates the image) + reboot. `dist test <kb> [yield]` self-
+          tests the flash path. CRITICAL FINDING + FIX (see spec 13.5 note): the
+          flash erase/write cache-disable + cross-core stall INTERMITTENTLY failed
+          to park the other core on this board, stretching the cache-off window to
+          seconds -> TG1WDT reset / Core-1 cache panic, mid-transfer. Root-caused
+          (not DFS/light-sleep/WiFi/app-tasks/PSRAM) and fixed with
+          CONFIG_SPI_FLASH_AUTO_SUSPEND (Winbond W25Q64 0xEF4017 supports it): flash
+          ops then take a mutex instead of disabling the cache. Validated on RF: full
+          1.2 MB firmware OTA completes (75/75 blocks, 0 WDT, 0 cache panic) under
+          DFS-on, and the cone reboots into the flashed image. Heltec OTA path
+          builds but not yet RF-soaked; weighted carousel (small files vs firmware)
+          is a Phase 7+ refinement.
 
 
 --------------------------------------------------------------------------------

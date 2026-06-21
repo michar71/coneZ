@@ -102,6 +102,9 @@ DIST_MANIFEST_ID = 0                              # reserved file id for the man
 # on-air chunks. Compress THEN (later) FEC, per block (spec section 13.3).
 DIST_BLOCK_SIZE          = 32768   # data-file block size (LOWER to bench multi-block)
 DIST_MANIFEST_BLOCK_SIZE = 32768   # MUST equal firmware LP_DIST_BLOCK_SIZE
+DIST_FW_BLOCK_SIZE       = 16384   # firmware block size (Phase 6): a flash-sector
+                                   # multiple (4096) so the cone can erase/write per
+                                   # block; kept modest to bound cone RAM
 ALGO_NONE    = 0
 ALGO_DEFLATE = 1                   # zlib stream (firmware inflate_buf auto-detects)
 COMPRESS_LEVEL = 6

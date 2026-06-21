@@ -33,9 +33,18 @@ CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 
-# Watchdog timers — longer timeouts for PSRAM SPI transfers and WASM compiles
+# Watchdog timers — longer timeouts for PSRAM SPI transfers and WASM compiles.
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=800
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# SPI flash auto-suspend (W25Q64 0xEF4017 supports it) — lets the cache stay
+# ENABLED during a flash erase/program by suspending it to service cache misses,
+# so flash ops take a mutex instead of disabling the cache + cross-core-stalling
+# the other core. That cross-core stall intermittently failed to park core 1 on
+# this board, stretching the cache-off window to seconds during dist firmware OTA
+# (TG1WDT reset / Core-1 cache panic). Auto-suspend removes the stall entirely.
+CONFIG_SPI_FLASH_AUTO_SUSPEND=y
+CONFIG_SPI_FLASH_AUTO_CHECK_SUSPEND_STATUS=y
 
 # WiFi — reduce buffer counts (MQTT/HTTP traffic, not high throughput)
 CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16

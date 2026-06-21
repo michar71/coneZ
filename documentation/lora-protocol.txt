@@ -346,6 +346,21 @@ etc.) and firmware are present when needed. ("dist" replaces the misleading name
   Linux self-extractor, but fragile -- a wrong margin bricks the image). The
   block model sidesteps it: the compressed block lives in RAM and inflate streams
   output to flash; we never decompress within the partition.
+  As BUILT (Phase 6): firmware is matched by product (esp_app_get_description
+  project_name) + version, downgrades refused unless [lora] ota_downgrade=on;
+  per block the cone RS-recovers (if needed), inflates, and erase+writes the
+  inactive OTA partition, then esp_ota_set_boot_partition (whole-image validate) +
+  reboot. CRITICAL: a cone running normal firmware flashes its OTA partition WHILE
+  the radio/system run, and esp_partition erase/write disable the flash cache and
+  cross-core-stall the other core. On the ConeZ board that stall INTERMITTENTLY
+  failed to park the other core, stretching the cache-off window to seconds ->
+  Interrupt-WDT reset or a Core-1 "cache disabled but cached memory accessed"
+  panic, killing the multi-hour transfer. The fix is CONFIG_SPI_FLASH_AUTO_SUSPEND
+  (our Winbond W25Q64 / id 0xEF4017 supports erase-suspend): flash ops then take a
+  MUTEX instead of disabling the cache, so the cache never goes off and there is no
+  cross-core park to fail. It must be on (with the matching bootloader) for dist
+  firmware OTA to be reliable. Diagnosis ruled out DFS, light sleep, WiFi, the
+  PSRAM driver, and concurrent app tasks; only the cache-disable window mattered.
 
 13.6  BLOCK SIZE -- the one real knob
   Trades: compression (bigger = marginally better, diminishing past ~64 KB),
@@ -530,6 +545,14 @@ Built (see documentation/lora-v1-implementation-plan.txt for phases):
     cycle. Same math in firmware/src/lora/rs.c and lora-master/reed_solomon.py. The
     DIST body added data_chunks N + parity_chunks R + block_comp_len (22 B). With
     all N data present the cone skips decode (Heltec-friendly). [Phase 5]
+  * dist firmware OTA -- firmware is a dist entry (manifest [firmware] gains
+    algo/block_size/total_blocks); the cone matches its own product/version
+    (esp_app_get_description), refuses downgrades unless [lora] ota_downgrade=on,
+    streams blocks straight to the inactive OTA partition (no whole-file buffer),
+    verifies via esp_ota_set_boot_partition, and reboots into the new image. The
+    manifest is broadcast after every beacon so a late-locking cone isn't stranded.
+    REQUIRES CONFIG_SPI_FLASH_AUTO_SUSPEND (see 13.5 note). Full 1.2 MB OTA verified
+    over RF end-to-end. [Phase 6]
   * Master: v1 beacon + dist carousel (lora-master/conez-master.py). The earlier
     ad-hoc 16-byte-header broadcast is retired (dead helpers remain dormant).
   * Cone: LoRa RX (lora_rx) + TX via `lora send` (lora_tx, guarded by
@@ -537,7 +560,7 @@ Built (see documentation/lora-v1-implementation-plan.txt for phases):
   * Bidirectional link verified both directions on the default LoRa params.
 
 Designed here, NOT yet built (remaining phases):
-  * Firmware-OTA-aware block commit [Phase 6].
+  * Cues [Phase 7]; superframe/registration/polling [Phase 8]; FSK [Phase 9].
   * Cues (fire-now / fire-at-time; groups). [Phase 7]
   * Superframe / timeslot scheduling; registration; polling; radio mutex. [Phase 8]
   * Master channel/mode switching; FSK mode. [Phase 9]

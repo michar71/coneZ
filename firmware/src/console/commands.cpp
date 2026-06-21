@@ -2758,7 +2758,13 @@ int cmd_lora(int argc, char **argv)
 int cmd_dist(int argc, char **argv)
 {
 #ifdef BOARD_HAS_LORA
-    dist_print_status();
+    if (argc >= 2 && !strcmp(argv[1], "test")) {
+        int kb = (argc >= 3) ? parse_int(argv[2]) : 64;
+        int ym = (argc >= 4) ? parse_int(argv[3]) : 0;
+        dist_ota_selftest(kb, ym);
+    } else {
+        dist_print_status();
+    }
 #else
     printfnl(SOURCE_COMMANDS, "LoRa not available on this board\n");
 #endif

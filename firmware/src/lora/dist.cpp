@@ -4,40 +4,57 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "esp_app_desc.h"
+#include "esp_system.h"
 #include "mbedtls/md5.h"
 #include "main.h"
+#include "config.h"
 #include "printManager.h"
 #include "lora_proto.h"
 #include "inflate.h"
 #include "rs.h"
 #include "dist.h"
 
-// ===== ConeZ dist (Phase 3 core + Phase 4 compression + Phase 5 FEC) =========
+// ===== ConeZ dist (Phases 3-6: core, deflate, RS FEC, OTA flash-stream) ======
 // A file = total_blocks blocks of (uncompressed) block_size bytes. Each block is
-// independently transferred as N DATA chunks (deflate-compressed when algo says
-// so) plus R systematic-RS PARITY chunks (rs.c) computed ACROSS the chunks. We
-// stage ONE block at a time; the block is recoverable as soon as we hold N of
-// the N+R chunks (all data -> use directly; gaps -> RS erasure-recover the lost
-// data from parity, same carousel cycle). The recovered compressed block is then
-// inflated (or copied) into the whole-file buffer at its block offset and the
-// block marked in a per-file bitmap; missed blocks are caught next cycle. When
-// every block is present the file is MD5-verified and written to /dist/<name>.
-// Firmware images exceed the RAM cap and are skipped here (OTA is Phase 6).
+// transferred as N DATA chunks (deflate-compressed when algo says so) + R
+// systematic-RS PARITY chunks (rs.c) computed ACROSS chunks. We stage ONE block
+// at a time; it is recoverable once N of the N+R chunks are held (all data ->
+// use directly; gaps -> RS erasure-recover the same cycle). The recovered
+// compressed block is inflated and committed:
+//   * data file (kind=FILE): into a whole-file RAM buffer, MD5-verified, written
+//     to /dist/<name>.
+//   * firmware (kind=FW, Phase 6): streamed to the INACTIVE OTA partition at the
+//     block offset (no whole-file RAM buffer); when all blocks are present,
+//     esp_ota_set_boot_partition validates the image, then we reboot. Downgrades
+//     are refused unless [lora] ota_downgrade is set (version is etched in-image).
 
 #define DIST_MAX_FILES   32
 #define DIST_DIR_PATH    "/dist"
-#define DIST_MAX_FILE    (256 * 1024)   // RAM-buffer cap (uncompressed)
+#define DIST_MAX_FILE    (256 * 1024)   // RAM-buffer cap for data files (uncompressed)
 #define DIST_L           LP_DIST_CHUNK_SIZE   // RS symbol size = chunk payload size
+
+#define DIST_KIND_FILE   0
+#define DIST_KIND_FW     1
+
+#ifndef SPI_FLASH_SEC_SIZE
+#define SPI_FLASH_SEC_SIZE 4096
+#endif
 
 typedef struct {
     uint16_t id;
-    char     name[40];
+    char     name[40];      // data file: filename; firmware: version string
     uint32_t size;
-    char     md5[9];        // 8 hex chars + NUL (build_manifest md5_8)
+    char     md5[9];        // 8 hex chars + NUL (build_manifest md5_8) -- data files
     uint8_t  algo;          // LP_DIST_ALGO_NONE / _DEFLATE
     uint32_t block_size;    // uncompressed block size
     uint16_t total_blocks;  // blocks in this file
-    bool     wanted;        // local copy missing or hash mismatch
+    uint8_t  kind;          // DIST_KIND_FILE / _FW
+    bool     wanted;        // local copy missing / hash differs (file); version newer (fw)
 } dist_file_t;
 
 static dist_file_t dfiles[DIST_MAX_FILES];
@@ -52,9 +69,14 @@ static uint32_t rx_file_len     = 0;       // total uncompressed file length
 static uint16_t rx_total_blocks = 0;
 static uint32_t rx_block_size   = 0;       // uncompressed block size
 static uint8_t  rx_algo         = LP_DIST_ALGO_NONE;
-static uint8_t *rx_buf          = NULL;    // uncompressed whole-file buffer
+static uint8_t *rx_buf          = NULL;    // uncompressed whole-file buffer (data files)
 static uint8_t *rx_block_bm     = NULL;    // total_blocks bits
 static uint16_t rx_blocks_have  = 0;
+
+// ---- firmware OTA streaming (Phase 6) --------------------------------------
+static bool                   rx_is_fw = false;
+static const esp_partition_t *fw_part  = NULL;   // inactive OTA partition
+static uint8_t               *fw_block = NULL;   // decompressed block (block_size)
 
 // ---- current staged block (data + parity chunks) ---------------------------
 static uint16_t blk_idx       = 0xFFFF;    // 0xFFFF = none staged
@@ -76,6 +98,21 @@ static uint32_t dist_files_done  = 0;
 static inline void bset(uint8_t *b, int i) { b[i >> 3] |= (uint8_t)(1 << (i & 7)); }
 static inline bool bget(uint8_t *b, int i) { return b[i >> 3] & (1 << (i & 7)); }
 
+// Compare dotted-numeric versions ("0.02.0451"): <0 if a<b, 0 if equal, >0 if a>b.
+static int version_cmp(const char *a, const char *b)
+{
+    while (*a || *b) {
+        char *ea, *eb;
+        long na = strtol(a, &ea, 10);
+        long nb = strtol(b, &eb, 10);
+        if (na != nb) return na < nb ? -1 : 1;
+        a = (*ea == '.') ? ea + 1 : ea;
+        b = (*eb == '.') ? eb + 1 : eb;
+        if (!*a && !*b) break;
+    }
+    return 0;
+}
+
 static void blk_reset(void)
 {
     free(blk_data);      blk_data = NULL;
@@ -91,6 +128,8 @@ static void rx_reset(void)
     blk_reset();
     free(rx_buf);      rx_buf = NULL;
     free(rx_block_bm); rx_block_bm = NULL;
+    free(fw_block);    fw_block = NULL;   // partial flash writes are harmless (boot not set)
+    rx_is_fw = false; fw_part = NULL;
     rx_file_id = 0xFFFF; rx_total_blocks = 0; rx_blocks_have = 0;
     rx_file_len = 0; rx_block_size = 0; rx_algo = LP_DIST_ALGO_NONE;
 }
@@ -133,7 +172,7 @@ static void reconcile_deletes(void)
         if (e->d_name[0] == '.') continue;
         bool in = false;
         for (int k = 0; k < dfile_n; k++)
-            if (!strcmp(dfiles[k].name, e->d_name)) { in = true; break; }
+            if (dfiles[k].kind == DIST_KIND_FILE && !strcmp(dfiles[k].name, e->d_name)) { in = true; break; }
         if (!in) {
             static char logical[300]; snprintf(logical, sizeof(logical), "%s/%s", DIST_DIR_PATH, e->d_name);
             static char path[320]; remove(lfs_path(path, sizeof(path), logical));
@@ -144,26 +183,61 @@ static void reconcile_deletes(void)
 }
 
 // Parse the reassembled manifest text -> dfiles[]; mark wanted; reconcile deletes.
-// [files] line: id \t name \t size \t md5 [ \t algo \t block_size \t total_blocks ]
+//   [firmware] line: id \t product \t version \t size \t md5 [ \t algo \t bsz \t tb ]
+//   [files]    line: id \t name    \t size    \t md5  [ \t algo \t bsz \t tb ]
 static void manifest_parse(char *text, uint32_t len)
 {
     (void)len;
+    const esp_app_desc_t *self = esp_app_get_description();
+    bool have_fw = false;
     dfile_n = 0;
     char *save_line;
     char *line = strtok_r(text, "\n", &save_line);
-    int section = 0;  // 1 = firmware (ignored here), 2 = files
+    int section = 0;  // 1 = firmware, 2 = files
     while (line && dfile_n < DIST_MAX_FILES) {
         if      (!strcmp(line, "[firmware]")) section = 1;
         else if (!strcmp(line, "[files]"))    section = 2;
+        else if (line[0] && line[0] != '#' && section == 1) {
+            char *st;
+            char *ids  = strtok_r(line, "\t", &st);
+            char *prod = ids  ? strtok_r(NULL, "\t",     &st) : NULL;
+            char *ver  = prod ? strtok_r(NULL, "\t",     &st) : NULL;
+            char *szs  = ver  ? strtok_r(NULL, "\t",     &st) : NULL;
+            char *md5  = szs  ? strtok_r(NULL, "\t\r\n", &st) : NULL;
+            char *alg  = md5  ? strtok_r(NULL, "\t\r\n", &st) : NULL;
+            char *bsz  = alg  ? strtok_r(NULL, "\t\r\n", &st) : NULL;
+            char *tbs  = bsz  ? strtok_r(NULL, "\t\r\n", &st) : NULL;
+            // Only OUR product, with full block geometry, and just one fw entry.
+            if (ids && prod && ver && szs && md5 && alg && bsz && tbs &&
+                self && !strcmp(prod, self->project_name) && !have_fw) {
+                have_fw = true;
+                dist_file_t *d = &dfiles[dfile_n++];
+                d->id   = (uint16_t)atoi(ids);
+                strlcpy(d->name, ver, sizeof(d->name));      // version string
+                d->size = (uint32_t)strtoul(szs, NULL, 10);
+                strlcpy(d->md5, md5, sizeof(d->md5));
+                d->algo = (uint8_t)atoi(alg);
+                d->block_size = (uint32_t)strtoul(bsz, NULL, 10);
+                if (d->block_size == 0) d->block_size = LP_DIST_BLOCK_SIZE;
+                d->total_blocks = (uint16_t)atoi(tbs);
+                if (d->total_blocks == 0) d->total_blocks = 1;
+                d->kind = DIST_KIND_FW;
+                int cmp = version_cmp(ver, self->version);    // >0 = manifest newer
+                d->wanted = config.lora_ota_downgrade ? (cmp != 0) : (cmp > 0);
+                if (d->wanted)
+                    printfnl(SOURCE_LORA, "dist: firmware %s available (running %s)%s\n",
+                             ver, self->version, cmp <= 0 ? " [downgrade]" : "");
+            }
+        }
         else if (line[0] && line[0] != '#' && section == 2) {
-            char *save_tok;
-            char *ids   = strtok_r(line, "\t", &save_tok);
-            char *name  = ids   ? strtok_r(NULL, "\t",     &save_tok) : NULL;
-            char *szs   = name  ? strtok_r(NULL, "\t",     &save_tok) : NULL;
-            char *md5   = szs   ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
-            char *algos = md5   ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
-            char *bsz   = algos ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
-            char *tbs   = bsz   ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
+            char *st;
+            char *ids   = strtok_r(line, "\t", &st);
+            char *name  = ids   ? strtok_r(NULL, "\t",     &st) : NULL;
+            char *szs   = name  ? strtok_r(NULL, "\t",     &st) : NULL;
+            char *md5   = szs   ? strtok_r(NULL, "\t\r\n", &st) : NULL;
+            char *algos = md5   ? strtok_r(NULL, "\t\r\n", &st) : NULL;
+            char *bsz   = algos ? strtok_r(NULL, "\t\r\n", &st) : NULL;
+            char *tbs   = bsz   ? strtok_r(NULL, "\t\r\n", &st) : NULL;
             if (ids && name && szs && md5) {
                 dist_file_t *d = &dfiles[dfile_n++];
                 d->id   = (uint16_t)atoi(ids);
@@ -176,6 +250,7 @@ static void manifest_parse(char *text, uint32_t len)
                 d->total_blocks = tbs ? (uint16_t)atoi(tbs)
                                       : (uint16_t)((d->size + d->block_size - 1) / d->block_size);
                 if (d->total_blocks == 0) d->total_blocks = 1;
+                d->kind = DIST_KIND_FILE;
                 d->wanted = false;
             }
         }
@@ -183,6 +258,7 @@ static void manifest_parse(char *text, uint32_t len)
     }
 
     for (int k = 0; k < dfile_n; k++) {
+        if (dfiles[k].kind != DIST_KIND_FILE) continue;   // fw wanted set above
         char logical[128]; snprintf(logical, sizeof(logical), "%s/%s", DIST_DIR_PATH, dfiles[k].name);
         char have[9];
         if (!file_md5_8(logical, have) || strcmp(have, dfiles[k].md5) != 0)
@@ -192,12 +268,27 @@ static void manifest_parse(char *text, uint32_t len)
     have_manifest = true;
     cur_serial = rx_serial;
     int want = 0; for (int k = 0; k < dfile_n; k++) if (dfiles[k].wanted) want++;
-    printfnl(SOURCE_LORA, "dist: manifest serial %u: %d files, %d to fetch\n",
+    printfnl(SOURCE_LORA, "dist: manifest serial %u: %d entries, %d to fetch\n",
              (unsigned)cur_serial, dfile_n, want);
 }
 
 static void complete(void)
 {
+    if (rx_is_fw) {
+        dist_file_t *df = find_file(rx_file_id);
+        esp_err_t e = esp_ota_set_boot_partition(fw_part);   // validates the image
+        if (e == ESP_OK) {
+            printfnl(SOURCE_LORA, "dist: firmware %s flashed + verified, rebooting...\n",
+                     df ? df->name : "");
+            vTaskDelay(pdMS_TO_TICKS(1500));                 // let the log drain
+            esp_restart();
+        }
+        printfnl(SOURCE_LORA, "dist: firmware image verify failed (%s), will refetch\n",
+                 esp_err_to_name(e));
+        rx_reset();
+        return;
+    }
+
     if (rx_file_id == LP_DIST_MANIFEST_ID) {
         manifest_parse((char *)rx_buf, rx_file_len);
     } else {
@@ -226,19 +317,35 @@ static void complete(void)
 }
 
 static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t total_blocks,
-                     uint8_t algo, uint32_t block_size)
+                     uint8_t algo, uint32_t block_size, uint8_t kind)
 {
     rx_reset();
-    if (flen > DIST_MAX_FILE) {   // firmware-sized -> Phase 6, skip here
+    if (total_blocks == 0) total_blocks = 1;
+    if (block_size == 0)   block_size = LP_DIST_BLOCK_SIZE;
+
+    if (kind == DIST_KIND_FW) {
+        // Erase + write the inactive OTA partition PER BLOCK (small flash windows,
+        // like the HTTP OTA's per-sector granularity). A single whole-image erase
+        // keeps the flash cache disabled for seconds and collides with concurrent
+        // LittleFS access on the other core (Cache-disabled panic).
+        fw_part = esp_ota_get_next_update_partition(NULL);
+        if (!fw_part) { printfnl(SOURCE_LORA, "dist: no OTA partition\n"); rx_reset(); return; }
+        fw_block    = (uint8_t *)malloc(block_size);
+        rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
+        if (!fw_block || !rx_block_bm) { printfnl(SOURCE_LORA, "dist: OTA alloc fail\n"); rx_reset(); return; }
+        rx_is_fw = true;
+        rx_file_id = fid; rx_serial = serial; rx_file_len = flen;
+        rx_total_blocks = total_blocks; rx_algo = algo; rx_block_size = block_size; rx_blocks_have = 0;
+        return;
+    }
+
+    if (flen > DIST_MAX_FILE) {   // oversized data file (shouldn't happen) -> skip
         printfnl(SOURCE_LORA, "dist: id %u too big to RAM-buffer (%u B), skipping\n",
                  (unsigned)fid, (unsigned)flen);
         return;
     }
-    if (total_blocks == 0) total_blocks = 1;
-    if (block_size == 0)   block_size = LP_DIST_BLOCK_SIZE;
     rx_file_id = fid; rx_serial = serial; rx_file_len = flen;
-    rx_total_blocks = total_blocks; rx_algo = algo; rx_block_size = block_size;
-    rx_blocks_have = 0;
+    rx_total_blocks = total_blocks; rx_algo = algo; rx_block_size = block_size; rx_blocks_have = 0;
     rx_buf      = (uint8_t *)malloc(flen ? flen : 1);
     rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
     if (!rx_buf || !rx_block_bm) { printfnl(SOURCE_LORA, "dist: alloc fail id %u\n", (unsigned)fid); rx_reset(); }
@@ -258,7 +365,8 @@ static void start_block(uint16_t bidx, uint16_t N, uint16_t R, uint32_t comp_len
 }
 
 // The staged block holds enough chunks: (RS-recover if needed ->) inflate/copy
-// into rx_buf at the block offset, mark it done, finalize the file when complete.
+// and commit (RAM buffer for a data file; flash for firmware); mark it done,
+// finalize the file when every block is present.
 static void finalize_block(bool use_rs)
 {
     if (use_rs) {
@@ -276,7 +384,8 @@ static void finalize_block(bool use_rs)
     uint32_t off_u = (uint32_t)blk_idx * rx_block_size;
     uint32_t ulen  = (off_u >= rx_file_len) ? 0
                    : (rx_file_len - off_u < rx_block_size ? rx_file_len - off_u : rx_block_size);
-    uint8_t *dest  = rx_buf + off_u;
+
+    uint8_t *dest = rx_is_fw ? fw_block : (rx_buf + off_u);
 
     if (rx_algo == LP_DIST_ALGO_DEFLATE) {
         int n = inflate_buf(blk_data, blk_comp_len, dest, ulen);
@@ -294,6 +403,35 @@ static void finalize_block(bool use_rs)
             return;
         }
         if (ulen) memcpy(dest, blk_data, ulen);
+    }
+
+    if (rx_is_fw) {
+        // Commit ONE flash sector (4 KB) at a time, yielding between. With
+        // CONFIG_SPI_FLASH_AUTO_SUSPEND the cache stays enabled during each
+        // erase/program (no cross-core cache-disable stall), so this never blocks
+        // the system; per-block timing is logged for OTA progress visibility.
+        uint32_t t0 = uptime_ms(), maxop = 0;
+        esp_err_t e = ESP_OK;
+        for (uint32_t s = 0; s < ulen && e == ESP_OK; s += SPI_FLASH_SEC_SIZE) {
+            uint32_t seg  = (ulen - s < SPI_FLASH_SEC_SIZE) ? (ulen - s) : SPI_FLASH_SEC_SIZE;
+            uint32_t wseg = (seg + 3u) & ~3u;              // flash writes are 4-aligned
+            if (wseg > seg) memset(fw_block + s + seg, 0, wseg - seg);
+            uint32_t a = uptime_ms();
+            e = esp_partition_erase_range(fw_part, off_u + s, SPI_FLASH_SEC_SIZE);
+            if (e == ESP_OK) e = esp_partition_write(fw_part, off_u + s, fw_block + s, wseg);
+            uint32_t d = uptime_ms() - a;
+            if (d > maxop) maxop = d;
+            vTaskDelay(1);                                 // let RX/idle breathe between sectors
+        }
+        if (e != ESP_OK) {
+            printfnl(SOURCE_LORA, "dist: id %u block %u flash erase/write failed (%s), retry next cycle\n",
+                     (unsigned)rx_file_id, (unsigned)blk_idx, esp_err_to_name(e));
+            blk_reset();
+            return;
+        }
+        printfnl(SOURCE_LORA, "dist: fw block %u/%u committed (%u ms, max op %u ms)\n",
+                 (unsigned)(blk_idx + 1), (unsigned)rx_total_blocks,
+                 (unsigned)(uptime_ms() - t0), (unsigned)maxop);
     }
 
     if (!bget(rx_block_bm, blk_idx)) { bset(rx_block_bm, blk_idx); rx_blocks_have++; }
@@ -347,7 +485,7 @@ void dist_handle_chunk(const uint8_t *pkt, size_t len)
     if (fid == LP_DIST_MANIFEST_ID) {
         if (have_manifest && serial == cur_serial) return;   // already have this manifest
         if (rx_file_id != LP_DIST_MANIFEST_ID || rx_serial != serial)
-            start_rx(LP_DIST_MANIFEST_ID, serial, flen, tb, LP_DIST_ALGO_NONE, LP_DIST_BLOCK_SIZE);
+            start_rx(LP_DIST_MANIFEST_ID, serial, flen, tb, LP_DIST_ALGO_NONE, LP_DIST_BLOCK_SIZE, DIST_KIND_FILE);
         if (rx_file_id != LP_DIST_MANIFEST_ID) return;       // alloc failed / too big
     } else {
         // data/parity chunk: need the matching manifest, and the file must be wanted
@@ -357,11 +495,16 @@ void dist_handle_chunk(const uint8_t *pkt, size_t len)
         if (rx_file_id != fid) {
             if (rx_file_id != 0xFFFF) return;                // busy with another reassembly
             uint16_t fblocks = df->total_blocks ? df->total_blocks : tb;
-            start_rx(fid, serial, flen, fblocks, df->algo, df->block_size);
+            start_rx(fid, serial, flen, fblocks, df->algo, df->block_size, df->kind);
             if (rx_file_id != fid) return;                   // alloc failed / too big
-            printfnl(SOURCE_LORA, "dist: fetching %s (%u B, %u blocks, %s)\n",
-                     df->name, (unsigned)flen, (unsigned)fblocks,
-                     df->algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store");
+            if (df->kind == DIST_KIND_FW)
+                printfnl(SOURCE_LORA, "dist: fetching firmware %s (%u B, %u blocks, %s)\n",
+                         df->name, (unsigned)flen, (unsigned)fblocks,
+                         df->algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store");
+            else
+                printfnl(SOURCE_LORA, "dist: fetching %s (%u B, %u blocks, %s)\n",
+                         df->name, (unsigned)flen, (unsigned)fblocks,
+                         df->algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store");
         }
     }
 
@@ -375,17 +518,50 @@ void dist_handle_chunk(const uint8_t *pkt, size_t len)
     else        add_data_chunk(cidx, payload, plen);
 }
 
+// Isolated OTA-partition flash stress: per-sector erase+write of `kb` KB to the
+// inactive OTA partition, timing each op. Lets us reproduce/iterate the flash
+// path from the CLI (no LoRa), to tell a flash-path watchdog from a concurrency
+// one. `yield_ms` > 0 inserts a vTaskDelay between sectors.
+void dist_ota_selftest(int kb, int yield_ms)
+{
+    const esp_partition_t *p = esp_ota_get_next_update_partition(NULL);
+    if (!p) { printfnl(SOURCE_COMMANDS, "ota selftest: no OTA partition\n"); return; }
+    uint8_t *buf = (uint8_t *)malloc(SPI_FLASH_SEC_SIZE);
+    if (!buf) { printfnl(SOURCE_COMMANDS, "ota selftest: no mem\n"); return; }
+    memset(buf, 0xA5, SPI_FLASH_SEC_SIZE);
+    uint32_t total = (uint32_t)kb * 1024;
+    if (total > p->size) total = p->size;
+    uint32_t t0 = uptime_ms(), max_e = 0, max_w = 0;
+    esp_err_t e = ESP_OK;
+    printfnl(SOURCE_COMMANDS, "ota selftest: %u KB to '%s', yield=%d ms...\n",
+             (unsigned)(total / 1024), p->label, yield_ms);
+    for (uint32_t off = 0; off < total && e == ESP_OK; off += SPI_FLASH_SEC_SIZE) {
+        uint32_t a = uptime_ms();
+        e = esp_partition_erase_range(p, off, SPI_FLASH_SEC_SIZE);
+        uint32_t b = uptime_ms();
+        if (e == ESP_OK) e = esp_partition_write(p, off, buf, SPI_FLASH_SEC_SIZE);
+        uint32_t c = uptime_ms();
+        if (b - a > max_e) max_e = b - a;
+        if (c - b > max_w) max_w = c - b;
+        if (yield_ms > 0) vTaskDelay(pdMS_TO_TICKS(yield_ms));
+    }
+    printfnl(SOURCE_COMMANDS, "ota selftest: done %u KB in %u ms, max erase %u ms, max write %u ms, rc=%s\n",
+             (unsigned)(total / 1024), (unsigned)(uptime_ms() - t0),
+             (unsigned)max_e, (unsigned)max_w, esp_err_to_name(e));
+    free(buf);
+}
+
 void dist_print_status(void)
 {
     if (!have_manifest) { printfnl(SOURCE_COMMANDS, "dist: no manifest heard yet\n"); return; }
     printfnl(SOURCE_COMMANDS,
-             "dist: manifest serial %u  %d files  %u chunks rx (%u parity)  %u RS-recovered  %u done\n",
+             "dist: manifest serial %u  %d entries  %u chunks rx (%u parity)  %u RS-recovered  %u done\n",
              (unsigned)cur_serial, dfile_n, (unsigned)dist_chunks_rx, (unsigned)dist_par_rx,
              (unsigned)dist_rs_recover, (unsigned)dist_files_done);
     for (int k = 0; k < dfile_n; k++)
-        printfnl(SOURCE_COMMANDS, "  [%u] %-22s %6u B  %s  %s/%ublk  %s\n",
-                 (unsigned)dfiles[k].id, dfiles[k].name, (unsigned)dfiles[k].size,
-                 dfiles[k].md5,
+        printfnl(SOURCE_COMMANDS, "  [%u]%s %-20s %7u B  %s/%ublk  %s\n",
+                 (unsigned)dfiles[k].id, dfiles[k].kind == DIST_KIND_FW ? " FW" : "   ",
+                 dfiles[k].name, (unsigned)dfiles[k].size,
                  dfiles[k].algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store",
                  (unsigned)dfiles[k].total_blocks,
                  dfiles[k].wanted ? "WANTED" : "ok");
