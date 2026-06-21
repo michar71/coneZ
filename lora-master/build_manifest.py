@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import lora_proto as lp
+
 ROOT         = Path(__file__).resolve().parent
 FIRMWARE_DIR = ROOT / "firmware"
 DIST_DIR     = ROOT / "dist"          # distributable payload only
@@ -194,7 +196,12 @@ def build_manifest() -> None:
             file_id = next_file_id
             next_file_id += 1
 
-        lines.append(f"{file_id}\t{fname}\t{size}\t{md5}")
+        # Phase 4 block geometry: deflate-or-store decision + block count, recorded
+        # so the cone knows whether/how to inflate. encode_file is deterministic, so
+        # the carousel (conez-master.py) reproduces the same algo/blocks on the wire.
+        algo, blocks = lp.encode_file(p.read_bytes())
+        lines.append(f"{file_id}\t{fname}\t{size}\t{md5}\t"
+                     f"{algo}\t{lp.DIST_BLOCK_SIZE}\t{len(blocks)}")
 
     manifest_text = "\n".join(lines) + "\n"
 

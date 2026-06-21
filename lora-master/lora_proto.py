@@ -11,6 +11,7 @@ Addresses: 0 = master, 1..254 = cone, 255 = broadcast.
 """
 import struct
 import time
+import zlib
 
 PROTO_VERSION = 1
 
@@ -77,26 +78,64 @@ def make_beacon(*, network: int, freq: int, bw: int, sf: int, cr: int,
     return make_header(PKT_BEACON, network, ADDR_MASTER, ADDR_BROADCAST) + body
 
 
-# DIST_DATA body (after the header):
+# DIST_DATA body (after the header). Phase 4: per-BLOCK transfer.
 #   H  manifest serial
 #   H  file id            (0 = the manifest itself)
 #   I  file length        (total uncompressed bytes)
-#   H  chunk index
-#   H  total chunks
-#   <payload>             (DIST_CHUNK_SIZE bytes; last chunk may be short)
-DIST_HDR_FMT    = ">HHIHH"
-DIST_HDR_LEN    = struct.calcsize(DIST_HDR_FMT)   # 12
+#   H  block index
+#   H  total blocks       (in this file)
+#   H  chunk index        (within this block)
+#   H  total chunks       (within this block)
+#   <payload>             (DIST_CHUNK_SIZE bytes of the COMPRESSED block; last short)
+DIST_HDR_FMT    = ">HHIHHHH"
+DIST_HDR_LEN    = struct.calcsize(DIST_HDR_FMT)   # 16
 DIST_CHUNK_SIZE = 200                             # payload bytes per chunk
 DIST_MANIFEST_ID = 0                              # reserved file id for the manifest
 
+# Block geometry / compression. A file is split into BLOCK_SIZE-byte (uncompressed)
+# blocks; each block is independently deflated, then sliced into <=CHUNK_SIZE
+# on-air chunks. Compress THEN (later) FEC, per block (spec section 13.3).
+DIST_BLOCK_SIZE          = 32768   # data-file block size (LOWER to bench multi-block)
+DIST_MANIFEST_BLOCK_SIZE = 32768   # MUST equal firmware LP_DIST_BLOCK_SIZE
+ALGO_NONE    = 0
+ALGO_DEFLATE = 1                   # zlib stream (firmware inflate_buf auto-detects)
+COMPRESS_LEVEL = 6
+
+
+def split_blocks(data: bytes, block_size: int = DIST_BLOCK_SIZE) -> list:
+    """Slice raw bytes into uncompressed blocks (>=1 block, even for empty data)."""
+    if not data:
+        return [b""]
+    return [data[i:i + block_size] for i in range(0, len(data), block_size)]
+
+
+def encode_file(data: bytes, block_size: int = DIST_BLOCK_SIZE,
+                level: int = COMPRESS_LEVEL):
+    """Plan a file for on-air transfer.
+
+    Returns (algo, blocks) where `blocks` is the list of per-block byte strings
+    AS SENT (compressed when algo == ALGO_DEFLATE, raw when ALGO_NONE). The
+    deflate-vs-store choice is per file: deflate only if it shrinks the whole
+    file (so already-compressed payloads aren't bloated). Deterministic, so the
+    manifest builder and the carousel agree without sharing state.
+    """
+    raw = split_blocks(data, block_size)
+    comp = [zlib.compress(b, level) for b in raw]
+    if sum(len(c) for c in comp) < len(data):
+        return ALGO_DEFLATE, comp
+    return ALGO_NONE, raw
+
 
 def make_dist_data(*, manifest_serial: int, file_id: int, file_len: int,
+                   block_index: int, total_blocks: int,
                    chunk_index: int, total_chunks: int, payload: bytes,
                    network: int = 0) -> bytes:
     """Build a full DIST_DATA packet (header + dist header + payload)."""
     body = struct.pack(DIST_HDR_FMT,
                        manifest_serial & 0xFFFF, file_id & 0xFFFF,
-                       file_len & 0xFFFFFFFF, chunk_index & 0xFFFF, total_chunks & 0xFFFF)
+                       file_len & 0xFFFFFFFF,
+                       block_index & 0xFFFF, total_blocks & 0xFFFF,
+                       chunk_index & 0xFFFF, total_chunks & 0xFFFF)
     return make_header(PKT_DIST_DATA, network, ADDR_MASTER, ADDR_BROADCAST) + body + payload
 
 

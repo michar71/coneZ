@@ -8,24 +8,32 @@
 #include "main.h"
 #include "printManager.h"
 #include "lora_proto.h"
+#include "inflate.h"
 #include "dist.h"
 
-// ===== ConeZ dist (Phase 3 core) =============================================
-// One reassembly context at a time (manifest takes priority, then files one at
-// a time). Each file is RAM-buffered by chunk offset, MD5-verified against the
-// manifest, then written to /dist/<name>. Firmware images (Phase 6) exceed the
-// RAM cap and are skipped here.
+// ===== ConeZ dist (Phase 3 core + Phase 4 per-block compression) =============
+// A file = total_blocks blocks of (uncompressed) block_size bytes; each block is
+// independently transferred and, when algo == deflate, deflated on the master and
+// inflated here on commit. We stage ONE block's compressed chunks at a time,
+// inflate (or copy) it into the whole-file buffer at its block offset, and mark a
+// per-file block bitmap; missed blocks are caught on the next carousel cycle.
+// When every block is present the file is MD5-verified against the manifest and
+// written to /dist/<name>. Firmware images exceed the RAM cap and are skipped
+// here (flash-streaming OTA is Phase 6).
 
 #define DIST_MAX_FILES   32
 #define DIST_DIR_PATH    "/dist"
-#define DIST_MAX_FILE    (256 * 1024)   // Phase 3 RAM-buffer cap
+#define DIST_MAX_FILE    (256 * 1024)   // RAM-buffer cap (uncompressed)
 
 typedef struct {
     uint16_t id;
     char     name[40];
     uint32_t size;
-    char     md5[9];      // 8 hex chars + NUL (build_manifest md5_8)
-    bool     wanted;      // local copy missing or hash mismatch
+    char     md5[9];        // 8 hex chars + NUL (build_manifest md5_8)
+    uint8_t  algo;          // LP_DIST_ALGO_NONE / _DEFLATE
+    uint32_t block_size;    // uncompressed block size
+    uint16_t total_blocks;  // blocks in this file
+    bool     wanted;        // local copy missing or hash mismatch
 } dist_file_t;
 
 static dist_file_t dfiles[DIST_MAX_FILES];
@@ -33,14 +41,24 @@ static int      dfile_n       = 0;
 static uint16_t cur_serial    = 0;
 static bool     have_manifest = false;
 
-// single reassembly context
-static uint16_t rx_file_id  = 0xFFFF;   // 0xFFFF = idle; 0 = manifest
-static uint16_t rx_serial   = 0;
-static uint32_t rx_file_len  = 0;
-static uint16_t rx_total    = 0;
-static uint16_t rx_have     = 0;
-static uint8_t *rx_buf      = NULL;
-static uint8_t *rx_bitmap   = NULL;
+// ---- single-file reassembly context ----------------------------------------
+static uint16_t rx_file_id     = 0xFFFF;  // 0xFFFF = idle; 0 = manifest
+static uint16_t rx_serial      = 0;
+static uint32_t rx_file_len    = 0;       // total uncompressed file length
+static uint16_t rx_total_blocks = 0;
+static uint32_t rx_block_size  = 0;       // uncompressed block size
+static uint8_t  rx_algo        = LP_DIST_ALGO_NONE;
+static uint8_t *rx_buf         = NULL;    // uncompressed whole-file buffer
+static uint8_t *rx_block_bm    = NULL;    // total_blocks bits
+static uint16_t rx_blocks_have = 0;
+
+// ---- current staged block (compressed chunks) ------------------------------
+static uint16_t blk_idx        = 0xFFFF;  // 0xFFFF = none staged
+static uint16_t blk_total_chunks = 0;
+static uint16_t blk_chunks_have = 0;
+static uint32_t blk_comp_len   = 0;       // running max end offset = compressed length
+static uint8_t *blk_buf        = NULL;    // compressed staging (total_chunks*CHUNK)
+static uint8_t *blk_chunk_bm   = NULL;
 
 static uint32_t dist_chunks_rx  = 0;
 static uint32_t dist_files_done = 0;
@@ -48,11 +66,20 @@ static uint32_t dist_files_done = 0;
 static inline void bset(uint8_t *b, int i) { b[i >> 3] |= (uint8_t)(1 << (i & 7)); }
 static inline bool bget(uint8_t *b, int i) { return b[i >> 3] & (1 << (i & 7)); }
 
+static void blk_reset(void)
+{
+    free(blk_buf);      blk_buf = NULL;
+    free(blk_chunk_bm); blk_chunk_bm = NULL;
+    blk_idx = 0xFFFF; blk_total_chunks = 0; blk_chunks_have = 0; blk_comp_len = 0;
+}
+
 static void rx_reset(void)
 {
-    free(rx_buf);    rx_buf = NULL;
-    free(rx_bitmap); rx_bitmap = NULL;
-    rx_file_id = 0xFFFF; rx_have = 0; rx_total = 0; rx_file_len = 0;
+    blk_reset();
+    free(rx_buf);      rx_buf = NULL;
+    free(rx_block_bm); rx_block_bm = NULL;
+    rx_file_id = 0xFFFF; rx_total_blocks = 0; rx_blocks_have = 0;
+    rx_file_len = 0; rx_block_size = 0; rx_algo = LP_DIST_ALGO_NONE;
 }
 
 static dist_file_t *find_file(uint16_t id)
@@ -104,27 +131,38 @@ static void reconcile_deletes(void)
 }
 
 // Parse the reassembled manifest text -> dfiles[]; mark wanted; reconcile deletes.
+// [files] line: id \t name \t size \t md5 [ \t algo \t block_size \t total_blocks ]
 static void manifest_parse(char *text, uint32_t len)
 {
+    (void)len;
     dfile_n = 0;
     char *save_line;
     char *line = strtok_r(text, "\n", &save_line);
-    int section = 0;  // 1 = firmware (ignored in Phase 3), 2 = files
+    int section = 0;  // 1 = firmware (ignored here), 2 = files
     while (line && dfile_n < DIST_MAX_FILES) {
         if      (!strcmp(line, "[firmware]")) section = 1;
         else if (!strcmp(line, "[files]"))    section = 2;
         else if (line[0] && line[0] != '#' && section == 2) {
             char *save_tok;
-            char *ids  = strtok_r(line, "\t", &save_tok);
-            char *name = ids  ? strtok_r(NULL, "\t",     &save_tok) : NULL;
-            char *szs  = name ? strtok_r(NULL, "\t",     &save_tok) : NULL;
-            char *md5  = szs  ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
+            char *ids   = strtok_r(line, "\t", &save_tok);
+            char *name  = ids   ? strtok_r(NULL, "\t",     &save_tok) : NULL;
+            char *szs   = name  ? strtok_r(NULL, "\t",     &save_tok) : NULL;
+            char *md5   = szs   ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
+            char *algos = md5   ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
+            char *bsz   = algos ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
+            char *tbs   = bsz   ? strtok_r(NULL, "\t\r\n", &save_tok) : NULL;
             if (ids && name && szs && md5) {
                 dist_file_t *d = &dfiles[dfile_n++];
                 d->id   = (uint16_t)atoi(ids);
                 strlcpy(d->name, name, sizeof(d->name));
                 d->size = (uint32_t)strtoul(szs, NULL, 10);
                 strlcpy(d->md5, md5, sizeof(d->md5));
+                d->algo       = algos ? (uint8_t)atoi(algos) : LP_DIST_ALGO_NONE;
+                d->block_size = bsz   ? (uint32_t)strtoul(bsz, NULL, 10) : LP_DIST_BLOCK_SIZE;
+                if (d->block_size == 0) d->block_size = LP_DIST_BLOCK_SIZE;
+                d->total_blocks = tbs ? (uint16_t)atoi(tbs)
+                                      : (uint16_t)((d->size + d->block_size - 1) / d->block_size);
+                if (d->total_blocks == 0) d->total_blocks = 1;
                 d->wanted = false;
             }
         }
@@ -174,7 +212,8 @@ static void complete(void)
     rx_reset();
 }
 
-static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t total)
+static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t total_blocks,
+                     uint8_t algo, uint32_t block_size)
 {
     rx_reset();
     if (flen > DIST_MAX_FILE) {   // firmware-sized -> Phase 6, skip here
@@ -182,21 +221,67 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
                  (unsigned)fid, (unsigned)flen);
         return;
     }
-    rx_file_id = fid; rx_serial = serial; rx_file_len = flen; rx_total = total; rx_have = 0;
-    rx_buf    = (uint8_t *)malloc(flen ? flen : 1);
-    rx_bitmap = (uint8_t *)calloc((total >> 3) + 1, 1);
-    if (!rx_buf || !rx_bitmap) { printfnl(SOURCE_LORA, "dist: alloc fail id %u\n", (unsigned)fid); rx_reset(); }
+    if (total_blocks == 0) total_blocks = 1;
+    if (block_size == 0)   block_size = LP_DIST_BLOCK_SIZE;
+    rx_file_id = fid; rx_serial = serial; rx_file_len = flen;
+    rx_total_blocks = total_blocks; rx_algo = algo; rx_block_size = block_size;
+    rx_blocks_have = 0;
+    rx_buf      = (uint8_t *)malloc(flen ? flen : 1);
+    rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
+    if (!rx_buf || !rx_block_bm) { printfnl(SOURCE_LORA, "dist: alloc fail id %u\n", (unsigned)fid); rx_reset(); }
 }
 
-static void add_chunk(uint16_t cidx, const uint8_t *payload, size_t plen)
+static void start_block(uint16_t bidx, uint16_t total_chunks)
 {
-    if (!rx_buf || !rx_bitmap || cidx >= rx_total || bget(rx_bitmap, cidx)) return;
+    blk_reset();
+    if (total_chunks == 0) return;
+    blk_buf      = (uint8_t *)malloc((size_t)total_chunks * LP_DIST_CHUNK_SIZE);
+    blk_chunk_bm = (uint8_t *)calloc((total_chunks >> 3) + 1, 1);
+    if (!blk_buf || !blk_chunk_bm) { blk_reset(); return; }   // retry next cycle
+    blk_idx = bidx; blk_total_chunks = total_chunks; blk_chunks_have = 0; blk_comp_len = 0;
+}
+
+// A staged block has all its chunks: inflate (or copy) into rx_buf at the block
+// offset, mark the block done; finalize the file once every block is present.
+static void finalize_block(void)
+{
+    uint32_t off_u = (uint32_t)blk_idx * rx_block_size;
+    uint32_t ulen  = (off_u >= rx_file_len) ? 0
+                   : (rx_file_len - off_u < rx_block_size ? rx_file_len - off_u : rx_block_size);
+    uint8_t *dest  = rx_buf + off_u;
+
+    if (rx_algo == LP_DIST_ALGO_DEFLATE) {
+        int n = inflate_buf(blk_buf, blk_comp_len, dest, ulen);
+        if (n != (int)ulen) {
+            printfnl(SOURCE_LORA, "dist: id %u block %u inflate %d != %u, retry next cycle\n",
+                     (unsigned)rx_file_id, (unsigned)blk_idx, n, (unsigned)ulen);
+            blk_reset();
+            return;
+        }
+    } else {
+        if (blk_comp_len != ulen) {
+            printfnl(SOURCE_LORA, "dist: id %u block %u len %u != %u, retry next cycle\n",
+                     (unsigned)rx_file_id, (unsigned)blk_idx, (unsigned)blk_comp_len, (unsigned)ulen);
+            blk_reset();
+            return;
+        }
+        if (ulen) memcpy(dest, blk_buf, ulen);
+    }
+
+    if (!bget(rx_block_bm, blk_idx)) { bset(rx_block_bm, blk_idx); rx_blocks_have++; }
+    blk_reset();
+    if (rx_blocks_have >= rx_total_blocks) complete();
+}
+
+static void add_block_chunk(uint16_t cidx, const uint8_t *payload, size_t plen)
+{
+    if (!blk_buf || cidx >= blk_total_chunks || bget(blk_chunk_bm, cidx)) return;
     size_t off = (size_t)cidx * LP_DIST_CHUNK_SIZE;
-    if (off + plen > rx_file_len) plen = (off < rx_file_len) ? (rx_file_len - off) : 0;
-    if (plen) memcpy(rx_buf + off, payload, plen);
-    bset(rx_bitmap, cidx);
-    rx_have++;
-    if (rx_have >= rx_total) complete();
+    memcpy(blk_buf + off, payload, plen);
+    bset(blk_chunk_bm, cidx);
+    blk_chunks_have++;
+    if (off + plen > blk_comp_len) blk_comp_len = off + plen;
+    if (blk_chunks_have >= blk_total_chunks) finalize_block();
 }
 
 void dist_handle_chunk(const uint8_t *pkt, size_t len)
@@ -205,33 +290,43 @@ void dist_handle_chunk(const uint8_t *pkt, size_t len)
     uint16_t serial = lp_rd_u16(pkt + LP_DIST_SERIAL);
     uint16_t fid    = lp_rd_u16(pkt + LP_DIST_FILE_ID);
     uint32_t flen   = lp_rd_u32(pkt + LP_DIST_FILE_LEN);
+    uint16_t bidx   = lp_rd_u16(pkt + LP_DIST_BLOCK_IDX);
+    uint16_t tb     = lp_rd_u16(pkt + LP_DIST_TOTAL_BLOCKS);
     uint16_t cidx   = lp_rd_u16(pkt + LP_DIST_CHUNK_IDX);
-    uint16_t total  = lp_rd_u16(pkt + LP_DIST_TOTAL_CHUNKS);
+    uint16_t nc     = lp_rd_u16(pkt + LP_DIST_TOTAL_CHUNKS);
     const uint8_t *payload = pkt + LP_DIST_PAYLOAD;
     size_t plen = len - LP_DIST_PAYLOAD;
     dist_chunks_rx++;
-    if (total == 0) return;
+    if (tb == 0 || nc == 0) return;
 
     if (fid == LP_DIST_MANIFEST_ID) {
         if (have_manifest && serial == cur_serial) return;   // already have this manifest
         if (rx_file_id != LP_DIST_MANIFEST_ID || rx_serial != serial)
-            start_rx(LP_DIST_MANIFEST_ID, serial, flen, total);
-        add_chunk(cidx, payload, plen);
-        return;
+            start_rx(LP_DIST_MANIFEST_ID, serial, flen, tb, LP_DIST_ALGO_NONE, LP_DIST_BLOCK_SIZE);
+        if (rx_file_id != LP_DIST_MANIFEST_ID) return;       // alloc failed / too big
+    } else {
+        // data-file chunk: need the matching manifest, and the file must be wanted
+        if (!have_manifest || serial != cur_serial) return;
+        dist_file_t *df = find_file(fid);
+        if (!df || !df->wanted) return;
+        if (rx_file_id != fid) {
+            if (rx_file_id != 0xFFFF) return;                // busy with another reassembly
+            uint16_t fblocks = df->total_blocks ? df->total_blocks : tb;
+            start_rx(fid, serial, flen, fblocks, df->algo, df->block_size);
+            if (rx_file_id != fid) return;                   // alloc failed / too big
+            printfnl(SOURCE_LORA, "dist: fetching %s (%u B, %u blocks, %s)\n",
+                     df->name, (unsigned)flen, (unsigned)fblocks,
+                     df->algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store");
+        }
     }
 
-    // data-file chunk: need the matching manifest, and the file must be wanted
-    if (!have_manifest || serial != cur_serial) return;
-    dist_file_t *df = find_file(fid);
-    if (!df || !df->wanted) return;
-    if (rx_file_id != fid) {
-        if (rx_file_id != 0xFFFF) return;     // busy with another reassembly
-        start_rx(fid, serial, flen, total);
-        if (rx_file_id == fid)
-            printfnl(SOURCE_LORA, "dist: fetching %s (%u B, %u chunks)\n",
-                     df->name, (unsigned)flen, (unsigned)total);
-    }
-    add_chunk(cidx, payload, plen);
+    // reassemble this block within the current file
+    if (bidx >= rx_total_blocks) return;
+    if (bget(rx_block_bm, bidx)) return;          // block already committed
+    if (blk_idx != bidx) start_block(bidx, nc);   // (re)stage; abandons any partial
+    if (blk_idx != bidx) return;                  // start_block alloc failed
+    if (blk_total_chunks != nc) return;           // inconsistent chunking, ignore
+    add_block_chunk(cidx, payload, plen);
 }
 
 void dist_print_status(void)
@@ -240,7 +335,10 @@ void dist_print_status(void)
     printfnl(SOURCE_COMMANDS, "dist: manifest serial %u  %d files  %u chunks rx  %u done\n",
              (unsigned)cur_serial, dfile_n, (unsigned)dist_chunks_rx, (unsigned)dist_files_done);
     for (int k = 0; k < dfile_n; k++)
-        printfnl(SOURCE_COMMANDS, "  [%u] %-22s %6u B  %s  %s\n",
+        printfnl(SOURCE_COMMANDS, "  [%u] %-22s %6u B  %s  %s/%ublk  %s\n",
                  (unsigned)dfiles[k].id, dfiles[k].name, (unsigned)dfiles[k].size,
-                 dfiles[k].md5, dfiles[k].wanted ? "WANTED" : "ok");
+                 dfiles[k].md5,
+                 dfiles[k].algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store",
+                 (unsigned)dfiles[k].total_blocks,
+                 dfiles[k].wanted ? "WANTED" : "ok");
 }

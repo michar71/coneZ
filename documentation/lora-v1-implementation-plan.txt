@@ -114,7 +114,7 @@ phase -- pure downlink broadcast, no uplink needed.)
 
 
 --------------------------------------------------------------------------------
-Phase 4 -- dist compression
+Phase 4 -- dist compression  (DONE)
 --------------------------------------------------------------------------------
 Goal: cut airtime (~35% on firmware) with per-block deflate.
   MASTER: per-block deflate (Python zlib); record algo + geometry in manifest.
@@ -122,6 +122,25 @@ Goal: cut airtime (~35% on firmware) with per-block deflate.
   Deps:   Phase 3.
   TEST:   compressed file reconstructs byte-identical; measured airtime drops;
           confirm Heltec RAM (compressed block + ~43 KB inflate) is OK.
+  DONE:   The dist transfer became per-BLOCK (this is also the unit Phase 5 FEC
+          and Phase 6 firmware-OTA need). A file = total_blocks blocks of
+          block_size uncompressed bytes; each block is independently deflated
+          (Python zlib, whole-file deflate-vs-store decision so already-compressed
+          payloads aren't bloated) and split into <=200-byte chunks. The DIST_DATA
+          wire body grew to 16 B (added block_idx + total_blocks; kept file_len);
+          the manifest [files] line gained algo / block_size / total_blocks
+          (lora_proto.encode_file is the single deterministic encoder shared by
+          build_manifest.py and the carousel). The manifest file itself (id 0)
+          stays uncompressed. CONE (dist.cpp): stages ONE block's compressed
+          chunks, inflate_buf()s (auto-detects zlib) into the whole-file buffer at
+          block_idx*block_size, marks a per-file block bitmap; a missed block is
+          re-fetched next carousel cycle (eventual consistency preserved). Whole
+          file still MD5-verified before write; firmware-sized files still skipped
+          (Phase 6). Block size is a master knob (lora_proto.DIST_BLOCK_SIZE,
+          default 32 KB; lower it to exercise multi-block on the tiny bench files).
+          Validated with a pure-Python encode->chunk->reassemble->inflate harness
+          across 3 block sizes incl. multi-block, empty + incompressible files, and
+          a dropped-chunk two-cycle recovery; both firmware targets build clean.
 
 
 --------------------------------------------------------------------------------

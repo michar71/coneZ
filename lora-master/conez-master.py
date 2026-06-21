@@ -576,33 +576,50 @@ def parse_manifest_files(path):
     return out
 
 
-def _chunk_file(file_id, data):
-    """Slice bytes into DIST_CHUNK_SIZE chunk descriptors."""
+def _file_to_chunks(file_id, file_len, algo, blocks):
+    """Slice a file's per-block (compressed) byte strings into chunk descriptors.
+
+    Each chunk carries the full block/file geometry so the cone can reassemble a
+    block, inflate it, and place it at block_idx*block_size in the output file.
+    """
     csz = proto.DIST_CHUNK_SIZE
-    n = max(1, (len(data) + csz - 1) // csz)
-    return [dict(fid=file_id, idx=i, n=n, flen=len(data),
-                 payload=data[i * csz:(i + 1) * csz]) for i in range(n)]
+    out = []
+    total_blocks = len(blocks)
+    for bidx, b in enumerate(blocks):
+        nc = max(1, (len(b) + csz - 1) // csz)
+        for ci in range(nc):
+            out.append(dict(fid=file_id, flen=file_len, algo=algo,
+                            bidx=bidx, tb=total_blocks, ci=ci, nc=nc,
+                            payload=b[ci * csz:(ci + 1) * csz]))
+    return out
 
 
 def build_dist_chunks():
-    """All chunks to broadcast: the manifest (file id 0) first, then data files."""
+    """All chunks to broadcast: the manifest (file id 0, uncompressed) first, then
+    data files (per-block deflate or store, per the manifest)."""
     chunks = []
     with open(MANIFEST_FILE, "rb") as fp:
-        chunks += _chunk_file(proto.DIST_MANIFEST_ID, fp.read())
+        man = fp.read()
+    chunks += _file_to_chunks(proto.DIST_MANIFEST_ID, len(man), proto.ALGO_NONE,
+                              proto.split_blocks(man, proto.DIST_MANIFEST_BLOCK_SIZE))
     for (fid, fname, size, md5) in parse_manifest_files(MANIFEST_FILE):
         fpath = os.path.join(DIST_DIR, fname)
         try:
             with open(fpath, "rb") as fp:
-                chunks += _chunk_file(fid, fp.read())
+                data = fp.read()
         except FileNotFoundError:
             print(f"  dist: WARNING missing {fpath} (id {fid})")
+            continue
+        algo, blocks = proto.encode_file(data)
+        chunks += _file_to_chunks(fid, len(data), algo, blocks)
     return chunks
 
 
 dist_chunks = build_dist_chunks()
 dist_idx = 0
+_comp = sum(len(c["payload"]) for c in dist_chunks)
 print(f"dist: {len(dist_chunks)} chunks (manifest + {len(parse_manifest_files(MANIFEST_FILE))} files), "
-      f"chunk size {proto.DIST_CHUNK_SIZE}")
+      f"chunk size {proto.DIST_CHUNK_SIZE}, {_comp} on-air payload bytes")
 
 
 def send_next_dist_chunk():
@@ -611,10 +628,13 @@ def send_next_dist_chunk():
         return
     c = dist_chunks[dist_idx]
     pkt = proto.make_dist_data(manifest_serial=manifest_serial, file_id=c["fid"],
-                               file_len=c["flen"], chunk_index=c["idx"],
-                               total_chunks=c["n"], payload=c["payload"])
+                               file_len=c["flen"], block_index=c["bidx"],
+                               total_blocks=c["tb"], chunk_index=c["ci"],
+                               total_chunks=c["nc"], payload=c["payload"])
     transmit(pkt)
-    print(f"TX dist id={c['fid']} chunk {c['idx']+1}/{c['n']} ({len(c['payload'])} B)")
+    _a = "deflate" if c["algo"] == proto.ALGO_DEFLATE else "store"
+    print(f"TX dist id={c['fid']} blk {c['bidx']+1}/{c['tb']} "
+          f"chunk {c['ci']+1}/{c['nc']} ({len(c['payload'])} B, {_a})")
     dist_idx = (dist_idx + 1) % len(dist_chunks)
 
 

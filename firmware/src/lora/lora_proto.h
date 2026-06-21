@@ -57,16 +57,30 @@
 #define LP_BCN_LEN           (LP_HDR_LEN + 30)  // total beacon packet length
 
 // DIST_DATA body offsets (absolute, from start of packet; header is 4 bytes).
-// Body (12 bytes): manifest_serial(2) file_id(2) file_len(4) chunk_idx(2) total_chunks(2)
-#define LP_DIST_HDR_LEN       12
+// Phase 4: per-BLOCK transfer. A file = total_blocks blocks of (uncompressed)
+// LP_DIST_BLOCK_SIZE bytes; each block is independently (de)compressed and split
+// into total_chunks on-air chunks. Block/file geometry + algo for data files is
+// carried in the manifest (section 13.2); the wire repeats it so reception is
+// self-describing.
+// Body (16 bytes): manifest_serial(2) file_id(2) file_len(4)
+//                  block_idx(2) total_blocks(2) chunk_idx(2) total_chunks(2)
+#define LP_DIST_HDR_LEN       16
 #define LP_DIST_SERIAL        (LP_HDR_LEN + 0)    // u16 manifest serial
 #define LP_DIST_FILE_ID       (LP_HDR_LEN + 2)    // u16 file id (0 = manifest)
-#define LP_DIST_FILE_LEN      (LP_HDR_LEN + 4)    // u32 total uncompressed length
-#define LP_DIST_CHUNK_IDX     (LP_HDR_LEN + 8)    // u16 chunk index
-#define LP_DIST_TOTAL_CHUNKS  (LP_HDR_LEN + 10)   // u16 total chunks
-#define LP_DIST_PAYLOAD       (LP_HDR_LEN + 12)   // payload starts here
+#define LP_DIST_FILE_LEN      (LP_HDR_LEN + 4)    // u32 total uncompressed file length
+#define LP_DIST_BLOCK_IDX     (LP_HDR_LEN + 8)    // u16 block index
+#define LP_DIST_TOTAL_BLOCKS  (LP_HDR_LEN + 10)   // u16 total blocks in this file
+#define LP_DIST_CHUNK_IDX     (LP_HDR_LEN + 12)   // u16 chunk index within this block
+#define LP_DIST_TOTAL_CHUNKS  (LP_HDR_LEN + 14)   // u16 total chunks in this block
+#define LP_DIST_PAYLOAD       (LP_HDR_LEN + 16)   // payload starts here
 #define LP_DIST_CHUNK_SIZE    200                 // payload bytes per chunk
 #define LP_DIST_MANIFEST_ID   0                   // reserved file id for the manifest
+#define LP_DIST_BLOCK_SIZE    32768               // block size assumed for the manifest
+                                                  // file (data files carry their own)
+
+// Per-file compression algorithm (manifest field; LP_DIST_ALGO_DEFLATE = zlib).
+#define LP_DIST_ALGO_NONE     0
+#define LP_DIST_ALGO_DEFLATE  1
 
 // Big-endian readers (wire is big-endian).
 static inline uint16_t lp_rd_u16(const uint8_t *p)

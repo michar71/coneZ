@@ -1,10 +1,10 @@
 #ifndef CONEZ_DIST_H
 #define CONEZ_DIST_H
 
-// ConeZ LoRa v1 dist (file distribution) -- cone receive side, Phase 3 core.
-// Reassembles DIST_DATA chunks into the manifest + data files under /dist/,
-// verifies MD5, and deletes local files no longer in the manifest. No
-// compression/FEC yet (Phases 4-5); firmware OTA is Phase 6.
+// ConeZ LoRa v1 dist (file distribution) -- cone receive side.
+// Reassembles DIST_DATA chunks (per block) into the manifest + data files under
+// /dist/, inflating per-block deflate (Phase 4), verifies MD5, and deletes local
+// files no longer in the manifest. No FEC yet (Phase 5); firmware OTA is Phase 6.
 
 #include <stdint.h>
 #include <stddef.h>
