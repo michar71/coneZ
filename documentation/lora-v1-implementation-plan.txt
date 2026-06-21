@@ -144,7 +144,7 @@ Goal: cut airtime (~35% on firmware) with per-block deflate.
 
 
 --------------------------------------------------------------------------------
-Phase 5 -- dist FEC (systematic Reed-Solomon)
+Phase 5 -- dist FEC (systematic Reed-Solomon)  (DONE)
 --------------------------------------------------------------------------------
 Goal: recover lost chunks without waiting a full carousel cycle.
   MASTER: RS(GF256) systematic encode per block -> R DIST_PARITY chunks.
@@ -154,6 +154,25 @@ Goal: recover lost chunks without waiting a full carousel cycle.
   Deps:   Phases 3-4.
   TEST:   induce N missing data chunks/block -> recovers from parity same cycle
           (ConeZ); Heltec either decodes one block or next-cycles.
+  DONE:   Systematic RS over GF(2^8) ACROSS chunks (each chunk = one RS symbol
+          column), generator [I_N ; C] with C an R x N Cauchy matrix (every square
+          submatrix invertible -> MDS), so any N of the N+R chunks rebuild a block;
+          PHY CRC gives erasure positions, so it is pure erasure decode (matrix
+          inversion, no error-locator). One implementation mirrored in C
+          (firmware/src/lora/rs.c) and Python (lora-master/reed_solomon.py),
+          cross-checked byte-for-byte on the host. Per block the master sends N
+          DATA (0x40) + R PARITY (0x41) chunks; R = max(DIST_PARITY_MIN,
+          ceil(N*DIST_PARITY_FRAC)). The DIST wire body grew to 22 B (added
+          data_chunks N, parity_chunks R, block_comp_len; chunk_idx is a parity
+          index on 0x41). The cone stages one block's data+parity, then on N data
+          present uses them directly (Heltec-friendly: no decode) or RS-recovers
+          lost data from parity the same cycle; the recovered compressed block is
+          inflated/copied as in Phase 4. Validated: host C-vs-Python vector match
+          (incl. N=120/R=16); 72-combo Python pipeline (files x block sizes x
+          drops); RF bench with the master dropping K data chunks/block (knob
+          DIST_TEST_DROP_DATA) -- at drop=2 a 2-chunk manifest block recovered
+          from 2 parity chunks with ZERO data received ("RS-recovered 2 lost data
+          from 2 parity"). Both firmware targets build clean.
 
 
 --------------------------------------------------------------------------------

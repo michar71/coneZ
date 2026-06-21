@@ -365,6 +365,7 @@ void lora_rx( void )
                 lora_handle_beacon(rxbuf, rxlen, rssi, snr);
                 break;
             case LP_PKT_DIST_DATA:
+            case LP_PKT_DIST_PARITY:
                 dist_handle_chunk(rxbuf, rxlen);
                 break;
             default:

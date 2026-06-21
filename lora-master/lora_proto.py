@@ -78,18 +78,23 @@ def make_beacon(*, network: int, freq: int, bw: int, sf: int, cr: int,
     return make_header(PKT_BEACON, network, ADDR_MASTER, ADDR_BROADCAST) + body
 
 
-# DIST_DATA body (after the header). Phase 4: per-BLOCK transfer.
+# DIST body (after the header). Shared by DIST_DATA (0x40) and DIST_PARITY (0x41);
+# the packet TYPE says whether chunk_idx is a data index (0..N-1) or parity index
+# (0..R-1). Phase 4 per-BLOCK transfer + Phase 5 systematic-RS-across-chunks.
 #   H  manifest serial
 #   H  file id            (0 = the manifest itself)
 #   I  file length        (total uncompressed bytes)
 #   H  block index
 #   H  total blocks       (in this file)
-#   H  chunk index        (within this block)
-#   H  total chunks       (within this block)
-#   <payload>             (DIST_CHUNK_SIZE bytes of the COMPRESSED block; last short)
-DIST_HDR_FMT    = ">HHIHHHH"
-DIST_HDR_LEN    = struct.calcsize(DIST_HDR_FMT)   # 16
-DIST_CHUNK_SIZE = 200                             # payload bytes per chunk
+#   H  chunk index        (data idx for DATA, parity idx for PARITY)
+#   H  data chunks N      (in this block)
+#   H  parity chunks R    (in this block)
+#   I  block comp len     (true compressed length of this block)
+#   <payload>             (CHUNK_SIZE bytes; last DATA chunk may be short, padded
+#                          with zeros for the RS code; PARITY chunks are full)
+DIST_HDR_FMT    = ">HHIHHHHHI"
+DIST_HDR_LEN    = struct.calcsize(DIST_HDR_FMT)   # 22
+DIST_CHUNK_SIZE = 200                             # payload bytes per chunk (RS symbol size)
 DIST_MANIFEST_ID = 0                              # reserved file id for the manifest
 
 # Block geometry / compression. A file is split into BLOCK_SIZE-byte (uncompressed)
@@ -100,6 +105,10 @@ DIST_MANIFEST_BLOCK_SIZE = 32768   # MUST equal firmware LP_DIST_BLOCK_SIZE
 ALGO_NONE    = 0
 ALGO_DEFLATE = 1                   # zlib stream (firmware inflate_buf auto-detects)
 COMPRESS_LEVEL = 6
+
+# Phase 5 FEC: per-block systematic Reed-Solomon parity (rs across chunks).
+DIST_PARITY_FRAC = 0.10            # R ~ this fraction of N data chunks per block
+DIST_PARITY_MIN  = 2               # ...but at least this many (capped at N+R <= 255)
 
 
 def split_blocks(data: bytes, block_size: int = DIST_BLOCK_SIZE) -> list:
@@ -126,17 +135,41 @@ def encode_file(data: bytes, block_size: int = DIST_BLOCK_SIZE,
     return ALGO_NONE, raw
 
 
-def make_dist_data(*, manifest_serial: int, file_id: int, file_len: int,
-                   block_index: int, total_blocks: int,
-                   chunk_index: int, total_chunks: int, payload: bytes,
-                   network: int = 0) -> bytes:
-    """Build a full DIST_DATA packet (header + dist header + payload)."""
+def _make_dist(ptype: int, *, manifest_serial: int, file_id: int, file_len: int,
+               block_index: int, total_blocks: int, chunk_index: int,
+               data_chunks: int, parity_chunks: int, block_comp_len: int,
+               payload: bytes, network: int = 0) -> bytes:
     body = struct.pack(DIST_HDR_FMT,
                        manifest_serial & 0xFFFF, file_id & 0xFFFF,
                        file_len & 0xFFFFFFFF,
                        block_index & 0xFFFF, total_blocks & 0xFFFF,
-                       chunk_index & 0xFFFF, total_chunks & 0xFFFF)
-    return make_header(PKT_DIST_DATA, network, ADDR_MASTER, ADDR_BROADCAST) + body + payload
+                       chunk_index & 0xFFFF, data_chunks & 0xFFFF,
+                       parity_chunks & 0xFFFF, block_comp_len & 0xFFFFFFFF)
+    return make_header(ptype, network, ADDR_MASTER, ADDR_BROADCAST) + body + payload
+
+
+def make_dist_data(*, manifest_serial: int, file_id: int, file_len: int,
+                   block_index: int, total_blocks: int, chunk_index: int,
+                   data_chunks: int, parity_chunks: int, block_comp_len: int,
+                   payload: bytes, network: int = 0) -> bytes:
+    """Build a DIST_DATA packet (chunk_index is a DATA index 0..N-1)."""
+    return _make_dist(PKT_DIST_DATA, manifest_serial=manifest_serial, file_id=file_id,
+                      file_len=file_len, block_index=block_index, total_blocks=total_blocks,
+                      chunk_index=chunk_index, data_chunks=data_chunks,
+                      parity_chunks=parity_chunks, block_comp_len=block_comp_len,
+                      payload=payload, network=network)
+
+
+def make_dist_parity(*, manifest_serial: int, file_id: int, file_len: int,
+                     block_index: int, total_blocks: int, chunk_index: int,
+                     data_chunks: int, parity_chunks: int, block_comp_len: int,
+                     payload: bytes, network: int = 0) -> bytes:
+    """Build a DIST_PARITY packet (chunk_index is a PARITY index 0..R-1)."""
+    return _make_dist(PKT_DIST_PARITY, manifest_serial=manifest_serial, file_id=file_id,
+                      file_len=file_len, block_index=block_index, total_blocks=total_blocks,
+                      chunk_index=chunk_index, data_chunks=data_chunks,
+                      parity_chunks=parity_chunks, block_comp_len=block_comp_len,
+                      payload=payload, network=network)
 
 
 def parse_header(pkt: bytes):

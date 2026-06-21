@@ -10,6 +10,11 @@ import math
 from datetime import datetime
 from LoRaRF import SX126x
 import lora_proto as proto
+import reed_solomon as rs
+
+# Bench FEC test: drop the last K DATA chunks of every block (parity still sent),
+# forcing the cone to Reed-Solomon-recover. 0 = off. `DIST_TEST_DROP_DATA=1 ...`
+DIST_TEST_DROP_DATA = int(os.environ.get("DIST_TEST_DROP_DATA", "0"))
 
 
 # --- Single-instance guard ---------------------------------------------------
@@ -577,20 +582,32 @@ def parse_manifest_files(path):
 
 
 def _file_to_chunks(file_id, file_len, algo, blocks):
-    """Slice a file's per-block (compressed) byte strings into chunk descriptors.
+    """Slice a file's per-block (compressed) byte strings into chunk descriptors:
+    N DATA chunks then R systematic-RS PARITY chunks per block (Phase 5).
 
     Each chunk carries the full block/file geometry so the cone can reassemble a
-    block, inflate it, and place it at block_idx*block_size in the output file.
+    block (RS-recovering any lost DATA chunks from PARITY), inflate it, and place
+    it at block_idx*block_size in the output file. The last DATA chunk is sent
+    short; the cone zero-pads it for the code (block_comp_len makes it unambiguous).
     """
     csz = proto.DIST_CHUNK_SIZE
     out = []
     total_blocks = len(blocks)
     for bidx, b in enumerate(blocks):
-        nc = max(1, (len(b) + csz - 1) // csz)
-        for ci in range(nc):
-            out.append(dict(fid=file_id, flen=file_len, algo=algo,
-                            bidx=bidx, tb=total_blocks, ci=ci, nc=nc,
-                            payload=b[ci * csz:(ci + 1) * csz]))
+        comp_len = len(b)
+        N = max(1, (comp_len + csz - 1) // csz)
+        R = rs.parity_count(N, proto.DIST_PARITY_FRAC, proto.DIST_PARITY_MIN)
+        padded = b + bytes(N * csz - comp_len)          # zero-pad last chunk for RS
+        parity = rs.encode(N, R, csz, padded) if R else b""
+        drop = min(DIST_TEST_DROP_DATA, R, N)           # bench: simulate erasures
+        meta = dict(fid=file_id, flen=file_len, algo=algo, bidx=bidx,
+                    tb=total_blocks, N=N, R=R, comp_len=comp_len)
+        for ci in range(N):
+            if drop and ci >= N - drop:                 # skip -> cone must RS-recover
+                continue
+            out.append(dict(meta, parity=False, idx=ci, payload=b[ci * csz:(ci + 1) * csz]))
+        for pi in range(R):
+            out.append(dict(meta, parity=True, idx=pi, payload=parity[pi * csz:(pi + 1) * csz]))
     return out
 
 
@@ -618,8 +635,10 @@ def build_dist_chunks():
 dist_chunks = build_dist_chunks()
 dist_idx = 0
 _comp = sum(len(c["payload"]) for c in dist_chunks)
-print(f"dist: {len(dist_chunks)} chunks (manifest + {len(parse_manifest_files(MANIFEST_FILE))} files), "
-      f"chunk size {proto.DIST_CHUNK_SIZE}, {_comp} on-air payload bytes")
+_par = sum(1 for c in dist_chunks if c["parity"])
+print(f"dist: {len(dist_chunks)} chunks ({_par} parity) (manifest + "
+      f"{len(parse_manifest_files(MANIFEST_FILE))} files), chunk size {proto.DIST_CHUNK_SIZE}, "
+      f"{_comp} on-air payload bytes" + (f"  [TEST drop {DIST_TEST_DROP_DATA} data/blk]" if DIST_TEST_DROP_DATA else ""))
 
 
 def send_next_dist_chunk():
@@ -627,14 +646,17 @@ def send_next_dist_chunk():
     if not dist_chunks:
         return
     c = dist_chunks[dist_idx]
-    pkt = proto.make_dist_data(manifest_serial=manifest_serial, file_id=c["fid"],
-                               file_len=c["flen"], block_index=c["bidx"],
-                               total_blocks=c["tb"], chunk_index=c["ci"],
-                               total_chunks=c["nc"], payload=c["payload"])
+    mk = proto.make_dist_parity if c["parity"] else proto.make_dist_data
+    pkt = mk(manifest_serial=manifest_serial, file_id=c["fid"], file_len=c["flen"],
+             block_index=c["bidx"], total_blocks=c["tb"], chunk_index=c["idx"],
+             data_chunks=c["N"], parity_chunks=c["R"], block_comp_len=c["comp_len"],
+             payload=c["payload"])
     transmit(pkt)
     _a = "deflate" if c["algo"] == proto.ALGO_DEFLATE else "store"
+    _k = "par" if c["parity"] else "dat"
+    _tot = c["R"] if c["parity"] else c["N"]
     print(f"TX dist id={c['fid']} blk {c['bidx']+1}/{c['tb']} "
-          f"chunk {c['ci']+1}/{c['nc']} ({len(c['payload'])} B, {_a})")
+          f"{_k} {c['idx']+1}/{_tot} ({len(c['payload'])} B, {_a})")
     dist_idx = (dist_idx + 1) % len(dist_chunks)
 
 

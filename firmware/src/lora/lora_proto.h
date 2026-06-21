@@ -56,27 +56,37 @@
 #define LP_BCN_CALLSIGN_LEN  8
 #define LP_BCN_LEN           (LP_HDR_LEN + 30)  // total beacon packet length
 
-// DIST_DATA body offsets (absolute, from start of packet; header is 4 bytes).
+// DIST body offsets (absolute, from start of packet; header is 4 bytes). Shared
+// by DIST_DATA (0x40) and DIST_PARITY (0x41) -- the packet TYPE tells you whether
+// chunk_idx indexes a DATA chunk (0..N-1) or a PARITY chunk (0..R-1).
+//
 // Phase 4: per-BLOCK transfer. A file = total_blocks blocks of (uncompressed)
-// LP_DIST_BLOCK_SIZE bytes; each block is independently (de)compressed and split
-// into total_chunks on-air chunks. Block/file geometry + algo for data files is
-// carried in the manifest (section 13.2); the wire repeats it so reception is
-// self-describing.
-// Body (16 bytes): manifest_serial(2) file_id(2) file_len(4)
-//                  block_idx(2) total_blocks(2) chunk_idx(2) total_chunks(2)
-#define LP_DIST_HDR_LEN       16
-#define LP_DIST_SERIAL        (LP_HDR_LEN + 0)    // u16 manifest serial
-#define LP_DIST_FILE_ID       (LP_HDR_LEN + 2)    // u16 file id (0 = manifest)
-#define LP_DIST_FILE_LEN      (LP_HDR_LEN + 4)    // u32 total uncompressed file length
-#define LP_DIST_BLOCK_IDX     (LP_HDR_LEN + 8)    // u16 block index
-#define LP_DIST_TOTAL_BLOCKS  (LP_HDR_LEN + 10)   // u16 total blocks in this file
-#define LP_DIST_CHUNK_IDX     (LP_HDR_LEN + 12)   // u16 chunk index within this block
-#define LP_DIST_TOTAL_CHUNKS  (LP_HDR_LEN + 14)   // u16 total chunks in this block
-#define LP_DIST_PAYLOAD       (LP_HDR_LEN + 16)   // payload starts here
-#define LP_DIST_CHUNK_SIZE    200                 // payload bytes per chunk
-#define LP_DIST_MANIFEST_ID   0                   // reserved file id for the manifest
-#define LP_DIST_BLOCK_SIZE    32768               // block size assumed for the manifest
-                                                  // file (data files carry their own)
+// block_size bytes; each block is independently (de)compressed.
+// Phase 5: each block is also systematic-RS-coded ACROSS chunks -- N data chunks
+// (each LP_DIST_CHUNK_SIZE bytes, last data chunk zero-padded for the code) plus
+// R Cauchy parity chunks (rs.c / reed_solomon.py). A cone needs any N of the N+R
+// to rebuild the block. block_comp_len is the true compressed length (so padding
+// is unambiguous even when the last data chunk is recovered from parity).
+// Block/file geometry + algo for data files is in the manifest (section 13.2);
+// the wire repeats N/R/comp_len so reception is self-describing.
+//
+// Body (22 bytes): manifest_serial(2) file_id(2) file_len(4) block_idx(2)
+//   total_blocks(2) chunk_idx(2) data_chunks(2) parity_chunks(2) block_comp_len(4)
+#define LP_DIST_HDR_LEN         22
+#define LP_DIST_SERIAL          (LP_HDR_LEN + 0)    // u16 manifest serial
+#define LP_DIST_FILE_ID         (LP_HDR_LEN + 2)    // u16 file id (0 = manifest)
+#define LP_DIST_FILE_LEN        (LP_HDR_LEN + 4)    // u32 total uncompressed file length
+#define LP_DIST_BLOCK_IDX       (LP_HDR_LEN + 8)    // u16 block index
+#define LP_DIST_TOTAL_BLOCKS    (LP_HDR_LEN + 10)   // u16 total blocks in this file
+#define LP_DIST_CHUNK_IDX       (LP_HDR_LEN + 12)   // u16 data idx (0x40) / parity idx (0x41)
+#define LP_DIST_DATA_CHUNKS     (LP_HDR_LEN + 14)   // u16 N data chunks in this block
+#define LP_DIST_PARITY_CHUNKS   (LP_HDR_LEN + 16)   // u16 R parity chunks in this block
+#define LP_DIST_BLOCK_COMP_LEN  (LP_HDR_LEN + 18)   // u32 compressed length of this block
+#define LP_DIST_PAYLOAD         (LP_HDR_LEN + 22)   // payload starts here
+#define LP_DIST_CHUNK_SIZE      200                 // payload bytes per chunk (RS symbol size)
+#define LP_DIST_MANIFEST_ID     0                   // reserved file id for the manifest
+#define LP_DIST_BLOCK_SIZE      32768               // block size assumed for the manifest
+                                                    // file (data files carry their own)
 
 // Per-file compression algorithm (manifest field; LP_DIST_ALGO_DEFLATE = zlib).
 #define LP_DIST_ALGO_NONE     0
