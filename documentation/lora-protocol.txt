@@ -351,9 +351,12 @@ etc.) and firmware are present when needed. ("dist" replaces the misleading name
   per block the cone RS-recovers (if needed), inflates, and erase+writes the
   inactive OTA partition, then esp_ota_set_boot_partition (whole-image validate) +
   reboot. CRITICAL: a cone running normal firmware flashes its OTA partition WHILE
-  the radio/system run, and esp_partition erase/write disable the flash cache and
-  cross-core-stall the other core. On the ConeZ board that stall INTERMITTENTLY
-  failed to park the other core, stretching the cache-off window to seconds ->
+  the radio/system run. The S3 executes code XIP (straight from flash through a
+  cache), so the chip cannot service a code fetch while it is mid-erase; the
+  DEFAULT esp_partition erase/write therefore DISABLE the cache and cross-core-
+  stall the other core for the whole op (parking it in an IRAM spin loop, else it
+  faults fetching cached code). On the ConeZ board that park INTERMITTENTLY ran
+  slow, stretching the cache-off window to seconds ->
   Interrupt-WDT reset or a Core-1 "cache disabled but cached memory accessed"
   panic, killing the multi-hour transfer. The fix is CONFIG_SPI_FLASH_AUTO_SUSPEND
   (our Winbond W25Q64 / id 0xEF4017 supports erase-suspend): flash ops then take a
@@ -361,6 +364,14 @@ etc.) and firmware are present when needed. ("dist" replaces the misleading name
   cross-core park to fail. It must be on (with the matching bootloader) for dist
   firmware OTA to be reliable. Diagnosis ruled out DFS, light sleep, WiFi, the
   PSRAM driver, and concurrent app tasks; only the cache-disable window mattered.
+  WHY ONLY OTA SURFACED IT (LittleFS writes use the SAME cache-disable path but
+  almost never hang): the stall is a rare per-erase event, and OTA is the worst
+  case on both axes -- ~300 back-to-back sector erases (vs a few sectors for a
+  config/log save), fired while the radio/inflate/RS/log-ring keep the OTHER core
+  hot (vs LittleFS writes at idle from the CLI, when the park is serviced
+  instantly). OTA samples the rare event hundreds of times under peak load; sparse
+  low-load LittleFS writes essentially never do. AUTO_SUSPEND changes the lock
+  strategy for ALL flash ops, so LittleFS/config/log writes are hardened too.
 
 13.6  BLOCK SIZE -- the one real knob
   Trades: compression (bigger = marginally better, diminishing past ~64 KB),

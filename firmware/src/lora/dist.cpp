@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_app_desc.h"
@@ -17,6 +18,7 @@
 #include "lora_proto.h"
 #include "inflate.h"
 #include "rs.h"
+#include "ota_lock.h"
 #include "dist.h"
 
 // ===== ConeZ dist (Phases 3-6: core, deflate, RS FEC, OTA flash-stream) ======
@@ -40,6 +42,15 @@
 
 #define DIST_KIND_FILE   0
 #define DIST_KIND_FW     1
+
+// Sanity caps on manifest/chunk-supplied sizes -- the amateur-radio link is
+// unauthenticated, so a garbled or hostile header must not drive a wild malloc.
+#define DIST_MAX_BLOCK   (64 * 1024)   // max uncompressed block_size (fw_block malloc)
+#define DIST_MAX_CHUNKS  255           // max N or R per block (RS is GF(256))
+// Free an in-progress transfer if no dist traffic at all arrives for this long
+// (the master beacons + rebroadcasts the manifest every ~10 s, so prolonged
+// silence means it is gone; brief gaps still resume from the held buffers).
+#define DIST_STALL_MS    (5 * 60 * 1000)
 
 #ifndef SPI_FLASH_SEC_SIZE
 #define SPI_FLASH_SEC_SIZE 4096
@@ -77,6 +88,15 @@ static uint16_t rx_blocks_have  = 0;
 static bool                   rx_is_fw = false;
 static const esp_partition_t *fw_part  = NULL;   // inactive OTA partition
 static uint8_t               *fw_block = NULL;   // decompressed block (block_size)
+static bool                   dist_holds_ota = false;  // we hold the shared ota_lock
+
+// Serializes dist_handle_chunk (LoRa task) against dist_abort (any task, e.g. the
+// shell on `lora off`) so a teardown never frees buffers a commit is still using.
+// Recursive + lazily created on the LoRa task (the only creator), so no race.
+static SemaphoreHandle_t dist_mtx = NULL;
+static uint32_t          last_chunk_ms = 0;      // uptime of the last dist packet
+static inline void dist_lock(void)   { if (dist_mtx) xSemaphoreTakeRecursive(dist_mtx, portMAX_DELAY); }
+static inline void dist_unlock(void) { if (dist_mtx) xSemaphoreGiveRecursive(dist_mtx); }
 
 // ---- current staged block (data + parity chunks) ---------------------------
 static uint16_t blk_idx       = 0xFFFF;    // 0xFFFF = none staged
@@ -129,6 +149,7 @@ static void rx_reset(void)
     free(rx_buf);      rx_buf = NULL;
     free(rx_block_bm); rx_block_bm = NULL;
     free(fw_block);    fw_block = NULL;   // partial flash writes are harmless (boot not set)
+    if (dist_holds_ota) { ota_lock_release(); dist_holds_ota = false; }
     rx_is_fw = false; fw_part = NULL;
     rx_file_id = 0xFFFF; rx_total_blocks = 0; rx_blocks_have = 0;
     rx_file_len = 0; rx_block_size = 0; rx_algo = LP_DIST_ALGO_NONE;
@@ -295,7 +316,11 @@ static void complete(void)
         dist_file_t *df = find_file(rx_file_id);
         if (df) {
             char got[9]; md5_8_buf(rx_buf, rx_file_len, got);
-            if (!strcmp(got, df->md5)) {
+            if (!strcmp(got, df->md5) && !littlefs_mounted) {
+                // a concurrent HTTP filesystem upload has unmounted LittleFS --
+                // don't fopen/fwrite into the gap; the carousel refetches next pass
+                printfnl(SOURCE_LORA, "dist: %s verified but filesystem busy, retry next cycle\n", df->name);
+            } else if (!strcmp(got, df->md5)) {
                 char mk[96]; mkdir(lfs_path(mk, sizeof(mk), DIST_DIR_PATH), 0755);  // ensure /dist
                 char logical[128]; snprintf(logical, sizeof(logical), "%s/%s", DIST_DIR_PATH, df->name);
                 char path[160]; FILE *f = fopen(lfs_path(path, sizeof(path), logical), "wb");
@@ -322,6 +347,11 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
     rx_reset();
     if (total_blocks == 0) total_blocks = 1;
     if (block_size == 0)   block_size = LP_DIST_BLOCK_SIZE;
+    if (block_size > DIST_MAX_BLOCK) {              // hostile/garbled manifest guard
+        printfnl(SOURCE_LORA, "dist: id %u block_size %u too large, skipping\n",
+                 (unsigned)fid, (unsigned)block_size);
+        return;                                     // stay idle (rx_file_id == 0xFFFF)
+    }
 
     if (kind == DIST_KIND_FW) {
         // Erase + write the inactive OTA partition PER BLOCK (small flash windows,
@@ -330,6 +360,14 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
         // LittleFS access on the other core (Cache-disabled panic).
         fw_part = esp_ota_get_next_update_partition(NULL);
         if (!fw_part) { printfnl(SOURCE_LORA, "dist: no OTA partition\n"); rx_reset(); return; }
+        // Refuse to start if an HTTP firmware/filesystem update owns the flash --
+        // both target the same inactive slot; interleaving corrupts the image.
+        if (!ota_lock_acquire("lora-fw-ota")) {
+            printfnl(SOURCE_LORA, "dist: OTA busy (%s in progress), deferring firmware\n",
+                     ota_lock_owner() ? ota_lock_owner() : "?");
+            rx_reset(); return;
+        }
+        dist_holds_ota = true;
         fw_block    = (uint8_t *)malloc(block_size);
         rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
         if (!fw_block || !rx_block_bm) { printfnl(SOURCE_LORA, "dist: OTA alloc fail\n"); rx_reset(); return; }
@@ -354,7 +392,7 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
 static void start_block(uint16_t bidx, uint16_t N, uint16_t R, uint32_t comp_len)
 {
     blk_reset();
-    if (N == 0) return;
+    if (N == 0 || N > DIST_MAX_CHUNKS || R > DIST_MAX_CHUNKS) return;  // RS / sanity bound
     blk_data      = (uint8_t *)calloc((size_t)N * DIST_L, 1);   // zero-pad for RS
     blk_data_have = (uint8_t *)calloc(N, 1);
     blk_par       = R ? (uint8_t *)calloc((size_t)R * DIST_L, 1) : NULL;
@@ -463,7 +501,7 @@ static void add_par_chunk(uint16_t idx, const uint8_t *payload, size_t plen)
     try_finalize();
 }
 
-void dist_handle_chunk(const uint8_t *pkt, size_t len)
+static void dist_handle_chunk_locked(const uint8_t *pkt, size_t len)
 {
     if (len < LP_DIST_PAYLOAD) return;
     bool     is_par = (pkt[LP_HDR_TYPE] == LP_PKT_DIST_PARITY);
@@ -516,6 +554,48 @@ void dist_handle_chunk(const uint8_t *pkt, size_t len)
     if (blk_N != N || blk_R != R) return;           // inconsistent geometry, ignore
     if (is_par) add_par_chunk(cidx, payload, plen);
     else        add_data_chunk(cidx, payload, plen);
+}
+
+// Called from the LoRa task on every DIST_DATA/DIST_PARITY packet. Serializes the
+// whole reassembly/commit against dist_abort() (which may run on another task).
+void dist_handle_chunk(const uint8_t *pkt, size_t len)
+{
+    if (!dist_mtx) dist_mtx = xSemaphoreCreateRecursiveMutex();  // LoRa task: sole creator
+    last_chunk_ms = uptime_ms();          // any dist packet means the master is present
+    dist_lock();
+    dist_handle_chunk_locked(pkt, len);
+    dist_unlock();
+}
+
+// Free an in-progress transfer's buffers (and release the OTA lock). Safe to call
+// from any task -- the dist mutex serializes it against a live commit. Used on
+// `lora off` so a disabled radio doesn't strand 16 KB-256 KB indefinitely.
+void dist_abort(void)
+{
+    if (!dist_mtx) return;                 // nothing ever started -> nothing to free
+    dist_lock();
+    if (rx_file_id != 0xFFFF) {
+        printfnl(SOURCE_LORA, "dist: aborting in-progress transfer, freeing buffers\n");
+        rx_reset();
+    }
+    dist_unlock();
+}
+
+// Periodic tick from the LoRa task: if a transfer has stalled (no dist traffic at
+// all for DIST_STALL_MS -> master gone), free it rather than hold the buffers for
+// the rest of the boot. Brief gaps keep the buffers and resume. Cheap when idle.
+void dist_tick(void)
+{
+    if (rx_file_id == 0xFFFF) return;                          // no transfer in flight
+    if ((uint32_t)(uptime_ms() - last_chunk_ms) < DIST_STALL_MS) return;
+    dist_lock();
+    if (rx_file_id != 0xFFFF &&
+        (uint32_t)(uptime_ms() - last_chunk_ms) >= DIST_STALL_MS) {
+        printfnl(SOURCE_LORA, "dist: transfer stalled %us (master lost?), freeing buffers\n",
+                 (unsigned)(DIST_STALL_MS / 1000));
+        rx_reset();
+    }
+    dist_unlock();
 }
 
 // Isolated OTA-partition flash stress: per-sector erase+write of `kb` KB to the

@@ -15,6 +15,7 @@
 #include "gps.h"
 #include "printManager.h"
 #include "conez_usb.h"
+#include "ota_lock.h"
 
 #ifdef BOARD_HAS_GPS
 extern volatile float gps_lat;
@@ -483,21 +484,12 @@ static esp_err_t http_update_page(httpd_req_t *req)
 }
 
 
-static esp_err_t http_update_post(httpd_req_t *req)
+// Apply an OTA upload to the inactive app slot (firmware) or the LittleFS data
+// partition (filesystem). Caller holds the ota_lock for the whole call. On success
+// it reboots and never returns; on any failure it returns ESP_FAIL and the caller
+// releases the lock.
+static esp_err_t http_update_apply(httpd_req_t *req, bool is_firmware)
 {
-    // Read query param "type"
-    char qbuf[32], typeval[16] = "firmware";
-    size_t qlen = httpd_req_get_url_query_len(req);
-    if (qlen > 0 && qlen < sizeof(qbuf)) {
-        httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf));
-        httpd_query_key_value(qbuf, "type", typeval, sizeof(typeval));
-    }
-
-    bool is_firmware = (strcmp(typeval, "filesystem") != 0);
-    const char *label = is_firmware ? "firmware" : "filesystem";
-
-    printfnl(SOURCE_SYSTEM, "OTA %s upload: %d bytes", label, req->content_len);
-
     const esp_partition_t *part;
     esp_ota_handle_t ota_handle = 0;
 
@@ -514,8 +506,10 @@ static esp_err_t http_update_post(httpd_req_t *req)
             return ESP_FAIL;
         }
     } else {
-        // Filesystem: unmount before erasing partition
+        // Filesystem: unmount before erasing partition. Clear littlefs_mounted so
+        // other subsystems (config, cue, dist file writes) don't touch the gone FS.
         esp_vfs_littlefs_unregister("spiffs");
+        littlefs_mounted = false;
         part = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
         if (!part) {
@@ -575,6 +569,35 @@ static esp_err_t http_update_post(httpd_req_t *req)
     vTaskDelay(pdMS_TO_TICKS(1000));
     esp_restart();
     return ESP_OK;
+}
+
+static esp_err_t http_update_post(httpd_req_t *req)
+{
+    // Read query param "type"
+    char qbuf[32], typeval[16] = "firmware";
+    size_t qlen = httpd_req_get_url_query_len(req);
+    if (qlen > 0 && qlen < sizeof(qbuf)) {
+        httpd_req_get_url_query_str(req, qbuf, sizeof(qbuf));
+        httpd_query_key_value(qbuf, "type", typeval, sizeof(typeval));
+    }
+
+    bool is_firmware = (strcmp(typeval, "filesystem") != 0);
+    const char *label = is_firmware ? "firmware" : "filesystem";
+
+    printfnl(SOURCE_SYSTEM, "OTA %s upload: %d bytes", label, req->content_len);
+
+    // Serialize against the LoRa dist firmware OTA (same inactive slot) and any
+    // other update; interleaved erase/write would corrupt the image.
+    if (!ota_lock_acquire(is_firmware ? "http-fw" : "http-fs")) {
+        printfnl(SOURCE_SYSTEM, "OTA refused: %s already in progress",
+                 ota_lock_owner() ? ota_lock_owner() : "another update");
+        httpd_resp_sendstr(req, "FAIL: another update in progress (LoRa OTA?)");
+        return ESP_FAIL;
+    }
+
+    esp_err_t r = http_update_apply(req, is_firmware);   // reboots on success
+    ota_lock_release();                                  // only reached on failure
+    return r;
 }
 
 

@@ -394,6 +394,7 @@ static void lora_task_fn( void *arg )
         if (lora_active) {
             lora_rx();
             lora_scan_tick();
+            dist_tick();                       // free a stalled (master-lost) transfer
             vTaskDelay( pdMS_TO_TICKS(2) );
         } else {
             vTaskDelay( pdMS_TO_TICKS(50) );   // idle while LoRa is off
@@ -418,6 +419,7 @@ void lora_set_active( bool on )
         lora_scan_set_enabled(true);   // reinits the radio (scan_apply) + scans
     } else if (!on && lora_active) {
         lora_scan_set_enabled(false);  // stop scanning + close scanlist files
+        dist_abort();                  // free any in-progress dist transfer buffers
         radio.sleep();                 // low power; woken by begin() on `lora on`
         lora_active = false;
     }
