@@ -403,8 +403,12 @@ void scan_notify_beacon(void)
     scan_have_beacon    = true;
     if (scan_state == SCAN_SCANNING) {
         scan_state = SCAN_LOCKED;
-        printfnl(SOURCE_LORA, "scan: LOCKED %.3f MHz (was scanning tier %d/%d)\n",
-                 config.lora_frequency, active_tier, n_tiers - 1);
+        // Report the channel we actually locked on (cur_entry). NOT
+        // config.lora_frequency -- scan_apply() restores config.* after tuning,
+        // so it holds the default, not the locked entry.
+        char d[72]; scan_describe(&cur_entry, d, sizeof(d));
+        printfnl(SOURCE_LORA, "scan: LOCKED %s (was scanning tier %d/%d)\n",
+                 d, active_tier, n_tiers - 1);
     }
     lora_radio_unlock();
 }
