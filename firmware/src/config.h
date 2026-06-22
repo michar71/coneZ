@@ -90,7 +90,7 @@
 #define DEFAULT_DBG_GPS_RAW     false
 #define DEFAULT_DBG_LORA        false
 #define DEFAULT_DBG_LORA_RAW    false
-#define DEFAULT_DBG_FSYNC       false
+#define DEFAULT_DBG_LORA_DIST   true     // dist file/firmware OTA chatter on by default (for now)
 #define DEFAULT_DBG_WIFI        false
 #define DEFAULT_DBG_SENSORS     false
 #define DEFAULT_DBG_WASM        true
@@ -179,7 +179,7 @@ typedef struct {
     bool    dbg_gps_raw;
     bool    dbg_lora;
     bool    dbg_lora_raw;
-    bool    dbg_fsync;
+    bool    dbg_lora_dist;
     bool    dbg_wifi;
     bool    dbg_sensors;
     bool    dbg_mqtt;

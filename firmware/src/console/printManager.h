@@ -28,9 +28,9 @@ typedef enum {
                                         // Available: 0x00008000
     SOURCE_LORA         = 0x00010000,
     SOURCE_LORA_RAW     = 0x00020000,
-                                        // Available: 0x00040000
+    SOURCE_LORA_DIST    = 0x00040000,   // dist (file/firmware distribution) chatter
                                         // Available: 0x00080000
-    SOURCE_FSYNC        = 0x00100000,
+                                        // Available: 0x00100000 (was SOURCE_FSYNC, removed: never emitted)
                                         // Available: 0x00200000
                                         // Available: 0x00400000
                                         // Available: 0x00800000

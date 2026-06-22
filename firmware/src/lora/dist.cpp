@@ -197,7 +197,7 @@ static void reconcile_deletes(void)
         if (!in) {
             static char logical[300]; snprintf(logical, sizeof(logical), "%s/%s", DIST_DIR_PATH, e->d_name);
             static char path[320]; remove(lfs_path(path, sizeof(path), logical));
-            printfnl(SOURCE_LORA, "dist: deleted %s (not in manifest)\n", e->d_name);
+            printfnl(SOURCE_LORA_DIST, "dist: deleted %s (not in manifest)\n", e->d_name);
         }
     }
     closedir(dir);
@@ -246,7 +246,7 @@ static void manifest_parse(char *text, uint32_t len)
                 int cmp = version_cmp(ver, self->version);    // >0 = manifest newer
                 d->wanted = config.lora_ota_downgrade ? (cmp != 0) : (cmp > 0);
                 if (d->wanted)
-                    printfnl(SOURCE_LORA, "dist: firmware %s available (running %s)%s\n",
+                    printfnl(SOURCE_LORA_DIST, "dist: firmware %s available (running %s)%s\n",
                              ver, self->version, cmp <= 0 ? " [downgrade]" : "");
             }
         }
@@ -289,7 +289,7 @@ static void manifest_parse(char *text, uint32_t len)
     have_manifest = true;
     cur_serial = rx_serial;
     int want = 0; for (int k = 0; k < dfile_n; k++) if (dfiles[k].wanted) want++;
-    printfnl(SOURCE_LORA, "dist: manifest serial %u: %d entries, %d to fetch\n",
+    printfnl(SOURCE_LORA_DIST, "dist: manifest serial %u: %d entries, %d to fetch\n",
              (unsigned)cur_serial, dfile_n, want);
 }
 
@@ -299,12 +299,12 @@ static void complete(void)
         dist_file_t *df = find_file(rx_file_id);
         esp_err_t e = esp_ota_set_boot_partition(fw_part);   // validates the image
         if (e == ESP_OK) {
-            printfnl(SOURCE_LORA, "dist: firmware %s flashed + verified, rebooting...\n",
+            printfnl(SOURCE_LORA_DIST, "dist: firmware %s flashed + verified, rebooting...\n",
                      df ? df->name : "");
             vTaskDelay(pdMS_TO_TICKS(1500));                 // let the log drain
             esp_restart();
         }
-        printfnl(SOURCE_LORA, "dist: firmware image verify failed (%s), will refetch\n",
+        printfnl(SOURCE_LORA_DIST, "dist: firmware image verify failed (%s), will refetch\n",
                  esp_err_to_name(e));
         rx_reset();
         return;
@@ -319,21 +319,33 @@ static void complete(void)
             if (!strcmp(got, df->md5) && !littlefs_mounted) {
                 // a concurrent HTTP filesystem upload has unmounted LittleFS --
                 // don't fopen/fwrite into the gap; the carousel refetches next pass
-                printfnl(SOURCE_LORA, "dist: %s verified but filesystem busy, retry next cycle\n", df->name);
+                printfnl(SOURCE_LORA_DIST, "dist: %s verified but filesystem busy, retry next cycle\n", df->name);
             } else if (!strcmp(got, df->md5)) {
                 char mk[96]; mkdir(lfs_path(mk, sizeof(mk), DIST_DIR_PATH), 0755);  // ensure /dist
-                char logical[128]; snprintf(logical, sizeof(logical), "%s/%s", DIST_DIR_PATH, df->name);
-                char path[160]; FILE *f = fopen(lfs_path(path, sizeof(path), logical), "wb");
+                // Atomic publish: write to a temp file, then rename() over the
+                // target. rename is atomic on LittleFS, so a power loss mid-write
+                // can never truncate the existing /dist/<name> -- the old copy
+                // stays intact until the verified new one is renamed in. The temp
+                // is a dotfile so reconcile_deletes() leaves it alone.
+                char tpath[160]; lfs_path(tpath, sizeof(tpath), DIST_DIR_PATH "/.incoming");
+                char logical[160]; snprintf(logical, sizeof(logical), "%s/%s", DIST_DIR_PATH, df->name);
+                char path[200];   lfs_path(path, sizeof(path), logical);
+                FILE *f = fopen(tpath, "wb");
+                bool ok = false;
                 if (f) {
-                    fwrite(rx_buf, 1, rx_file_len, f); fclose(f);
+                    size_t w = fwrite(rx_buf, 1, rx_file_len, f);
+                    ok = (fclose(f) == 0) && (w == rx_file_len);  // full write committed
+                }
+                if (ok && rename(tpath, path) == 0) {
                     df->wanted = false; dist_files_done++;
-                    printfnl(SOURCE_LORA, "dist: %s complete + verified (%s, %u B)\n",
+                    printfnl(SOURCE_LORA_DIST, "dist: %s complete + verified (%s, %u B)\n",
                              df->name, df->md5, (unsigned)rx_file_len);
                 } else {
-                    printfnl(SOURCE_LORA, "dist: %s write failed\n", df->name);
+                    remove(tpath);   // drop the partial temp; old /dist/<name> untouched
+                    printfnl(SOURCE_LORA_DIST, "dist: %s write failed\n", df->name);
                 }
             } else {
-                printfnl(SOURCE_LORA, "dist: %s hash mismatch (got %s want %s), retry next cycle\n",
+                printfnl(SOURCE_LORA_DIST, "dist: %s hash mismatch (got %s want %s), retry next cycle\n",
                          df->name, got, df->md5);
             }
         }
@@ -348,7 +360,7 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
     if (total_blocks == 0) total_blocks = 1;
     if (block_size == 0)   block_size = LP_DIST_BLOCK_SIZE;
     if (block_size > DIST_MAX_BLOCK) {              // hostile/garbled manifest guard
-        printfnl(SOURCE_LORA, "dist: id %u block_size %u too large, skipping\n",
+        printfnl(SOURCE_LORA_DIST, "dist: id %u block_size %u too large, skipping\n",
                  (unsigned)fid, (unsigned)block_size);
         return;                                     // stay idle (rx_file_id == 0xFFFF)
     }
@@ -359,18 +371,18 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
         // keeps the flash cache disabled for seconds and collides with concurrent
         // LittleFS access on the other core (Cache-disabled panic).
         fw_part = esp_ota_get_next_update_partition(NULL);
-        if (!fw_part) { printfnl(SOURCE_LORA, "dist: no OTA partition\n"); rx_reset(); return; }
+        if (!fw_part) { printfnl(SOURCE_LORA_DIST, "dist: no OTA partition\n"); rx_reset(); return; }
         // Refuse to start if an HTTP firmware/filesystem update owns the flash --
         // both target the same inactive slot; interleaving corrupts the image.
         if (!ota_lock_acquire("lora-fw-ota")) {
-            printfnl(SOURCE_LORA, "dist: OTA busy (%s in progress), deferring firmware\n",
+            printfnl(SOURCE_LORA_DIST, "dist: OTA busy (%s in progress), deferring firmware\n",
                      ota_lock_owner() ? ota_lock_owner() : "?");
             rx_reset(); return;
         }
         dist_holds_ota = true;
         fw_block    = (uint8_t *)malloc(block_size);
         rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
-        if (!fw_block || !rx_block_bm) { printfnl(SOURCE_LORA, "dist: OTA alloc fail\n"); rx_reset(); return; }
+        if (!fw_block || !rx_block_bm) { printfnl(SOURCE_LORA_DIST, "dist: OTA alloc fail\n"); rx_reset(); return; }
         rx_is_fw = true;
         rx_file_id = fid; rx_serial = serial; rx_file_len = flen;
         rx_total_blocks = total_blocks; rx_algo = algo; rx_block_size = block_size; rx_blocks_have = 0;
@@ -378,7 +390,7 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
     }
 
     if (flen > DIST_MAX_FILE) {   // oversized data file (shouldn't happen) -> skip
-        printfnl(SOURCE_LORA, "dist: id %u too big to RAM-buffer (%u B), skipping\n",
+        printfnl(SOURCE_LORA_DIST, "dist: id %u too big to RAM-buffer (%u B), skipping\n",
                  (unsigned)fid, (unsigned)flen);
         return;
     }
@@ -386,7 +398,7 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
     rx_total_blocks = total_blocks; rx_algo = algo; rx_block_size = block_size; rx_blocks_have = 0;
     rx_buf      = (uint8_t *)malloc(flen ? flen : 1);
     rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
-    if (!rx_buf || !rx_block_bm) { printfnl(SOURCE_LORA, "dist: alloc fail id %u\n", (unsigned)fid); rx_reset(); }
+    if (!rx_buf || !rx_block_bm) { printfnl(SOURCE_LORA_DIST, "dist: alloc fail id %u\n", (unsigned)fid); rx_reset(); }
 }
 
 static void start_block(uint16_t bidx, uint16_t N, uint16_t R, uint32_t comp_len)
@@ -415,7 +427,7 @@ static void finalize_block(bool use_rs)
             return;
         }
         dist_rs_recover++;
-        printfnl(SOURCE_LORA, "dist: id %u block %u RS-recovered %u lost data from %u parity\n",
+        printfnl(SOURCE_LORA_DIST, "dist: id %u block %u RS-recovered %u lost data from %u parity\n",
                  (unsigned)rx_file_id, (unsigned)blk_idx, (unsigned)lost, (unsigned)blk_par_cnt);
     }
 
@@ -428,14 +440,14 @@ static void finalize_block(bool use_rs)
     if (rx_algo == LP_DIST_ALGO_DEFLATE) {
         int n = inflate_buf(blk_data, blk_comp_len, dest, ulen);
         if (n != (int)ulen) {
-            printfnl(SOURCE_LORA, "dist: id %u block %u inflate %d != %u, retry next cycle\n",
+            printfnl(SOURCE_LORA_DIST, "dist: id %u block %u inflate %d != %u, retry next cycle\n",
                      (unsigned)rx_file_id, (unsigned)blk_idx, n, (unsigned)ulen);
             blk_reset();
             return;
         }
     } else {
         if (blk_comp_len != ulen) {
-            printfnl(SOURCE_LORA, "dist: id %u block %u len %u != %u, retry next cycle\n",
+            printfnl(SOURCE_LORA_DIST, "dist: id %u block %u len %u != %u, retry next cycle\n",
                      (unsigned)rx_file_id, (unsigned)blk_idx, (unsigned)blk_comp_len, (unsigned)ulen);
             blk_reset();
             return;
@@ -448,28 +460,44 @@ static void finalize_block(bool use_rs)
         // CONFIG_SPI_FLASH_AUTO_SUSPEND the cache stays enabled during each
         // erase/program (no cross-core cache-disable stall), so this never blocks
         // the system; per-block timing is logged for OTA progress visibility.
-        uint32_t t0 = uptime_ms(), maxop = 0;
+        // Before erasing, read the sector and SKIP the erase+write if the flash
+        // already holds exactly these bytes -- on a re-fetch after a reset/abort
+        // the partition still has the blocks written earlier, so re-commits become
+        // cheap reads (no flash wear, no cache-off window).
+        uint32_t t0 = uptime_ms(), maxop = 0, nwritten = 0;
         esp_err_t e = ESP_OK;
+        uint8_t *cur = (uint8_t *)malloc(SPI_FLASH_SEC_SIZE);   // scratch to compare flash
         for (uint32_t s = 0; s < ulen && e == ESP_OK; s += SPI_FLASH_SEC_SIZE) {
             uint32_t seg  = (ulen - s < SPI_FLASH_SEC_SIZE) ? (ulen - s) : SPI_FLASH_SEC_SIZE;
             uint32_t wseg = (seg + 3u) & ~3u;              // flash writes are 4-aligned
             if (wseg > seg) memset(fw_block + s + seg, 0, wseg - seg);
-            uint32_t a = uptime_ms();
-            e = esp_partition_erase_range(fw_part, off_u + s, SPI_FLASH_SEC_SIZE);
-            if (e == ESP_OK) e = esp_partition_write(fw_part, off_u + s, fw_block + s, wseg);
-            uint32_t d = uptime_ms() - a;
-            if (d > maxop) maxop = d;
+            bool match = cur && esp_partition_read(fw_part, off_u + s, cur, wseg) == ESP_OK &&
+                         memcmp(cur, fw_block + s, wseg) == 0;
+            if (!match) {
+                uint32_t a = uptime_ms();
+                e = esp_partition_erase_range(fw_part, off_u + s, SPI_FLASH_SEC_SIZE);
+                if (e == ESP_OK) e = esp_partition_write(fw_part, off_u + s, fw_block + s, wseg);
+                uint32_t d = uptime_ms() - a;
+                if (d > maxop) maxop = d;
+                nwritten++;
+            }
             vTaskDelay(1);                                 // let RX/idle breathe between sectors
         }
+        free(cur);
         if (e != ESP_OK) {
-            printfnl(SOURCE_LORA, "dist: id %u block %u flash erase/write failed (%s), retry next cycle\n",
+            printfnl(SOURCE_LORA_DIST, "dist: id %u block %u flash erase/write failed (%s), retry next cycle\n",
                      (unsigned)rx_file_id, (unsigned)blk_idx, esp_err_to_name(e));
             blk_reset();
             return;
         }
-        printfnl(SOURCE_LORA, "dist: fw block %u/%u committed (%u ms, max op %u ms)\n",
-                 (unsigned)(blk_idx + 1), (unsigned)rx_total_blocks,
-                 (unsigned)(uptime_ms() - t0), (unsigned)maxop);
+        if (nwritten == 0)
+            printfnl(SOURCE_LORA_DIST, "dist: fw block %u/%u already matches (%u ms)\n",
+                     (unsigned)(blk_idx + 1), (unsigned)rx_total_blocks,
+                     (unsigned)(uptime_ms() - t0));
+        else
+            printfnl(SOURCE_LORA_DIST, "dist: fw block %u/%u committed (%u ms, max op %u ms)\n",
+                     (unsigned)(blk_idx + 1), (unsigned)rx_total_blocks,
+                     (unsigned)(uptime_ms() - t0), (unsigned)maxop);
     }
 
     if (!bget(rx_block_bm, blk_idx)) { bset(rx_block_bm, blk_idx); rx_blocks_have++; }
@@ -536,11 +564,11 @@ static void dist_handle_chunk_locked(const uint8_t *pkt, size_t len)
             start_rx(fid, serial, flen, fblocks, df->algo, df->block_size, df->kind);
             if (rx_file_id != fid) return;                   // alloc failed / too big
             if (df->kind == DIST_KIND_FW)
-                printfnl(SOURCE_LORA, "dist: fetching firmware %s (%u B, %u blocks, %s)\n",
+                printfnl(SOURCE_LORA_DIST, "dist: fetching firmware %s (%u B, %u blocks, %s)\n",
                          df->name, (unsigned)flen, (unsigned)fblocks,
                          df->algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store");
             else
-                printfnl(SOURCE_LORA, "dist: fetching %s (%u B, %u blocks, %s)\n",
+                printfnl(SOURCE_LORA_DIST, "dist: fetching %s (%u B, %u blocks, %s)\n",
                          df->name, (unsigned)flen, (unsigned)fblocks,
                          df->algo == LP_DIST_ALGO_DEFLATE ? "deflate" : "store");
         }
@@ -575,7 +603,7 @@ void dist_abort(void)
     if (!dist_mtx) return;                 // nothing ever started -> nothing to free
     dist_lock();
     if (rx_file_id != 0xFFFF) {
-        printfnl(SOURCE_LORA, "dist: aborting in-progress transfer, freeing buffers\n");
+        printfnl(SOURCE_LORA_DIST, "dist: aborting in-progress transfer, freeing buffers\n");
         rx_reset();
     }
     dist_unlock();
@@ -591,7 +619,7 @@ void dist_tick(void)
     dist_lock();
     if (rx_file_id != 0xFFFF &&
         (uint32_t)(uptime_ms() - last_chunk_ms) >= DIST_STALL_MS) {
-        printfnl(SOURCE_LORA, "dist: transfer stalled %us (master lost?), freeing buffers\n",
+        printfnl(SOURCE_LORA_DIST, "dist: transfer stalled %us (master lost?), freeing buffers\n",
                  (unsigned)(DIST_STALL_MS / 1000));
         rx_reset();
     }

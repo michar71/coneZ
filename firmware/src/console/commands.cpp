@@ -331,7 +331,7 @@ int cmd_debug( int argc, char **argv )
         printfnl(SOURCE_COMMANDS, " - GPS_RAW: \t%s\n", getDebug(SOURCE_GPS_RAW) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, " - LORA: \t%s\n", getDebug(SOURCE_LORA) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, " - LORA_RAW: \t%s\n", getDebug(SOURCE_LORA_RAW) ? "on" : "off" );
-        printfnl(SOURCE_COMMANDS, " - FSYNC: \t%s\n", getDebug(SOURCE_FSYNC) ? "on" : "off" );
+        printfnl(SOURCE_COMMANDS, " - LORA_DIST: \t%s\n", getDebug(SOURCE_LORA_DIST) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, " - WIFI: \t%s\n", getDebug(SOURCE_WIFI) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, " - SENSORS: \t%s\n", getDebug(SOURCE_SENSORS) ? "on" : "off" );
         printfnl(SOURCE_COMMANDS, " - MQTT: \t%s\n", getDebug(SOURCE_MQTT) ? "on" : "off" );
@@ -375,11 +375,11 @@ int cmd_debug( int argc, char **argv )
     if( !strcasecmp( argv[1], "LORA_RAW" ) )
         mask_to_set = SOURCE_LORA_RAW;
     else
+    if( !strcasecmp( argv[1], "LORA_DIST" ) )
+        mask_to_set = SOURCE_LORA_DIST;
+    else
     if( !strcasecmp( argv[1], "WIFI" ) )
         mask_to_set = SOURCE_WIFI;
-    else
-    if( !strcasecmp( argv[1], "FSYNC" ) )
-        mask_to_set = SOURCE_FSYNC;
     else
     if( !strcasecmp( argv[1], "OTHER" ) )
         mask_to_set = SOURCE_OTHER;
@@ -3787,7 +3787,7 @@ static const char * const subs_config[] = { "set", "unset", "reset", NULL };
 static const char * const subs_cue[]    = { "load", "start", "stop", "status", NULL };
 static const char * const subs_debug[]  = {
     "off", "system", "basic", "wasm", "commands", "shell",
-    "gps", "gps_raw", "lora", "lora_raw", "wifi", "fsync",
+    "gps", "gps_raw", "lora", "lora_raw", "lora_dist", "wifi",
     "sensors", "mqtt", "other", NULL
 };
 static const char * const subs_onoff[]  = { "on", "off", NULL };

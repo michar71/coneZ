@@ -631,15 +631,18 @@ def _file_to_chunks(file_id, file_len, algo, blocks):
     return out
 
 
-def build_dist_chunks():
+def build_dist_chunks(manifest_path=None):
     """All chunks to broadcast: the manifest (file id 0, uncompressed) first, then
-    data files (per-block deflate or store, per the manifest)."""
+    data files (per-block deflate or store, per the manifest). Defaults to the
+    current MANIFEST_FILE; reload_manifest_if_changed() passes a fresh path."""
+    if manifest_path is None:
+        manifest_path = MANIFEST_FILE
     chunks = []
-    with open(MANIFEST_FILE, "rb") as fp:
+    with open(manifest_path, "rb") as fp:
         man = fp.read()
     chunks += _file_to_chunks(proto.DIST_MANIFEST_ID, len(man), proto.ALGO_NONE,
                               proto.split_blocks(man, proto.DIST_MANIFEST_BLOCK_SIZE))
-    for (fid, fname, size, md5) in parse_manifest_files(MANIFEST_FILE):
+    for (fid, fname, size, md5) in parse_manifest_files(manifest_path):
         fpath = os.path.join(DIST_DIR, fname)
         try:
             with open(fpath, "rb") as fp:
@@ -651,7 +654,7 @@ def build_dist_chunks():
         chunks += _file_to_chunks(fid, len(data), algo, blocks)
     # Phase 6: firmware images, chunked at the firmware block size (sent last so the
     # small files keep flowing each carousel pass while the big image trickles).
-    for (fid, prod, ver, size, bsz) in parse_manifest_firmware(MANIFEST_FILE):
+    for (fid, prod, ver, size, bsz) in parse_manifest_firmware(manifest_path):
         fpath = os.path.join("firmware", prod, ver + ".bin")
         try:
             with open(fpath, "rb") as fp:
@@ -711,17 +714,47 @@ def send_next_payload_chunk():
     payload_idx = (payload_idx + 1) % len(payload_chunks)
 
 
+def reload_manifest_if_changed():
+    """Hot-reload: if build_manifest.py has produced a newer manifest_<N>.txt,
+    switch to it live -- re-read the manifest + repackage all chunks -- WITHOUT a
+    restart. Build the new chunks first; only swap the live globals if it succeeds,
+    so a half-written manifest or a missing payload never takes the master down."""
+    global MANIFEST_FILE, manifest_serial, manifest_len
+    global dist_chunks, manifest_chunks, payload_chunks, payload_idx
+    path, serial = latest_manifest()
+    if path is None or serial <= manifest_serial:
+        return False
+    try:
+        new_chunks = build_dist_chunks(path)
+    except Exception as e:
+        print(f"dist: reload of serial {serial} failed ({e}); staying on serial {manifest_serial}")
+        return False
+    MANIFEST_FILE  = path
+    manifest_serial = serial
+    manifest_len   = os.path.getsize(path)
+    dist_chunks    = new_chunks
+    manifest_chunks = [c for c in dist_chunks if c["fid"] == proto.DIST_MANIFEST_ID]
+    payload_chunks  = [c for c in dist_chunks if c["fid"] != proto.DIST_MANIFEST_ID]
+    payload_idx = 0
+    nf = len(parse_manifest_files(path)); nfw = len(parse_manifest_firmware(path))
+    print(f"dist: HOT-RELOADED manifest serial {serial} ({os.path.basename(path)}): "
+          f"{len(manifest_chunks)} manifest + {len(payload_chunks)} payload chunks "
+          f"({nf} files + {nfw} fw)")
+    return True
+
+
 # --- Main loop ---------------------------------------------------------------
 last_tx = time.monotonic() - BEACON_PERIOD         # force immediate beacon
 try:
     while True:
         # Periodic beacon
         if time.monotonic() - last_tx >= BEACON_PERIOD:
+            reload_manifest_if_changed()   # pick up a freshly-built manifest, no restart
             print( "-------" )
             print()
-            
+
             print( "TX Beacon" )
-            beacon = make_beacon()
+            beacon = make_beacon()         # carries the (possibly just-reloaded) manifest_serial
             transmit( beacon )
             last_tx = time.monotonic()
             # Manifest right after each beacon so a freshly-locked cone can act

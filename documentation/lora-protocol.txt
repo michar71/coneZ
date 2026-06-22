@@ -372,6 +372,17 @@ etc.) and firmware are present when needed. ("dist" replaces the misleading name
   instantly). OTA samples the rare event hundreds of times under peak load; sparse
   low-load LittleFS writes essentially never do. AUTO_SUSPEND changes the lock
   strategy for ALL flash ops, so LittleFS/config/log writes are hardened too.
+  COMPARE-BEFORE-WRITE: before erasing a sector the cone reads it and skips the
+  erase+write if the flash already holds those exact bytes (logs "already matches"
+  vs "committed"), so on a re-fetch after a reset/abort the already-written blocks
+  re-commit as cheap reads -- no flash wear, no cache-off window. ATOMIC FILE
+  WRITE: dist data files are written to /dist/.incoming then rename()d over the
+  target (atomic on LittleFS) so a power loss mid-write never truncates the old
+  copy. CONCURRENCY: HTTP firmware/filesystem upload and the LoRa dist firmware OTA
+  share one ota_lock (either may release; loser fails fast) so they never interleave
+  on the inactive slot; in-progress buffers are freed on `lora off` and on a
+  5-minute stall (master gone). All dist chatter logs under its own [LORA_DIST]
+  debug source (debug lora_dist on|off, default on).
 
 13.6  BLOCK SIZE -- the one real knob
   Trades: compression (bigger = marginally better, diminishing past ~64 KB),

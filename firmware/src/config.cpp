@@ -114,7 +114,7 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("debug",  "gps_raw",      CFG_BOOL,  dbg_gps_raw),
     CFG_ENTRY("debug",  "lora",         CFG_BOOL,  dbg_lora),
     CFG_ENTRY("debug",  "lora_raw",     CFG_BOOL,  dbg_lora_raw),
-    CFG_ENTRY("debug",  "fsync",        CFG_BOOL,  dbg_fsync),
+    CFG_ENTRY("debug",  "lora_dist",    CFG_BOOL,  dbg_lora_dist),
     CFG_ENTRY("debug",  "wifi",         CFG_BOOL,  dbg_wifi),
     CFG_ENTRY("debug",  "sensors",      CFG_BOOL,  dbg_sensors),
     CFG_ENTRY("debug",  "mqtt",         CFG_BOOL,  dbg_mqtt),
@@ -269,7 +269,7 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->dbg_gps_raw      = DEFAULT_DBG_GPS_RAW;
     cfg->dbg_lora         = DEFAULT_DBG_LORA;
     cfg->dbg_lora_raw     = DEFAULT_DBG_LORA_RAW;
-    cfg->dbg_fsync        = DEFAULT_DBG_FSYNC;
+    cfg->dbg_lora_dist    = DEFAULT_DBG_LORA_DIST;
     cfg->dbg_wifi         = DEFAULT_DBG_WIFI;
     cfg->dbg_sensors      = DEFAULT_DBG_SENSORS;
     cfg->dbg_mqtt         = DEFAULT_DBG_MQTT;
@@ -510,7 +510,7 @@ void config_apply_debug(void)
     setDebugLevel(SOURCE_GPS_RAW,   config.dbg_gps_raw);
     setDebugLevel(SOURCE_LORA,      config.dbg_lora);
     setDebugLevel(SOURCE_LORA_RAW,  config.dbg_lora_raw);
-    setDebugLevel(SOURCE_FSYNC,     config.dbg_fsync);
+    setDebugLevel(SOURCE_LORA_DIST, config.dbg_lora_dist);
     setDebugLevel(SOURCE_WIFI,      config.dbg_wifi);
     setDebugLevel(SOURCE_SENSORS,   config.dbg_sensors);
     setDebugLevel(SOURCE_MQTT,      config.dbg_mqtt);

@@ -102,9 +102,9 @@ void vprintfnl( source_e source, const char *format, va_list args )
             case SOURCE_GPS_RAW:   tag = "GPS_RAW";   break;
             case SOURCE_LORA:      tag = "LORA";      break;
             case SOURCE_LORA_RAW:  tag = "LORA_RAW";  break;
+            case SOURCE_LORA_DIST: tag = "LORA_DIST"; break;
             case SOURCE_OTHER:     tag = "OTHER";     break;
             case SOURCE_WIFI:      tag = "WIFI";      break;
-            case SOURCE_FSYNC:     tag = "FSYNC";     break;
             case SOURCE_SENSORS:   tag = "SENSORS";   break;
             case SOURCE_MQTT:      tag = "MQTT";      break;
             case SOURCE_NONE:      break;
