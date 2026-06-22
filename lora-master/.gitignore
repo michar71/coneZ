@@ -4,3 +4,6 @@ firmware/**/*.bin
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Live master config (ship conez-master.ini.example; the real one is per-deployment)
+conez-master.ini

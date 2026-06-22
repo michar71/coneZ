@@ -7,6 +7,9 @@ import fcntl
 import time, binascii
 import struct
 import math
+import socket
+import threading
+import configparser
 from datetime import datetime
 from LoRaRF import SX126x
 import lora_proto as proto
@@ -68,6 +71,74 @@ FILE_CHUNK_SIZE = 128
 DIST_DIR = "dist"
 MANIFEST_DIR = "dist-state"
 MANIFEST_RE = re.compile(r"manifest_(\d+)\.txt$")
+
+
+# --- Config file (overrides the hard-coded defaults above) -------------------
+# Optional INI at CONEZ_MASTER_CONFIG (default ./conez-master.ini). Precedence:
+# built-in defaults < config file < env vars (DEADTIME / DIST_TEST_DROP_DATA),
+# so existing bench invocations keep working. Re-readable at runtime via the
+# control socket's `reload` command.
+CONFIG_PATH    = os.environ.get("CONEZ_MASTER_CONFIG", "conez-master.ini")
+CONTROL_SOCKET = os.environ.get("CONEZ_MASTER_SOCKET", "/tmp/conez-master.sock")
+
+# Snapshot the hard-coded defaults ONCE (before load_config can mutate them) so a
+# reload is deterministic: every setting is recomputed as (default <- file <- env),
+# never carried over from a previous reload.
+_CFG_DEFAULTS = dict(
+    BEACON_PERIOD=BEACON_PERIOD, DOWNSTREAM_DEADTIME=DOWNSTREAM_DEADTIME, CALLSIGN=CALLSIGN,
+    DOWNSTREAM_FREQUENCY=DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH=DOWNSTREAM_BANDWIDTH,
+    DOWNSTREAM_SF=DOWNSTREAM_SF, DOWNSTREAM_CR=DOWNSTREAM_CR, DOWNSTREAM_PREAMBLE=DOWNSTREAM_PREAMBLE,
+    DOWNSTREAM_TXPOWER=DOWNSTREAM_TXPOWER, LORA_SYNC_WORD=LORA_SYNC_WORD,
+    DIST_DIR=DIST_DIR, MANIFEST_DIR=MANIFEST_DIR, DIST_TEST_DROP_DATA=DIST_TEST_DROP_DATA,
+    CONTROL_SOCKET=CONTROL_SOCKET,
+)
+
+def load_config(path=CONFIG_PATH):
+    """Recompute every setting from (hard-coded default <- INI file <- env var).
+    Deterministic: a key absent from the file falls back to the DEFAULT, never to a
+    value left over from an earlier reload. Returns a one-line summary."""
+    global BEACON_PERIOD, DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_SF
+    global DOWNSTREAM_CR, DOWNSTREAM_PREAMBLE, DOWNSTREAM_LDRO, DOWNSTREAM_TXPOWER
+    global DOWNSTREAM_DEADTIME, LORA_SYNC_WORD, CALLSIGN
+    global DIST_DIR, MANIFEST_DIR, DIST_TEST_DROP_DATA, CONTROL_SOCKET
+    D = _CFG_DEFAULTS
+    loaded = os.path.exists(path)
+    cp = configparser.ConfigParser()
+    if loaded:
+        cp.read(path)
+    def g(sec, key, default, cast):
+        if loaded and cp.has_option(sec, key):
+            try: return cast(cp.get(sec, key).strip())
+            except Exception as e: print(f"config: bad [{sec}] {key}: {e}")
+        return default
+    BEACON_PERIOD        = g("master", "beacon_period", D["BEACON_PERIOD"], int)
+    DOWNSTREAM_DEADTIME  = g("master", "deadtime",      D["DOWNSTREAM_DEADTIME"], float)
+    CALLSIGN             = g("master", "callsign",      D["CALLSIGN"], str)
+    DOWNSTREAM_FREQUENCY = g("lora", "frequency", D["DOWNSTREAM_FREQUENCY"], int)
+    DOWNSTREAM_BANDWIDTH = g("lora", "bandwidth", D["DOWNSTREAM_BANDWIDTH"], int)
+    DOWNSTREAM_SF        = g("lora", "sf",        D["DOWNSTREAM_SF"], int)
+    DOWNSTREAM_CR        = g("lora", "cr",        D["DOWNSTREAM_CR"], int)
+    DOWNSTREAM_PREAMBLE  = g("lora", "preamble",  D["DOWNSTREAM_PREAMBLE"], int)
+    DOWNSTREAM_TXPOWER   = g("lora", "tx_power",  D["DOWNSTREAM_TXPOWER"], int)
+    LORA_SYNC_WORD       = g("lora", "sync_word", D["LORA_SYNC_WORD"], lambda s: int(s, 0))
+    DIST_DIR             = g("dist", "dir",            D["DIST_DIR"], str)
+    MANIFEST_DIR         = g("dist", "manifest_dir",   D["MANIFEST_DIR"], str)
+    DIST_TEST_DROP_DATA  = g("dist", "test_drop_data", D["DIST_TEST_DROP_DATA"], int)
+    CONTROL_SOCKET       = g("control", "socket",      D["CONTROL_SOCKET"], str)
+    # Env vars win over the file (legacy bench knobs).
+    if "DEADTIME" in os.environ:
+        DOWNSTREAM_DEADTIME = float(os.environ["DEADTIME"])
+    if "DIST_TEST_DROP_DATA" in os.environ:
+        DIST_TEST_DROP_DATA = int(os.environ["DIST_TEST_DROP_DATA"])
+    # LDRO is DERIVED from SF/BW (must match the cone's auto-LDRO), never set directly.
+    DOWNSTREAM_LDRO = ((1 << DOWNSTREAM_SF) / DOWNSTREAM_BANDWIDTH) > 0.016
+    src = path if loaded else f"defaults (no {path})"
+    return (f"config: {src} -> {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz SF{DOWNSTREAM_SF} "
+            f"BW{DOWNSTREAM_BANDWIDTH//1000}k CR4/{DOWNSTREAM_CR} {DOWNSTREAM_TXPOWER:+d} dBm "
+            f"sync 0x{LORA_SYNC_WORD:04X} beacon {BEACON_PERIOD}s deadtime {DOWNSTREAM_DEADTIME}s "
+            f"callsign {CALLSIGN}")
+
+print(load_config())
 
 
 def latest_manifest(dir_path=MANIFEST_DIR):
@@ -307,30 +378,30 @@ if not LoRa.begin(busId, csId, resetPin, busyPin, irqPin, txenPin, rxenPin):
     raise RuntimeError("Can't start LoRa radio")
 
 LoRa.setDio2RfSwitch()
-
-print( f"  Set frequency: {DOWNSTREAM_FREQUENCY/1000000} MHz" )
-LoRa.setFrequency( DOWNSTREAM_FREQUENCY )
-
 LoRa.setRxGain( LoRa.RX_GAIN_BOOSTED )
 
-print( f"  Set modulation parameters:\n    Spreading factor = {DOWNSTREAM_SF}\n    Bandwidth = {DOWNSTREAM_BANDWIDTH/1000} kHz\n    Coding rate = 4/{DOWNSTREAM_CR}\n    LDRO = {'on' if DOWNSTREAM_LDRO else 'off'}" )
-LoRa.setLoRaModulation( DOWNSTREAM_SF, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_CR, DOWNSTREAM_LDRO )
 
-print( f"  Set packet parameters:\n    Preamble = {DOWNSTREAM_PREAMBLE}  CRC: On" )
-LoRa.setLoRaPacket( LoRa.HEADER_EXPLICIT, DOWNSTREAM_PREAMBLE, 200, True, False )
+def apply_radio_config(reconfigure=False):
+    """Apply the (possibly reloaded) DOWNSTREAM_* radio params, then return to RX
+    continuous. reconfigure=True first drops to standby (the radio sits in
+    RX_CONTINUOUS during normal operation). TX power goes through set_tx_power()'s
+    per-power PA table, NOT LoRaRF setTxPower() (which dead-ends <+14 dBm on SX1262).
+    Returns the actual TX power set."""
+    if reconfigure:
+        LoRa.standby()
+    LoRa.setFrequency( DOWNSTREAM_FREQUENCY )
+    LoRa.setLoRaModulation( DOWNSTREAM_SF, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_CR, DOWNSTREAM_LDRO )
+    LoRa.setLoRaPacket( LoRa.HEADER_EXPLICIT, DOWNSTREAM_PREAMBLE, 200, True, False )
+    LoRa.setSyncWord( LORA_SYNC_WORD )
+    p = set_tx_power( DOWNSTREAM_TXPOWER )
+    LoRa.request( LoRa.RX_CONTINUOUS )
+    return p
 
-print( f"  Set LoRa sync word: 0x{LORA_SYNC_WORD:04X}" )
-LoRa.setSyncWord( LORA_SYNC_WORD )
-
-# Set TX power via the per-power optimized PA table (set_tx_power above). LoRaRF's
-# own setTxPower() dead-ends for SX1262 <+14 dBm; this gives a clean signal at any
-# power -9..+22 dBm.
-_actual_power = set_tx_power( DOWNSTREAM_TXPOWER )
-print( f"  Set TX power: {_actual_power:+d} dBm (matched PA config)" )
-
-
+_actual_power = apply_radio_config()
+print( f"  Radio: {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz  SF{DOWNSTREAM_SF}  BW{DOWNSTREAM_BANDWIDTH//1000}k  "
+       f"CR4/{DOWNSTREAM_CR}  LDRO {'on' if DOWNSTREAM_LDRO else 'off'}  {_actual_power:+d} dBm  "
+       f"sync 0x{LORA_SYNC_WORD:04X}" )
 print("\n--- LoRa RX Continuous ---\n")
-LoRa.request(LoRa.RX_CONTINUOUS)
 
 def flush_rx_fifo():
     while LoRa.available():
@@ -743,12 +814,120 @@ def reload_manifest_if_changed():
     return True
 
 
+# --- Control socket ----------------------------------------------------------
+# A Unix-domain control socket (+ the conez-masterctl CLI) drives the running
+# master without a restart. Commands set flags the MAIN LOOP acts on, so config/
+# manifest/radio reloads happen in the main thread and never race a transmit.
+g_tx_enabled    = True               # LoRa transmission on/off (enable/disable)
+g_stop          = False              # graceful shutdown (stop)
+g_reload_req    = threading.Event()  # control thread -> main loop: do a full reload
+g_reload_done   = threading.Event()  # main loop -> control thread: reload finished
+g_reload_result = ""                 # main loop writes the reload summary
+
+def do_full_reload():
+    """Re-read the config file, re-apply the radio params, and reload the latest
+    manifest. MUST run in the main-loop thread (no race with transmit)."""
+    global MANIFEST_FILE, manifest_serial, manifest_len, dist_chunks
+    global manifest_chunks, payload_chunks, payload_idx, _actual_power
+    cfg_summary = load_config()
+    _actual_power = apply_radio_config(reconfigure=True)
+    path, serial = latest_manifest(MANIFEST_DIR)
+    if path is not None:
+        MANIFEST_FILE   = path
+        manifest_serial = serial
+        manifest_len    = os.path.getsize(path)
+        dist_chunks     = build_dist_chunks(path)
+        manifest_chunks = [c for c in dist_chunks if c["fid"] == proto.DIST_MANIFEST_ID]
+        payload_chunks  = [c for c in dist_chunks if c["fid"] != proto.DIST_MANIFEST_ID]
+        payload_idx     = 0
+    return (f"{cfg_summary}; manifest serial {manifest_serial} "
+            f"({os.path.basename(MANIFEST_FILE) if MANIFEST_FILE else 'none'}), "
+            f"{len(payload_chunks)} payload chunks")
+
+def handle_control_command(line):
+    """Runs in the control thread. Returns a one-line response."""
+    global g_tx_enabled, g_stop
+    cmd = (line.split() or [""])[0].lower()
+    if cmd in ("enable", "on"):
+        g_tx_enabled = True;  return "OK: LoRa TX enabled"
+    if cmd in ("disable", "off"):
+        g_tx_enabled = False; return "OK: LoRa TX disabled"
+    if cmd == "stop":
+        g_stop = True;        return "OK: stopping"
+    if cmd == "reload":
+        # do_full_reload() re-runs build_dist_chunks() (deflate+RS of the whole
+        # firmware, ~20 s for a 1.2 MB image), so wait generously.
+        g_reload_done.clear()
+        g_reload_req.set()                       # main loop performs it
+        if g_reload_done.wait(timeout=90):
+            return "OK: reloaded — " + g_reload_result
+        return "ERROR: reload still running (taking >90 s); check the master log"
+    if cmd == "status":
+        return (f"OK: tx={'enabled' if g_tx_enabled else 'disabled'}  "
+                f"manifest=serial {manifest_serial} "
+                f"({os.path.basename(MANIFEST_FILE) if MANIFEST_FILE else 'none'})  "
+                f"payload_chunks={len(payload_chunks)}  "
+                f"radio={DOWNSTREAM_FREQUENCY/1e6:.3f}MHz/SF{DOWNSTREAM_SF}/"
+                f"BW{DOWNSTREAM_BANDWIDTH//1000}k/{DOWNSTREAM_TXPOWER:+d}dBm  "
+                f"beacon={BEACON_PERIOD}s deadtime={DOWNSTREAM_DEADTIME}s callsign={CALLSIGN}")
+    if cmd in ("help", "?", ""):
+        return "OK: commands: status | reload | enable|on | disable|off | stop | help"
+    return f"ERROR: unknown command '{cmd}' (try: status, reload, enable, disable, stop, help)"
+
+def control_server():
+    """Background thread: serve the Unix-domain control socket."""
+    try:
+        if os.path.exists(CONTROL_SOCKET):
+            os.unlink(CONTROL_SOCKET)
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(CONTROL_SOCKET)
+        srv.listen(4)
+        srv.settimeout(1.0)
+    except Exception as e:
+        print(f"control socket: FAILED on {CONTROL_SOCKET}: {e}")
+        return
+    print(f"control socket: {CONTROL_SOCKET}  (use conez-masterctl)")
+    while not g_stop:
+        try:
+            conn, _ = srv.accept()
+        except socket.timeout:
+            continue
+        except OSError:
+            break
+        try:
+            conn.settimeout(20.0)
+            line = conn.recv(512).decode(errors="replace").strip()
+            conn.sendall((handle_control_command(line) + "\n").encode())
+        except Exception as e:
+            try: conn.sendall(f"ERROR: {e}\n".encode())
+            except Exception: pass
+        finally:
+            conn.close()
+    try:
+        srv.close(); os.unlink(CONTROL_SOCKET)
+    except OSError:
+        pass
+
+threading.Thread(target=control_server, name="control", daemon=True).start()
+
+
 # --- Main loop ---------------------------------------------------------------
 last_tx = time.monotonic() - BEACON_PERIOD         # force immediate beacon
 try:
-    while True:
-        # Periodic beacon
-        if time.monotonic() - last_tx >= BEACON_PERIOD:
+    while not g_stop:
+        # Control: explicit full reload (config + radio + manifest), done HERE so
+        # it never races a transmit or the chunk lists.
+        if g_reload_req.is_set():
+            try:
+                g_reload_result = do_full_reload()
+            except Exception as e:
+                g_reload_result = f"reload failed: {e}"
+            g_reload_req.clear()
+            g_reload_done.set()
+            print(f"control: reloaded — {g_reload_result}")
+
+        # Periodic beacon (only while TX is enabled)
+        if g_tx_enabled and time.monotonic() - last_tx >= BEACON_PERIOD:
             reload_manifest_if_changed()   # pick up a freshly-built manifest, no restart
             print( "-------" )
             print()
@@ -760,12 +939,14 @@ try:
             # Manifest right after each beacon so a freshly-locked cone can act
             # immediately (highest priority); the payload cycles between beacons.
             send_manifest()
-        else:
+        elif g_tx_enabled:
             # dist carousel: next data/firmware chunk (manifest sent post-beacon)
             send_next_payload_chunk()
             time.sleep( DOWNSTREAM_DEADTIME )
+        else:
+            time.sleep( 0.05 )             # TX disabled: idle, but keep serving RX below
 
-        # Check for incoming packets
+        # Check for incoming packets (always, even when TX is disabled)
         if LoRa.available():
             t_rx = datetime.now()
             msg   = bytearray()
@@ -790,4 +971,7 @@ except KeyboardInterrupt:
     pass
 finally:
     LoRa.end()
+    try: os.unlink(CONTROL_SOCKET)
+    except OSError: pass
+    print("conez-master: stopped")
 
