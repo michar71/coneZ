@@ -56,6 +56,32 @@ DOWNSTREAM_TXPOWER = 0				# dBm (signed, -9..+22). Low for close-range
 						# ends for SX1262 powers <+14 -> no RF out)
 DOWNSTREAM_DEADTIME = float(os.environ.get("DEADTIME", "0.1"))	# Gap between transmissions (env-tunable for bench)
 LORA_SYNC_WORD = 0xDEAD
+
+# --- Radio mode + FSK (Phase 9) ----------------------------------------------
+# DOWNSTREAM_MODE selects "lora" or "fsk". FSK defaults match the cone's RadioLib
+# beginFSK config + the scanlist FSK entry (F 431250000 4800 5000 9700 0x2D):
+# NRZ (whitening off), variable-length packets, 2-byte CCITT-inverted CRC.
+DOWNSTREAM_MODE          = "lora"   # "lora" | "fsk"
+DOWNSTREAM_FSK_BITRATE   = 4800     # bps
+DOWNSTREAM_FSK_FREQDEV   = 5000     # Hz
+DOWNSTREAM_FSK_RXBW      = 9700     # Hz (mapped to an SX126x DSB RX-BW register)
+DOWNSTREAM_FSK_SYNC      = "0x2D"   # FSK sync word (hex, 1+ bytes)
+DOWNSTREAM_FSK_PREAMBLE_BITS = 32   # master TX preamble bits (>= the cone's detector)
+DOWNSTREAM_FSK_WHITENING = 0        # 0 = off (cone uses NRZ); 1 = on
+DOWNSTREAM_FSK_SHAPING   = 0        # Gaussian shaping index, MUST match the cone's
+                                    # [fsk] shaping: 0=none 1=BT0.3 2=BT0.5 3=BT0.7 4=BT1.0
+# SX126x GFSK pulse-shape register value per shaping index (datasheet SetModulationParams).
+FSK_PULSE = (0x00, 0x08, 0x09, 0x0A, 0x0B)
+# SX126x GFSK DSB RX-bandwidth register map (Hz -> reg), per the SX1262 datasheet.
+FSK_BW_REG = {4800:0x1F, 5800:0x17, 7300:0x0F, 9700:0x1E, 11700:0x16, 14600:0x0E,
+              19500:0x1D, 23400:0x15, 29300:0x0D, 39000:0x1C, 46900:0x14, 58600:0x0C,
+              78200:0x1B, 93800:0x13, 117300:0x0B, 156200:0x1A, 187200:0x12,
+              234300:0x0A, 312000:0x19, 373600:0x11}
+# Match RadioLib CRC_2_BYTE_INV (CCITT): type byte + init/poly (fixed, must agree).
+FSK_CRC_TYPE = 0x06
+FSK_CRC_INIT = 0x1D0F
+FSK_CRC_POLY = 0x1021
+FXTAL_HZ     = 32000000
 CALLSIGN = "N1AF"				# FCC station ID (in the v1 beacon)
 
 # Firmware (legacy Phase-0 globals, used only by the dormant transmit_firmware()
@@ -91,6 +117,10 @@ _CFG_DEFAULTS = dict(
     DOWNSTREAM_TXPOWER=DOWNSTREAM_TXPOWER, LORA_SYNC_WORD=LORA_SYNC_WORD,
     DIST_DIR=DIST_DIR, MANIFEST_DIR=MANIFEST_DIR, DIST_TEST_DROP_DATA=DIST_TEST_DROP_DATA,
     CONTROL_SOCKET=CONTROL_SOCKET,
+    DOWNSTREAM_MODE=DOWNSTREAM_MODE, DOWNSTREAM_FSK_BITRATE=DOWNSTREAM_FSK_BITRATE,
+    DOWNSTREAM_FSK_FREQDEV=DOWNSTREAM_FSK_FREQDEV, DOWNSTREAM_FSK_RXBW=DOWNSTREAM_FSK_RXBW,
+    DOWNSTREAM_FSK_SYNC=DOWNSTREAM_FSK_SYNC, DOWNSTREAM_FSK_PREAMBLE_BITS=DOWNSTREAM_FSK_PREAMBLE_BITS,
+    DOWNSTREAM_FSK_WHITENING=DOWNSTREAM_FSK_WHITENING, DOWNSTREAM_FSK_SHAPING=DOWNSTREAM_FSK_SHAPING,
 )
 
 def load_config(path=CONFIG_PATH):
@@ -101,6 +131,9 @@ def load_config(path=CONFIG_PATH):
     global DOWNSTREAM_CR, DOWNSTREAM_PREAMBLE, DOWNSTREAM_LDRO, DOWNSTREAM_TXPOWER
     global DOWNSTREAM_DEADTIME, LORA_SYNC_WORD, CALLSIGN
     global DIST_DIR, MANIFEST_DIR, DIST_TEST_DROP_DATA, CONTROL_SOCKET
+    global DOWNSTREAM_MODE, DOWNSTREAM_FSK_BITRATE, DOWNSTREAM_FSK_FREQDEV
+    global DOWNSTREAM_FSK_RXBW, DOWNSTREAM_FSK_SYNC, DOWNSTREAM_FSK_PREAMBLE_BITS
+    global DOWNSTREAM_FSK_WHITENING, DOWNSTREAM_FSK_SHAPING
     D = _CFG_DEFAULTS
     loaded = os.path.exists(path)
     cp = configparser.ConfigParser()
@@ -125,6 +158,14 @@ def load_config(path=CONFIG_PATH):
     MANIFEST_DIR         = g("dist", "manifest_dir",   D["MANIFEST_DIR"], str)
     DIST_TEST_DROP_DATA  = g("dist", "test_drop_data", D["DIST_TEST_DROP_DATA"], int)
     CONTROL_SOCKET       = g("control", "socket",      D["CONTROL_SOCKET"], str)
+    DOWNSTREAM_MODE              = g("lora", "mode", D["DOWNSTREAM_MODE"], str).lower()
+    DOWNSTREAM_FSK_BITRATE       = g("fsk", "bitrate",       D["DOWNSTREAM_FSK_BITRATE"], int)
+    DOWNSTREAM_FSK_FREQDEV       = g("fsk", "freqdev",       D["DOWNSTREAM_FSK_FREQDEV"], int)
+    DOWNSTREAM_FSK_RXBW          = g("fsk", "rxbw",          D["DOWNSTREAM_FSK_RXBW"], int)
+    DOWNSTREAM_FSK_SYNC          = g("fsk", "sync",          D["DOWNSTREAM_FSK_SYNC"], str)
+    DOWNSTREAM_FSK_PREAMBLE_BITS = g("fsk", "preamble_bits", D["DOWNSTREAM_FSK_PREAMBLE_BITS"], int)
+    DOWNSTREAM_FSK_WHITENING     = g("fsk", "whitening",     D["DOWNSTREAM_FSK_WHITENING"], int)
+    DOWNSTREAM_FSK_SHAPING       = g("fsk", "shaping",       D["DOWNSTREAM_FSK_SHAPING"], int)
     # Env vars win over the file (legacy bench knobs).
     if "DEADTIME" in os.environ:
         DOWNSTREAM_DEADTIME = float(os.environ["DEADTIME"])
@@ -133,10 +174,14 @@ def load_config(path=CONFIG_PATH):
     # LDRO is DERIVED from SF/BW (must match the cone's auto-LDRO), never set directly.
     DOWNSTREAM_LDRO = ((1 << DOWNSTREAM_SF) / DOWNSTREAM_BANDWIDTH) > 0.016
     src = path if loaded else f"defaults (no {path})"
-    return (f"config: {src} -> {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz SF{DOWNSTREAM_SF} "
-            f"BW{DOWNSTREAM_BANDWIDTH//1000}k CR4/{DOWNSTREAM_CR} {DOWNSTREAM_TXPOWER:+d} dBm "
-            f"sync 0x{LORA_SYNC_WORD:04X} beacon {BEACON_PERIOD}s deadtime {DOWNSTREAM_DEADTIME}s "
-            f"callsign {CALLSIGN}")
+    if DOWNSTREAM_MODE == "fsk":
+        phy = (f"FSK {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz {DOWNSTREAM_FSK_BITRATE} bps "
+               f"dev {DOWNSTREAM_FSK_FREQDEV} Hz rxbw {DOWNSTREAM_FSK_RXBW} Hz sync {DOWNSTREAM_FSK_SYNC}")
+    else:
+        phy = (f"LoRa {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz SF{DOWNSTREAM_SF} "
+               f"BW{DOWNSTREAM_BANDWIDTH//1000}k CR4/{DOWNSTREAM_CR} sync 0x{LORA_SYNC_WORD:04X}")
+    return (f"config: {src} -> {phy} {DOWNSTREAM_TXPOWER:+d} dBm "
+            f"beacon {BEACON_PERIOD}s deadtime {DOWNSTREAM_DEADTIME}s callsign {CALLSIGN}")
 
 print(load_config())
 
@@ -381,27 +426,73 @@ LoRa.setDio2RfSwitch()
 LoRa.setRxGain( LoRa.RX_GAIN_BOOSTED )
 
 
+def _fsk_sync_bytes(s):
+    """Parse a hex sync word ('0x2D', '12AD', ...) into a list of byte ints."""
+    s = str(s).lower().replace("0x", "").replace(" ", "")
+    if not s: return [0x2D]
+    if len(s) % 2: s = "0" + s
+    return [int(s[i:i+2], 16) for i in range(0, len(s), 2)]
+
 def apply_radio_config(reconfigure=False):
-    """Apply the (possibly reloaded) DOWNSTREAM_* radio params, then return to RX
-    continuous. reconfigure=True first drops to standby (the radio sits in
-    RX_CONTINUOUS during normal operation). TX power goes through set_tx_power()'s
-    per-power PA table, NOT LoRaRF setTxPower() (which dead-ends <+14 dBm on SX1262).
+    """Apply the (possibly reloaded) DOWNSTREAM_* radio params (LoRa or FSK), then
+    return to RX continuous. reconfigure=True first drops to standby. TX power goes
+    through set_tx_power()'s PA table (LoRaRF setTxPower() dead-ends <+14 dBm).
     Returns the actual TX power set."""
     if reconfigure:
         LoRa.standby()
     LoRa.setFrequency( DOWNSTREAM_FREQUENCY )
-    LoRa.setLoRaModulation( DOWNSTREAM_SF, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_CR, DOWNSTREAM_LDRO )
-    LoRa.setLoRaPacket( LoRa.HEADER_EXPLICIT, DOWNSTREAM_PREAMBLE, 200, True, False )
-    LoRa.setSyncWord( LORA_SYNC_WORD )
+    if DOWNSTREAM_MODE == "fsk":
+        # GFSK matched to the cone's RadioLib beginFSK. LoRaRF's setFskModulation
+        # has an Fdev bug, so write SetModulationParams (0x8B) directly:
+        # BR(3 bytes), pulseShape (NONE), RX bandwidth, Fdev(3 bytes).
+        LoRa.setPacketType( LoRa.FSK_MODEM )
+        br = round(32 * FXTAL_HZ / DOWNSTREAM_FSK_BITRATE)        # e.g. 4800 -> 213333
+        fd = round(DOWNSTREAM_FSK_FREQDEV * (1 << 25) / FXTAL_HZ) # e.g. 5000 -> 5243
+        bw = FSK_BW_REG.get(DOWNSTREAM_FSK_RXBW, 0x1E)
+        ps = FSK_PULSE[DOWNSTREAM_FSK_SHAPING] if 0 <= DOWNSTREAM_FSK_SHAPING < len(FSK_PULSE) else 0x00
+        LoRa._writeBytes(0x8B, (
+            (br >> 16) & 0xFF, (br >> 8) & 0xFF, br & 0xFF,
+            ps, bw,
+            (fd >> 16) & 0xFF, (fd >> 8) & 0xFF, fd & 0xFF), 8)
+        LoRa.setFskCrc( FSK_CRC_INIT, FSK_CRC_POLY )             # CCITT init/poly (match RadioLib)
+        sw = _fsk_sync_bytes( DOWNSTREAM_FSK_SYNC )
+        LoRa.setFskSyncWord( tuple(sw), len(sw) )
+        # SetPacketParams (per-TX payload length is patched in by the dispatch below)
+        LoRa.setFskPacket( DOWNSTREAM_FSK_PREAMBLE_BITS, 0x05, len(sw) * 8, 0x00,
+                           0x01, 0xFF, FSK_CRC_TYPE, DOWNSTREAM_FSK_WHITENING )
+    else:
+        LoRa.setPacketType( LoRa.LORA_MODEM )
+        LoRa.setLoRaModulation( DOWNSTREAM_SF, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_CR, DOWNSTREAM_LDRO )
+        LoRa.setLoRaPacket( LoRa.HEADER_EXPLICIT, DOWNSTREAM_PREAMBLE, 200, True, False )
+        LoRa.setSyncWord( LORA_SYNC_WORD )
     p = set_tx_power( DOWNSTREAM_TXPOWER )
     LoRa.request( LoRa.RX_CONTINUOUS )
     return p
 
+# LoRaRF's endPacket() always calls setPacketParamsLoRa(...payloadLength...). In FSK
+# mode, redirect that to setPacketParamsFsk with the same per-packet length, so the
+# unchanged beginPacket/write/endPacket TX path emits a proper variable-length GFSK
+# packet (sync/CRC/whitening matched to the cone).
+_orig_set_packet_params_lora = LoRa.setPacketParamsLoRa
+def _set_packet_params_dispatch(preambleLength, headerType, payloadLength, crcType, invertIq):
+    if DOWNSTREAM_MODE == "fsk":
+        sw_len = len(_fsk_sync_bytes(DOWNSTREAM_FSK_SYNC))
+        LoRa.setPacketParamsFsk(DOWNSTREAM_FSK_PREAMBLE_BITS, 0x05, sw_len * 8, 0x00,
+                                0x01, payloadLength, FSK_CRC_TYPE, DOWNSTREAM_FSK_WHITENING)
+    else:
+        _orig_set_packet_params_lora(preambleLength, headerType, payloadLength, crcType, invertIq)
+LoRa.setPacketParamsLoRa = _set_packet_params_dispatch
+
 _actual_power = apply_radio_config()
-print( f"  Radio: {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz  SF{DOWNSTREAM_SF}  BW{DOWNSTREAM_BANDWIDTH//1000}k  "
-       f"CR4/{DOWNSTREAM_CR}  LDRO {'on' if DOWNSTREAM_LDRO else 'off'}  {_actual_power:+d} dBm  "
-       f"sync 0x{LORA_SYNC_WORD:04X}" )
-print("\n--- LoRa RX Continuous ---\n")
+if DOWNSTREAM_MODE == "fsk":
+    print( f"  Radio: FSK {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz  {DOWNSTREAM_FSK_BITRATE} bps  "
+           f"dev {DOWNSTREAM_FSK_FREQDEV} Hz  rxbw {DOWNSTREAM_FSK_RXBW} Hz  "
+           f"sync {DOWNSTREAM_FSK_SYNC}  {_actual_power:+d} dBm" )
+else:
+    print( f"  Radio: LoRa {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz  SF{DOWNSTREAM_SF}  BW{DOWNSTREAM_BANDWIDTH//1000}k  "
+           f"CR4/{DOWNSTREAM_CR}  LDRO {'on' if DOWNSTREAM_LDRO else 'off'}  {_actual_power:+d} dBm  "
+           f"sync 0x{LORA_SYNC_WORD:04X}" )
+print("\n--- RX Continuous ---\n")
 
 def flush_rx_fifo():
     while LoRa.available():
@@ -863,12 +954,16 @@ def handle_control_command(line):
             return "OK: reloaded — " + g_reload_result
         return "ERROR: reload still running (taking >90 s); check the master log"
     if cmd == "status":
+        if DOWNSTREAM_MODE == "fsk":
+            radio = (f"FSK/{DOWNSTREAM_FREQUENCY/1e6:.3f}MHz/{DOWNSTREAM_FSK_BITRATE}bps/"
+                     f"dev{DOWNSTREAM_FSK_FREQDEV}/sync{DOWNSTREAM_FSK_SYNC}/{DOWNSTREAM_TXPOWER:+d}dBm")
+        else:
+            radio = (f"LoRa/{DOWNSTREAM_FREQUENCY/1e6:.3f}MHz/SF{DOWNSTREAM_SF}/"
+                     f"BW{DOWNSTREAM_BANDWIDTH//1000}k/{DOWNSTREAM_TXPOWER:+d}dBm")
         return (f"OK: tx={'enabled' if g_tx_enabled else 'disabled'}  "
                 f"manifest=serial {manifest_serial} "
                 f"({os.path.basename(MANIFEST_FILE) if MANIFEST_FILE else 'none'})  "
-                f"payload_chunks={len(payload_chunks)}  "
-                f"radio={DOWNSTREAM_FREQUENCY/1e6:.3f}MHz/SF{DOWNSTREAM_SF}/"
-                f"BW{DOWNSTREAM_BANDWIDTH//1000}k/{DOWNSTREAM_TXPOWER:+d}dBm  "
+                f"payload_chunks={len(payload_chunks)}  radio={radio}  "
                 f"beacon={BEACON_PERIOD}s deadtime={DOWNSTREAM_DEADTIME}s callsign={CALLSIGN}")
     if cmd in ("help", "?", ""):
         return "OK: commands: status | reload | enable|on | disable|off | stop | help"

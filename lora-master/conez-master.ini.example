@@ -8,14 +8,26 @@
 # File path override:  CONEZ_MASTER_CONFIG=/path/to/file python3 conez-master.py
 
 [lora]
-frequency  = 431250000     ; Hz  (431.250 MHz, 70 cm amateur band)
-bandwidth  = 500000        ; Hz  (500 kHz)
-sf         = 7             ; spreading factor 7..12
-cr         = 5             ; coding rate denominator -> 4/5
-preamble   = 8             ; preamble symbols
-tx_power   = 0             ; dBm, -9..+22 (via the per-power PA table)
-sync_word  = 0xDEAD        ; 0x.. hex or decimal
+mode       = lora          ; "lora" or "fsk" (selects the [fsk] section below)
+frequency  = 431250000     ; Hz  (431.250 MHz, 70 cm amateur band) — used by both modes
+bandwidth  = 500000        ; Hz  (500 kHz)        — LoRa only
+sf         = 7             ; spreading factor 7..12 — LoRa only
+cr         = 5             ; coding rate denominator -> 4/5 — LoRa only
+preamble   = 8             ; preamble symbols — LoRa only
+tx_power   = 0             ; dBm, -9..+22 (via the per-power PA table) — both modes
+sync_word  = 0xDEAD        ; 0x.. hex or decimal — LoRa only
 # LDRO is DERIVED from sf/bandwidth (must match the cone's auto-LDRO) — not a key.
+
+[fsk]
+# Used only when [lora] mode = fsk. Defaults match the cone's RadioLib beginFSK +
+# the scanlist FSK entry (F <freq> 4800 5000 9700 0x2D). Set [lora] frequency too.
+bitrate       = 4800       ; bps
+freqdev       = 5000       ; Hz  (frequency deviation)
+rxbw          = 9700       ; Hz  (DSB RX bandwidth; mapped to an SX126x register)
+sync          = 0x2D       ; FSK sync word (hex, 1+ bytes)
+preamble_bits = 32         ; master TX preamble bits (>= the cone's preamble detector)
+whitening     = 0          ; 0 = off (cone uses NRZ encoding); 1 = on
+# CRC is fixed to 2-byte CCITT-inverted (init 0x1D0F / poly 0x1021) to match RadioLib.
 
 [master]
 beacon_period = 10         ; seconds between beacons (also the carousel cadence)

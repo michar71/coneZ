@@ -154,7 +154,8 @@ int lora_setup( void )
         config.fsk_rxbw,
         config.lora_tx_power,
         config.lora_preamble,
-        0,      // tcxoVoltage — already set above
+        1.8,    // tcxoVoltage — beginFSK() resets the chip (clears the setTCXO
+                // above), so it MUST be (re)set here or the TCXO stays off
         false   // useLDO
     );
   }
@@ -610,7 +611,9 @@ int lora_reinit(void)
             config.fsk_rxbw,
             config.lora_tx_power,
             config.lora_preamble,
-            0,
+            1.8,    // TCXO voltage -- MUST be set: beginFSK() resets the chip
+                    // (findChip->reset), which clears any prior setTCXO(); passing
+                    // 0 here leaves the TCXO disabled -> no clock -> dead FSK RX.
             false
         );
     }

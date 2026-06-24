@@ -254,6 +254,27 @@ Goal: faster bulk via FSK; master can move channel/mode.
   TEST:   master switches to FSK, fleet follows, firmware push throughput rises;
           cones recover to LoRa control mode afterward.
 
+  STATUS (2026-06-24): FSK PHY DONE + validated end-to-end on the bench.
+    - MASTER: conez-master.py GFSK TX -- [lora] mode=fsk + a [fsk] section
+      (bitrate/freqdev/rxbw/sync/shaping/whitening). Raw SX126x SetModulationParams
+      (0x8B) written directly because LoRaRF's setFskModulation() has an Fdev bug
+      (high Fdev bytes filled with the bitrate). Per-TX variable-length framing via
+      a setPacketParamsLoRa->Fsk monkey-patch so the existing transmit() path works.
+    - CONE: lora_reinit()/lora_setup() beginFSK path; scanlist F entries tune it;
+      [fsk] config section (was [lora] fsk_*). CRITICAL FIX: beginFSK MUST be passed
+      the real tcxoVoltage (1.8) -- its internal chip reset wipes setTCXO(), and
+      tcxoVoltage=0 then leaves the cone's TCXO off (dead demod). See AGENTS.md.
+    - VALIDATED: cone scans to the FSK entry, locks, and a full 1.2 MB firmware dist
+      OTA completed over GFSK 4800bps/5kHz-dev (scanlist `F 431250000 4800 5000
+      19500 2D`). The link is marginal (~3.75 chunks lost/16KB block) but the
+      systematic-RS FEC recovered ALL loss -- 285 chunks across 72/76 blocks, zero
+      unrecoverable. Beacon holds with occasional ~16-min drop + ~1-min re-acquire.
+    - NOT YET DONE: in-beacon pre-announced channel/mode switch (master still
+      requires a manual reload to change mode; cones re-acquire via scanlist on
+      beacon loss, ~60-90 s, rather than following an announced switch). Link
+      margin (whitening / larger deviation / AFC) is an open tuning item -- the
+      fsk.* params are now CLI-tunable to support that without reflashing.
+
 
 --------------------------------------------------------------------------------
 Phase 10 -- Future / deferred
