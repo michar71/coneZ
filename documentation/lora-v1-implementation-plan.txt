@@ -265,15 +265,20 @@ Goal: faster bulk via FSK; master can move channel/mode.
       the real tcxoVoltage (1.8) -- its internal chip reset wipes setTCXO(), and
       tcxoVoltage=0 then leaves the cone's TCXO off (dead demod). See AGENTS.md.
     - VALIDATED: cone scans to the FSK entry, locks, and a full 1.2 MB firmware dist
-      OTA completed over GFSK 4800bps/5kHz-dev (scanlist `F 431250000 4800 5000
-      19500 2D`). The link is marginal (~3.75 chunks lost/16KB block) but the
-      systematic-RS FEC recovered ALL loss -- 285 chunks across 72/76 blocks, zero
-      unrecoverable. Beacon holds with occasional ~16-min drop + ~1-min re-acquire.
+      OTA completes over GFSK. Tuning result: the original 5 kHz-dev/19.5 kHz-BW link
+      lost ~4.6% (285 chunks/76 blocks, FEC-recovered) -- offset-sensitive (the two
+      TCXOs' ~±2 kHz mismatch is a big fraction of 5 kHz dev). Widening to 10 kHz dev
+      / 29.3 kHz RX BW (now the default; scanlist `F 431250000 4800 10000 29300 2D`)
+      drops loss to ~0% -- a full 1.2 MB OTA at +0 dBm lost ONE chunk / ~6200, zero
+      retries. Beacon loss is 0 throughout (short packets ride through). Diagnosed
+      with an Airspy: master TX is clean (no FIFO underrun -- every burst maps to a
+      logged TX size). SX126x has no usable RX AFC (getFrequencyError is LoRa-only),
+      so wide deviation is the offset fix; no AFC or power boost needed.
     - NOT YET DONE: in-beacon pre-announced channel/mode switch (master still
       requires a manual reload to change mode; cones re-acquire via scanlist on
-      beacon loss, ~60-90 s, rather than following an announced switch). Link
-      margin (whitening / larger deviation / AFC) is an open tuning item -- the
-      fsk.* params are now CLI-tunable to support that without reflashing.
+      beacon loss, ~60-90 s, rather than following an announced switch). Per-cone
+      TCXO calibration could squeeze the last bit for a wide fleet, but 10 kHz dev
+      already tolerates the spread (sweep: ±3 kHz offset ~= 4x errors at 10 kHz).
 
 
 --------------------------------------------------------------------------------

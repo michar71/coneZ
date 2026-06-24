@@ -63,8 +63,8 @@ LORA_SYNC_WORD = 0xDEAD
 # NRZ (whitening off), variable-length packets, 2-byte CCITT-inverted CRC.
 DOWNSTREAM_MODE          = "lora"   # "lora" | "fsk"
 DOWNSTREAM_FSK_BITRATE   = 4800     # bps
-DOWNSTREAM_FSK_FREQDEV   = 5000     # Hz
-DOWNSTREAM_FSK_RXBW      = 9700     # Hz (mapped to an SX126x DSB RX-BW register)
+DOWNSTREAM_FSK_FREQDEV   = 10000    # Hz (wide dev tolerates per-cone TCXO offset: ~0% dist loss vs ~4.6% at 5 kHz)
+DOWNSTREAM_FSK_RXBW      = 29300    # Hz (>= Carson ~24.8 kHz; mapped to an SX126x DSB RX-BW register)
 DOWNSTREAM_FSK_SYNC      = "0x2D"   # FSK sync word (hex, 1+ bytes)
 DOWNSTREAM_FSK_PREAMBLE_BITS = 32   # master TX preamble bits (>= the cone's detector)
 DOWNSTREAM_FSK_WHITENING = 0        # 0 = off (cone uses NRZ); 1 = on

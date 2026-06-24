@@ -29,8 +29,8 @@ callsign=
 ; [fsk] -- FSK PHY params (used only when [lora] mode=fsk). Matches the master's INI.
 ; [fsk]
 ; bitrate=4.8              ; kbps (0.6-300)
-; freqdev=5.0              ; kHz (0.6-200)
-; rxbw=156.2              ; kHz (discrete set: 4.8-467); must exceed ~2*(freqdev+bitrate/2)
+; freqdev=10.0             ; kHz (0.6-200); wide dev tolerates per-cone TCXO offset
+; rxbw=29.3                ; kHz (discrete set: 4.8-467); must exceed ~2*(freqdev+bitrate/2)
 ; shaping=0                ; 0=none, 1=BT0.3, 2=BT0.5, 3=BT0.7, 4=BT1.0
 ; whitening=off            ; data whitening (improves bit-clock recovery on long packets)
 ; sync=12AD                ; hex string, 2-16 hex chars (1-8 bytes)

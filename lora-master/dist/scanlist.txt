@@ -17,7 +17,8 @@ L 431250000 125000 9 5 0x12
 L 433000000 500000 7 5 0xDEAD
 L 432000000 250000 9 5 0x12
 
-# FSK (Phase 9): GFSK 4800 bps, 5 kHz deviation, 19.5 kHz DSB RX bandwidth
-# (>= Carson ~14.8 kHz for this bitrate/deviation), sync word 2D. Emitted by the
-# master when [lora] mode=fsk. Sync is bare hex (no 0x) for parse_hex_syncword().
-F 431250000 4800 5000 19500 2D
+# FSK (Phase 9): GFSK 4800 bps, 10 kHz deviation, 29.3 kHz DSB RX bandwidth
+# (>= Carson ~24.8 kHz; the wider deviation buys frequency-offset margin vs the
+# two TCXOs). sync word 2D. Emitted by the master when [lora] mode=fsk. Sync is
+# bare hex (no 0x) for parse_hex_syncword().
+F 431250000 4800 10000 29300 2D

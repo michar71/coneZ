@@ -48,8 +48,8 @@
 #define DEFAULT_LORA_SCAN_PASSES 5             // scanlist passes before widening the search
 #define DEFAULT_LORA_SCAN_DWELL  12            // seconds to listen on each channel while scanning
 #define DEFAULT_FSK_BITRATE     4.8f
-#define DEFAULT_FSK_FREQDEV     5.0f
-#define DEFAULT_FSK_RXBW        156.2f
+#define DEFAULT_FSK_FREQDEV     10.0f   // wide dev tolerates per-cone TCXO offset (bench: ~0% dist loss vs ~4.6% at 5 kHz)
+#define DEFAULT_FSK_RXBW        29.3f   // >= Carson ~24.8 kHz for 4.8 kbps / 10 kHz dev
 #define DEFAULT_FSK_SHAPING     0
 #define DEFAULT_FSK_WHITENING   false
 #define DEFAULT_FSK_SYNCWORD    "12AD"
