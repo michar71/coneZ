@@ -34,6 +34,7 @@
 
 #define SCAN_MAX_TIERS     5
 #define SCAN_LOSS_MS       40000   // re-scan after this long locked with no beacon
+#define LAST_CONN_EVERY    3       // probe the RAM last-connected channel 1 in N scan steps
 // Dwell per channel = config.lora_scan_dwell (s); sweeps before widening =
 // config.lora_scan_passes.
 
@@ -105,6 +106,13 @@ static enum { SCAN_LOCKED, SCAN_SCANNING } scan_state = SCAN_SCANNING;
 static uint32_t scan_dwell_until = 0;
 static uint32_t scan_last_beacon_ms = 0;   // uptime at the last beacon heard
 static bool     scan_have_beacon    = false;
+// Last-connected channel, remembered IN RAM only (never persisted -- a reboot
+// reverts to the configured scanlist). On a rescan we interleave a probe of it
+// with the tiered sweep, so a master we FOLLOWED to a non-scanlist channel (or one
+// that briefly dropped) is re-found fast, alongside the normal scanlist.
+static scan_entry_t last_conn;
+static bool         have_last_conn = false;
+static int          last_conn_ctr  = 0;       // step counter: probe when it hits 0 (1 in LAST_CONN_EVERY)
 
 // Parse one scanlist line. Returns 1=entry, 0=blank/comment, -1=malformed.
 static int scan_parse_line(const char *s, scan_entry_t *e)
@@ -286,11 +294,15 @@ static void scan_describe(const scan_entry_t *e, char *buf, size_t n)
 {
     const char *ro = e->rx_only ? " [RX-only]" : "";
     if (e->mode == LP_MODE_FSK)
-        snprintf(buf, n, "FSK %.3f MHz %u bps%s%s", e->freq_hz / 1e6, (unsigned)e->bitrate_bps,
+        snprintf(buf, n, "FSK %.3f MHz %u bps dev%.1f bw%.1f sync 0x%X%s%s",
+                 e->freq_hz / 1e6, (unsigned)e->bitrate_bps,
+                 e->freqdev_hz / 1000.0, e->rxbw_hz / 1000.0,
+                 (unsigned)strtol(e->fsk_sync, NULL, 16),
                  e->whitening ? " whiten" : "", ro);
     else
         snprintf(buf, n, "LoRa %.3f MHz BW%u SF%u sync 0x%04X%s",
-                 e->freq_hz / 1e6, (unsigned)(e->bw_hz / 1000), (unsigned)e->sf, (unsigned)e->sync_word, ro);
+                 e->freq_hz / 1e6, (unsigned)(e->bw_hz / 1000), (unsigned)e->sf,
+                 (unsigned)e->sync_word, ro);
 }
 
 // Tune the radio to a scanlist entry. We BORROW config.* to feed lora_reinit(),
@@ -348,6 +360,24 @@ static uint32_t scan_dwell_ms(void)
 static void scan_step(void)
 {
     if (n_tiers == 0) return;
+
+    // Interleave a probe of the LAST-CONNECTED channel (RAM-only, this boot) with
+    // the tiered sweep -- 1 step in every LAST_CONN_EVERY -- so a master we FOLLOWED
+    // to a non-scanlist channel, or that briefly dropped, is re-found fast WITHOUT
+    // monopolizing the scan. The tiered sweep proceeds and widens unchanged.
+    if (have_last_conn) {
+        if (last_conn_ctr == 0) {
+            last_conn_ctr = LAST_CONN_EVERY - 1;   // then LAST_CONN_EVERY-1 tier steps
+            cur_entry = last_conn;
+            scan_apply(&cur_entry);
+            scan_dwell_until = uptime_ms() + scan_dwell_ms();
+            char d[96]; scan_describe(&cur_entry, d, sizeof(d));
+            printfnl(SOURCE_LORA, "scan: last-conn %s\n", d);
+            return;
+        }
+        last_conn_ctr--;
+    }
+
     int t = rr_tier;
     bool wrapped = false;
     if (!tier_next(&tiers[t], &cur_entry, &wrapped)) {  // tier yielded nothing
@@ -356,7 +386,7 @@ static void scan_step(void)
     }
     scan_apply(&cur_entry);
     scan_dwell_until = uptime_ms() + scan_dwell_ms();
-    char d[72]; scan_describe(&cur_entry, d, sizeof(d));
+    char d[96]; scan_describe(&cur_entry, d, sizeof(d));
     printfnl(SOURCE_LORA, "scan: tier %d/%d %s\n", t, active_tier, d);
 
     bool primary_wrapped = (t == 0 && wrapped);
@@ -385,6 +415,7 @@ static void scan_restart(void)
     active_tier = 0;
     scan_pass_count = 0;
     rr_tier = 0;
+    last_conn_ctr = 0;                 // probe the last-connected channel first on a rescan
     scan_open();
     if (n_tiers > 0) scan_step();
 }
@@ -421,6 +452,10 @@ static bool scan_phy_sane(const scan_entry_t *e)
     return e->sf >= 5 && e->sf <= 12 && e->bw_hz >= 1000;
 }
 
+// Remember the channel we're currently locked on, in RAM (see last_conn). Cleared
+// only by a reboot, so a power-cycle reverts to the persisted scanlist.
+static void remember_last_conn(void) { last_conn = cur_entry; have_last_conn = true; }
+
 void scan_notify_beacon(const scan_entry_t *advertised)
 {
     lora_radio_lock();
@@ -435,7 +470,7 @@ void scan_notify_beacon(const scan_entry_t *advertised)
         !scan_phy_eq(advertised, &cur_entry)) {
         scan_entry_t next = *advertised;
         next.rx_only = cur_entry.rx_only;     // inherit TX policy (beacon can't carry it)
-        char from[72], to[72];
+        char from[96], to[96];
         scan_describe(&cur_entry, from, sizeof(from));
         scan_describe(&next,      to,   sizeof(to));
         scan_apply(&next);
@@ -443,6 +478,7 @@ void scan_notify_beacon(const scan_entry_t *advertised)
         scan_state          = SCAN_LOCKED;
         scan_last_beacon_ms = uptime_ms();
         scan_have_beacon    = true;
+        remember_last_conn();                 // followed channel becomes the last-connected
         printfnl(SOURCE_LORA, "scan: following master %s -> %s\n", from, to);
         lora_radio_unlock();
         return;
@@ -450,12 +486,13 @@ void scan_notify_beacon(const scan_entry_t *advertised)
 
     scan_last_beacon_ms = uptime_ms();
     scan_have_beacon    = true;
+    remember_last_conn();                     // current channel is good -> remember it
     if (scan_state == SCAN_SCANNING) {
         scan_state = SCAN_LOCKED;
         // Report the channel we actually locked on (cur_entry). NOT
         // config.lora_frequency -- scan_apply() restores config.* after tuning,
         // so it holds the default, not the locked entry.
-        char d[72]; scan_describe(&cur_entry, d, sizeof(d));
+        char d[96]; scan_describe(&cur_entry, d, sizeof(d));
         printfnl(SOURCE_LORA, "scan: LOCKED %s (was scanning tier %d/%d)\n",
                  d, active_tier, n_tiers - 1);
     }
@@ -515,8 +552,12 @@ void lora_scan_print(void)   // shown in `lora` status
         printfnl(SOURCE_COMMANDS, "    tier %d %-18s %5d entries%s\n",
                  t, tiers[t].name, tiers[t].count, t <= active_tier ? "  [active]" : "");
     if (scan_enabled) {
-        char d[72]; scan_describe(&cur_entry, d, sizeof(d));
+        char d[96]; scan_describe(&cur_entry, d, sizeof(d));
         printfnl(SOURCE_COMMANDS, "    primary sweep %d/%d, last: %s\n", scan_pass_count, passes, d);
+        if (have_last_conn) {
+            char l[96]; scan_describe(&last_conn, l, sizeof(l));
+            printfnl(SOURCE_COMMANDS, "    last-conn (RAM, probed 1-in-%d): %s\n", LAST_CONN_EVERY, l);
+        }
     }
     lora_radio_unlock();
 }

@@ -287,10 +287,18 @@ Goal: faster bulk via FSK; master can move channel/mode.
       loss->rescan). Master: do_full_reload / _announce_radio_change (conez-master.py);
       cone: scan_notify_beacon follow path (scan.cpp; scan_phy_eq mirrors the
       master's _phy_signature). tx_power / CR changes apply with NO announcement.
+    - DONE (2026-06-25): RAM last-connected probe. The cone remembers the last-
+      connected channel IN RAM and, during a rescan, interleaves a probe of it 1-in-3
+      steps with the tiered sweep -- so a master that FOLLOWED to a non-scanlist
+      channel and then briefly dropped (or restarted) is re-found fast, without that
+      channel being in any scanlist tier. RAM-only -> a reboot reverts to the
+      persisted scanlist. Bench-validated (master moved to 431.500 non-scanlist,
+      cone followed, master TX dropped+restored, cone re-locked via the probe).
+      scan.cpp: last_conn / LAST_CONN_EVERY in scan_step.
     - STILL OPEN: per-cone TCXO calibration could squeeze the last bit for a wide
       fleet (9.6 kHz dev already tolerates the spread); and a followed channel is not
-      yet written back into the scanlist, so a long-term move is still best paired
-      with a dist-delivered scanlist update.
+      yet PERSISTED across a reboot (the RAM probe covers within-session), so a
+      long-term move is still best paired with a dist-delivered scanlist update.
 
 
 --------------------------------------------------------------------------------

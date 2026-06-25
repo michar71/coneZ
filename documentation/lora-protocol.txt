@@ -480,7 +480,9 @@ ROUND-ROBIN -- one entry from each per step, each tier keeping its own cursor --
 so the small primary tier stays frequently scanned even while a huge backup tier
 (e.g. the exhaustive sweep) is also being swept; a master returning to a main
 channel is found quickly regardless of backup-list size. On a decoded beacon the
-cone LOCKS; after a prolonged beacon loss (default 40 s) it re-scans from tier 0.
+cone LOCKS; after a prolonged beacon loss (default 40 s) it re-scans from tier 0,
+interleaving a probe of the LAST-CONNECTED channel (see the handoff Fallbacks below)
+~1 step in 3.
 
 Reconfiguration handoff (announce + follow). When the master changes its
 downstream PHY it does not just jump -- it first ANNOUNCES the new params, then
@@ -500,9 +502,13 @@ the cone FOLLOWS, so a planned channel/mode change costs no rescan:
     and rescanning. The comparison mirrors the master's: it ignores CR and tx_power.
     Following is suppressed while scanning is manually pinned off (`lora scan off`).
   * Fallbacks: a cone that misses the whole announcement burst (e.g. every beacon
-    lost) simply takes the normal loss -> rescan path and rejoins via the scanlist.
-    A followed channel is not yet written back into the scanlist, so a long-term
-    move is still best paired with a dist-delivered scanlist update.
+    lost) simply takes the normal loss -> rescan path. To still rejoin a master that
+    moved to a channel in NO scanlist tier, the cone remembers the LAST-CONNECTED
+    channel IN RAM and probes it ~1 step in 3 during a rescan (interleaved with the
+    tiered sweep, which widens unchanged) -- so a transient drop, or a master restart
+    on a followed channel, re-locks fast without that channel being in any scanlist.
+    This is RAM-only: a REBOOT reverts to the persisted scanlist, so a long-term move
+    is still best paired with a dist-delivered scanlist update.
 
 Knobs (config [lora], read live): scan_dwell (seconds per channel, default 12 --
 must exceed the beacon period to reliably catch a beacon); scan_passes (primary
@@ -630,10 +636,15 @@ Built (see documentation/lora-v1-implementation-plan.txt for phases):
     beacon advertising a different PHY than it is tuned to FOLLOWS to the new channel
     without dropping lock -- no rescan for a planned move. Master:
     do_full_reload / _announce_radio_change (conez-master.py); cone:
-    scan_notify_beacon follow path (scan.cpp). Bench-validated both directions. [Phase 9]
+    scan_notify_beacon follow path (scan.cpp). The cone also remembers the last-
+    connected channel in RAM and probes it ~1-in-3 during a rescan, so it re-finds a
+    master that moved to a non-scanlist channel (RAM-only; a reboot reverts to the
+    scanlist). Bench-validated both directions. [Phase 9]
 
 Designed here, NOT yet built (remaining phases):
   * Cues (fire-now / fire-at-time; groups). [Phase 7]
   * Superframe / timeslot scheduling; registration; polling; radio mutex. [Phase 8]
-  * Follow-up to the reconfiguration handoff: write a followed channel back into the
-    scanlist (or dist a scanlist update) so a long-term move survives a beacon loss.
+  * Follow-up to the reconfiguration handoff: PERSIST a followed channel (the RAM
+    last-connected probe already re-finds it within a session, but not across a
+    reboot) -- write it back into the scanlist, or dist a scanlist update, so a
+    long-term move survives a power cycle.
