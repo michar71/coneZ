@@ -277,11 +277,20 @@ Goal: faster bulk via FSK; master can move channel/mode.
       every burst maps to a logged TX size). SX126x has no usable RX AFC
       (getFrequencyError is LoRa-only); none needed (power +0->+15 dBm barely moved
       loss -> not margin-limited).
-    - NOT YET DONE: in-beacon pre-announced channel/mode switch (master still
-      requires a manual reload to change mode; cones re-acquire via scanlist on
-      beacon loss, ~60-90 s, rather than following an announced switch). Per-cone
-      TCXO calibration could squeeze the last bit for a wide fleet, but 9.6 kHz dev
-      already tolerates the spread (sweep: ±3 kHz offset ~= 4x errors).
+    - DONE (2026-06-25): reconfiguration handoff (announce + follow). On a radio-
+      config `reload` that changes the PHY -- any param EXCEPT tx_power / LoRa CR --
+      the master beacons the NEW params 10x on the OLD channel (0.25 s gap, a live
+      timestamp on each so it doesn't disturb a follower's clock) before retuning;
+      a cone that hears a beacon advertising a PHY different from the one it is tuned
+      to FOLLOWS to it without dropping lock. Bench-validated both directions
+      (431.250<->431.500): ~38 ms to follow, 0 rescans (vs the old ~40-90 s
+      loss->rescan). Master: do_full_reload / _announce_radio_change (conez-master.py);
+      cone: scan_notify_beacon follow path (scan.cpp; scan_phy_eq mirrors the
+      master's _phy_signature). tx_power / CR changes apply with NO announcement.
+    - STILL OPEN: per-cone TCXO calibration could squeeze the last bit for a wide
+      fleet (9.6 kHz dev already tolerates the spread); and a followed channel is not
+      yet written back into the scanlist, so a long-term move is still best paired
+      with a dist-delivered scanlist update.
 
 
 --------------------------------------------------------------------------------

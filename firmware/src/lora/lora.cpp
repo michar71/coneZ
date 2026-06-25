@@ -317,7 +317,28 @@ static void lora_handle_beacon( const uint8_t *p, size_t len, float rssi, float 
              (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, sig,
              t_applied ? "set" : "kept");
 
-    scan_notify_beacon();   // a beacon here means we're on the master's channel
+    // Build the channel this beacon ADVERTISES (mode-keyed PHY union) so the scanner
+    // can FOLLOW a master that's announcing a PHY change before it retunes. We're
+    // tuned to the master's current PHY (else we couldn't have received this), so if
+    // the advertised PHY differs, the master is about to move there.
+    scan_entry_t adv; memset(&adv, 0, sizeof(adv));
+    adv.mode      = g_beacon.mode;
+    adv.freq_hz   = g_beacon.freq_hz;
+    adv.sync_word = g_beacon.sync_word;
+    if (g_beacon.mode == LP_MODE_FSK) {
+        adv.bitrate_bps = g_beacon.fsk_bitrate;
+        adv.freqdev_hz  = g_beacon.fsk_freqdev;
+        adv.rxbw_hz     = g_beacon.fsk_rxbw;
+        adv.whitening   = g_beacon.whitening;
+        // Beacon carries the sync as a u16; render it back to the hex string the
+        // scanner uses (2-byte form -- matches the default 0xDEAD).
+        snprintf(adv.fsk_sync, sizeof(adv.fsk_sync), "%04X", (unsigned)g_beacon.sync_word);
+    } else {
+        adv.bw_hz = g_beacon.bw_hz;
+        adv.sf    = g_beacon.sf;
+        adv.cr    = g_beacon.cr;
+    }
+    scan_notify_beacon(&adv);   // a beacon here means we're on the master's channel
 }
 
 // Show the last beacon in the `lora` status command (SOURCE_COMMANDS).

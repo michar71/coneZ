@@ -37,17 +37,7 @@
 // Dwell per channel = config.lora_scan_dwell (s); sweeps before widening =
 // config.lora_scan_passes.
 
-typedef struct {
-    uint8_t  mode;                 // LP_MODE_LORA / LP_MODE_FSK
-    bool     rx_only;              // LX/FX (or *_RX built-in): listen only, never TX here
-    bool     whitening;            // FW: FSK data whitening (seed 0x01FF); ignored for LoRa
-    uint32_t freq_hz;
-    uint32_t bw_hz;                // LoRa bandwidth
-    uint8_t  sf, cr;               // LoRa
-    uint16_t sync_word;            // LoRa 16-bit sync
-    uint32_t bitrate_bps, freqdev_hz, rxbw_hz;  // FSK
-    char     fsk_sync[17];         // FSK sync word as hex string
-} scan_entry_t;
+// scan_entry_t is declared in scan.h (shared with lora.cpp for the beacon-follow).
 
 // Built-in default: the few most-likely channels (const -> lives in flash, never
 // copied to RAM). Used even with no scanlist files present. Use the *_RX mode to
@@ -406,9 +396,58 @@ void scan_init(void)
         printfnl(SOURCE_LORA, "scan: starting across %d tier(s)\n", n_tiers);
 }
 
-void scan_notify_beacon(void)
+// True if two channels are the SAME downstream PHY a locked cone must track: freq
+// + sync + the LoRa (bw/sf) or FSK (bitrate/freqdev/rxbw/whitening) params. Mirrors
+// the master's _phy_signature -- excludes LoRa CR (RX auto-detects it from the
+// header) and rx_only (a cone-side TX policy the beacon doesn't carry).
+static bool scan_phy_eq(const scan_entry_t *a, const scan_entry_t *b)
+{
+    if (a->mode != b->mode || a->freq_hz != b->freq_hz) return false;
+    if (a->mode == LP_MODE_FSK)
+        return a->bitrate_bps == b->bitrate_bps && a->freqdev_hz == b->freqdev_hz &&
+               a->rxbw_hz == b->rxbw_hz && a->whitening == b->whitening &&
+               (uint16_t)strtol(a->fsk_sync, NULL, 16) == (uint16_t)strtol(b->fsk_sync, NULL, 16);
+    return a->bw_hz == b->bw_hz && a->sf == b->sf && a->sync_word == b->sync_word;
+}
+
+// Light sanity gate on a beacon-advertised channel before we retune to it: a
+// corrupt-but-CRC-valid (or future-buggy-master) beacon must not strand us on a
+// dead channel. Roughly the 70cm band + plausible modem params.
+static bool scan_phy_sane(const scan_entry_t *e)
+{
+    if (e->freq_hz < 100000000u || e->freq_hz > 1000000000u) return false;
+    if (e->mode == LP_MODE_FSK)
+        return e->bitrate_bps >= 100 && e->rxbw_hz >= 1000;
+    return e->sf >= 5 && e->sf <= 12 && e->bw_hz >= 1000;
+}
+
+void scan_notify_beacon(const scan_entry_t *advertised)
 {
     lora_radio_lock();
+
+    // FOLLOW: the master announces an imminent PHY change by beaconing the NEW
+    // params on the OLD (current) PHY several times before it retunes. We can only
+    // RECEIVE a beacon on the PHY we're tuned to, so a beacon whose advertised PHY
+    // differs from cur_entry means the master is about to move -- retune to it now
+    // and stay locked, instead of waiting ~40s to lose the beacon and rescan. Gated
+    // on scan_enabled so a manual `lora scan off` pin is never overridden.
+    if (scan_enabled && advertised && scan_phy_sane(advertised) &&
+        !scan_phy_eq(advertised, &cur_entry)) {
+        scan_entry_t next = *advertised;
+        next.rx_only = cur_entry.rx_only;     // inherit TX policy (beacon can't carry it)
+        char from[72], to[72];
+        scan_describe(&cur_entry, from, sizeof(from));
+        scan_describe(&next,      to,   sizeof(to));
+        scan_apply(&next);
+        cur_entry           = next;
+        scan_state          = SCAN_LOCKED;
+        scan_last_beacon_ms = uptime_ms();
+        scan_have_beacon    = true;
+        printfnl(SOURCE_LORA, "scan: following master %s -> %s\n", from, to);
+        lora_radio_unlock();
+        return;
+    }
+
     scan_last_beacon_ms = uptime_ms();
     scan_have_beacon    = true;
     if (scan_state == SCAN_SCANNING) {
