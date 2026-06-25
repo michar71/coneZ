@@ -39,6 +39,16 @@ _lock_fh.flush()
 # Misc
 BEACON_PERIOD = 10              # seconds
 
+# When a `reload` changes the downstream PHY (any radio parameter a locked cone
+# must follow -- everything EXCEPT tx_power and LoRa CR, which a locked cone
+# tolerates without retuning), announce the new settings to the herd before
+# moving: beacon the NEW params on the OLD PHY this many times, with this gap (s)
+# between them, THEN retune. Cones hear the change and can follow instead of
+# dropping lock and rescanning. (Cone-side follow is a later step; the master
+# emits the announcement now.)
+RECONFIG_BEACON_COUNT = 10
+RECONFIG_BEACON_GAP   = 0.25
+
 DOWNSTREAM_FREQUENCY = 431250000		# 431.250MHz
 DOWNSTREAM_BANDWIDTH = 500000			# 500kHz
 DOWNSTREAM_SF = 7				# SF7...SF12
@@ -925,12 +935,89 @@ g_reload_req    = threading.Event()  # control thread -> main loop: do a full re
 g_reload_done   = threading.Event()  # main loop -> control thread: reload finished
 g_reload_result = ""                 # main loop writes the reload summary
 
+# --- Radio-reconfig announcement ---------------------------------------------
+# The exact globals that define the downstream PHY. Snapshotted before a reload so
+# we can tell whether the radio actually changed, and restored briefly so the
+# announcement beacons go out on the OLD PHY (see do_full_reload).
+RADIO_GLOBALS = (
+    "DOWNSTREAM_MODE", "DOWNSTREAM_FREQUENCY",
+    "DOWNSTREAM_BANDWIDTH", "DOWNSTREAM_SF", "DOWNSTREAM_CR",
+    "DOWNSTREAM_PREAMBLE", "DOWNSTREAM_LDRO", "LORA_SYNC_WORD",
+    "DOWNSTREAM_FSK_BITRATE", "DOWNSTREAM_FSK_FREQDEV", "DOWNSTREAM_FSK_RXBW",
+    "DOWNSTREAM_FSK_SYNC", "DOWNSTREAM_FSK_PREAMBLE_BITS",
+    "DOWNSTREAM_FSK_WHITENING", "DOWNSTREAM_FSK_SHAPING", "DOWNSTREAM_TXPOWER",
+)
+
+def _radio_snapshot():
+    return {k: globals()[k] for k in RADIO_GLOBALS}
+
+def _phy_signature(cfg):
+    """The cone-actionable PHY identity: the radio params a locked cone must follow
+    to stay in sync. Deliberately EXCLUDES tx_power and (for LoRa) CR -- a locked
+    cone tolerates both without retuning -- and params the beacon can't carry
+    (preamble/shaping). A reload that changes only those needs no announcement. A
+    mode flip changes the tuple's shape, so it always trips."""
+    if cfg["DOWNSTREAM_MODE"] == "fsk":
+        return ("fsk", cfg["DOWNSTREAM_FREQUENCY"], cfg["DOWNSTREAM_FSK_BITRATE"],
+                cfg["DOWNSTREAM_FSK_FREQDEV"], cfg["DOWNSTREAM_FSK_RXBW"],
+                str(cfg["DOWNSTREAM_FSK_SYNC"]).lower(),
+                bool(cfg["DOWNSTREAM_FSK_WHITENING"]))
+    return ("lora", cfg["DOWNSTREAM_FREQUENCY"], cfg["DOWNSTREAM_BANDWIDTH"],
+            cfg["DOWNSTREAM_SF"], cfg["LORA_SYNC_WORD"])
+
+def _phy_desc(cfg):
+    if cfg["DOWNSTREAM_MODE"] == "fsk":
+        return (f"FSK {cfg['DOWNSTREAM_FREQUENCY']/1e6:.3f}MHz {cfg['DOWNSTREAM_FSK_BITRATE']}bps "
+                f"dev{cfg['DOWNSTREAM_FSK_FREQDEV']} bw{cfg['DOWNSTREAM_FSK_RXBW']} "
+                f"sync{cfg['DOWNSTREAM_FSK_SYNC']} whiten{'on' if cfg['DOWNSTREAM_FSK_WHITENING'] else 'off'}")
+    return (f"LoRa {cfg['DOWNSTREAM_FREQUENCY']/1e6:.3f}MHz SF{cfg['DOWNSTREAM_SF']} "
+            f"BW{cfg['DOWNSTREAM_BANDWIDTH']//1000}k CR4/{cfg['DOWNSTREAM_CR']} "
+            f"sync0x{cfg['LORA_SYNC_WORD']:04X}")
+
+def _announce_radio_change(old, new):
+    """Beacon the NEW params RECONFIG_BEACON_COUNT times on the CURRENT (old) PHY so
+    cones still locked on the old channel can follow us to the new one before we
+    retune.
+
+    On entry the DOWNSTREAM_* globals hold the NEW config (load_config just ran).
+    Each pass REBUILDS the beacon under the NEW globals -- so the body both
+    advertises the new PHY AND carries a LIVE master timestamp (NOT one frozen at
+    the start, which would drag a following cone's clock back by up to the whole
+    announcement window) -- then flips to the OLD globals so the TX path emits on
+    the old PHY. Globals are left as found (NEW) on return."""
+    print(f"radio reconfig: {_phy_desc(old)}  ->  {_phy_desc(new)}")
+    print(f"radio reconfig: announcing {RECONFIG_BEACON_COUNT} beacons on the OLD PHY "
+          f"(gap {RECONFIG_BEACON_GAP}s) before retuning")
+    for i in range(RECONFIG_BEACON_COUNT):
+        beacon = make_beacon()                          # NEW params + a FRESH timestamp
+        for k in RADIO_GLOBALS: globals()[k] = old[k]   # TX path -> OLD PHY
+        print(f"TX reconfig-beacon {i+1}/{RECONFIG_BEACON_COUNT}")
+        transmit(beacon)
+        for k in RADIO_GLOBALS: globals()[k] = new[k]   # restore NEW for the next build/retune
+        if i < RECONFIG_BEACON_COUNT - 1:
+            time.sleep(RECONFIG_BEACON_GAP)
+
 def do_full_reload():
     """Re-read the config file, re-apply the radio params, and reload the latest
-    manifest. MUST run in the main-loop thread (no race with transmit)."""
+    manifest. MUST run in the main-loop thread (no race with transmit).
+
+    If the reload changes the downstream PHY (anything a locked cone must follow --
+    everything except tx_power and LoRa CR), first announce the new settings to the
+    herd: beacon the NEW params on the OLD PHY RECONFIG_BEACON_COUNT times, THEN
+    retune -- so cones can follow instead of dropping lock and rescanning."""
     global MANIFEST_FILE, manifest_serial, manifest_len, dist_chunks
     global manifest_chunks, payload_chunks, payload_idx, _actual_power
-    cfg_summary = load_config()
+    old = _radio_snapshot()
+    cfg_summary = load_config()                  # mutates the DOWNSTREAM_* globals -> NEW
+    new = _radio_snapshot()
+    note = ""
+    if _phy_signature(old) != _phy_signature(new):
+        if g_tx_enabled:
+            _announce_radio_change(old, new)     # fresh beacon per TX (new params + live timestamp)
+            note = (f"; announced PHY change ({RECONFIG_BEACON_COUNT} beacons on old PHY, "
+                    f"{RECONFIG_BEACON_GAP}s gap) then retuned")
+        else:
+            note = "; PHY changed (TX disabled -> no announcement)"
     _actual_power = apply_radio_config(reconfigure=True)
     path, serial = latest_manifest(MANIFEST_DIR)
     if path is not None:
@@ -943,7 +1030,7 @@ def do_full_reload():
         payload_idx     = 0
     return (f"{cfg_summary}; manifest serial {manifest_serial} "
             f"({os.path.basename(MANIFEST_FILE) if MANIFEST_FILE else 'none'}), "
-            f"{len(payload_chunks)} payload chunks")
+            f"{len(payload_chunks)} payload chunks{note}")
 
 def handle_control_command(line):
     """Runs in the control thread. Returns a one-line response."""
