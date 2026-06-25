@@ -63,11 +63,11 @@ LORA_SYNC_WORD = 0xDEAD
 # NRZ (whitening off), variable-length packets, 2-byte CCITT-inverted CRC.
 DOWNSTREAM_MODE          = "lora"   # "lora" | "fsk"
 DOWNSTREAM_FSK_BITRATE   = 4800     # bps
-DOWNSTREAM_FSK_FREQDEV   = 10000    # Hz (10 kHz dev, h~4; secondary offset-margin factor -- the RX BW below is the lossless lever)
+DOWNSTREAM_FSK_FREQDEV   = 9600     # Hz (9.6 kHz dev, h=4.0; secondary offset-margin factor -- the RX BW below is the lossless lever)
 DOWNSTREAM_FSK_RXBW      = 29300    # Hz (THE lever: 29.3 kHz captures the signal+skirts+offset; 19.5 kHz lost ~4.6% even at 4800 Hz dev. SX126x DSB RX-BW register)
-DOWNSTREAM_FSK_SYNC      = "0x2D"   # FSK sync word (hex, 1+ bytes)
+DOWNSTREAM_FSK_SYNC      = "0xDEAD" # FSK sync word (hex, 1+ bytes); matches the LoRa sync word
 DOWNSTREAM_FSK_PREAMBLE_BITS = 32   # master TX preamble bits (>= the cone's detector)
-DOWNSTREAM_FSK_WHITENING = 0        # 0 = off (cone uses NRZ); 1 = on
+DOWNSTREAM_FSK_WHITENING = 1        # 1 = on (seed 0x01FF, matches the cone's RadioLib); 0 = NRZ
 DOWNSTREAM_FSK_SHAPING   = 0        # Gaussian shaping index, MUST match the cone's
                                     # [fsk] shaping: 0=none 1=BT0.3 2=BT0.5 3=BT0.7 4=BT1.0
 # SX126x GFSK pulse-shape register value per shaping index (datasheet SetModulationParams).
@@ -309,14 +309,22 @@ def _cr_code(cr: int) -> int:
 
 
 def make_beacon(network: int = 0) -> bytes:
-    """v1 BEACON: channel/params + master time + manifest serial + callsign."""
+    """v1 BEACON: channel/params + master time + manifest serial + callsign.
+    The mode byte is a flags field (mode + FSK whitening). On FSK the LoRa fields
+    bw/sf/cr are zeroed and sync carries the FSK sync word."""
+    if DOWNSTREAM_MODE == "fsk":
+        flags = proto.MODE_FSK | (proto.BCN_FLAG_WHITENING if DOWNSTREAM_FSK_WHITENING else 0)
+        sb = _fsk_sync_bytes(DOWNSTREAM_FSK_SYNC)
+        sync = (sb[0] << 8 | sb[1]) if len(sb) >= 2 else (sb[0] if sb else 0)
+        return proto.make_beacon(
+            network=network, mode=flags, freq=DOWNSTREAM_FREQUENCY, sync_word=sync,
+            bitrate=DOWNSTREAM_FSK_BITRATE, freqdev=DOWNSTREAM_FSK_FREQDEV,
+            rxbw=DOWNSTREAM_FSK_RXBW,
+            manifest_serial=manifest_serial, callsign=CALLSIGN)
     return proto.make_beacon(
-        network=network,
-        freq=DOWNSTREAM_FREQUENCY, bw=DOWNSTREAM_BANDWIDTH,
-        sf=DOWNSTREAM_SF, cr=DOWNSTREAM_CR,
-        sync_word=LORA_SYNC_WORD, manifest_serial=manifest_serial,
-        callsign=CALLSIGN,
-    )
+        network=network, mode=proto.MODE_LORA, freq=DOWNSTREAM_FREQUENCY,
+        bw=DOWNSTREAM_BANDWIDTH, sf=DOWNSTREAM_SF, cr=DOWNSTREAM_CR,
+        sync_word=LORA_SYNC_WORD, manifest_serial=manifest_serial, callsign=CALLSIGN)
 
 
 # ------------------------------------------
@@ -460,6 +468,8 @@ def apply_radio_config(reconfigure=False):
         # SetPacketParams (per-TX payload length is patched in by the dispatch below)
         LoRa.setFskPacket( DOWNSTREAM_FSK_PREAMBLE_BITS, 0x05, len(sw) * 8, 0x00,
                            0x01, 0xFF, FSK_CRC_TYPE, DOWNSTREAM_FSK_WHITENING )
+        if DOWNSTREAM_FSK_WHITENING:
+            LoRa.setFskWhitening( 0x01FF )   # whitening LFSR seed -- match the cone's RadioLib default
     else:
         LoRa.setPacketType( LoRa.LORA_MODEM )
         LoRa.setLoRaModulation( DOWNSTREAM_SF, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_CR, DOWNSTREAM_LDRO )

@@ -191,18 +191,31 @@ The manifest is not a packet type -- it is a well-known dist file (section 13).
 10. BEACON (0x01)   M -> broadcast (G1, G6, G7)
 --------------------------------------------------------------------------------
 
-Body (after the 4-byte header):
-  - protocol version
+Body (after the 4-byte header). v1 implements the time + channel + manifest +
+callsign subset; the frame map and registration policy noted below are reserved
+for a later revision. The 30-byte v1 body (big-endian; lora_proto.h / lora_proto.py
+hold the byte-exact definition):
+
+    ver(1) epoch_s(4) epoch_ms(2) flags(1) freq(4) PHY(8) manifest(2) callsign(8)
+
+  - protocol version (u8)
   - master epoch: seconds (u32) + millis (u16)  [end-of-TX reference, section 8]
-  - current channel descriptor: mode (LoRa/FSK), frequency, and the mode params
-    (BW/SF/CR or bitrate/fdev/rxbw/shaping), sync word
-  - frame map: superframe length, downlink length, uplink layout
-      (contention window slot count + position, poll slot position),
-      and which cone address (if any) is polled this frame
+  - flags (u8): bit0 = mode (0 = LoRa, 1 = FSK); bit1 = FSK data whitening
+    (LFSR seed 0x01FF, fixed so a single bit fully specifies it). Higher bits reserved.
+  - frequency (u32 Hz)
+  - PHY params -- an 8-byte UNION keyed by the mode bit:
+      LoRa: bandwidth (u32 Hz), SF (u8), CR (u8), sync word (u16)
+      FSK:  bitrate, freq deviation, RX bandwidth (each u16 in UNITS OF 100 --
+            bps/Hz; the configured values are always multiples of 100, so /100
+            keeps u16 from capping and reaches 6.5 Mbps / 6.5 MHz), then sync
+            word (u16). The sync word is at the same offset in both modes.
+            (Shaping/CRC are not carried -- they are fixed config, not per-beacon.)
   - manifest serial (u16): current dist manifest version, so a cone knows if its
     dist/ dir is stale (section 13)
-  - registration policy: contention slot count, backoff parameters
-  - callsign (ASCII, e.g. 6 bytes space-padded) -- station ID (section 2)
+  - callsign (8 bytes ASCII, space-padded) -- station ID (section 2)
+
+  Reserved for a later revision: a frame map (superframe/downlink/uplink layout +
+  polled-cone address) and registration policy (contention slot count, backoff).
 
 Beacon cadence is tunable (the legacy 10 s is a fine starting point and easily
 meets the 10-minute ID rule).

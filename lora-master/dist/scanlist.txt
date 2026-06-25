@@ -1,9 +1,10 @@
 # ConeZ scanlist v1 -- channels a cone scans to find the master's beacon.
 #
-# One entry per line. The first token selects the mode; all frequencies are in
-# Hz and sync words in hex:
-#   L <freq_hz> <bw_hz> <sf> <cr> <sync_hex>                       LoRa
-#   F <freq_hz> <bitrate_bps> <freqdev_hz> <rxbw_hz> <sync_hex>    FSK
+# One entry per line. The first token selects the mode (L=LoRa, F=FSK), optionally
+# followed by flag letters: X = receive-only (listen, never transmit here),
+# W = FSK data whitening (F entries only; seed 0x01FF). Frequencies in Hz, sync hex:
+#   L[X]    <freq_hz> <bw_hz> <sf> <cr> <sync_hex>                   LoRa
+#   F[X][W] <freq_hz> <bitrate_bps> <freqdev_hz> <rxbw_hz> <sync_hex>  FSK
 #
 # '#' comments and blank lines are ignored. Scan order = file order. The cone
 # dwells on each entry longer than the beacon period before advancing, and
@@ -17,8 +18,10 @@ L 431250000 125000 9 5 0x12
 L 433000000 500000 7 5 0xDEAD
 L 432000000 250000 9 5 0x12
 
-# FSK (Phase 9): GFSK 4800 bps, 10 kHz deviation, 29.3 kHz DSB RX bandwidth
-# (>= Carson ~24.8 kHz; the wider deviation buys frequency-offset margin vs the
-# two TCXOs). sync word 2D. Emitted by the master when [lora] mode=fsk. Sync is
-# bare hex (no 0x) for parse_hex_syncword().
-F 431250000 4800 10000 29300 2D
+# FSK (Phase 9): GFSK 4800 bps, 9.6 kHz deviation (h=4.0), 29.3 kHz DSB RX bandwidth.
+# The 29.3 kHz RX BW is what makes the link lossless (19.5 kHz lost ~4.6% even at
+# 4800 Hz dev); the wider deviation is only a secondary offset-margin factor.
+# sync word DEAD (matches LoRa). Emitted by the master when [lora] mode=fsk. Sync is bare hex (no
+# 0x) for parse_hex_syncword(). The W flag (FW) enables data whitening (default on,
+# seed 0x01FF); drop it (plain F) for NRZ.
+FW 431250000 4800 9600 29300 DEAD

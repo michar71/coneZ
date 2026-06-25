@@ -40,6 +40,7 @@
 typedef struct {
     uint8_t  mode;                 // LP_MODE_LORA / LP_MODE_FSK
     bool     rx_only;              // LX/FX (or *_RX built-in): listen only, never TX here
+    bool     whitening;            // FW: FSK data whitening (seed 0x01FF); ignored for LoRa
     uint32_t freq_hz;
     uint32_t bw_hz;                // LoRa bandwidth
     uint8_t  sf, cr;               // LoRa
@@ -52,10 +53,10 @@ typedef struct {
 // copied to RAM). Used even with no scanlist files present. Use the *_RX mode to
 // mark a channel RECEIVE-ONLY (listen for the master, never transmit there -- e.g.
 // GMRS / business-band frequencies outside the amateur allocation).
-#define LORA     LP_MODE_LORA, false
-#define LORA_RX  LP_MODE_LORA, true
-#define FSK      LP_MODE_FSK,  false
-#define FSK_RX   LP_MODE_FSK,  true
+#define LORA     LP_MODE_LORA, false, false
+#define LORA_RX  LP_MODE_LORA, true,  false
+#define FSK      LP_MODE_FSK,  false, false
+#define FSK_RX   LP_MODE_FSK,  true,  false
 static const scan_entry_t DEFAULT_SCANLIST[] = {
     //  mode     freq_hz     bw_hz   sf cr  sync   br fd rxbw  fsk_sync
     { LORA,    431250000, 500000, 7, 5, 0xDEAD, 0, 0, 0, "" },
@@ -121,8 +122,12 @@ static int scan_parse_line(const char *s, scan_entry_t *e)
     while (*s == ' ' || *s == '\t') s++;
     if (*s == '#' || *s == '\0' || *s == '\r' || *s == '\n') return 0;
     char mode = *s++;
-    bool rx_only = false;
-    if (*s == 'X' || *s == 'x') { rx_only = true; s++; }   // LX / FX = receive-only
+    bool rx_only = false, whitening = false;
+    for (;;) {   // flag letters after the mode char: X = receive-only, W = FSK whitening
+        if      (*s == 'X' || *s == 'x') { rx_only   = true; s++; }
+        else if (*s == 'W' || *s == 'w') { whitening = true; s++; }
+        else break;
+    }
     memset(e, 0, sizeof(*e));
     if (mode == 'L' || mode == 'l') {
         unsigned long freq, bw; int sf, cr; char sync[16];
@@ -139,6 +144,7 @@ static int scan_parse_line(const char *s, scan_entry_t *e)
         e->freqdev_hz = (uint32_t)fd; e->rxbw_hz = (uint32_t)rxbw;
         strlcpy(e->fsk_sync, sync, sizeof(e->fsk_sync));
         e->rx_only = rx_only;
+        e->whitening = whitening;
         return 1;
     }
     return -1;
@@ -290,7 +296,8 @@ static void scan_describe(const scan_entry_t *e, char *buf, size_t n)
 {
     const char *ro = e->rx_only ? " [RX-only]" : "";
     if (e->mode == LP_MODE_FSK)
-        snprintf(buf, n, "FSK %.3f MHz %u bps%s", e->freq_hz / 1e6, (unsigned)e->bitrate_bps, ro);
+        snprintf(buf, n, "FSK %.3f MHz %u bps%s%s", e->freq_hz / 1e6, (unsigned)e->bitrate_bps,
+                 e->whitening ? " whiten" : "", ro);
     else
         snprintf(buf, n, "LoRa %.3f MHz BW%u SF%u sync 0x%04X%s",
                  e->freq_hz / 1e6, (unsigned)(e->bw_hz / 1000), (unsigned)e->sf, (unsigned)e->sync_word, ro);
@@ -309,6 +316,7 @@ static void scan_apply(const scan_entry_t *e)
     float s_freq = config.lora_frequency, s_bw = config.lora_bandwidth;
     int   s_sf = config.lora_sf, s_cr = config.lora_cr, s_sync = config.lora_sync_word;
     float s_br = config.fsk_bitrate, s_fd = config.fsk_freqdev, s_rxbw = config.fsk_rxbw;
+    bool  s_white = config.fsk_whitening;
 
     config.lora_frequency = e->freq_hz / 1e6f;
     if (e->mode == LP_MODE_FSK) {
@@ -317,6 +325,7 @@ static void scan_apply(const scan_entry_t *e)
         config.fsk_freqdev = e->freqdev_hz / 1000.0f;
         config.fsk_rxbw    = e->rxbw_hz / 1000.0f;
         strlcpy(config.fsk_syncword, e->fsk_sync, sizeof(config.fsk_syncword));
+        config.fsk_whitening = e->whitening;
     } else {
         strlcpy(config.lora_rf_mode, "lora", sizeof(config.lora_rf_mode));
         config.lora_bandwidth = e->bw_hz / 1000.0f;
@@ -331,6 +340,7 @@ static void scan_apply(const scan_entry_t *e)
     config.lora_frequency = s_freq; config.lora_bandwidth = s_bw;
     config.lora_sf = s_sf; config.lora_cr = s_cr; config.lora_sync_word = s_sync;
     config.fsk_bitrate = s_br; config.fsk_freqdev = s_fd; config.fsk_rxbw = s_rxbw;
+    config.fsk_whitening = s_white;
     strlcpy(config.lora_rf_mode, s_mode, sizeof(config.lora_rf_mode));
     strlcpy(config.fsk_syncword, s_fsync, sizeof(config.fsk_syncword));
 }

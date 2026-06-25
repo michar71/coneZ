@@ -22,11 +22,11 @@ sync_word  = 0xDEAD        ; 0x.. hex or decimal — LoRa only
 # Used only when [lora] mode = fsk. Defaults match the cone's RadioLib beginFSK +
 # the scanlist FSK entry (F <freq> 4800 5000 9700 0x2D). Set [lora] frequency too.
 bitrate       = 4800       ; bps
-freqdev       = 10000      ; Hz  (10 kHz dev, h~4; secondary offset-margin factor -- rxbw is the lossless lever)
+freqdev       = 9600       ; Hz  (9.6 kHz dev, h=4.0; secondary offset-margin factor -- rxbw is the lossless lever)
 rxbw          = 29300      ; Hz  (DSB RX BW -- THE lever: 29.3 kHz ~0% loss, 19.5 kHz ~4.6% even at 4800 Hz dev; SX126x register)
-sync          = 0x2D       ; FSK sync word (hex, 1+ bytes)
+sync          = 0xDEAD     ; FSK sync word (hex, 1+ bytes); matches the LoRa sync word
 preamble_bits = 32         ; master TX preamble bits (>= the cone's preamble detector)
-whitening     = 0          ; 0 = off (cone uses NRZ encoding); 1 = on
+whitening     = 1          ; 1 = on (seed 0x01FF, matches the cone); 0 = NRZ
 # CRC is fixed to 2-byte CCITT-inverted (init 0x1D0F / poly 0x1021) to match RadioLib.
 
 [master]

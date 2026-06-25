@@ -48,11 +48,11 @@
 #define DEFAULT_LORA_SCAN_PASSES 5             // scanlist passes before widening the search
 #define DEFAULT_LORA_SCAN_DWELL  12            // seconds to listen on each channel while scanning
 #define DEFAULT_FSK_BITRATE     4.8f
-#define DEFAULT_FSK_FREQDEV     10.0f   // 10 kHz dev (h~4); a secondary offset-margin factor -- the RX BW below is the lossless lever
+#define DEFAULT_FSK_FREQDEV     9.6f    // 9.6 kHz dev (h=4.0); a secondary offset-margin factor -- the RX BW below is the lossless lever
 #define DEFAULT_FSK_RXBW        29.3f   // THE lever: 29.3 kHz captures the GFSK signal+skirts+TCXO offset (~0% dist loss; 19.5 kHz lost ~4.6%, even at 4800 Hz dev)
 #define DEFAULT_FSK_SHAPING     0
-#define DEFAULT_FSK_WHITENING   false
-#define DEFAULT_FSK_SYNCWORD    "12AD"
+#define DEFAULT_FSK_WHITENING   true    // data whitening on (seed 0x01FF); helps bit-clock recovery
+#define DEFAULT_FSK_SYNCWORD    "DEAD"   // 2-byte FSK sync; matches the default LoRa sync word
 #define DEFAULT_FSK_CRC         2
 
 // System

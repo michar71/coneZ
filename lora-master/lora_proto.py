@@ -33,6 +33,10 @@ ADDR_BROADCAST = 255
 MODE_LORA = 0
 MODE_FSK  = 1
 
+# BEACON "mode" byte is a flags bitfield: bit0 = mode, bit1 = FSK whitening (seed 0x01FF).
+BCN_FLAG_MODE      = 0x01
+BCN_FLAG_WHITENING = 0x02
+
 # Common header: type, network, src, dst
 HEADER_FMT = ">BBBB"
 HEADER_LEN = struct.calcsize(HEADER_FMT)   # 4
@@ -41,7 +45,7 @@ HEADER_LEN = struct.calcsize(HEADER_FMT)   # 4
 #   B  proto version
 #   I  epoch seconds        (master clock at end-of-TX; see spec section 8)
 #   H  epoch millis
-#   B  mode (0=LoRa, 1=FSK)
+#   B  flags: bit0 mode (0=LoRa, 1=FSK), bit1 FSK whitening enabled
 #   I  frequency  (Hz)
 #   I  bandwidth  (Hz)       [LoRa]
 #   B  spreading factor      [LoRa]
@@ -49,33 +53,44 @@ HEADER_LEN = struct.calcsize(HEADER_FMT)   # 4
 #   H  sync word
 #   H  manifest serial
 #   8s callsign (ASCII, space-padded)
-BEACON_FMT = ">BIHBIIBBHH8s"
+BEACON_FMT = ">BIHBIIBBHH8s"               # LoRa-mode layout (also defines BEACON_LEN=30)
 BEACON_LEN = struct.calcsize(BEACON_FMT)   # 30
 CALLSIGN_LEN = 8
+# The 8-byte PHY region @ body+12 is a mode-keyed union; pack/unpack in pieces:
+BEACON_PREFIX_FMT = ">BIHBI"   # ver, epoch_s, epoch_ms, flags, freq        (12 B)
+BEACON_PHY_LORA   = ">IBBH"    # bw, sf, cr, sync                           (8 B)
+BEACON_PHY_FSK    = ">HHHH"    # bitrate/100, freqdev/100, rxbw/100, sync   (8 B)
+BEACON_SUFFIX_FMT = ">H8s"     # manifest_serial, callsign                  (10 B)
 
 
 def make_header(ptype: int, network: int, src: int, dst: int) -> bytes:
     return struct.pack(HEADER_FMT, ptype & 0xFF, network & 0xFF, src & 0xFF, dst & 0xFF)
 
 
-def make_beacon(*, network: int, freq: int, bw: int, sf: int, cr: int,
-                sync_word: int, manifest_serial: int, callsign: str,
-                mode: int = MODE_LORA,
+def make_beacon(*, network: int, freq: int, sync_word: int,
+                manifest_serial: int, callsign: str, mode: int = MODE_LORA,
+                bw: int = 0, sf: int = 0, cr: int = 0,
+                bitrate: int = 0, freqdev: int = 0, rxbw: int = 0,
                 epoch_s: int | None = None, epoch_ms: int | None = None) -> bytes:
-    """Build a full BEACON packet (header + body). If epoch not given, use now."""
+    """Build a full BEACON packet (header + body). The 8-byte PHY region @ body+12 is
+    a mode-keyed union: LoRa bw/sf/cr or FSK bitrate/freqdev/rxbw (each stored /100).
+    If epoch not given, use now."""
     if epoch_s is None:
         now = time.time()
         epoch_s = int(now)
         epoch_ms = int((now - epoch_s) * 1000)
     cs = callsign.encode("ascii", "replace")[:CALLSIGN_LEN].ljust(CALLSIGN_LEN, b" ")
-    body = struct.pack(BEACON_FMT,
-                       PROTO_VERSION,
-                       epoch_s & 0xFFFFFFFF, epoch_ms & 0xFFFF,
-                       mode & 0xFF,
-                       freq & 0xFFFFFFFF, bw & 0xFFFFFFFF,
-                       sf & 0xFF, cr & 0xFF,
-                       sync_word & 0xFFFF, manifest_serial & 0xFFFF, cs)
-    return make_header(PKT_BEACON, network, ADDR_MASTER, ADDR_BROADCAST) + body
+    prefix = struct.pack(BEACON_PREFIX_FMT, PROTO_VERSION, epoch_s & 0xFFFFFFFF,
+                         epoch_ms & 0xFFFF, mode & 0xFF, freq & 0xFFFFFFFF)
+    if mode & BCN_FLAG_MODE:   # FSK: bitrate/freqdev/rxbw in units of 100
+        phy = struct.pack(BEACON_PHY_FSK, (bitrate // 100) & 0xFFFF,
+                          (freqdev // 100) & 0xFFFF, (rxbw // 100) & 0xFFFF,
+                          sync_word & 0xFFFF)
+    else:                      # LoRa
+        phy = struct.pack(BEACON_PHY_LORA, bw & 0xFFFFFFFF, sf & 0xFF, cr & 0xFF,
+                          sync_word & 0xFFFF)
+    suffix = struct.pack(BEACON_SUFFIX_FMT, manifest_serial & 0xFFFF, cs)
+    return make_header(PKT_BEACON, network, ADDR_MASTER, ADDR_BROADCAST) + prefix + phy + suffix
 
 
 # DIST body (after the header). Shared by DIST_DATA (0x40) and DIST_PARITY (0x41);
@@ -186,8 +201,16 @@ def parse_beacon(pkt: bytes) -> dict | None:
     """Parse a BEACON packet body into a dict, or None if malformed."""
     if len(pkt) < HEADER_LEN + BEACON_LEN:
         return None
-    (ver, es, ems, mode, freq, bw, sf, cr, sync, serial, cs) = \
-        struct.unpack(BEACON_FMT, pkt[HEADER_LEN:HEADER_LEN + BEACON_LEN])
-    return dict(version=ver, epoch_s=es, epoch_ms=ems, mode=mode, freq=freq,
-                bw=bw, sf=sf, cr=cr, sync_word=sync, manifest_serial=serial,
-                callsign=cs.decode("ascii", "replace").rstrip())
+    body = pkt[HEADER_LEN:HEADER_LEN + BEACON_LEN]
+    (ver, es, ems, flags, freq) = struct.unpack(BEACON_PREFIX_FMT, body[:12])
+    (serial, cs) = struct.unpack(BEACON_SUFFIX_FMT, body[20:30])
+    d = dict(version=ver, epoch_s=es, epoch_ms=ems, mode=flags, freq=freq,
+             whitening=bool(flags & BCN_FLAG_WHITENING), manifest_serial=serial,
+             callsign=cs.decode("ascii", "replace").rstrip())
+    if flags & BCN_FLAG_MODE:   # FSK
+        (br100, fd100, bw100, sync) = struct.unpack(BEACON_PHY_FSK, body[12:20])
+        d.update(bitrate=br100 * 100, freqdev=fd100 * 100, rxbw=bw100 * 100, sync_word=sync)
+    else:                       # LoRa
+        (bw, sf, cr, sync) = struct.unpack(BEACON_PHY_LORA, body[12:20])
+        d.update(bw=bw, sf=sf, cr=cr, sync_word=sync)
+    return d

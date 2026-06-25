@@ -247,10 +247,12 @@ int lora_setup( void )
 // ---- v1 BEACON (0x01) tracking ----------------------------------------------
 static struct {
     bool     valid;
+    bool     whitening;        // FSK whitening flag (beacon flags bit1)
     uint32_t uptime_ms;
     float    rssi, snr;
     uint8_t  version, mode, sf, cr;
     uint32_t epoch_s, freq_hz, bw_hz;
+    uint32_t fsk_bitrate, fsk_freqdev, fsk_rxbw;  // FSK PHY (bps/Hz) from the beacon union
     uint16_t epoch_ms, sync_word, manifest_serial;
     char     callsign[LP_BCN_CALLSIGN_LEN + 1];
 } g_beacon;
@@ -268,12 +270,22 @@ static void lora_handle_beacon( const uint8_t *p, size_t len, float rssi, float 
     g_beacon.version         = p[LP_BCN_VERSION];
     g_beacon.epoch_s         = lp_rd_u32(p + LP_BCN_EPOCH_S);
     g_beacon.epoch_ms        = lp_rd_u16(p + LP_BCN_EPOCH_MS);
-    g_beacon.mode            = p[LP_BCN_MODE];
+    g_beacon.mode            = p[LP_BCN_MODE] & LP_BCN_FLAG_MODE;
+    g_beacon.whitening       = (p[LP_BCN_MODE] & LP_BCN_FLAG_WHITENING) != 0;
     g_beacon.freq_hz         = lp_rd_u32(p + LP_BCN_FREQ);
-    g_beacon.bw_hz           = lp_rd_u32(p + LP_BCN_BW);
-    g_beacon.sf              = p[LP_BCN_SF];
-    g_beacon.cr              = p[LP_BCN_CR];
     g_beacon.sync_word       = lp_rd_u16(p + LP_BCN_SYNC);
+    // The 8-byte PHY region @ +12 is a mode-keyed union (see lora_proto.h).
+    if (g_beacon.mode == LP_MODE_FSK) {
+        g_beacon.fsk_bitrate = (uint32_t)lp_rd_u16(p + LP_BCN_FSK_BR100) * 100;
+        g_beacon.fsk_freqdev = (uint32_t)lp_rd_u16(p + LP_BCN_FSK_FD100) * 100;
+        g_beacon.fsk_rxbw    = (uint32_t)lp_rd_u16(p + LP_BCN_FSK_BW100) * 100;
+        g_beacon.bw_hz = 0; g_beacon.sf = 0; g_beacon.cr = 0;
+    } else {
+        g_beacon.bw_hz       = lp_rd_u32(p + LP_BCN_BW);
+        g_beacon.sf          = p[LP_BCN_SF];
+        g_beacon.cr          = p[LP_BCN_CR];
+        g_beacon.fsk_bitrate = g_beacon.fsk_freqdev = g_beacon.fsk_rxbw = 0;
+    }
     g_beacon.manifest_serial = lp_rd_u16(p + LP_BCN_MANIFEST);
     memcpy(g_beacon.callsign, p + LP_BCN_CALLSIGN, LP_BCN_CALLSIGN_LEN);
     g_beacon.callsign[LP_BCN_CALLSIGN_LEN] = '\0';
@@ -283,12 +295,26 @@ static void lora_handle_beacon( const uint8_t *p, size_t len, float rssi, float 
     // Discipline our clock from the beacon when we have no GPS/NTP of our own.
     bool t_applied = time_set_from_beacon((uint64_t)g_beacon.epoch_s * 1000ULL + g_beacon.epoch_ms);
 
+    // PHY descriptor differs by mode: FSK has no BW/SF/CR (those bytes are 0) and
+    // no meaningful SNR (the SX126x computes SNR only for LoRa), so omit it.
+    char phy[72], sig[28];
+    if (g_beacon.mode == LP_MODE_FSK) {
+        snprintf(phy, sizeof(phy), "FSK %.1fkbps dev%.1f bw%.1f sync 0x%X whiten %s",
+                 g_beacon.fsk_bitrate / 1000.0, g_beacon.fsk_freqdev / 1000.0,
+                 g_beacon.fsk_rxbw / 1000.0, (unsigned)g_beacon.sync_word,
+                 g_beacon.whitening ? "on" : "off");
+        snprintf(sig, sizeof(sig), "RSSI %.0f", rssi);
+    } else {
+        snprintf(phy, sizeof(phy), "BW%u SF%u CR4/%u sync 0x%04X",
+                 (unsigned)(g_beacon.bw_hz / 1000), (unsigned)g_beacon.sf,
+                 (unsigned)g_beacon.cr, (unsigned)g_beacon.sync_word);
+        snprintf(sig, sizeof(sig), "RSSI %.0f SNR %.1f", rssi, snr);
+    }
     printfnl(SOURCE_LORA,
-             "BEACON %s v%u %.3f MHz BW%u SF%u CR4/%u sync 0x%04X manifest %u  t=%u.%03u  RSSI %.0f SNR %.1f  clock:%s\n",
+             "BEACON %s v%u %.3f MHz %s manifest %u  t=%u.%03u  %s  clock:%s\n",
              g_beacon.callsign, (unsigned)g_beacon.version, g_beacon.freq_hz / 1e6,
-             (unsigned)(g_beacon.bw_hz / 1000), (unsigned)g_beacon.sf, (unsigned)g_beacon.cr,
-             (unsigned)g_beacon.sync_word, (unsigned)g_beacon.manifest_serial,
-             (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, rssi, snr,
+             phy, (unsigned)g_beacon.manifest_serial,
+             (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, sig,
              t_applied ? "set" : "kept");
 
     scan_notify_beacon();   // a beacon here means we're on the master's channel
@@ -305,11 +331,21 @@ void lora_print_beacon( void )
     printfnl(SOURCE_COMMANDS, "  Master beacon (%us ago): %s  v%u  manifest %u\n",
              (unsigned)age, g_beacon.callsign, (unsigned)g_beacon.version,
              (unsigned)g_beacon.manifest_serial);
-    printfnl(SOURCE_COMMANDS, "    chan: %.3f MHz  BW %u kHz  SF%u  CR4/%u  sync 0x%04X\n",
-             g_beacon.freq_hz / 1e6, (unsigned)(g_beacon.bw_hz / 1000),
-             (unsigned)g_beacon.sf, (unsigned)g_beacon.cr, (unsigned)g_beacon.sync_word);
-    printfnl(SOURCE_COMMANDS, "    master time %u.%03u  RSSI %.0f dBm  SNR %.1f dB\n",
-             (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, g_beacon.rssi, g_beacon.snr);
+    if (g_beacon.mode == LP_MODE_FSK)
+        printfnl(SOURCE_COMMANDS, "    chan: %.3f MHz  FSK  %.1f kbps  dev %.1f kHz  bw %.1f kHz  sync 0x%X  whitening %s\n",
+                 g_beacon.freq_hz / 1e6, g_beacon.fsk_bitrate / 1000.0,
+                 g_beacon.fsk_freqdev / 1000.0, g_beacon.fsk_rxbw / 1000.0,
+                 (unsigned)g_beacon.sync_word, g_beacon.whitening ? "on" : "off");
+    else
+        printfnl(SOURCE_COMMANDS, "    chan: %.3f MHz  BW %u kHz  SF%u  CR4/%u  sync 0x%04X\n",
+                 g_beacon.freq_hz / 1e6, (unsigned)(g_beacon.bw_hz / 1000),
+                 (unsigned)g_beacon.sf, (unsigned)g_beacon.cr, (unsigned)g_beacon.sync_word);
+    if (g_beacon.mode == LP_MODE_FSK)
+        printfnl(SOURCE_COMMANDS, "    master time %u.%03u  RSSI %.0f dBm\n",
+                 (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, g_beacon.rssi);
+    else
+        printfnl(SOURCE_COMMANDS, "    master time %u.%03u  RSSI %.0f dBm  SNR %.1f dB\n",
+                 (unsigned)g_beacon.epoch_s, (unsigned)g_beacon.epoch_ms, g_beacon.rssi, g_beacon.snr);
 }
 
 

@@ -28,9 +28,14 @@
 #define LP_ADDR_MASTER       0
 #define LP_ADDR_BROADCAST    255
 
-// Channel modes
+// Channel modes (low bit of the BEACON flags byte)
 #define LP_MODE_LORA         0
 #define LP_MODE_FSK          1
+
+// BEACON "mode" byte is a flags bitfield: bit0 = mode (LoRa/FSK), bit1 = FSK
+// whitening enabled (seed standardized to RadioLib's 0x01FF). Higher bits reserved.
+#define LP_BCN_FLAG_MODE       0x01
+#define LP_BCN_FLAG_WHITENING  0x02
 
 // Common header (4 bytes)
 #define LP_HDR_LEN           4
@@ -40,17 +45,27 @@
 #define LP_HDR_DST           3
 
 // BEACON body offsets (absolute, from start of packet; header is 4 bytes).
-// Body layout (30 bytes): ver(1) epoch_s(4) epoch_ms(2) mode(1) freq(4) bw(4)
-//                         sf(1) cr(1) sync(2) manifest_serial(2) callsign(8)
+// Body layout (30 bytes): ver(1) epoch_s(4) epoch_ms(2) flags(1) freq(4) PHY(8)
+//                         manifest_serial(2) callsign(8)
+// flags = mode|whitening (see LP_BCN_FLAG_*). The 8-byte PHY region @ +12 is a
+// UNION keyed by the mode bit:
+//   LoRa: bw(u32) sf(u8) cr(u8) sync(u16)
+//   FSK:  bitrate(u16) freqdev(u16) rxbw(u16) sync(u16), each in UNITS OF 100
+//         (bps/Hz). The configured values are always multiples of 100, and /100
+//         keeps u16 from capping -- range to 6.5 Mbps / 6.5 MHz (>> SX126x limits).
+// The sync word (last 2 bytes) is at the same offset in both modes.
 #define LP_BCN_VERSION       (LP_HDR_LEN + 0)   // u8
 #define LP_BCN_EPOCH_S       (LP_HDR_LEN + 1)   // u32
 #define LP_BCN_EPOCH_MS      (LP_HDR_LEN + 5)   // u16
-#define LP_BCN_MODE          (LP_HDR_LEN + 7)   // u8
+#define LP_BCN_MODE          (LP_HDR_LEN + 7)   // u8 (flags)
 #define LP_BCN_FREQ          (LP_HDR_LEN + 8)   // u32
-#define LP_BCN_BW            (LP_HDR_LEN + 12)  // u32
-#define LP_BCN_SF            (LP_HDR_LEN + 16)  // u8
-#define LP_BCN_CR            (LP_HDR_LEN + 17)  // u8
-#define LP_BCN_SYNC          (LP_HDR_LEN + 18)  // u16
+#define LP_BCN_BW            (LP_HDR_LEN + 12)  // u32  [LoRa]
+#define LP_BCN_SF            (LP_HDR_LEN + 16)  // u8   [LoRa]
+#define LP_BCN_CR            (LP_HDR_LEN + 17)  // u8   [LoRa]
+#define LP_BCN_FSK_BR100     (LP_HDR_LEN + 12)  // u16  [FSK] bitrate / 100 (bps)
+#define LP_BCN_FSK_FD100     (LP_HDR_LEN + 14)  // u16  [FSK] freqdev / 100 (Hz)
+#define LP_BCN_FSK_BW100     (LP_HDR_LEN + 16)  // u16  [FSK] rxbw / 100 (Hz)
+#define LP_BCN_SYNC          (LP_HDR_LEN + 18)  // u16  (both modes)
 #define LP_BCN_MANIFEST      (LP_HDR_LEN + 20)  // u16
 #define LP_BCN_CALLSIGN      (LP_HDR_LEN + 22)  // 8 bytes ASCII, space-padded
 #define LP_BCN_CALLSIGN_LEN  8
