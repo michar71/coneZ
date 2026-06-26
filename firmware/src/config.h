@@ -94,7 +94,7 @@
 #define DEFAULT_DBG_WIFI        false
 #define DEFAULT_DBG_SENSORS     false
 #define DEFAULT_DBG_WASM        true
-#define DEFAULT_DBG_MQTT        true
+#define DEFAULT_DBG_MQTT        false    // off by default (broker often absent -> error spam)
 #define DEFAULT_DBG_OTHER       false
 
 // ---------- Config struct ----------

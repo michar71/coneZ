@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include <esp_http_server.h>
 #include "esp_system.h"
 #include "esp_partition.h"
@@ -8,6 +9,7 @@
 #include <nvs_flash.h>
 #include <nvs.h>
 #include "esp_littlefs.h"
+#include "mbedtls/md5.h"
 #include <dirent.h>
 #include "main.h"
 #include "http.h"
@@ -488,87 +490,137 @@ static esp_err_t http_update_page(httpd_req_t *req)
 // partition (filesystem). Caller holds the ota_lock for the whole call. On success
 // it reboots and never returns; on any failure it returns ESP_FAIL and the caller
 // releases the lock.
+// Heap scratch for the OTA handler. Kept off the (4 KB) httpd task stack: a 1 KB
+// stream/read-back bounce buffer + the filesystem MD5 state. DRAM, not PSRAM -- buf
+// is handed to httpd_req_recv / esp_ota_write / esp_partition_read+write, which
+// access it by real address, and this board's PSRAM is not memory-mapped (it is
+// reached through the SPI driver's psram_read/write, so a PSRAM handle can't be
+// passed to those APIs). ~1.1 KB, held only for the duration of one upload.
+typedef struct {
+    char                buf[1024];   // recv + read-back bounce buffer
+    mbedtls_md5_context md5;         // fs: stream hash, then reused for the read-back
+} ota_scratch_t;
+
 static esp_err_t http_update_apply(httpd_req_t *req, bool is_firmware)
 {
-    const esp_partition_t *part;
+    ota_scratch_t *s = (ota_scratch_t *) malloc(sizeof(ota_scratch_t));
+    if (!s) { httpd_resp_sendstr(req, "FAIL: no memory"); return ESP_FAIL; }
+
+    const esp_partition_t *part = NULL;
     esp_ota_handle_t ota_handle = 0;
+    bool ota_open = false, md5_open = false;
+    const size_t SECTOR = 4096;
+    int    remaining = req->content_len;
+    size_t offset = 0, erased = 0;
 
     if (is_firmware) {
         part = esp_ota_get_next_update_partition(NULL);
-        if (!part) {
-            httpd_resp_sendstr(req, "FAIL: no OTA partition");
-            return ESP_FAIL;
-        }
+        if (!part) { httpd_resp_sendstr(req, "FAIL: no OTA partition"); goto fail; }
         esp_err_t err = esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
         if (err != ESP_OK) {
             printfnl(SOURCE_SYSTEM, "OTA begin failed: %s", esp_err_to_name(err));
-            httpd_resp_sendstr(req, "FAIL: begin error");
-            return ESP_FAIL;
+            httpd_resp_sendstr(req, "FAIL: begin error"); goto fail;
         }
+        ota_open = true;
     } else {
-        // Filesystem: unmount before erasing partition. Clear littlefs_mounted so
-        // other subsystems (config, cue, dist file writes) don't touch the gone FS.
-        esp_vfs_littlefs_unregister("spiffs");
-        littlefs_mounted = false;
         part = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
-        if (!part) {
-            httpd_resp_sendstr(req, "FAIL: no filesystem partition");
-            return ESP_FAIL;
+        if (!part) { httpd_resp_sendstr(req, "FAIL: no filesystem partition"); goto fail; }
+        // LENGTH CHECK FIRST -- a LittleFS image fills the whole partition (its block
+        // count is derived from the partition size). Reject a wrong-size upload now,
+        // while the FS is still MOUNTED + intact, so a truncated/oversized image
+        // can't even start to brick it.
+        if (req->content_len != (int)part->size) {
+            char m[96];
+            snprintf(m, sizeof(m), "FAIL: fs image must be exactly %u bytes (got %d)",
+                     (unsigned)part->size, req->content_len);
+            printfnl(SOURCE_SYSTEM, "FS upload rejected: %s", m);
+            httpd_resp_sendstr(req, m); goto fail;
         }
-        esp_err_t err = esp_partition_erase_range(part, 0, part->size);
-        if (err != ESP_OK) {
-            printfnl(SOURCE_SYSTEM, "OTA erase failed: %s", esp_err_to_name(err));
-            httpd_resp_sendstr(req, "FAIL: erase error");
-            return ESP_FAIL;
-        }
+        // Committed: unmount so config/cue/dist don't touch the FS while we rewrite.
+        esp_vfs_littlefs_unregister("spiffs");
+        littlefs_mounted = false;
+        mbedtls_md5_init(&s->md5); mbedtls_md5_starts(&s->md5); md5_open = true;
     }
 
-    // Stream body chunks
-    char buf[1024];
-    int remaining = req->content_len;
-    size_t offset = 0;
+    // Stream body chunks (s->buf). Firmware -> esp_ota_write (erases on demand).
+    // Filesystem -> raw partition write, erasing each 4 KB sector JUST BEFORE we
+    // write into it (not one big up-front erase, which would block the httpd task
+    // for seconds and risk a watchdog reset); MD5 the bytes for a post-write verify.
     while (remaining > 0) {
-        int toread = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
-        int recv_len = httpd_req_recv(req, buf, toread);
+        int toread = remaining < (int)sizeof(s->buf) ? remaining : (int)sizeof(s->buf);
+        int recv_len = httpd_req_recv(req, s->buf, toread);
         if (recv_len <= 0) {
             if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) continue;
-            if (is_firmware) esp_ota_abort(ota_handle);
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
-            return ESP_FAIL;
+            goto fail;
         }
 
-        esp_err_t err;
+        esp_err_t err = ESP_OK;
         if (is_firmware) {
-            err = esp_ota_write(ota_handle, buf, recv_len);
+            err = esp_ota_write(ota_handle, s->buf, recv_len);
         } else {
-            err = esp_partition_write(part, offset, buf, recv_len);
-            offset += recv_len;
+            while (err == ESP_OK && erased < offset + (size_t)recv_len) {
+                err = esp_partition_erase_range(part, erased, SECTOR);
+                if (err == ESP_OK) erased += SECTOR;
+            }
+            if (err == ESP_OK) err = esp_partition_write(part, offset, s->buf, recv_len);
+            if (err == ESP_OK) {
+                mbedtls_md5_update(&s->md5, (const unsigned char *)s->buf, recv_len);
+                offset += recv_len;
+            }
         }
         if (err != ESP_OK) {
             printfnl(SOURCE_SYSTEM, "OTA write failed: %s", esp_err_to_name(err));
-            if (is_firmware) esp_ota_abort(ota_handle);
-            httpd_resp_sendstr(req, "FAIL: write error");
-            return ESP_FAIL;
+            httpd_resp_sendstr(req, "FAIL: write error"); goto fail;
         }
         remaining -= recv_len;
     }
 
     if (is_firmware) {
-        esp_err_t err = esp_ota_end(ota_handle);
+        esp_err_t err = esp_ota_end(ota_handle); ota_open = false;   // handle consumed
         if (err != ESP_OK) {
             printfnl(SOURCE_SYSTEM, "OTA end failed: %s", esp_err_to_name(err));
-            httpd_resp_sendstr(req, "FAIL: verify error");
-            return ESP_FAIL;
+            httpd_resp_sendstr(req, "FAIL: verify error"); goto fail;
         }
         esp_ota_set_boot_partition(part);
+    } else {
+        // VERIFY: read the partition back and compare its MD5 to what we streamed --
+        // catches a bad flash write BEFORE we reboot into a corrupt FS. On a mismatch
+        // we do NOT reboot; the FS is left unmounted (writes are guarded) so the
+        // operator simply re-uploads.
+        uint8_t want[16]; mbedtls_md5_finish(&s->md5, want);
+        mbedtls_md5_starts(&s->md5);                 // reuse the context for the read-back
+        for (size_t pos = 0; pos < part->size; ) {
+            size_t n = part->size - pos; if (n > sizeof(s->buf)) n = sizeof(s->buf);
+            if (esp_partition_read(part, pos, s->buf, n) != ESP_OK) {
+                httpd_resp_sendstr(req, "FAIL: verify read error"); goto fail;
+            }
+            mbedtls_md5_update(&s->md5, (const unsigned char *)s->buf, n);
+            pos += n;
+            if ((pos & 0xFFFF) == 0) vTaskDelay(1);   // yield ~every 64 KB
+        }
+        uint8_t got[16]; mbedtls_md5_finish(&s->md5, got); md5_open = false; mbedtls_md5_free(&s->md5);
+        if (memcmp(want, got, 16) != 0) {
+            printfnl(SOURCE_SYSTEM, "FS verify MISMATCH -- not rebooting; re-upload");
+            httpd_resp_sendstr(req, "FAIL: verify mismatch (FS not committed; re-upload)");
+            goto fail;
+        }
+        printfnl(SOURCE_SYSTEM, "FS verify OK (md5 match)");
     }
 
+    free(s);
     printfnl(SOURCE_SYSTEM, "OTA success: %d bytes", req->content_len);
     httpd_resp_sendstr(req, "OK — rebooting...");
     vTaskDelay(pdMS_TO_TICKS(1000));
     esp_restart();
-    return ESP_OK;
+    return ESP_OK;   // never reached
+
+fail:
+    if (ota_open) esp_ota_abort(ota_handle);
+    if (md5_open) mbedtls_md5_free(&s->md5);
+    free(s);
+    return ESP_FAIL;
 }
 
 static esp_err_t http_update_post(httpd_req_t *req)
@@ -605,7 +657,7 @@ int http_setup()
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 12;
-    cfg.stack_size = 4096;
+    cfg.stack_size = 4096;   // OTA handler keeps its 1 KB buffer + MD5 state on the heap
     cfg.core_id = 1;
 
     if (httpd_start(&server, &cfg) != ESP_OK) {

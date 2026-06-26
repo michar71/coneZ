@@ -153,7 +153,7 @@ Sections and Keys
   fsync             Frame sync messages            (default: off)
   wifi              WiFi events                    (default: off)
   sensors           Sensor readings                (default: off)
-  mqtt              MQTT client messages           (default: on)
+  mqtt              MQTT client messages           (default: off)
   other             Uncategorized messages          (default: off)
 
 Boolean values accept: on/off, true/false, 1/0
