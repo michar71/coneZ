@@ -416,6 +416,17 @@ etc.) and firmware are present when needed. ("dist" replaces the misleading name
   is hours). A cue file dropped in at 18:00 lands well before the firmware that
   has trickled since noon.
 
+  IMPLEMENTED (conez-master.py): the manifest broadcasts on its own timer ([dist]
+  manifest_interval, default 60 s; a freshly-built or reloaded manifest goes out
+  promptly regardless). Between manifests, send_next_payload_chunk() keeps the long-
+  run data-FILE:FIRMWARE chunk ratio at [dist] file_per_fw : 1 -- a FLOAT (default
+  1 = even). >1 favours files (4 -> small files stay responsive while a big image
+  trickles); <1 favours firmware (0.25 -> 1 file : 4 fw, to push an image faster).
+  A 1/ratio accumulator fires a firmware chunk once the file chunks have earned one,
+  so any positive value holds (<=0 falls back to 1). v1 groups all data files --
+  incl. the scanlist -- into the one "file" class above firmware; sub-prioritising
+  the scanlist within that class is a later refinement.
+
 13.8  CONCURRENT TRANSFERS (files + firmware at once)
   The carousel may interleave a new firmware image AND new files. A ConeZ with
   PSRAM keeps several block-reassembly contexts in flight and absorbs both at
@@ -620,11 +631,16 @@ Built (see documentation/lora-v1-implementation-plan.txt for phases):
     (esp_app_get_description), refuses downgrades unless [lora] ota_downgrade=on,
     streams blocks straight to the inactive OTA partition (no whole-file buffer),
     verifies via esp_ota_set_boot_partition, and reboots into the new image. The
-    manifest is broadcast after every beacon so a late-locking cone isn't stranded.
-    REQUIRES CONFIG_SPI_FLASH_AUTO_SUSPEND (see 13.5 note). Full 1.2 MB OTA verified
+    manifest is rebroadcast on its own interval (13.7) so a late-locking cone isn't
+    stranded. REQUIRES CONFIG_SPI_FLASH_AUTO_SUSPEND (see 13.5 note). Full 1.2 MB OTA verified
     over RF end-to-end. [Phase 6]
   * Master: v1 beacon + dist carousel (lora-master/conez-master.py). The earlier
     ad-hoc 16-byte-header broadcast is retired (dead helpers remain dormant).
+  * Weighted carousel (13.7): the manifest broadcasts on its own timer ([dist]
+    manifest_interval, default 60 s; a fresh/reloaded manifest goes out promptly),
+    and between manifests the payload holds a file:firmware chunk ratio of [dist]
+    file_per_fw : 1 -- a FLOAT (default 1 = even; >1 favours files, <1 favours
+    firmware). send_next_payload_chunk() in conez-master.py.
   * Cone: LoRa RX (lora_rx) + TX via `lora send` (lora_tx, guarded by
     lora_tx_active -- no radio mutex yet).
   * Bidirectional link verified both directions on the default LoRa params.

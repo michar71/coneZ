@@ -38,6 +38,8 @@ _lock_fh.flush()
 
 # Misc
 BEACON_PERIOD = 10              # seconds
+MANIFEST_INTERVAL = 60          # seconds between manifest (re)broadcasts -- the carousel
+                                # entry point; a cone can't act on data/fw chunks without it
 
 # When a `reload` changes the downstream PHY (any radio parameter a locked cone
 # must follow -- everything EXCEPT tx_power and LoRa CR, which a locked cone
@@ -104,6 +106,12 @@ firmware_offset = 0
 # File distribution. The distributable payload lives in dist/ (only what gets
 # sent to the herd); the generated manifest + serial counter live in dist-state/.
 FILE_CHUNK_SIZE = 128
+# Weighted carousel (spec 13.7): data-FILE chunks sent per FIRMWARE chunk -- a FLOAT.
+#   >1  prioritizes files (e.g. 4 -> 4 file:1 fw; small files stay responsive)
+#    1  even split
+#   <1  prioritizes firmware (e.g. 0.25 -> 1 file:4 fw; push an image faster)
+# (<=0 falls back to 1.0). The scheduler keeps the long-run ratio for any value.
+DIST_FILE_PER_FW = 1.0
 DIST_DIR = "dist"
 MANIFEST_DIR = "dist-state"
 MANIFEST_RE = re.compile(r"manifest_(\d+)\.txt$")
@@ -121,7 +129,8 @@ CONTROL_SOCKET = os.environ.get("CONEZ_MASTER_SOCKET", "/tmp/conez-master.sock")
 # reload is deterministic: every setting is recomputed as (default <- file <- env),
 # never carried over from a previous reload.
 _CFG_DEFAULTS = dict(
-    BEACON_PERIOD=BEACON_PERIOD, DOWNSTREAM_DEADTIME=DOWNSTREAM_DEADTIME, CALLSIGN=CALLSIGN,
+    BEACON_PERIOD=BEACON_PERIOD, MANIFEST_INTERVAL=MANIFEST_INTERVAL, DIST_FILE_PER_FW=DIST_FILE_PER_FW,
+    DOWNSTREAM_DEADTIME=DOWNSTREAM_DEADTIME, CALLSIGN=CALLSIGN,
     DOWNSTREAM_FREQUENCY=DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH=DOWNSTREAM_BANDWIDTH,
     DOWNSTREAM_SF=DOWNSTREAM_SF, DOWNSTREAM_CR=DOWNSTREAM_CR, DOWNSTREAM_PREAMBLE=DOWNSTREAM_PREAMBLE,
     DOWNSTREAM_TXPOWER=DOWNSTREAM_TXPOWER, LORA_SYNC_WORD=LORA_SYNC_WORD,
@@ -137,7 +146,8 @@ def load_config(path=CONFIG_PATH):
     """Recompute every setting from (hard-coded default <- INI file <- env var).
     Deterministic: a key absent from the file falls back to the DEFAULT, never to a
     value left over from an earlier reload. Returns a one-line summary."""
-    global BEACON_PERIOD, DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_SF
+    global BEACON_PERIOD, MANIFEST_INTERVAL, DIST_FILE_PER_FW
+    global DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_SF
     global DOWNSTREAM_CR, DOWNSTREAM_PREAMBLE, DOWNSTREAM_LDRO, DOWNSTREAM_TXPOWER
     global DOWNSTREAM_DEADTIME, LORA_SYNC_WORD, CALLSIGN
     global DIST_DIR, MANIFEST_DIR, DIST_TEST_DROP_DATA, CONTROL_SOCKET
@@ -155,6 +165,8 @@ def load_config(path=CONFIG_PATH):
             except Exception as e: print(f"config: bad [{sec}] {key}: {e}")
         return default
     BEACON_PERIOD        = g("master", "beacon_period", D["BEACON_PERIOD"], int)
+    MANIFEST_INTERVAL    = g("dist", "manifest_interval", D["MANIFEST_INTERVAL"], int)
+    DIST_FILE_PER_FW     = g("dist", "file_per_fw",       D["DIST_FILE_PER_FW"], float)
     DOWNSTREAM_DEADTIME  = g("master", "deadtime",      D["DOWNSTREAM_DEADTIME"], float)
     CALLSIGN             = g("master", "callsign",      D["CALLSIGN"], str)
     DOWNSTREAM_FREQUENCY = g("lora", "frequency", D["DOWNSTREAM_FREQUENCY"], int)
@@ -191,7 +203,8 @@ def load_config(path=CONFIG_PATH):
         phy = (f"LoRa {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz SF{DOWNSTREAM_SF} "
                f"BW{DOWNSTREAM_BANDWIDTH//1000}k CR4/{DOWNSTREAM_CR} sync 0x{LORA_SYNC_WORD:04X}")
     return (f"config: {src} -> {phy} {DOWNSTREAM_TXPOWER:+d} dBm "
-            f"beacon {BEACON_PERIOD}s deadtime {DOWNSTREAM_DEADTIME}s callsign {CALLSIGN}")
+            f"beacon {BEACON_PERIOD}s manifest {MANIFEST_INTERVAL}s file:fw {DIST_FILE_PER_FW:g}:1 "
+            f"deadtime {DOWNSTREAM_DEADTIME}s callsign {CALLSIGN}")
 
 print(load_config())
 
@@ -783,7 +796,7 @@ def parse_manifest_firmware(path):
     return out
 
 
-def _file_to_chunks(file_id, file_len, algo, blocks):
+def _file_to_chunks(file_id, file_len, algo, blocks, kind):
     """Slice a file's per-block (compressed) byte strings into chunk descriptors:
     N DATA chunks then R systematic-RS PARITY chunks per block (Phase 5).
 
@@ -803,7 +816,7 @@ def _file_to_chunks(file_id, file_len, algo, blocks):
         parity = rs.encode(N, R, csz, padded) if R else b""
         drop = min(DIST_TEST_DROP_DATA, R, N)           # bench: simulate erasures
         meta = dict(fid=file_id, flen=file_len, algo=algo, bidx=bidx,
-                    tb=total_blocks, N=N, R=R, comp_len=comp_len)
+                    tb=total_blocks, N=N, R=R, comp_len=comp_len, kind=kind)
         for ci in range(N):
             if drop and ci >= N - drop:                 # skip -> cone must RS-recover
                 continue
@@ -823,7 +836,7 @@ def build_dist_chunks(manifest_path=None):
     with open(manifest_path, "rb") as fp:
         man = fp.read()
     chunks += _file_to_chunks(proto.DIST_MANIFEST_ID, len(man), proto.ALGO_NONE,
-                              proto.split_blocks(man, proto.DIST_MANIFEST_BLOCK_SIZE))
+                              proto.split_blocks(man, proto.DIST_MANIFEST_BLOCK_SIZE), "manifest")
     for (fid, fname, size, md5) in parse_manifest_files(manifest_path):
         fpath = os.path.join(DIST_DIR, fname)
         try:
@@ -833,9 +846,10 @@ def build_dist_chunks(manifest_path=None):
             print(f"  dist: WARNING missing {fpath} (id {fid})")
             continue
         algo, blocks = proto.encode_file(data)
-        chunks += _file_to_chunks(fid, len(data), algo, blocks)
-    # Phase 6: firmware images, chunked at the firmware block size (sent last so the
-    # small files keep flowing each carousel pass while the big image trickles).
+        chunks += _file_to_chunks(fid, len(data), algo, blocks, "file")
+    # Phase 6: firmware images, chunked at the firmware block size. Tagged "fw" so the
+    # weighted scheduler (send_next_payload_chunk, spec 13.7) trickles them at low
+    # weight while the small "file" chunks stay responsive.
     for (fid, prod, ver, size, bsz) in parse_manifest_firmware(manifest_path):
         fpath = os.path.join("firmware", prod, ver + ".bin")
         try:
@@ -845,26 +859,41 @@ def build_dist_chunks(manifest_path=None):
             print(f"  dist: WARNING missing firmware {fpath} (id {fid})")
             continue
         algo, blocks = proto.encode_file(data, bsz)
-        chunks += _file_to_chunks(fid, len(data), algo, blocks)
+        chunks += _file_to_chunks(fid, len(data), algo, blocks, "fw")
         print(f"  dist: firmware {prod} {ver} ({len(data)} B) -> {len(blocks)} blocks, "
               f"{'deflate' if algo else 'store'}")
     return chunks
 
 
+# --- Carousel chunk lists (spec 13.7: WEIGHTED scheduler) --------------------
+# dist_chunks splits into three priority classes (by chunk "kind"):
+#   manifest -- the entry point (a cone can't act on any data/fw chunk without it);
+#               (re)broadcast on its own MANIFEST_INTERVAL timer (main loop).
+#   file     -- small data files (cues/scanlist/scripts); kept responsive.
+#   fw       -- firmware images; large, trickled at low weight.
+# Between manifests the payload classes interleave by DIST_FILE_PER_FW (file:fw).
+manifest_chunks, file_chunks, fw_chunks = [], [], []
+file_idx = fw_idx = 0
+fw_due = 0.0          # firmware chunks "owed"; += 1/ratio per file chunk, fires fw at >=1
+
+def _rebuild_chunk_lists():
+    """Re-split dist_chunks into manifest/file/fw lists and reset the carousel cursors.
+    Called whenever dist_chunks is (re)built (startup, hot-reload, full reload)."""
+    global manifest_chunks, file_chunks, fw_chunks, file_idx, fw_idx, fw_due
+    manifest_chunks = [c for c in dist_chunks if c["kind"] == "manifest"]
+    file_chunks     = [c for c in dist_chunks if c["kind"] == "file"]
+    fw_chunks       = [c for c in dist_chunks if c["kind"] == "fw"]
+    file_idx = fw_idx = 0
+    fw_due = 0.0
+
 dist_chunks = build_dist_chunks()
-# The MANIFEST (file id 0) is the entry point: a cone can't act on any data/firmware
-# chunk until it holds the matching manifest. With a large firmware a full carousel
-# pass is many minutes, so sending the manifest only once per pass strands a cone
-# that locks mid-pass. Broadcast it after EVERY beacon instead (spec 13.7: manifest
-# = highest priority); the big payload cycles in between.
-manifest_chunks = [c for c in dist_chunks if c["fid"] == proto.DIST_MANIFEST_ID]
-payload_chunks  = [c for c in dist_chunks if c["fid"] != proto.DIST_MANIFEST_ID]
-payload_idx = 0
+_rebuild_chunk_lists()
 _comp = sum(len(c["payload"]) for c in dist_chunks)
 _par = sum(1 for c in dist_chunks if c["parity"])
 print(f"dist: {len(dist_chunks)} chunks ({_par} parity) ({len(manifest_chunks)} manifest + "
-      f"{len(parse_manifest_files(MANIFEST_FILE))} files + {len(parse_manifest_firmware(MANIFEST_FILE))} fw), "
-      f"chunk size {proto.DIST_CHUNK_SIZE}, {_comp} on-air payload bytes"
+      f"{len(file_chunks)} file + {len(fw_chunks)} fw), "
+      f"chunk size {proto.DIST_CHUNK_SIZE}, {_comp} on-air payload bytes, "
+      f"weight file:fw {DIST_FILE_PER_FW:g}:1, manifest every {MANIFEST_INTERVAL}s"
       + (f"  [TEST drop {DIST_TEST_DROP_DATA} data/blk]" if DIST_TEST_DROP_DATA else ""))
 
 
@@ -889,11 +918,29 @@ def send_manifest():
 
 
 def send_next_payload_chunk():
-    global payload_idx
-    if not payload_chunks:
+    """WEIGHTED carousel turn (spec 13.7): keep the long-run data-FILE:FIRMWARE chunk
+    ratio at DIST_FILE_PER_FW:1 (a float) while both classes are pending. Each file
+    chunk accrues 1/ratio of a "firmware due"; when that reaches 1 a firmware chunk
+    fires. So ratio 4 -> f f f f W, 1 -> f W, 0.25 -> f W W W W. The accumulator only
+    advances while BOTH classes have chunks; otherwise just drain the one present
+    (no catch-up burst when the other class reappears)."""
+    global file_idx, fw_idx, fw_due
+    have_file = bool(file_chunks)
+    have_fw   = bool(fw_chunks)
+    if not (have_file or have_fw):
         return
-    send_chunk(payload_chunks[payload_idx])
-    payload_idx = (payload_idx + 1) % len(payload_chunks)
+    ratio = DIST_FILE_PER_FW if DIST_FILE_PER_FW > 0 else 1.0
+    if have_file and have_fw:
+        if fw_due >= 1.0:
+            send_fw = True;  fw_due -= 1.0
+        else:
+            send_fw = False; fw_due += 1.0 / ratio
+    else:
+        send_fw = have_fw                       # only one class has pending chunks
+    if send_fw:
+        send_chunk(fw_chunks[fw_idx]);     fw_idx   = (fw_idx + 1)   % len(fw_chunks)
+    else:
+        send_chunk(file_chunks[file_idx]); file_idx = (file_idx + 1) % len(file_chunks)
 
 
 def reload_manifest_if_changed():
@@ -901,8 +948,7 @@ def reload_manifest_if_changed():
     switch to it live -- re-read the manifest + repackage all chunks -- WITHOUT a
     restart. Build the new chunks first; only swap the live globals if it succeeds,
     so a half-written manifest or a missing payload never takes the master down."""
-    global MANIFEST_FILE, manifest_serial, manifest_len
-    global dist_chunks, manifest_chunks, payload_chunks, payload_idx
+    global MANIFEST_FILE, manifest_serial, manifest_len, dist_chunks
     path, serial = latest_manifest()
     if path is None or serial <= manifest_serial:
         return False
@@ -915,13 +961,9 @@ def reload_manifest_if_changed():
     manifest_serial = serial
     manifest_len   = os.path.getsize(path)
     dist_chunks    = new_chunks
-    manifest_chunks = [c for c in dist_chunks if c["fid"] == proto.DIST_MANIFEST_ID]
-    payload_chunks  = [c for c in dist_chunks if c["fid"] != proto.DIST_MANIFEST_ID]
-    payload_idx = 0
-    nf = len(parse_manifest_files(path)); nfw = len(parse_manifest_firmware(path))
+    _rebuild_chunk_lists()
     print(f"dist: HOT-RELOADED manifest serial {serial} ({os.path.basename(path)}): "
-          f"{len(manifest_chunks)} manifest + {len(payload_chunks)} payload chunks "
-          f"({nf} files + {nfw} fw)")
+          f"{len(manifest_chunks)} manifest + {len(file_chunks)} file + {len(fw_chunks)} fw chunks")
     return True
 
 
@@ -1005,8 +1047,7 @@ def do_full_reload():
     everything except tx_power and LoRa CR), first announce the new settings to the
     herd: beacon the NEW params on the OLD PHY RECONFIG_BEACON_COUNT times, THEN
     retune -- so cones can follow instead of dropping lock and rescanning."""
-    global MANIFEST_FILE, manifest_serial, manifest_len, dist_chunks
-    global manifest_chunks, payload_chunks, payload_idx, _actual_power
+    global MANIFEST_FILE, manifest_serial, manifest_len, dist_chunks, _actual_power
     old = _radio_snapshot()
     cfg_summary = load_config()                  # mutates the DOWNSTREAM_* globals -> NEW
     new = _radio_snapshot()
@@ -1025,12 +1066,10 @@ def do_full_reload():
         manifest_serial = serial
         manifest_len    = os.path.getsize(path)
         dist_chunks     = build_dist_chunks(path)
-        manifest_chunks = [c for c in dist_chunks if c["fid"] == proto.DIST_MANIFEST_ID]
-        payload_chunks  = [c for c in dist_chunks if c["fid"] != proto.DIST_MANIFEST_ID]
-        payload_idx     = 0
+        _rebuild_chunk_lists()
     return (f"{cfg_summary}; manifest serial {manifest_serial} "
             f"({os.path.basename(MANIFEST_FILE) if MANIFEST_FILE else 'none'}), "
-            f"{len(payload_chunks)} payload chunks{note}")
+            f"{len(file_chunks)} file + {len(fw_chunks)} fw chunks{note}")
 
 def handle_control_command(line):
     """Runs in the control thread. Returns a one-line response."""
@@ -1060,8 +1099,9 @@ def handle_control_command(line):
         return (f"OK: tx={'enabled' if g_tx_enabled else 'disabled'}  "
                 f"manifest=serial {manifest_serial} "
                 f"({os.path.basename(MANIFEST_FILE) if MANIFEST_FILE else 'none'})  "
-                f"payload_chunks={len(payload_chunks)}  radio={radio}  "
-                f"beacon={BEACON_PERIOD}s deadtime={DOWNSTREAM_DEADTIME}s callsign={CALLSIGN}")
+                f"chunks=file {len(file_chunks)}/fw {len(fw_chunks)}  radio={radio}  "
+                f"beacon={BEACON_PERIOD}s manifest={MANIFEST_INTERVAL}s file:fw={DIST_FILE_PER_FW:g}:1 "
+                f"deadtime={DOWNSTREAM_DEADTIME}s callsign={CALLSIGN}")
     if cmd in ("help", "?", ""):
         return "OK: commands: status | reload | enable|on | disable|off | stop | help"
     return f"ERROR: unknown command '{cmd}' (try: status, reload, enable, disable, stop, help)"
@@ -1104,7 +1144,8 @@ threading.Thread(target=control_server, name="control", daemon=True).start()
 
 
 # --- Main loop ---------------------------------------------------------------
-last_tx = time.monotonic() - BEACON_PERIOD         # force immediate beacon
+last_tx = time.monotonic() - BEACON_PERIOD            # force immediate beacon
+last_manifest = time.monotonic() - MANIFEST_INTERVAL  # force an early manifest
 try:
     while not g_stop:
         # Control: explicit full reload (config + radio + manifest), done HERE so
@@ -1114,25 +1155,29 @@ try:
                 g_reload_result = do_full_reload()
             except Exception as e:
                 g_reload_result = f"reload failed: {e}"
+            last_manifest = time.monotonic() - MANIFEST_INTERVAL   # broadcast the reloaded manifest promptly
             g_reload_req.clear()
             g_reload_done.set()
             print(f"control: reloaded — {g_reload_result}")
 
         # Periodic beacon (only while TX is enabled)
         if g_tx_enabled and time.monotonic() - last_tx >= BEACON_PERIOD:
-            reload_manifest_if_changed()   # pick up a freshly-built manifest, no restart
+            if reload_manifest_if_changed():   # a freshly-built manifest -> broadcast it now
+                send_manifest()
+                last_manifest = time.monotonic()
             print( "-------" )
             print()
-
             print( "TX Beacon" )
             beacon = make_beacon()         # carries the (possibly just-reloaded) manifest_serial
             transmit( beacon )
             last_tx = time.monotonic()
-            # Manifest right after each beacon so a freshly-locked cone can act
-            # immediately (highest priority); the payload cycles between beacons.
+        # Manifest on its own interval (the carousel entry point; configurable, default
+        # 60s). A freshly-locked cone waits at most MANIFEST_INTERVAL for it.
+        elif g_tx_enabled and time.monotonic() - last_manifest >= max(1, MANIFEST_INTERVAL):
             send_manifest()
+            last_manifest = time.monotonic()
         elif g_tx_enabled:
-            # dist carousel: next data/firmware chunk (manifest sent post-beacon)
+            # dist carousel: next WEIGHTED file/firmware chunk (spec 13.7)
             send_next_payload_chunk()
             time.sleep( DOWNSTREAM_DEADTIME )
         else:

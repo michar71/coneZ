@@ -30,14 +30,21 @@ whitening     = 1          ; 1 = on (seed 0x01FF, matches the cone); 0 = NRZ
 # CRC is fixed to 2-byte CCITT-inverted (init 0x1D0F / poly 0x1021) to match RadioLib.
 
 [master]
-beacon_period = 10         ; seconds between beacons (also the carousel cadence)
+beacon_period = 10         ; seconds between beacons
 deadtime      = 0.1        ; seconds between downstream transmissions
 callsign      = N1AF       ; FCC station ID carried in the v1 beacon
 
 [dist]
-dir            = dist          ; distributable payload directory
-manifest_dir   = dist-state    ; where manifest_<N>.txt + serial.txt live
-test_drop_data = 0             ; bench FEC test: drop last K data chunks/block (0=off)
+dir              = dist          ; distributable payload directory
+manifest_dir     = dist-state    ; where manifest_<N>.txt + serial.txt live
+manifest_interval = 60           ; seconds between manifest (re)broadcasts -- the carousel
+                                 ;   entry point (a cone can't act on data/fw chunks without it).
+                                 ;   A freshly-built manifest is broadcast promptly regardless.
+file_per_fw      = 1             ; WEIGHTED carousel (spec 13.7): data-FILE chunks sent per
+                                 ;   FIRMWARE chunk -- a FLOAT. >1 prioritizes files (4 = 4 file:1 fw,
+                                 ;   small files stay responsive); 1 = even; <1 prioritizes firmware
+                                 ;   (0.25 = 1 file:4 fw, push an image faster). (<=0 -> 1.0)
+test_drop_data   = 0             ; bench FEC test: drop last K data chunks/block (0=off)
 
 [control]
 socket = /tmp/conez-master.sock   ; Unix control socket (conez-masterctl)
