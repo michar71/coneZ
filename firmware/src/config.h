@@ -10,7 +10,6 @@
 #define CONFIG_MAX_PASSWORD     65
 #define CONFIG_MAX_DEVICE_NAME  33
 #define CONFIG_MAX_PATH         33
-#define CONFIG_MAX_LORA_SSID    17
 #define CONFIG_MAX_NTP_SERVER   65
 #define CONFIG_MAX_CALLSIGN     11
 #define CONFIG_MAX_LORA_MODE    8
@@ -42,7 +41,7 @@
 // (0xXY -> register 0xX4Y4, e.g. 0x12 = 0x1424 LoRaWAN private); values >0xFF
 // are written as the raw 16-bit register. 0xDEAD matches the lora-master spec.
 #define DEFAULT_LORA_SYNC_WORD  0xDEAD
-#define DEFAULT_LORA_SSID       "ConeZ"
+#define DEFAULT_LORA_NETWORK    0          // ConeZ network id (0-255); 0 = default net
 #define DEFAULT_LORA_CALLSIGN   ""
 #define DEFAULT_LORA_MODE       "lora"
 #define DEFAULT_LORA_SCAN_PASSES 5             // scanlist passes before widening the search
@@ -88,7 +87,7 @@
 #define DEFAULT_DBG_COMMANDS    true
 #define DEFAULT_DBG_GPS         false
 #define DEFAULT_DBG_GPS_RAW     false
-#define DEFAULT_DBG_LORA        false
+#define DEFAULT_DBG_LORA        true     // beacon/RX events on by default (bench/dev phase)
 #define DEFAULT_DBG_LORA_RAW    false
 #define DEFAULT_DBG_LORA_DIST   true     // dist file/firmware OTA chatter on by default (for now)
 #define DEFAULT_DBG_WIFI        false
@@ -119,7 +118,7 @@ typedef struct {
     int     lora_preamble;
     int     lora_tx_power;
     int     lora_sync_word;
-    char    lora_ssid[CONFIG_MAX_LORA_SSID];
+    int     lora_network;       // ConeZ network id (0-255); RX drops other networks
     char    lora_callsign[CONFIG_MAX_CALLSIGN];
     char    lora_rf_mode[CONFIG_MAX_LORA_MODE];
     float   fsk_bitrate;

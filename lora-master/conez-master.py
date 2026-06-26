@@ -68,6 +68,7 @@ DOWNSTREAM_TXPOWER = 0				# dBm (signed, -9..+22). Low for close-range
 						# ends for SX1262 powers <+14 -> no RF out)
 DOWNSTREAM_DEADTIME = float(os.environ.get("DEADTIME", "0.1"))	# Gap between transmissions (env-tunable for bench)
 LORA_SYNC_WORD = 0xDEAD
+NETWORK_ID = 0                   # ConeZ network id (0-255); 0 = default network
 
 # --- Radio mode + FSK (Phase 9) ----------------------------------------------
 # DOWNSTREAM_MODE selects "lora" or "fsk". FSK defaults match the cone's RadioLib
@@ -133,7 +134,7 @@ _CFG_DEFAULTS = dict(
     DOWNSTREAM_DEADTIME=DOWNSTREAM_DEADTIME, CALLSIGN=CALLSIGN,
     DOWNSTREAM_FREQUENCY=DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH=DOWNSTREAM_BANDWIDTH,
     DOWNSTREAM_SF=DOWNSTREAM_SF, DOWNSTREAM_CR=DOWNSTREAM_CR, DOWNSTREAM_PREAMBLE=DOWNSTREAM_PREAMBLE,
-    DOWNSTREAM_TXPOWER=DOWNSTREAM_TXPOWER, LORA_SYNC_WORD=LORA_SYNC_WORD,
+    DOWNSTREAM_TXPOWER=DOWNSTREAM_TXPOWER, LORA_SYNC_WORD=LORA_SYNC_WORD, NETWORK_ID=NETWORK_ID,
     DIST_DIR=DIST_DIR, MANIFEST_DIR=MANIFEST_DIR, DIST_TEST_DROP_DATA=DIST_TEST_DROP_DATA,
     CONTROL_SOCKET=CONTROL_SOCKET,
     DOWNSTREAM_MODE=DOWNSTREAM_MODE, DOWNSTREAM_FSK_BITRATE=DOWNSTREAM_FSK_BITRATE,
@@ -149,7 +150,7 @@ def load_config(path=CONFIG_PATH):
     global BEACON_PERIOD, MANIFEST_INTERVAL, DIST_FILE_PER_FW
     global DOWNSTREAM_FREQUENCY, DOWNSTREAM_BANDWIDTH, DOWNSTREAM_SF
     global DOWNSTREAM_CR, DOWNSTREAM_PREAMBLE, DOWNSTREAM_LDRO, DOWNSTREAM_TXPOWER
-    global DOWNSTREAM_DEADTIME, LORA_SYNC_WORD, CALLSIGN
+    global DOWNSTREAM_DEADTIME, LORA_SYNC_WORD, CALLSIGN, NETWORK_ID
     global DIST_DIR, MANIFEST_DIR, DIST_TEST_DROP_DATA, CONTROL_SOCKET
     global DOWNSTREAM_MODE, DOWNSTREAM_FSK_BITRATE, DOWNSTREAM_FSK_FREQDEV
     global DOWNSTREAM_FSK_RXBW, DOWNSTREAM_FSK_SYNC, DOWNSTREAM_FSK_PREAMBLE_BITS
@@ -176,6 +177,7 @@ def load_config(path=CONFIG_PATH):
     DOWNSTREAM_PREAMBLE  = g("lora", "preamble",  D["DOWNSTREAM_PREAMBLE"], int)
     DOWNSTREAM_TXPOWER   = g("lora", "tx_power",  D["DOWNSTREAM_TXPOWER"], int)
     LORA_SYNC_WORD       = g("lora", "sync_word", D["LORA_SYNC_WORD"], lambda s: int(s, 0))
+    NETWORK_ID           = g("lora", "network",   D["NETWORK_ID"], int)
     DIST_DIR             = g("dist", "dir",            D["DIST_DIR"], str)
     MANIFEST_DIR         = g("dist", "manifest_dir",   D["MANIFEST_DIR"], str)
     DIST_TEST_DROP_DATA  = g("dist", "test_drop_data", D["DIST_TEST_DROP_DATA"], int)
@@ -202,7 +204,7 @@ def load_config(path=CONFIG_PATH):
     else:
         phy = (f"LoRa {DOWNSTREAM_FREQUENCY/1e6:.3f} MHz SF{DOWNSTREAM_SF} "
                f"BW{DOWNSTREAM_BANDWIDTH//1000}k CR4/{DOWNSTREAM_CR} sync 0x{LORA_SYNC_WORD:04X}")
-    return (f"config: {src} -> {phy} {DOWNSTREAM_TXPOWER:+d} dBm "
+    return (f"config: {src} -> {phy} {DOWNSTREAM_TXPOWER:+d} dBm net {NETWORK_ID} "
             f"beacon {BEACON_PERIOD}s manifest {MANIFEST_INTERVAL}s file:fw {DIST_FILE_PER_FW:g}:1 "
             f"deadtime {DOWNSTREAM_DEADTIME}s callsign {CALLSIGN}")
 
@@ -331,10 +333,11 @@ def _cr_code(cr: int) -> int:
     return lookup.get(cr, 0)
 
 
-def make_beacon(network: int = 0) -> bytes:
+def make_beacon(network: int = None) -> bytes:
     """v1 BEACON: channel/params + master time + manifest serial + callsign.
     The mode byte is a flags field (mode + FSK whitening). On FSK the LoRa fields
     bw/sf/cr are zeroed and sync carries the FSK sync word."""
+    if network is None: network = NETWORK_ID
     if DOWNSTREAM_MODE == "fsk":
         flags = proto.MODE_FSK | (proto.BCN_FLAG_WHITENING if DOWNSTREAM_FSK_WHITENING else 0)
         sb = _fsk_sync_bytes(DOWNSTREAM_FSK_SYNC)
@@ -902,7 +905,7 @@ def send_chunk(c):
     pkt = mk(manifest_serial=manifest_serial, file_id=c["fid"], file_len=c["flen"],
              block_index=c["bidx"], total_blocks=c["tb"], chunk_index=c["idx"],
              data_chunks=c["N"], parity_chunks=c["R"], block_comp_len=c["comp_len"],
-             payload=c["payload"])
+             payload=c["payload"], network=NETWORK_ID)
     transmit(pkt)
     _a = "deflate" if c["algo"] == proto.ALGO_DEFLATE else "store"
     _k = "par" if c["parity"] else "dat"

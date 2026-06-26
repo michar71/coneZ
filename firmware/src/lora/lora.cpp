@@ -416,6 +416,15 @@ void lora_rx( void )
     // v1 dispatch on the 4-byte common header (type, network, src, dst)
     if (rxlen >= LP_HDR_LEN)
     {
+        // Network-id filter: the LoRa sync word separates networks at the PHY; this
+        // is the logical filter so two ConeZ networks sharing a sync word don't
+        // cross-talk. Drop anything not on our network ([lora] network; 0 = default).
+        if (rxbuf[LP_HDR_NET] != (uint8_t)config.lora_network)
+        {
+            printfnl(SOURCE_LORA_RAW, "RX drop: foreign net %u (mine %u)\n",
+                     (unsigned)rxbuf[LP_HDR_NET], (unsigned)config.lora_network);
+            return;
+        }
         uint8_t ptype = rxbuf[LP_HDR_TYPE];
         switch (ptype)
         {

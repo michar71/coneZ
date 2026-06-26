@@ -15,7 +15,7 @@ origin_lon=-119.193672
 enabled=on                 ; master on/off for the LoRa subsystem (default on)
 rx_only=off                ; listen-only: inhibit ALL transmit (default off)
 ota_downgrade=off          ; dist firmware OTA: accept older/= versions (default off = newer only)
-ssid=ConeZ
+network=0                  ; ConeZ network id 0-255; RX drops other networks (default 0)
 frequency=431.250
 bandwidth=500.0
 sf=9

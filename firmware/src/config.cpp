@@ -52,7 +52,7 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("lora",   "enabled",      CFG_BOOL,  lora_enabled),
     CFG_ENTRY("lora",   "rx_only",      CFG_BOOL,  lora_rx_only),
     CFG_ENTRY("lora",   "ota_downgrade",CFG_BOOL,  lora_ota_downgrade),
-    CFG_ENTRY("lora",   "ssid",         CFG_STR,   lora_ssid),
+    CFG_ENTRY_R("lora", "network",      CFG_INT,   lora_network,   0, 255),
     CFG_ENTRY("lora",   "frequency",    CFG_FLOAT, lora_frequency),
     CFG_ENTRY("lora",   "bandwidth",    CFG_FLOAT, lora_bandwidth),
     CFG_ENTRY_R("lora", "sf",           CFG_INT,   lora_sf,        5, 12),
@@ -217,7 +217,7 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->lora_scan_dwell  = DEFAULT_LORA_SCAN_DWELL;
     cfg->lora_tx_power    = DEFAULT_LORA_TX_POWER;
     cfg->lora_sync_word   = DEFAULT_LORA_SYNC_WORD;
-    strlcpy(cfg->lora_ssid,       DEFAULT_LORA_SSID,      sizeof(cfg->lora_ssid));
+    cfg->lora_network     = DEFAULT_LORA_NETWORK;
     strlcpy(cfg->lora_callsign,   DEFAULT_LORA_CALLSIGN,  sizeof(cfg->lora_callsign));
     strlcpy(cfg->lora_rf_mode,    DEFAULT_LORA_MODE,      sizeof(cfg->lora_rf_mode));
     cfg->fsk_bitrate      = DEFAULT_FSK_BITRATE;

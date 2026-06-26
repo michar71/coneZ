@@ -69,7 +69,10 @@ Half-duplex: only one station transmits at a time; the master schedules who.
   broadcast (dst=255) and filtered by group id in the cue body (section 13).
 
   Network id (1 byte): lets two independent ConeZ networks share a band without
-  cross-talk (in addition to the LoRa sync word). 0 = default network.
+  cross-talk (in addition to the LoRa sync word). 0 = default network. ENFORCED:
+  the master stamps its configured id (ini [lora] network) into every header, and
+  a cone drops any packet whose network id != its own (config [lora] network)
+  before dispatch, so a foreign network's beacons can't lock or feed it.
 
 
 --------------------------------------------------------------------------------

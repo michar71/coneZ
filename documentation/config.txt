@@ -44,7 +44,7 @@ Sections and Keys
   origin_lon        Origin longitude in degrees    (default: -119.193672)
 
 [lora]
-  ssid              LoRa network identifier        (default: ConeZ)
+  network           Network id 0-255; RX drops other nets (default: 0)
   frequency         Frequency in MHz               (default: 431.250)
   bandwidth         Bandwidth in kHz               (default: 500.0)
   sf                Spreading factor (7-12)        (default: 9)

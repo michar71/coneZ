@@ -9,6 +9,7 @@
 
 [lora]
 mode       = lora          ; "lora" or "fsk" (selects the [fsk] section below)
+network    = 0             ; ConeZ network id 0-255; stamped in every packet header — both modes
 frequency  = 431250000     ; Hz  (431.250 MHz, 70 cm amateur band) — used by both modes
 bandwidth  = 500000        ; Hz  (500 kHz)        — LoRa only
 sf         = 7             ; spreading factor 7..12 — LoRa only
