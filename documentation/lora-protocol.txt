@@ -507,8 +507,11 @@ the cone FOLLOWS, so a planned channel/mode change costs no rescan:
     channel IN RAM and probes it ~1 step in 3 during a rescan (interleaved with the
     tiered sweep, which widens unchanged) -- so a transient drop, or a master restart
     on a followed channel, re-locks fast without that channel being in any scanlist.
-    This is RAM-only: a REBOOT reverts to the persisted scanlist, so a long-term move
-    is still best paired with a dist-delivered scanlist update.
+    The last-connected channel is also PERSISTED to /scanlast.txt (one scanlist-format
+    line; compare-before-write, so flash is touched only on an actual change) and
+    re-seeded into the probe at boot -- so a master that moved to a non-scanlist
+    channel is re-found even across a power cycle, with no scanlist write-back or
+    dist update needed.
 
 Knobs (config [lora], read live): scan_dwell (seconds per channel, default 12 --
 must exceed the beacon period to reliably catch a beacon); scan_passes (primary
@@ -637,14 +640,11 @@ Built (see documentation/lora-v1-implementation-plan.txt for phases):
     without dropping lock -- no rescan for a planned move. Master:
     do_full_reload / _announce_radio_change (conez-master.py); cone:
     scan_notify_beacon follow path (scan.cpp). The cone also remembers the last-
-    connected channel in RAM and probes it ~1-in-3 during a rescan, so it re-finds a
-    master that moved to a non-scanlist channel (RAM-only; a reboot reverts to the
-    scanlist). Bench-validated both directions. [Phase 9]
+    connected channel and probes it ~1-in-3 during a rescan, so it re-finds a master
+    that moved to a non-scanlist channel -- persisted to /scanlast.txt (compare-
+    before-write) and re-seeded at boot, so the re-find survives a power cycle too.
+    Bench-validated both directions, including across a reboot. [Phase 9]
 
 Designed here, NOT yet built (remaining phases):
   * Cues (fire-now / fire-at-time; groups). [Phase 7]
   * Superframe / timeslot scheduling; registration; polling; radio mutex. [Phase 8]
-  * Follow-up to the reconfiguration handoff: PERSIST a followed channel (the RAM
-    last-connected probe already re-finds it within a session, but not across a
-    reboot) -- write it back into the scanlist, or dist a scanlist update, so a
-    long-term move survives a power cycle.

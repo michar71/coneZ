@@ -113,6 +113,7 @@ static bool     scan_have_beacon    = false;
 static scan_entry_t last_conn;
 static bool         have_last_conn = false;
 static int          last_conn_ctr  = 0;       // step counter: probe when it hits 0 (1 in LAST_CONN_EVERY)
+static bool         last_conn_dirty = false;  // last_conn changed -> persist to /scanlast.txt
 
 // Parse one scanlist line. Returns 1=entry, 0=blank/comment, -1=malformed.
 static int scan_parse_line(const char *s, scan_entry_t *e)
@@ -406,6 +407,61 @@ static void scan_step(void)
     }
 }
 
+// --- /scanlast.txt: persist the last-connected channel across reboots ----------
+// The RAM last_conn probe re-finds a master that FOLLOWED to a non-scanlist channel
+// within a session; persisting it to /scanlast.txt lets that survive a power cycle
+// too. One scanlist-format line, seeded into last_conn at boot and rewritten only
+// when the channel actually changes (compare-before-write, to spare flash).
+#define SCAN_LAST_FILE "/scanlast.txt"
+
+static void scan_serialize(const scan_entry_t *e, char *buf, size_t n)
+{
+    char mode[4]; int i = 0;
+    mode[i++] = (e->mode == LP_MODE_FSK) ? 'F' : 'L';
+    if (e->mode == LP_MODE_FSK && e->whitening) mode[i++] = 'W';
+    if (e->rx_only) mode[i++] = 'X';
+    mode[i] = '\0';
+    if (e->mode == LP_MODE_FSK)
+        snprintf(buf, n, "%s %u %u %u %u %s\n", mode, (unsigned)e->freq_hz,
+                 (unsigned)e->bitrate_bps, (unsigned)e->freqdev_hz, (unsigned)e->rxbw_hz, e->fsk_sync);
+    else
+        snprintf(buf, n, "%s %u %u %u %u %04X\n", mode, (unsigned)e->freq_hz,
+                 (unsigned)e->bw_hz, (unsigned)e->sf, (unsigned)e->cr, (unsigned)e->sync_word);
+}
+
+// Write the entry to /scanlast.txt, but ONLY if the file's current line differs
+// (compare-before-write -> no flash wear on a re-lock to the same channel).
+static void scan_persist_last_conn(const scan_entry_t *e)
+{
+    char line[96]; scan_serialize(e, line, sizeof(line));
+    char path[80]; const char *p = lfs_path(path, sizeof(path), SCAN_LAST_FILE);
+    char existing[96] = "";
+    FILE *f = fopen(p, "r");
+    if (f) { if (!fgets(existing, sizeof(existing), f)) existing[0] = '\0'; fclose(f); }
+    if (strcmp(existing, line) == 0) return;           // already current -> skip the write
+    f = fopen(p, "w");
+    if (!f) { printfnl(SOURCE_LORA, "scan: WARNING can't write %s\n", SCAN_LAST_FILE); return; }
+    fputs(line, f); fclose(f);
+    char d[96]; scan_describe(e, d, sizeof(d));
+    printfnl(SOURCE_LORA, "scan: saved last-conn -> %s: %s\n", SCAN_LAST_FILE, d);
+}
+
+// Seed last_conn from /scanlast.txt at boot so the 1-in-LAST_CONN_EVERY probe covers
+// a previously-followed (non-scanlist) channel across a reboot too.
+static void scan_load_last_conn(void)
+{
+    char path[80];
+    FILE *f = fopen(lfs_path(path, sizeof(path), SCAN_LAST_FILE), "r");
+    if (!f) return;
+    char line[160]; scan_entry_t e; bool got = false;
+    while (fgets(line, sizeof(line), f)) { if (scan_parse_line(line, &e) == 1) { got = true; break; } }
+    fclose(f);
+    if (!got) return;
+    last_conn = e; have_last_conn = true;
+    char d[96]; scan_describe(&last_conn, d, sizeof(d));
+    printfnl(SOURCE_LORA, "scan: last-conn restored from %s: %s\n", SCAN_LAST_FILE, d);
+}
+
 // (Re)start scanning from tier 0 -- reopens scanlist files (picking up any edits,
 // deletions, appearances or a freshly dist-delivered scanlist) and resets the
 // round-robin.
@@ -422,6 +478,7 @@ static void scan_restart(void)
 
 void scan_init(void)
 {
+    scan_load_last_conn();   // seed last_conn from /scanlast.txt (persisted across reboot)
     scan_restart();
     if (n_tiers > 0)
         printfnl(SOURCE_LORA, "scan: starting across %d tier(s)\n", n_tiers);
@@ -452,9 +509,17 @@ static bool scan_phy_sane(const scan_entry_t *e)
     return e->sf >= 5 && e->sf <= 12 && e->bw_hz >= 1000;
 }
 
-// Remember the channel we're currently locked on, in RAM (see last_conn). Cleared
-// only by a reboot, so a power-cycle reverts to the persisted scanlist.
-static void remember_last_conn(void) { last_conn = cur_entry; have_last_conn = true; }
+// Remember the channel we're locked on in RAM (last_conn) and -- when it actually
+// CHANGES -- flag it for persisting to /scanlast.txt (the write is deferred out of
+// the RX path; see lora_scan_tick). The RAM phy-eq check keeps the steady-state
+// every-beacon path free of any file work.
+static void remember_last_conn(void)
+{
+    if (have_last_conn && scan_phy_eq(&last_conn, &cur_entry)) return;   // unchanged
+    last_conn = cur_entry;
+    have_last_conn = true;
+    last_conn_dirty = true;
+}
 
 void scan_notify_beacon(const scan_entry_t *advertised)
 {
@@ -501,6 +566,17 @@ void scan_notify_beacon(const scan_entry_t *advertised)
 
 void lora_scan_tick(void)   // called from the LoRa task after lora_rx()
 {
+    // Persist a changed last-connected channel to /scanlast.txt. Snapshot under the
+    // radio lock, then do the LittleFS write OUTSIDE it so flash I/O never stalls RX
+    // or holds the radio mutex. Done before the scan_enabled gate so a lock that
+    // happened with scanning pinned off still gets saved.
+    if (last_conn_dirty) {
+        lora_radio_lock();
+        scan_entry_t snap = last_conn; bool have = have_last_conn; last_conn_dirty = false;
+        lora_radio_unlock();
+        if (have) scan_persist_last_conn(&snap);
+    }
+
     if (!scan_enabled || n_tiers == 0) return;   // cheap reads; lock only to act
     uint32_t now = uptime_ms();
 
