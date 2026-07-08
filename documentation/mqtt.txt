@@ -18,21 +18,43 @@ Topic Hierarchy
 Per-Cone Status: conez/{id}/status
 -----------------------------------
 
-Published every 30 seconds by each cone. QoS 0, not retained.
+Published every n seconds by each cone. QoS 0, not retained.
+(N initially to be 30 sec, TBD what the best rate is....)
 
-Payload: JSON object with device telemetry.
+Payload via MQTT:memory structure (This will unpacked on the sewer pipe side into a JSON structure to be handed over to the MQTT broker.)
 
-    {
-        "uptime": 3600,       // seconds since boot
-        "heap": 180000,       // free heap bytes
-        "temp": 28.5,         // board temperature (C), TMP102 sensor
-        "rssi": -62           // WiFi signal strength (dBm)
-    }
+struct node_status{  
+        Uint32 status;  //bitfield. Bit 0=GPS Lock,Bit 1=Wifi Connected, 2=Lora connected
+			//3=load power on,4=low voltage detected, 5=low voltage disconnect,
+                        //6=solar charging, 7=MQTT connected. 
+                        //Upper 4 bits denote the status package version, initially 0.
+	int8 w_rssi;    //Wifi RSSI
+	int8 l_rssi;    //LoRa RSSI
+	uin8 l_snr;     //Lora Signal-To-Noise Ratio 
+	uint8 sat_cat;  //Number of saxtleties tracked by GPS
+        uint8 v_bat;	//Battery voltage * 10  
+        Uint8 v_solar;  //Solar voltage * 10;
+	Uint32 uptime; 	//Uptime in seconds
+        Uint32 heap; 	//Available heap memory
+	int16 b_temp;   //Board temperature from TMP102 in Deg C * 100      
+        int16 c_temp;	//CPU temperature in Deg C * 100
+	int16 alt;      //Altitude in meters    
+	float lat;	//Latitude as signed float
+        float long;	//Longitude as signed float
+	float tilt_x;   //Tilt in x-Dir in deg   
+	float tilt_y;   //Tilt in Y-Dir in deg   
+}
+(Total 40 Bytes) 
+
+Payload via Wifi: JSON object with device telemetry.
+(We unpack the internal structure into JSON and send it as plain text with variable name as field name as it is easier to debug and can go directly to the MQTT server. We convert temperature and voltage into actual floating point numbers)
+
 
 Use cases:
   - Show controller monitors which cones are alive
   - Dashboard displays fleet health
   - Detect offline cones (no heartbeat for >60s)
+  - Mapping cone locations
 
 Per-Cone Debug Stream: conez/{id}/debug
 ----------------------------------------
