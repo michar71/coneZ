@@ -17,6 +17,7 @@
 #include "dist.h"
 #include "scan.h"
 #include "gps.h"
+#include "syst_status.h"
 
 static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
 
@@ -412,6 +413,7 @@ void lora_rx( void )
     last_rssi = rssi;            // a real packet -> these are now meaningful
     last_snr  = snr;
     rx_metrics_valid = true;
+    syst_status_note_lora_packet();
 
     // v1 dispatch on the 4-byte common header (type, network, src, dst)
     if (rxlen >= LP_HDR_LEN)

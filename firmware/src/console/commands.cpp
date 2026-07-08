@@ -1894,6 +1894,7 @@ int cmd_mqtt(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, "MQTT Status:\n");
     printfnl(SOURCE_COMMANDS, "  Enabled:    %s\n", config.mqtt_enabled ? "yes" : "no");
     printfnl(SOURCE_COMMANDS, "  Broker:     %s:%d\n", config.mqtt_broker, config.mqtt_port);
+    printfnl(SOURCE_COMMANDS, "  Interval:   %ds\n", config.mqtt_status_interval);
     printfnl(SOURCE_COMMANDS, "  State:      %s\n", mqtt_state_str());
     if (mqtt_connected()) {
         printfnl(SOURCE_COMMANDS, "  Uptime:     %lus\n", (unsigned long)mqtt_uptime_sec());

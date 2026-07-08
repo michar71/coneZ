@@ -49,6 +49,7 @@
 #include "artnet.h"
 #include "loadavg.h"
 #include "pm.h"
+#include "syst_status.h"
 
 #define WIFI_TIMEOUT                5     // Seconds
 
@@ -500,6 +501,7 @@ void setup()
 
   // MQTT uses printfnl() — must come after printManagerInit()
   mqtt_setup();
+  syst_status_setup();
 
   // ArtNet receiver — started if artnet_enabled in config
   artnet_setup();
@@ -575,6 +577,9 @@ void loop()
 
   // NTP time sync (runs on all boards when WiFi is connected)
   ntp_loop();
+
+  // Periodic shared node-status sampling for MQTT/LoRa transport
+  syst_status_loop();
 
   // MQTT client
   mqtt_loop();

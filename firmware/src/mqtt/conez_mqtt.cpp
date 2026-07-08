@@ -16,11 +16,11 @@
 #include "conez_wifi.h"
 #include "config.h"
 #include "printManager.h"
-#include "sensors.h"
+#include "syst_status.h"
+#include "node_status.h"
 
 // ---------- Tunables ----------
 #define MQTT_KEEPALIVE_SEC   60
-#define MQTT_HEARTBEAT_MS    30000
 
 // ---------- State ----------
 static esp_mqtt_client_handle_t s_client = NULL;
@@ -36,6 +36,14 @@ static char client_id[32];
 
 static bool s_started = false;       // esp_mqtt_client_start() has been called
 static bool s_user_stopped = false;  // user manually disconnected (suppress auto-start)
+
+static uint32_t mqtt_heartbeat_interval_ms(void)
+{
+    uint32_t seconds = (config.mqtt_status_interval > 0)
+        ? (uint32_t)config.mqtt_status_interval
+        : 30u;
+    return seconds * 1000u;
+}
 
 // ---------- Event handler ----------
 
@@ -162,17 +170,22 @@ static void send_heartbeat(void)
 {
     if (!s_client) return;
 
-    char payload[128];
-    snprintf(payload, sizeof(payload),
-             "{\"uptime\":%u,\"heap\":%u,\"temp\":%.1f,\"rssi\":%d}",
-             (unsigned)(uptime_ms() / 1000),
-             (unsigned)esp_get_free_heap_size(),
-             getTemp(),
-             (int)wifi_get_rssi());
+    node_status status = {};
+    if (!syst_status_get_publishable(&status)) {
+        return;
+    }
+
+    char payload[MQTT_NODE_STATUS_JSON_MAX];
+    if (mqtt_node_status_format_json(&status, payload, sizeof(payload)) < 0) {
+        printfnl(SOURCE_MQTT, "Status JSON build failed\n");
+        return;
+    }
 
     int msg_id = esp_mqtt_client_publish(s_client, topic_status, payload, 0, 0, 0);
-    if (msg_id >= 0)
+    if (msg_id >= 0) {
         s_tx_count = s_tx_count + 1;
+        syst_status_on_heartbeat_sent();
+    }
     last_heartbeat_ms = uptime_ms();
 }
 
@@ -190,6 +203,7 @@ void mqtt_setup(void)
     s_user_stopped = false;
 
     printfnl(SOURCE_MQTT, "Client ID: %s, broker: %s\n", client_id, config.mqtt_broker);
+    last_heartbeat_ms = 0;
 }
 
 void mqtt_loop(void)
@@ -201,7 +215,7 @@ void mqtt_loop(void)
     }
 
     // Heartbeat (only when connected)
-    if (s_connected && (uptime_ms() - last_heartbeat_ms) >= MQTT_HEARTBEAT_MS) {
+    if (s_connected && (uptime_ms() - last_heartbeat_ms) >= mqtt_heartbeat_interval_ms()) {
         send_heartbeat();
     }
 }
