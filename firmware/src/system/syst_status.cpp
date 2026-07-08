@@ -116,10 +116,10 @@ static void collect_status(node_status *out)
 
     if (lora_have_rx()) {
         out->l_rssi = (int8_t)lroundf(lora_get_rssi());
-        out->l_snr = lora_get_snr();
+        out->l_snr = (int8_t)lroundf(lora_get_snr());
     } else {
         out->l_rssi = 0;
-        out->l_snr = 0.0f;
+        out->l_snr = 0;
     }
 
     if (get_gpsstatus()) {

@@ -29,7 +29,7 @@ int mqtt_node_status_format_json(const node_status *status, char *buf, size_t bu
         "\"status\":%u,"
         "\"wifi_rssi\":%d,"
         "\"lora_rssi\":%d,"
-        "\"lora_snr\":%.1f,"
+        "\"lora_snr\":%d,"
         "\"satellites\":%u,"
         "\"battery_v\":%.1f,"
         "\"solar_v\":%.1f,"
@@ -46,7 +46,7 @@ int mqtt_node_status_format_json(const node_status *status, char *buf, size_t bu
         (unsigned)status->status,
         (int)status->w_rssi,
         (int)status->l_rssi,
-        status->l_snr,
+        (int)status->l_snr,
         (unsigned)status->sat_cat,
         status->v_bat / 10.0f,
         status->v_solar / 10.0f,

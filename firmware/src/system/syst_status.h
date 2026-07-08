@@ -26,18 +26,18 @@ struct node_status {
     float longitude;
     float tilt_x;
     float tilt_y;
-    float l_snr;
     int16_t b_temp;
     int16_t c_temp;
     int16_t alt;
     int8_t w_rssi;
     int8_t l_rssi;
+    int8_t l_snr;
     uint8_t sat_cat;
     uint8_t v_bat;
     uint8_t v_solar;
 };
 
-static_assert(sizeof(node_status) == 44, "node_status layout changed");
+static_assert(sizeof(node_status) == 40, "node_status layout changed");
 
 void syst_status_setup(void);
 void syst_status_loop(void);
