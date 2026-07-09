@@ -3784,7 +3784,7 @@ int cmd_compile(int argc, char **argv)
 
 // Subcommand lists for tab completion (NULL-terminated, stored in .rodata)
 static const char * const subs_color[]  = { "on", "off", NULL };
-static const char * const subs_config[] = { "set", "unset", "reset", NULL };
+static const char * const subs_config[] = { "get", "set", "unset", "reset", NULL };
 static const char * const subs_cue[]    = { "load", "start", "stop", "status", NULL };
 static const char * const subs_debug[]  = {
     "off", "system", "basic", "wasm", "commands", "shell",
@@ -3807,7 +3807,8 @@ static const char * const * tc_debug(int wordIndex, const char **words, int nWor
 static const char * const * tc_config(int wordIndex, const char **words, int nWords) {
     if (wordIndex == 1) return subs_config;
     if (wordIndex == 2 && nWords >= 2) {
-        if (strcasecmp(words[1], "set") == 0 || strcasecmp(words[1], "unset") == 0) {
+        if (strcasecmp(words[1], "get") == 0 || strcasecmp(words[1], "set") == 0 ||
+            strcasecmp(words[1], "unset") == 0) {
             // If partial word contains '.', show full section.key list
             if (nWords > 2 && strchr(words[2], '.'))
                 return config_get_key_list();
