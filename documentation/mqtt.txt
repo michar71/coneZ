@@ -14,6 +14,9 @@ The broker MUST allow anonymous connections. conez_mqtt.cpp populates only
 esp_mqtt_client_config_t.credentials.client_id -- it sets no username or
 password -- so a broker that requires auth rejects every cone.
 
+Endpoints on the master node: mqtt://sewerpipe.local:1883 (the cones) and
+ws://sewerpipe.local:9001 (browser dashboards; subprotocol "mqtt").
+
 Topic Hierarchy
 ---------------
 
@@ -161,7 +164,7 @@ Broker deployment (master node)
 -------------------------------
 
 The master node (the Raspberry Pi that also runs lora-master/conez-master.py)
-serves MQTT via Mosquitto. Two pieces of setup are required; neither is the
+serves MQTT via Mosquitto. Three pieces of setup are required; none is the
 package default.
 
 1. Mosquitto 2.x binds only to localhost and denies anonymous access out of
@@ -169,11 +172,36 @@ package default.
    /etc/mosquitto/conf.d/conez.conf:
 
        listener 1883 0.0.0.0
+       protocol mqtt
        allow_anonymous true
        max_keepalive 300
 
    allow_anonymous is mandatory, not a convenience -- see the note above about
    the firmware sending no credentials.
+
+1a. MQTT over WebSockets (port 9001), for browser dashboards and tools like
+   MQTT Explorer over ws://. Add a second listener:
+
+       listener 9001 0.0.0.0
+       protocol websockets
+
+   Debian's mosquitto 2.0.11 has libwebsockets (4.1.6) compiled in and this
+   works. But note the trap:
+
+       A websockets-ONLY config fails with
+           Error: Unable to start any listening sockets, exiting.
+       even though libwebsockets bound the port perfectly -- the verbose log
+       shows "lws_socket_bind says 9001" and "Listening on port 9001" right
+       before the error.
+
+   That message counts only MQTT listeners; a websockets listener never
+   populates that list. Keep at least one `protocol mqtt` listener and both
+   come up. Read the error as "no MQTT listener", not as a libwebsockets fault
+   -- it sends you hunting a problem that does not exist.
+
+   Verify with a real session rather than a bound port: the handshake should
+   return 101 with `Sec-WebSocket-Protocol: mqtt`, then MQTT CONNECT/CONNACK
+   and SUBSCRIBE/SUBACK inside binary frames.
 
 2. The firmware hardcodes DEFAULT_MQTT_BROKER "sewerpipe.local" (config.h),
    but the Pi's hostname is "raspberrypi", so that name does not resolve.
