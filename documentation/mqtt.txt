@@ -23,27 +23,25 @@ Published every n seconds by each cone. QoS 0, not retained.
 
 Payload via MQTT:memory structure (This will unpacked on the sewer pipe side into a JSON structure to be handed over to the MQTT broker.)
 
-struct node_status{  
-        Uint32 status;  //bitfield. Bit 0=GPS Lock,Bit 1=Wifi Connected, 2=Lora connected
-			//3=load power on,4=low voltage detected, 5=low voltage disconnect,
-                        //6=solar charging, 7=MQTT connected. 
-                        //Upper 4 bits denote the status package version, initially 0.
-	int8 w_rssi;    //Wifi RSSI
-	int8 l_rssi;    //LoRa RSSI
-	uin8 l_snr;     //Lora Signal-To-Noise Ratio 
-	uint8 sat_cat;  //Number of saxtleties tracked by GPS
-        uint8 v_bat;	//Battery voltage * 10  
-        Uint8 v_solar;  //Solar voltage * 10;
-	Uint32 uptime; 	//Uptime in seconds
-        Uint32 heap; 	//Available heap memory
-	int16 b_temp;   //Board temperature from TMP102 in Deg C * 100      
-        int16 c_temp;	//CPU temperature in Deg C * 100
-	int16 alt;      //Altitude in meters    
-	float lat;	//Latitude as signed float
-        float long;	//Longitude as signed float
-	float tilt_x;   //Tilt in x-Dir in deg   
-	float tilt_y;   //Tilt in Y-Dir in deg   
-}
+struct node_status {
+    uint32_t status;
+    uint32_t uptime;
+    uint32_t heap;
+    float lat;
+    float longitude;
+    float tilt_x;
+    float tilt_y;
+    int16_t b_temp;
+    int16_t c_temp;
+    int16_t alt;
+    int8_t w_rssi;
+    int8_t l_rssi;
+    int8_t l_snr;
+    uint8_t sat_cat;
+    uint8_t v_bat;
+    uint8_t v_solar;
+};
+
 (Total 40 Bytes) 
 
 Payload via Wifi: JSON object with device telemetry.
