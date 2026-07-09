@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ConeZ Telnet</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06111d;
+      --panel: rgba(10, 23, 38, 0.96);
+      --panel-soft: rgba(12, 27, 42, 0.98);
+      --border: rgba(96, 196, 255, 0.2);
+      --text: #dff6ff;
+      --muted: #7ea4bb;
+      --cyan: #53d8ff;
+      --good: #2df7a3;
+      --bad: #ff5878;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Mono", Monaco, Consolas, "Liberation Mono", monospace;
+      background:
+        radial-gradient(circle at top left, rgba(83, 216, 255, 0.14), transparent 24%),
+        linear-gradient(180deg, #081525 0%, var(--bg) 55%, #030910 100%);
+      color: var(--text);
+    }
+
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px 14px;
+    }
+
+    .shell {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px 16px;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: -0.03em;
+      text-transform: uppercase;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(13, 31, 48, 0.94), rgba(7, 19, 31, 0.94));
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pill strong {
+      color: var(--text);
+    }
+
+    .pill.connected strong {
+      color: var(--good);
+    }
+
+    .pill.disconnected strong {
+      color: var(--bad);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn {
+      min-height: 36px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 216, 255, 0.18);
+      background: linear-gradient(180deg, rgba(18, 40, 62, 0.96), rgba(8, 20, 33, 0.96));
+      color: var(--cyan);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+    }
+
+    .output {
+      min-height: 480px;
+      max-height: 65vh;
+      overflow: auto;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(83, 216, 255, 0.12);
+      background: linear-gradient(180deg, rgba(8, 18, 28, 0.98), rgba(3, 9, 16, 0.98));
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
+
+    .composer input {
+      min-width: 0;
+      min-height: 46px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(83, 216, 255, 0.16);
+      background: var(--panel-soft);
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    .composer button {
+      min-height: 46px;
+      padding: 12px 16px;
+    }
+
+    @media (max-width: 720px) {
+      .composer {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="shell">
+      <div class="header">
+        <div>
+          <h1 id="title">ConeZ Telnet</h1>
+          <div class="meta">
+            <div class="pill">
+              <span>Host</span>
+              <strong id="host-label">--</strong>
+            </div>
+            <div class="pill disconnected" id="status-pill">
+              <span>Status</span>
+              <strong id="status-label">DISCONNECTED</strong>
+            </div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button class="btn" type="button" id="reconnect-btn">Reconnect</button>
+          <button class="btn" type="button" id="close-btn">Close</button>
+        </div>
+      </div>
+      <div class="output" id="output" aria-live="polite"></div>
+      <form class="composer" id="composer">
+        <input id="command-input" type="text" autocomplete="off" placeholder="Type a command and press Enter">
+        <button class="btn" type="submit">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const host = params.get("host") || "";
+    const port = params.get("port") || "23";
+    const title = params.get("title") || host || "ConeZ";
+    const wsPort = params.get("wsport") || String((Number(window.location.port || "80") || 80) + 1);
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//${window.location.hostname}:${wsPort}/telnet?host=${encodeURIComponent(host)}&port=${encodeURIComponent(port)}`;
+
+    const titleEl = document.getElementById("title");
+    const hostLabelEl = document.getElementById("host-label");
+    const statusPillEl = document.getElementById("status-pill");
+    const statusLabelEl = document.getElementById("status-label");
+    const outputEl = document.getElementById("output");
+    const reconnectBtnEl = document.getElementById("reconnect-btn");
+    const closeBtnEl = document.getElementById("close-btn");
+    const composerEl = document.getElementById("composer");
+    const commandInputEl = document.getElementById("command-input");
+
+    let socket = null;
+    let rawOutputBuffer = "";
+    const MAX_OUTPUT_CHARS = 200000;
+
+    const ANSI_COLORS = {
+      30: "#0a1824",
+      31: "#ff6b7f",
+      32: "#42f5a7",
+      33: "#ffd166",
+      34: "#63a8ff",
+      35: "#d68dff",
+      36: "#53d8ff",
+      37: "#eaf7ff",
+      90: "#6c8496",
+      91: "#ff8f9f",
+      92: "#79ffc0",
+      93: "#ffe08f",
+      94: "#91beff",
+      95: "#e0a9ff",
+      96: "#8cecff",
+      97: "#ffffff"
+    };
+
+    function setStatus(connected, text) {
+      statusPillEl.classList.toggle("connected", connected);
+      statusPillEl.classList.toggle("disconnected", !connected);
+      statusLabelEl.textContent = text;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function cloneStyle(style) {
+      return {
+        fg: style.fg,
+        bg: style.bg,
+        bold: style.bold
+      };
+    }
+
+    function styleKey(style) {
+      return `${style.fg || ""}|${style.bg || ""}|${style.bold ? "1" : "0"}`;
+    }
+
+    function styleToCss(style) {
+      const rules = [];
+      if (style.fg) {
+        rules.push(`color:${style.fg}`);
+      }
+      if (style.bg) {
+        rules.push(`background:${style.bg}`);
+      }
+      if (style.bold) {
+        rules.push("font-weight:700");
+      }
+      return rules.join(";");
+    }
+
+    function applySgrCodes(style, codes) {
+      if (codes.length === 0) {
+        style.fg = null;
+        style.bg = null;
+        style.bold = false;
+        return;
+      }
+
+      for (const code of codes) {
+        if (code === 0) {
+          style.fg = null;
+          style.bg = null;
+          style.bold = false;
+        } else if (code === 1) {
+          style.bold = true;
+        } else if (code === 22) {
+          style.bold = false;
+        } else if (code === 39) {
+          style.fg = null;
+        } else if (code === 49) {
+          style.bg = null;
+        } else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) {
+          style.fg = ANSI_COLORS[code] || null;
+        } else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) {
+          style.bg = ANSI_COLORS[code - 10] || null;
+        }
+      }
+    }
+
+    function renderAnsiBuffer(buffer) {
+      const tokens = [];
+      const style = { fg: null, bg: null, bold: false };
+
+      for (let index = 0; index < buffer.length; index += 1) {
+        const ch = buffer[index];
+
+        if (ch === "\x1b" && buffer[index + 1] === "[") {
+          let end = index + 2;
+          while (end < buffer.length && !/[A-Za-z]/.test(buffer[end])) {
+            end += 1;
+          }
+          if (end >= buffer.length) {
+            break;
+          }
+
+          const command = buffer[end];
+          const params = buffer
+            .slice(index + 2, end)
+            .split(";")
+            .filter((part) => part.length > 0)
+            .map((part) => Number.parseInt(part, 10))
+            .filter((part) => !Number.isNaN(part));
+
+          if (command === "m") {
+            applySgrCodes(style, params);
+          }
+          index = end;
+          continue;
+        }
+
+        if (ch === "\b") {
+          for (let tokenIndex = tokens.length - 1; tokenIndex >= 0; tokenIndex -= 1) {
+            if (tokens[tokenIndex].char !== "\n") {
+              tokens.splice(tokenIndex, 1);
+              break;
+            }
+          }
+          continue;
+        }
+
+        if (ch === "\r") {
+          continue;
+        }
+
+        if (ch === "\t") {
+          tokens.push({ char: "    ", style: cloneStyle(style) });
+        } else {
+          tokens.push({ char: ch, style: cloneStyle(style) });
+        }
+      }
+
+      let html = "";
+      let currentKey = null;
+      let currentCss = "";
+      let currentText = "";
+
+      function flushSpan() {
+        if (!currentText) {
+          return;
+        }
+        const escaped = escapeHtml(currentText);
+        if (currentCss) {
+          html += `<span style="${currentCss}">${escaped}</span>`;
+        } else {
+          html += escaped;
+        }
+        currentText = "";
+      }
+
+      for (const token of tokens) {
+        const key = styleKey(token.style);
+        const css = styleToCss(token.style);
+        if (key !== currentKey) {
+          flushSpan();
+          currentKey = key;
+          currentCss = css;
+        }
+        currentText += token.char;
+      }
+      flushSpan();
+      return html;
+    }
+
+    function appendOutput(text) {
+      rawOutputBuffer += text;
+      if (rawOutputBuffer.length > MAX_OUTPUT_CHARS) {
+        rawOutputBuffer = rawOutputBuffer.slice(rawOutputBuffer.length - MAX_OUTPUT_CHARS);
+      }
+      outputEl.innerHTML = renderAnsiBuffer(rawOutputBuffer);
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    function connect() {
+      if (!host) {
+        appendOutput("Missing host in telnet URL.\n");
+        setStatus(false, "NO HOST");
+        return;
+      }
+
+      if (socket) {
+        socket.close();
+      }
+
+      setStatus(false, "CONNECTING");
+      appendOutput(`Connecting to ${host}:${port} ...\n`);
+      socket = new WebSocket(wsUrl);
+
+      socket.addEventListener("open", () => {
+        setStatus(true, "CONNECTED");
+        appendOutput(`Connected to ${host}:${port}\n`);
+      });
+
+      socket.addEventListener("message", (event) => {
+        appendOutput(String(event.data));
+      });
+
+      socket.addEventListener("close", () => {
+        setStatus(false, "DISCONNECTED");
+        appendOutput("\n[session closed]\n");
+      });
+
+      socket.addEventListener("error", () => {
+        setStatus(false, "ERROR");
+        appendOutput("\n[connection error]\n");
+      });
+    }
+
+    titleEl.textContent = `${title} Telnet`;
+    hostLabelEl.textContent = `${host || "--"}:${port}`;
+
+    reconnectBtnEl.addEventListener("click", () => {
+      connect();
+      commandInputEl.focus();
+    });
+
+    closeBtnEl.addEventListener("click", () => {
+      window.close();
+    });
+
+    composerEl.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const command = commandInputEl.value;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        appendOutput("[not connected]\n");
+        return;
+      }
+      socket.send(command + "\r");
+      commandInputEl.value = "";
+    });
+
+    commandInputEl.focus();
+    connect();
+  </script>
+</body>
+</html>

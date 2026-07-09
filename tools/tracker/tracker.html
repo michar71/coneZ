@@ -1,0 +1,1675 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ConeZ Tracker</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06111d;
+      --bg-deep: #030910;
+      --panel: rgba(10, 23, 38, 0.9);
+      --panel-strong: rgba(14, 31, 48, 0.98);
+      --panel-soft: rgba(9, 19, 31, 0.84);
+      --border: rgba(96, 196, 255, 0.2);
+      --text: #dff6ff;
+      --muted: #7ea4bb;
+      --track: rgba(94, 149, 187, 0.18);
+      --good: #2df7a3;
+      --warn: #f3bb48;
+      --bad: #ff5878;
+      --cyan: #53d8ff;
+      --violet: #86a8ff;
+      --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Mono", Monaco, Consolas, "Liberation Mono", monospace;
+      scroll-behavior: smooth;
+      background:
+        radial-gradient(circle at top left, rgba(83, 216, 255, 0.14), transparent 24%),
+        radial-gradient(circle at top right, rgba(134, 168, 255, 0.14), transparent 22%),
+        linear-gradient(180deg, #081525 0%, var(--bg) 48%, var(--bg-deep) 100%);
+      color: var(--text);
+    }
+
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px 16px 32px;
+    }
+
+    .top-shell {
+      position: sticky;
+      top: 0;
+      z-index: 500;
+      margin: -24px -16px 18px;
+      padding: 24px 16px 14px;
+      background:
+        linear-gradient(180deg, rgba(6, 17, 29, 0.96) 0%, rgba(6, 17, 29, 0.92) 72%, rgba(6, 17, 29, 0.55) 100%);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(83, 216, 255, 0.1);
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 32px;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      text-transform: uppercase;
+      color: #f3fbff;
+      text-shadow: 0 0 20px rgba(83, 216, 255, 0.22);
+    }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .node-shortcuts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0;
+    }
+
+    .node-shortcut {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 216, 255, 0.16);
+      background: linear-gradient(180deg, rgba(13, 31, 48, 0.88), rgba(7, 19, 31, 0.94));
+      color: var(--cyan);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+      transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    .node-shortcut:hover {
+      transform: translateY(-1px);
+      border-color: rgba(83, 216, 255, 0.32);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+    }
+
+    .node-shortcut:active {
+      transform: translateY(0);
+    }
+
+    .node-shortcut.stale {
+      color: #9aafbc;
+      border-color: rgba(143, 167, 183, 0.12);
+      background: linear-gradient(180deg, rgba(24, 33, 42, 0.84), rgba(15, 21, 28, 0.9));
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+      opacity: 0.72;
+      filter: grayscale(0.35) saturate(0.8);
+    }
+
+    .node-shortcuts-empty {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 8px 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(13, 31, 48, 0.94), rgba(7, 19, 31, 0.94));
+      box-shadow: var(--shadow);
+      color: var(--muted);
+      font-size: 13px;
+      backdrop-filter: blur(8px);
+    }
+
+    .pill strong {
+      color: var(--text);
+    }
+
+    .pill.connected strong {
+      color: var(--good);
+    }
+
+    .pill.disconnected strong {
+      color: var(--bad);
+    }
+
+    .list {
+      max-height: calc(100vh - 150px);
+      overflow-y: auto;
+      display: grid;
+      gap: 14px;
+      padding-right: 4px;
+      margin-bottom: 18px;
+    }
+
+    .card {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+      scroll-margin-top: 160px;
+    }
+
+    .card.card-stale {
+      opacity: 0.5;
+      filter: grayscale(0.7) saturate(0.65);
+      border-color: rgba(160, 176, 190, 0.16);
+      box-shadow: 0 12px 26px rgba(0, 0, 0, 0.24);
+    }
+
+    .card.card-stale .node-id,
+    .card.card-stale .module h2 {
+      color: #90a7b6;
+    }
+
+    .card.card-flash {
+      animation: card-flash 1.35s ease;
+    }
+
+    @keyframes card-flash {
+      0% {
+        border-color: rgba(83, 216, 255, 0.22);
+        box-shadow: var(--shadow);
+      }
+      28% {
+        border-color: rgba(83, 216, 255, 0.72);
+        box-shadow:
+          0 0 0 1px rgba(83, 216, 255, 0.24),
+          0 0 34px rgba(83, 216, 255, 0.24),
+          0 18px 40px rgba(0, 0, 0, 0.35);
+      }
+      100% {
+        border-color: rgba(96, 196, 255, 0.2);
+        box-shadow: var(--shadow);
+      }
+    }
+
+    .card-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px 16px;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(83, 216, 255, 0.14);
+    }
+
+    .node-id {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: #f3fbff;
+    }
+
+    .updated {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .card-actions-block {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .card-ip {
+      display: grid;
+      gap: 3px;
+      text-align: right;
+      justify-items: end;
+    }
+
+    .card-ip-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .card-ip-value {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .action-btn {
+      min-height: 32px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 216, 255, 0.18);
+      background: linear-gradient(180deg, rgba(18, 40, 62, 0.96), rgba(8, 20, 33, 0.96));
+      color: var(--cyan);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: transform 120ms ease, border-color 120ms ease, opacity 120ms ease;
+    }
+
+    .action-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      border-color: rgba(83, 216, 255, 0.34);
+    }
+
+    .action-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .panel-grid {
+      display: grid;
+      grid-template-columns:
+        minmax(140px, 15%)
+        minmax(180px, 1fr)
+        minmax(180px, 1fr)
+        minmax(220px, 1.1fr)
+        minmax(180px, 0.9fr)
+        minmax(180px, 0.9fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .module {
+      padding: 12px;
+      border-radius: 14px;
+      background:
+        linear-gradient(180deg, rgba(15, 34, 54, 0.96), rgba(10, 22, 35, 0.98));
+      border: 1px solid rgba(83, 216, 255, 0.12);
+      box-shadow: inset 0 1px 0 rgba(140, 220, 255, 0.06);
+    }
+
+    .module h2 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--cyan);
+    }
+
+    .signal-stack {
+      display: grid;
+      gap: 6px;
+      height: 100%;
+    }
+
+    .signal-row {
+      display: grid;
+      gap: 6px;
+    }
+
+    .signal-stat {
+      padding-top: 4px;
+    }
+
+    .signal-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .signal-bar {
+      height: 16px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--track);
+      border: 1px solid rgba(83, 216, 255, 0.08);
+    }
+
+    .signal-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--bad), var(--warn) 58%, var(--good));
+      box-shadow: 0 0 18px rgba(83, 216, 255, 0.18);
+    }
+
+    .gauge-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(72px, 1fr));
+      gap: 12px;
+      align-content: start;
+      justify-items: center;
+    }
+
+    .gauge {
+      --angle: 180deg;
+      --gauge-color: var(--good);
+      width: 100%;
+      display: grid;
+      justify-items: center;
+      gap: 8px;
+    }
+
+    .gauge-face {
+      position: relative;
+      width: min(116px, 100%);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, var(--panel-strong) 0 52%, transparent 53% 100%),
+        conic-gradient(var(--gauge-color) 0deg var(--angle), var(--track) var(--angle) 360deg);
+      border: 1px solid rgba(83, 216, 255, 0.16);
+      box-shadow:
+        inset 0 0 0 8px rgba(7, 19, 31, 0.88),
+        0 0 26px rgba(83, 216, 255, 0.08);
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      text-align: center;
+    }
+
+    .gauge-value {
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1.05;
+    }
+
+    .gauge-unit {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .gauge-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .gps-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .gps-item {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(16, 34, 52, 0.95), rgba(9, 20, 31, 0.95));
+      border: 1px solid rgba(83, 216, 255, 0.1);
+    }
+
+    .gps-k {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .gps-v {
+      font-size: 16px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .stats-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .stat-item {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(16, 34, 52, 0.95), rgba(9, 20, 31, 0.95));
+      border: 1px solid rgba(83, 216, 255, 0.1);
+    }
+
+    .stat-k {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .stat-v {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .tilt-wrap {
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+      align-content: center;
+      min-height: 100%;
+    }
+
+    .tilt-scope {
+      position: relative;
+      width: 132px;
+      height: 132px;
+      border-radius: 50%;
+      border: 1px solid rgba(83, 216, 255, 0.2);
+      background:
+        radial-gradient(circle at center, rgba(83, 216, 255, 0.08) 0, rgba(83, 216, 255, 0.02) 38%, transparent 39%),
+        linear-gradient(180deg, rgba(15, 34, 54, 0.96), rgba(10, 22, 35, 0.98));
+      box-shadow:
+        inset 0 0 0 1px rgba(83, 216, 255, 0.08),
+        0 0 24px rgba(83, 216, 255, 0.08);
+      overflow: hidden;
+    }
+
+    .tilt-scope::before,
+    .tilt-scope::after {
+      content: "";
+      position: absolute;
+      background: rgba(83, 216, 255, 0.12);
+    }
+
+    .tilt-scope::before {
+      left: 50%;
+      top: 10px;
+      bottom: 10px;
+      width: 1px;
+      transform: translateX(-50%);
+    }
+
+    .tilt-scope::after {
+      top: 50%;
+      left: 10px;
+      right: 10px;
+      height: 1px;
+      transform: translateY(-50%);
+    }
+
+    .tilt-ring {
+      position: absolute;
+      inset: 18px;
+      border-radius: 50%;
+      border: 1px solid rgba(83, 216, 255, 0.12);
+    }
+
+    .tilt-point {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--warn);
+      font-size: 20px;
+      font-weight: 800;
+      text-shadow: 0 0 14px rgba(243, 187, 72, 0.4);
+      pointer-events: none;
+    }
+
+    .tilt-inline {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+      text-align: center;
+    }
+
+    .empty {
+      padding: 28px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--border);
+      border-radius: 18px;
+      background: rgba(10, 23, 38, 0.7);
+    }
+
+    .map-card {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .map-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px 16px;
+      margin-bottom: 14px;
+    }
+
+    .map-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .map-status {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .map-frame {
+      min-height: 420px;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(83, 216, 255, 0.12);
+      background:
+        linear-gradient(135deg, rgba(20, 46, 70, 0.84), rgba(4, 13, 23, 0.96)),
+        repeating-linear-gradient(
+          0deg,
+          rgba(83, 216, 255, 0.06) 0,
+          rgba(83, 216, 255, 0.06) 1px,
+          transparent 1px,
+          transparent 34px
+        ),
+        repeating-linear-gradient(
+          90deg,
+          rgba(83, 216, 255, 0.06) 0,
+          rgba(83, 216, 255, 0.06) 1px,
+          transparent 1px,
+          transparent 34px
+        );
+    }
+
+    .map-placeholder {
+      min-height: 420px;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    @media (max-width: 1024px) {
+      .panel-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 680px) {
+      main {
+        padding: 18px 12px 24px;
+      }
+
+      .top-shell {
+        top: 0;
+        margin: -18px -12px 16px;
+        padding: 18px 12px 12px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .list {
+        max-height: none;
+      }
+
+      .panel-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .gauge-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .leaflet-container {
+      width: 100%;
+      min-height: 420px;
+      font-family: "SF Mono", Monaco, Consolas, "Liberation Mono", monospace;
+      background: #07131f;
+    }
+
+    .leaflet-popup-content-wrapper,
+    .leaflet-popup-tip {
+      background: rgba(7, 19, 31, 0.96);
+      color: var(--text);
+      border: 1px solid rgba(83, 216, 255, 0.16);
+      box-shadow: 0 16px 28px rgba(0, 0, 0, 0.45);
+    }
+
+    .leaflet-control-zoom a {
+      background: rgba(10, 23, 38, 0.96);
+      color: var(--text);
+      border-bottom-color: rgba(83, 216, 255, 0.12);
+    }
+
+    .leaflet-control-zoom a:hover {
+      background: rgba(19, 40, 61, 0.98);
+      color: #ffffff;
+    }
+
+    .leaflet-control-layers {
+      background: rgba(7, 19, 31, 0.96);
+      border: 1px solid rgba(83, 216, 255, 0.16);
+      box-shadow: 0 16px 28px rgba(0, 0, 0, 0.35);
+      color: var(--text);
+    }
+
+    .leaflet-control-layers-toggle {
+      filter: invert(0.92) hue-rotate(165deg) saturate(1.4);
+    }
+
+    .leaflet-control-layers-expanded {
+      padding: 10px 12px;
+      background: rgba(7, 19, 31, 0.96);
+      color: var(--text);
+    }
+
+    .leaflet-control-layers-expanded label {
+      color: var(--text);
+    }
+
+    .leaflet-tooltip {
+      background: rgba(7, 19, 31, 0.92);
+      border: 1px solid rgba(83, 216, 255, 0.18);
+      color: var(--cyan);
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+    }
+
+    .leaflet-tooltip-top:before {
+      border-top-color: rgba(83, 216, 255, 0.18);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="top-shell">
+      <h1>ConeZ Tracker</h1>
+      <div class="status-line">
+        <div class="pill disconnected" id="broker-pill">
+          <span>Broker</span>
+          <strong id="broker-status">NOT CONNECTED</strong>
+        </div>
+        <div class="pill">
+          <span>Nodes</span>
+          <strong id="node-count">0</strong>
+        </div>
+        <div class="pill">
+          <span>Topic</span>
+          <strong id="topic-status">conez/+/status</strong>
+        </div>
+        <div class="pill">
+          <span>Retry</span>
+          <strong id="retry-status">Every 2s when offline</strong>
+        </div>
+      </div>
+      <nav class="node-shortcuts" id="node-shortcuts" aria-label="Jump to node"></nav>
+    </div>
+    <section class="list" id="node-list" aria-live="polite"></section>
+    <section class="map-card">
+      <div class="map-header">
+        <h2 class="map-title">Node Map</h2>
+        <div class="map-status" id="map-status">Waiting for node positions...</div>
+      </div>
+      <div class="map-frame" id="map-frame">
+        <div class="map-placeholder" id="map-placeholder">
+          Leaflet map will appear here when nodes publish latitude/longitude.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script>
+    const TOPIC_ROOT = "conez";
+    const TOPIC_STATUS_PATTERN = `${TOPIC_ROOT}/+/status`;
+    const RETRY_INTERVAL_MS = 2000;
+    const RETRY_LABEL = `${RETRY_INTERVAL_MS / 1000}s`;
+    const STALE_AFTER_MS = 2 * 60 * 1000;
+    const STATUS_URL = "./api/status";
+    const TELNET_PAGE_URL = "./telnet.html";
+    const MQTT_URLS = [
+      "ws://sewerpipe.local:9001/mqtt",
+      "ws://sewerpipe.local:9001",
+      "ws://sewerpipe.local/mqtt"
+    ];
+    const TRANSPORTS = ["shim", "websocket"];
+
+    const brokerPillEl = document.getElementById("broker-pill");
+    const brokerStatusEl = document.getElementById("broker-status");
+    const nodeCountEl = document.getElementById("node-count");
+    const topicStatusEl = document.getElementById("topic-status");
+    const retryStatusEl = document.getElementById("retry-status");
+    const nodeShortcutsEl = document.getElementById("node-shortcuts");
+    const nodeListEl = document.getElementById("node-list");
+    const mapStatusEl = document.getElementById("map-status");
+    const mapFrameEl = document.getElementById("map-frame");
+    const mapPlaceholderEl = document.getElementById("map-placeholder");
+
+    const nodes = new Map();
+    const mapMarkers = new Map();
+
+    let refreshTimer = null;
+    let reconnectTimer = null;
+    let map = null;
+    let streetLayer = null;
+    let satelliteLayer = null;
+    let mapLayerControl = null;
+    let activeTransport = null;
+    let wsClient = null;
+    let wsUrlIndex = 0;
+    let transportIndex = 0;
+    let shimSequence = 0;
+    let wsSequence = 0;
+    let staleRefreshTimer = null;
+    let mapAutoFitEnabled = true;
+    let suppressMapInteractionFlag = false;
+
+    function setBrokerState(connected, text) {
+      brokerPillEl.classList.toggle("connected", connected);
+      brokerPillEl.classList.toggle("disconnected", !connected);
+      brokerStatusEl.textContent = text;
+      retryStatusEl.textContent = connected
+        ? `Live via ${activeTransport || "unknown"}`
+        : `Retrying every ${RETRY_LABEL} via ${TRANSPORTS[transportIndex]}`;
+    }
+
+    function tryParseJson(text) {
+      try {
+        return JSON.parse(text);
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function scalePercent(value, min, max) {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) {
+        return 0;
+      }
+      return ((clamp(Number(value), min, max) - min) / (max - min)) * 100;
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function hexToRgb(hex) {
+      const clean = hex.replace("#", "");
+      return {
+        r: parseInt(clean.slice(0, 2), 16),
+        g: parseInt(clean.slice(2, 4), 16),
+        b: parseInt(clean.slice(4, 6), 16)
+      };
+    }
+
+    function mixColor(lowHex, highHex, t) {
+      const low = hexToRgb(lowHex);
+      const high = hexToRgb(highHex);
+      const ratio = clamp(t, 0, 1);
+      const r = Math.round(lerp(low.r, high.r, ratio));
+      const g = Math.round(lerp(low.g, high.g, ratio));
+      const b = Math.round(lerp(low.b, high.b, ratio));
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    function gaugeVisual(value, min, max, lowColor, highColor) {
+      const percent = scalePercent(value, min, max);
+      return {
+        angle: `${Math.round((percent / 100) * 360)}deg`,
+        color: mixColor(lowColor, highColor, percent / 100)
+      };
+    }
+
+    function formatMaybeNumber(value, digits = 1) {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) {
+        return "--";
+      }
+      return Number(value).toFixed(digits);
+    }
+
+    function formatCoordinate(value) {
+      if (value === null || value === undefined || Number.isNaN(Number(value))) {
+        return "--";
+      }
+      return Number(value).toFixed(6);
+    }
+
+    function hasValidPosition(metrics) {
+      if (!metrics) {
+        return false;
+      }
+      return Number.isFinite(metrics.latitude) && Number.isFinite(metrics.longitude);
+    }
+
+    function parseIpAddress(value) {
+      if (!Array.isArray(value) || value.length !== 4) {
+        return null;
+      }
+
+      const octets = value.map((part) => Number(part));
+      if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+        return null;
+      }
+      return octets;
+    }
+
+    function formatIpAddress(ipAddress) {
+      if (!Array.isArray(ipAddress) || ipAddress.length !== 4) {
+        return "--";
+      }
+      return ipAddress.join(".");
+    }
+
+    function hasUsableIpAddress(ipAddress) {
+      return Array.isArray(ipAddress) && ipAddress.length === 4 && ipAddress.some((part) => part !== 0);
+    }
+
+    function getNodeMetrics(payload) {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return null;
+      }
+
+      return {
+        wifiRssi: Number(payload.wifi_rssi),
+        loraRssi: Number(payload.lora_rssi),
+        loraSnr: Number(payload.lora_snr),
+        solarV: Number(payload.solar_v),
+        batteryV: Number(payload.battery_v),
+        uptimeS: Number(payload.uptime_s),
+        heapB: Number(payload.heap_b),
+        cpuLoad: Number(payload.cpu_load),
+        boardTempC: Number(payload.board_temp_c),
+        cpuTempC: Number(payload.cpu_temp_c),
+        satellites: Number(payload.satellites),
+        latitude: Number(payload.lat),
+        longitude: Number(payload.longitude),
+        altitudeM: Number(payload.alt_m),
+        tiltXDeg: Number(payload.tilt_x_deg),
+        tiltYDeg: Number(payload.tilt_y_deg),
+        ipAddress: parseIpAddress(payload.ip)
+      };
+    }
+
+    function updateNode(nodeId, topic, payload) {
+      nodes.set(nodeId, {
+        nodeId,
+        topic,
+        payload,
+        updatedAt: new Date()
+      });
+      renderNodes();
+      updateMap();
+    }
+
+    function renderSignalRow(label, value) {
+      const percent = scalePercent(value, -120, -40);
+      const displayValue = Number.isFinite(value) ? `${Math.round(value)} dBm` : "--";
+      return `
+        <div class="signal-row">
+          <div class="signal-label">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(displayValue)}</strong>
+          </div>
+          <div class="signal-bar">
+            <div class="signal-fill" style="width:${percent}%;"></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderGauge(label, value, unit, min, max, lowColor, highColor, digits = 1) {
+      const visual = gaugeVisual(value, min, max, lowColor, highColor);
+      const textValue = formatMaybeNumber(value, digits);
+      return `
+        <div class="gauge" style="--angle:${visual.angle}; --gauge-color:${visual.color};">
+          <div class="gauge-face">
+            <div class="gauge-value">
+              ${escapeHtml(textValue)}
+              <span class="gauge-unit">${escapeHtml(unit)}</span>
+            </div>
+          </div>
+          <div class="gauge-label">${escapeHtml(label)}</div>
+        </div>
+      `;
+    }
+
+    function renderGpsItem(label, value) {
+      return `
+        <div class="gps-item">
+          <span class="gps-k">${escapeHtml(label)}</span>
+          <div class="gps-v">${escapeHtml(value)}</div>
+        </div>
+      `;
+    }
+
+    function formatDuration(seconds) {
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        return "--";
+      }
+
+      const total = Math.floor(seconds);
+      const days = Math.floor(total / 86400);
+      const hours = Math.floor((total % 86400) / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+
+      if (days > 0) {
+        return `${days}d ${hours}h ${minutes}m`;
+      }
+      if (hours > 0) {
+        return `${hours}h ${minutes}m ${secs}s`;
+      }
+      if (minutes > 0) {
+        return `${minutes}m ${secs}s`;
+      }
+      return `${secs}s`;
+    }
+
+    function formatBytes(bytes) {
+      if (!Number.isFinite(bytes) || bytes < 0) {
+        return "--";
+      }
+      if (bytes >= 1024 * 1024) {
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+      }
+      if (bytes >= 1024) {
+        return `${(bytes / 1024).toFixed(1)} KB`;
+      }
+      return `${Math.round(bytes)} B`;
+    }
+
+    function renderStatItem(label, value) {
+      return `
+        <div class="stat-item">
+          <span class="stat-k">${escapeHtml(label)}</span>
+          <div class="stat-v">${escapeHtml(value)}</div>
+        </div>
+      `;
+    }
+
+    function renderNodeActions(nodeId, metrics) {
+      const ipText = formatIpAddress(metrics?.ipAddress);
+      const hasIp = hasUsableIpAddress(metrics?.ipAddress);
+      const disabledAttr = hasIp ? "" : " disabled";
+
+      return `
+        <div class="card-actions-block">
+          <div class="card-ip">
+            <span class="card-ip-label">IP Address</span>
+            <div class="card-ip-value">${escapeHtml(ipText)}</div>
+          </div>
+          <div class="card-actions">
+            <button class="action-btn" type="button" data-node-action="web" data-node-id="${escapeHtml(nodeId)}" data-ip="${escapeHtml(ipText)}"${disabledAttr}>
+              Open Web
+            </button>
+            <button class="action-btn" type="button" data-node-action="telnet" data-node-id="${escapeHtml(nodeId)}" data-ip="${escapeHtml(ipText)}"${disabledAttr}>
+              Open Telnet
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function telnetPopupUrl(nodeId, ipText) {
+      const popupUrl = new URL(TELNET_PAGE_URL, window.location.href);
+      popupUrl.searchParams.set("host", ipText);
+      popupUrl.searchParams.set("port", "23");
+      popupUrl.searchParams.set("title", nodeId);
+
+      const currentPort = Number(window.location.port || (window.location.protocol === "https:" ? "443" : "80"));
+      if (Number.isFinite(currentPort) && currentPort > 0) {
+        popupUrl.searchParams.set("wsport", String(currentPort + 1));
+      }
+      return popupUrl.toString();
+    }
+
+    function openNodeWeb(ipText) {
+      window.open(`http://${ipText}/`, "_blank", "noopener,noreferrer");
+    }
+
+    function openNodeTelnet(nodeId, ipText) {
+      window.open(
+        telnetPopupUrl(nodeId, ipText),
+        `telnet-${String(nodeId).replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+        "popup=yes,width=980,height=720,resizable=yes,scrollbars=yes"
+      );
+    }
+
+    function renderTiltScope(metrics) {
+      const xDeg = Number.isFinite(metrics.tiltXDeg) ? metrics.tiltXDeg : 0;
+      const yDeg = Number.isFinite(metrics.tiltYDeg) ? metrics.tiltYDeg : 0;
+      const maxOffset = 48;
+      const xOffset = clamp((xDeg / 90) * maxOffset, -maxOffset, maxOffset);
+      const yOffset = clamp((yDeg / 90) * maxOffset, -maxOffset, maxOffset);
+
+      return `
+        <div class="tilt-wrap">
+          <div class="tilt-scope" aria-label="Tilt polar display">
+            <div class="tilt-ring"></div>
+            <div
+              class="tilt-point"
+              style="transform: translate(calc(-50% + ${xOffset.toFixed(1)}px), calc(-50% + ${yOffset.toFixed(1)}px));"
+            >X</div>
+          </div>
+          <div class="tilt-inline">
+            X:${escapeHtml(formatMaybeNumber(metrics.tiltXDeg, 1))} / Y:${escapeHtml(formatMaybeNumber(metrics.tiltYDeg, 1))}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderNodes() {
+      const entries = Array.from(nodes.values()).sort((a, b) =>
+        a.nodeId.localeCompare(b.nodeId, undefined, { numeric: true, sensitivity: "base" })
+      );
+
+      nodeCountEl.textContent = String(entries.length);
+      renderNodeShortcuts(entries);
+
+      if (entries.length === 0) {
+        nodeListEl.innerHTML = '<div class="empty">No node data received yet.</div>';
+        return;
+      }
+
+      nodeListEl.innerHTML = entries.map((entry) => {
+        const metrics = getNodeMetrics(entry.payload);
+        const panelId = nodePanelId(entry.nodeId);
+        const stale = isNodeStale(entry);
+        const staleClass = stale ? " card-stale" : "";
+        const updatedText = stale
+          ? `Topic ${escapeHtml(entry.topic)} | Stale since ${escapeHtml(entry.updatedAt.toLocaleTimeString())}`
+          : `Topic ${escapeHtml(entry.topic)} | Updated ${escapeHtml(entry.updatedAt.toLocaleTimeString())}`;
+        if (!metrics) {
+          const rawText = typeof entry.payload === "string"
+            ? entry.payload
+            : JSON.stringify(entry.payload, null, 2);
+          return `
+            <article class="card${staleClass}" id="${escapeHtml(panelId)}">
+              <div class="card-header">
+                <div>
+                  <div class="node-id">${escapeHtml(entry.nodeId)}</div>
+                  <div class="updated">${updatedText}</div>
+                </div>
+              </div>
+              <div class="module">
+                <h2>Raw Payload</h2>
+                <div class="gps-v">${escapeHtml(rawText)}</div>
+              </div>
+            </article>
+          `;
+        }
+
+        return `
+          <article class="card${staleClass}" id="${escapeHtml(panelId)}">
+            <div class="card-header">
+              <div>
+                <div class="node-id">${escapeHtml(entry.nodeId)}</div>
+                <div class="updated">${updatedText}</div>
+              </div>
+              ${renderNodeActions(entry.nodeId, metrics)}
+            </div>
+            <div class="panel-grid">
+              <section class="module">
+                <h2>Signal</h2>
+                <div class="signal-stack">
+                  ${renderSignalRow("WiFi RSSI", metrics.wifiRssi)}
+                  ${renderSignalRow("LoRa RSSI", metrics.loraRssi)}
+                  <div class="signal-stat">
+                    ${renderStatItem("LoRa SNR", Number.isFinite(metrics.loraSnr) ? `${formatMaybeNumber(metrics.loraSnr, 1)} dB` : "--")}
+                  </div>
+                </div>
+              </section>
+              <section class="module">
+                <h2>Power</h2>
+                <div class="gauge-grid">
+                  ${renderGauge("Solar", metrics.solarV, "V", 10, 14, "#c63e2f", "#2b9a50", 1)}
+                  ${renderGauge("Battery", metrics.batteryV, "V", 10, 14, "#c63e2f", "#2b9a50", 1)}
+                </div>
+              </section>
+              <section class="module">
+                <h2>Temperature</h2>
+                <div class="gauge-grid">
+                  ${renderGauge("CPU", metrics.cpuTempC, "C", 20, 90, "#2b9a50", "#c63e2f", 1)}
+                  ${renderGauge("Board", metrics.boardTempC, "C", 20, 90, "#2b9a50", "#c63e2f", 1)}
+                </div>
+              </section>
+              <section class="module">
+                <h2>GPS</h2>
+                <div class="gps-grid">
+                  ${renderGpsItem(
+                    "Satellites / Altitude",
+                    `${Number.isFinite(metrics.satellites) ? String(metrics.satellites) : "--"} sats | ${formatMaybeNumber(metrics.altitudeM, 0)} m`
+                  )}
+                  ${renderGpsItem("Latitude", formatCoordinate(metrics.latitude))}
+                  ${renderGpsItem("Longitude", formatCoordinate(metrics.longitude))}
+                </div>
+              </section>
+              <section class="module">
+                <h2>System</h2>
+                <div class="stats-grid">
+                  ${renderStatItem("Uptime", formatDuration(metrics.uptimeS))}
+                  ${renderStatItem("Heap Free", formatBytes(metrics.heapB))}
+                  ${renderStatItem("CPU Load", Number.isFinite(metrics.cpuLoad) ? `${formatMaybeNumber(metrics.cpuLoad, 0)} %` : "--")}
+                </div>
+              </section>
+              <section class="module">
+                <h2>Tilt</h2>
+                ${renderTiltScope(metrics)}
+              </section>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function nodePanelId(nodeId) {
+      return `node-panel-${String(nodeId).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    }
+
+    function isNodeStale(entry) {
+      return (Date.now() - entry.updatedAt.getTime()) >= STALE_AFTER_MS;
+    }
+
+    function renderNodeShortcuts(entries) {
+      if (entries.length === 0) {
+        nodeShortcutsEl.innerHTML = '<div class="node-shortcuts-empty">No node shortcuts yet.</div>';
+        return;
+      }
+
+      nodeShortcutsEl.innerHTML = entries.map((entry) => `
+        <a class="node-shortcut${isNodeStale(entry) ? " stale" : ""}" href="#${escapeHtml(nodePanelId(entry.nodeId))}">
+          ${escapeHtml(entry.nodeId)}
+        </a>
+      `).join("");
+    }
+
+    function flashNodePanelFromHash(hash) {
+      if (!hash || hash === "#") {
+        return;
+      }
+
+      const target = document.getElementById(hash.slice(1));
+      if (!target) {
+        return;
+      }
+
+      target.classList.remove("card-flash");
+      // Force reflow so repeated clicks retrigger the animation.
+      void target.offsetWidth;
+      target.classList.add("card-flash");
+    }
+
+    function startStaleRefreshLoop() {
+      if (staleRefreshTimer) {
+        clearInterval(staleRefreshTimer);
+      }
+      staleRefreshTimer = setInterval(() => {
+        renderNodes();
+      }, 1000);
+    }
+
+    function getMappableEntries() {
+      return Array.from(nodes.values()).filter((entry) => hasValidPosition(getNodeMetrics(entry.payload)));
+    }
+
+    function ensureMapPlaceholder(text) {
+      mapStatusEl.textContent = text;
+      if (mapPlaceholderEl) {
+        mapPlaceholderEl.textContent = text;
+        mapPlaceholderEl.hidden = false;
+      }
+    }
+
+    function hideMapPlaceholder() {
+      if (mapPlaceholderEl) {
+        mapPlaceholderEl.hidden = true;
+      }
+    }
+
+    function ensureMap() {
+      if (map) {
+        setTimeout(() => map.invalidateSize(), 0);
+        return map;
+      }
+
+      if (!window.L) {
+        ensureMapPlaceholder("Leaflet failed to load. Check network access to the Leaflet CDN.");
+        return null;
+      }
+
+      hideMapPlaceholder();
+      map = L.map(mapFrameEl, {
+        center: [37.7749, -122.4194],
+        zoom: 5,
+        zoomControl: true
+      });
+
+      map.on("movestart zoomstart", () => {
+        if (suppressMapInteractionFlag) {
+          return;
+        }
+        mapAutoFitEnabled = false;
+      });
+
+      streetLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      });
+      satelliteLayer = L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        {
+          maxZoom: 19,
+          attribution: 'Tiles &copy; Esri'
+        }
+      );
+
+      streetLayer.addTo(map);
+      mapLayerControl = L.control.layers(
+        {
+          "Map": streetLayer,
+          "Satellite": satelliteLayer
+        },
+        null,
+        { collapsed: false }
+      ).addTo(map);
+
+      setTimeout(() => map.invalidateSize(), 0);
+      return map;
+    }
+
+    function updateMap() {
+      const entries = getMappableEntries();
+
+      if (entries.length === 0) {
+        ensureMapPlaceholder("Waiting for node positions...");
+        mapMarkers.forEach((marker) => marker.remove());
+        mapMarkers.clear();
+        return;
+      }
+
+      const mapInstance = ensureMap();
+      if (!mapInstance) {
+        mapStatusEl.textContent = `${entries.length} node${entries.length === 1 ? "" : "s"} with coordinates ready`;
+        return;
+      }
+
+      const activeIds = new Set();
+      const bounds = L.latLngBounds();
+
+      entries.forEach((entry) => {
+        const metrics = getNodeMetrics(entry.payload);
+        const position = [Number(metrics.latitude), Number(metrics.longitude)];
+        activeIds.add(entry.nodeId);
+
+        let marker = mapMarkers.get(entry.nodeId);
+        const popupText = `
+          <strong>${escapeHtml(entry.nodeId)}</strong><br>
+          Lat ${escapeHtml(formatCoordinate(metrics.latitude))}<br>
+          Lon ${escapeHtml(formatCoordinate(metrics.longitude))}<br>
+          Alt ${escapeHtml(formatMaybeNumber(metrics.altitudeM, 0))} m
+        `;
+
+        if (!marker) {
+          marker = L.marker(position, {
+            title: entry.nodeId
+          }).addTo(mapInstance);
+          marker.bindTooltip(entry.nodeId, {
+            permanent: true,
+            direction: "top",
+            offset: [0, -10],
+            opacity: 0.9
+          });
+          marker.bindPopup(popupText);
+          mapMarkers.set(entry.nodeId, marker);
+        } else {
+          marker.setLatLng(position);
+          marker.setPopupContent(popupText);
+          const tooltip = marker.getTooltip();
+          if (tooltip) {
+            tooltip.setContent(entry.nodeId);
+          }
+        }
+
+        bounds.extend(position);
+      });
+
+      mapMarkers.forEach((marker, nodeId) => {
+        if (!activeIds.has(nodeId)) {
+          marker.remove();
+          mapMarkers.delete(nodeId);
+        }
+      });
+
+      if (mapAutoFitEnabled) {
+        suppressMapInteractionFlag = true;
+        if (entries.length === 1) {
+          mapInstance.setView(bounds.getCenter(), 13);
+        } else {
+          mapInstance.fitBounds(bounds, { padding: [60, 60] });
+        }
+        setTimeout(() => {
+          suppressMapInteractionFlag = false;
+        }, 0);
+      }
+
+      hideMapPlaceholder();
+      mapStatusEl.textContent = `${entries.length} node${entries.length === 1 ? "" : "s"} mapped by latitude/longitude`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function clearRefreshTimer() {
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
+    }
+
+    function clearReconnectTimer() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function disconnectWebSocketClient() {
+      if (wsClient) {
+        const oldClient = wsClient;
+        wsClient = null;
+        wsSequence += 1;
+        if (typeof oldClient.removeAllListeners === "function") {
+          oldClient.removeAllListeners();
+        }
+        oldClient.end(true);
+      }
+    }
+
+    function clearAllTransportTimers() {
+      clearRefreshTimer();
+      clearReconnectTimer();
+    }
+
+    function applySnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== "object") {
+        return;
+      }
+
+      const connected = Boolean(snapshot.connected);
+      const brokerLabel = snapshot.broker || "NOT CONNECTED";
+      setBrokerState(connected, connected ? brokerLabel : "NOT CONNECTED");
+      topicStatusEl.textContent = snapshot.topic || TOPIC_STATUS_PATTERN;
+
+      nodes.clear();
+      const entryList = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
+      entryList.forEach((entry) => {
+        const parsedPayload = typeof entry.payload === "string"
+          ? (tryParseJson(entry.payload) ?? entry.payload)
+          : entry.payload;
+        nodes.set(entry.nodeId, {
+          nodeId: entry.nodeId,
+          topic: entry.topic || `${TOPIC_ROOT}/${entry.nodeId}/status`,
+          payload: parsedPayload,
+          updatedAt: entry.updatedAt ? new Date(entry.updatedAt) : new Date()
+        });
+      });
+
+      renderNodes();
+      updateMap();
+    }
+
+    function processRootPayload(payload, topic) {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        updateNode("conez", topic, payload);
+        return;
+      }
+
+      Object.entries(payload).forEach(([nodeId, nodePayload]) => {
+        updateNode(nodeId, topic, nodePayload);
+      });
+    }
+
+    function processMessage(topic, payloadText) {
+      const parsed = tryParseJson(payloadText);
+
+      if (topic === TOPIC_ROOT) {
+        processRootPayload(parsed ?? payloadText, topic);
+        return;
+      }
+
+      if (!topic.startsWith(TOPIC_ROOT + "/")) {
+        updateNode(topic, topic, parsed ?? payloadText);
+        return;
+      }
+
+      const suffix = topic.slice(TOPIC_ROOT.length + 1);
+      const nodeId = suffix.split("/")[0] || topic;
+      updateNode(nodeId, topic, parsed ?? payloadText);
+    }
+
+    function setActiveTransport(name) {
+      activeTransport = name;
+      setBrokerState(true, name === "shim" ? "Shim HTTP bridge" : `WebSocket ${MQTT_URLS[(wsUrlIndex + MQTT_URLS.length - 1) % MQTT_URLS.length]}`);
+    }
+
+    function advanceTransport() {
+      transportIndex = (transportIndex + 1) % TRANSPORTS.length;
+    }
+
+    function scheduleRetry() {
+      clearAllTransportTimers();
+      disconnectWebSocketClient();
+      activeTransport = null;
+      setBrokerState(false, "NOT CONNECTED");
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        attemptConnection();
+      }, RETRY_INTERVAL_MS);
+      advanceTransport();
+    }
+
+    async function fetchSnapshotOnce(sequence) {
+      try {
+        const response = await fetch(STATUS_URL, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const snapshot = await response.json();
+        if (sequence !== shimSequence) {
+          return false;
+        }
+        applySnapshot(snapshot);
+        if (snapshot.connected) {
+          setActiveTransport("shim");
+          return true;
+        }
+        return false;
+      } catch (_err) {
+        if (sequence !== shimSequence) {
+          return false;
+        }
+        return false;
+      }
+    }
+
+    function scheduleShimRefresh() {
+      clearRefreshTimer();
+      const currentSequence = ++shimSequence;
+      refreshTimer = setTimeout(async () => {
+        const ok = await fetchSnapshotOnce(currentSequence);
+        if (!ok) {
+          scheduleRetry();
+          return;
+        }
+        scheduleShimRefresh();
+      }, RETRY_INTERVAL_MS);
+    }
+
+    async function attemptShim() {
+      clearAllTransportTimers();
+      disconnectWebSocketClient();
+      activeTransport = null;
+      setBrokerState(false, "CONNECTING SHIM");
+      retryStatusEl.textContent = "Trying shim transport";
+      topicStatusEl.textContent = TOPIC_STATUS_PATTERN;
+
+      const currentSequence = ++shimSequence;
+      const ok = await fetchSnapshotOnce(currentSequence);
+      if (!ok) {
+        scheduleRetry();
+        return;
+      }
+      scheduleShimRefresh();
+    }
+
+    function attemptWebSocket() {
+      clearAllTransportTimers();
+      disconnectWebSocketClient();
+      activeTransport = null;
+      retryStatusEl.textContent = "Trying websocket transport";
+
+      if (!window.mqtt) {
+        scheduleRetry();
+        return;
+      }
+
+      const url = MQTT_URLS[wsUrlIndex];
+      wsUrlIndex = (wsUrlIndex + 1) % MQTT_URLS.length;
+      const currentSequence = ++wsSequence;
+
+      setBrokerState(false, `CONNECTING WS ${url}`);
+      topicStatusEl.textContent = TOPIC_STATUS_PATTERN;
+
+      wsClient = mqtt.connect(url, {
+        clean: true,
+        connectTimeout: 5000,
+        keepalive: 30,
+        reconnectPeriod: 0,
+        clientId: "tracker-" + Math.random().toString(16).slice(2, 10)
+      });
+
+      wsClient.on("connect", () => {
+        if (!wsClient || currentSequence !== wsSequence) {
+          return;
+        }
+        wsClient.subscribe([TOPIC_STATUS_PATTERN], { qos: 0 }, (err) => {
+          if (currentSequence !== wsSequence) {
+            return;
+          }
+          if (err) {
+            scheduleRetry();
+            return;
+          }
+          setActiveTransport("websocket");
+        });
+      });
+
+      wsClient.on("message", (topic, payload) => {
+        if (currentSequence !== wsSequence) {
+          return;
+        }
+        processMessage(topic, payload.toString());
+      });
+
+      wsClient.on("error", () => {
+        if (currentSequence !== wsSequence) {
+          return;
+        }
+        scheduleRetry();
+      });
+
+      wsClient.on("close", () => {
+        if (currentSequence !== wsSequence) {
+          return;
+        }
+        scheduleRetry();
+      });
+    }
+
+    function attemptConnection() {
+      const transport = TRANSPORTS[transportIndex];
+      if (transport === "shim") {
+        attemptShim();
+        return;
+      }
+      attemptWebSocket();
+    }
+
+    renderNodes();
+    updateMap();
+    nodeShortcutsEl.addEventListener("click", (event) => {
+      const link = event.target.closest(".node-shortcut");
+      if (!link) {
+        return;
+      }
+      const hash = link.getAttribute("href");
+      if (!hash) {
+        return;
+      }
+      requestAnimationFrame(() => flashNodePanelFromHash(hash));
+    });
+    window.addEventListener("hashchange", () => {
+      flashNodePanelFromHash(window.location.hash);
+    });
+    nodeListEl.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-node-action]");
+      if (!button || button.disabled) {
+        return;
+      }
+
+      const ipText = button.dataset.ip || "";
+      const nodeId = button.dataset.nodeId || "ConeZ";
+      if (!ipText || ipText === "--") {
+        return;
+      }
+
+      if (button.dataset.nodeAction === "web") {
+        openNodeWeb(ipText);
+      } else if (button.dataset.nodeAction === "telnet") {
+        openNodeTelnet(nodeId, ipText);
+      }
+    });
+    startStaleRefreshLoop();
+    attemptConnection();
+  </script>
+</body>
+</html>
