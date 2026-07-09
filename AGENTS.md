@@ -755,6 +755,8 @@ Lightweight MQTT 3.1.1 broker in `tools/sewerpipe/` for coordinating cues and co
 
 **Capabilities:** QoS 0 + QoS 1, retained messages, topic wildcards (`+` single-level, `#` multi-level), `$`-prefix topic filtering, duplicate client ID takeover, keep-alive timeout enforcement. **Not supported:** TLS, auth, will messages, persistent sessions, QoS 2, `$SYS` topics.
 
+**The master node does not run sewerpipe — it runs Mosquitto.** Cones only require *a* MQTT 3.1.1 broker reachable at `sewerpipe.local:1883`; sewerpipe and Mosquitto are interchangeable from their point of view. Mosquitto 2.x needs two non-default settings, both documented in `documentation/mqtt.txt`: a `listener 1883 0.0.0.0` (it otherwise binds localhost-only) and `allow_anonymous true` (mandatory — `conez_mqtt.cpp` sets only `credentials.client_id`, never a username/password, so an auth-requiring broker rejects every cone). A `sewerpipe-alias.service` systemd unit publishes the `sewerpipe.local` mDNS name, since the Pi's hostname is `raspberrypi` and the firmware hardcodes `DEFAULT_MQTT_BROKER "sewerpipe.local"`. Net effect: **the broker is open (anonymous, no TLS) by necessity — keep it on a controlled show LAN.**
+
 ```bash
 # Build
 cd tools/sewerpipe && make

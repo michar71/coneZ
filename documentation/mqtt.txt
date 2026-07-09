@@ -5,8 +5,14 @@ ConeZ devices communicate via MQTT through the sewerpipe broker. Each
 cone identifies itself by its cone_id (config: system.cone_id). All
 topics live under the "conez/" prefix.
 
-Broker: sewerpipe (tools/sewerpipe/), default at sewerpipe.local:1883.
+Broker: any MQTT 3.1.1 broker at sewerpipe.local:1883. Two are in use:
+sewerpipe (tools/sewerpipe/), the in-tree broker, and Mosquitto, which is
+what the master node currently runs (see "Broker deployment" below).
 Client ID format: "conez-{cone_id}" (e.g. "conez-0", "conez-42").
+
+The broker MUST allow anonymous connections. conez_mqtt.cpp populates only
+esp_mqtt_client_config_t.credentials.client_id -- it sets no username or
+password -- so a broker that requires auth rejects every cone.
 
 Topic Hierarchy
 ---------------
@@ -150,6 +156,40 @@ From a laptop with mosquitto-clients:
 
     mosquitto_sub -h sewerpipe.local -t "conez/#" -v
     mosquitto_pub -h sewerpipe.local -t "conez/5/cmd/stop" -m ""
+
+Broker deployment (master node)
+-------------------------------
+
+The master node (the Raspberry Pi that also runs lora-master/conez-master.py)
+serves MQTT via Mosquitto. Two pieces of setup are required; neither is the
+package default.
+
+1. Mosquitto 2.x binds only to localhost and denies anonymous access out of
+   the box, so a stock install is unreachable by cones. Override in
+   /etc/mosquitto/conf.d/conez.conf:
+
+       listener 1883 0.0.0.0
+       allow_anonymous true
+       max_keepalive 300
+
+   allow_anonymous is mandatory, not a convenience -- see the note above about
+   the firmware sending no credentials.
+
+2. The firmware hardcodes DEFAULT_MQTT_BROKER "sewerpipe.local" (config.h),
+   but the Pi's hostname is "raspberrypi", so that name does not resolve.
+   A systemd unit (sewerpipe-alias.service) publishes the extra mDNS name:
+
+       ExecStart=/bin/sh -c 'exec /usr/bin/avahi-publish -a -R sewerpipe.local \
+                             "$(hostname -I | cut -d" " -f1)"'
+
+   The address is resolved at start time rather than baked in, so a DHCP lease
+   change is repaired by restarting the unit. Requires avahi-utils.
+
+Cones then need no per-device configuration -- the compiled-in default resolves.
+
+Security: the broker is open (anonymous, no TLS) because the firmware cannot
+authenticate. Anyone on the network can publish conez/{id}/cmd/stop to any
+cone. Run it only on a controlled show LAN.
 
 Configuration
 -------------
