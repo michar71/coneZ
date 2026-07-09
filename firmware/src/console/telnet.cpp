@@ -205,15 +205,31 @@ size_t TelnetServer::write(const uint8_t *buffer, size_t size) {
     return size;
 }
 
+// How many bytes are waiting on this socket, without using FIONREAD.
+//
+// ioctl(FIONREAD) DOES NOT WORK on lwIP sockets in this build: lwIP compiles the
+// FIONREAD case out unless LWIP_SO_RCVBUF or LWIP_FIONREAD_LINUXMODE is enabled, and
+// CONFIG_LWIP_SO_RCVBUF defaults to n (its Kconfig help: "allows checking for
+// available data on a netconn"). The call therefore fails every time, available()
+// returned 0, DualStream::read() never took the telnet branch, and typed input was
+// silently discarded while output kept working -- output uses send(), which doesn't
+// touch ioctl. That was the telnet-input regression.
+//
+// A non-blocking MSG_PEEK needs no lwIP options and the sockets are already
+// O_NONBLOCK. Peeking a small window is enough: callers only need "is there input",
+// and read() consumes one byte at a time anyway.
+static int slot_pending(int fd) {
+    uint8_t probe[64];
+    int n = recv(fd, probe, sizeof(probe), MSG_PEEK | MSG_DONTWAIT);
+    return (n > 0) ? n : 0;
+}
+
 int TelnetServer::available() {
     checkClient();
     int total = 0;
     for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
-        if (clients[i].fd >= 0) {
-            int count = 0;
-            if (ioctl(clients[i].fd, FIONREAD, &count) == 0)
-                total += count;
-        }
+        if (clients[i].fd >= 0)
+            total += slot_pending(clients[i].fd);
     }
     return total;
 }
@@ -226,17 +242,20 @@ int TelnetServer::read() {
         if (slot.fd < 0)
             continue;
 
-        // Loop to consume IAC sequences from this slot
+        // Loop to consume IAC sequences from this slot.
+        // The socket is O_NONBLOCK, so recv() itself reports "nothing pending" via
+        // EAGAIN -- no FIONREAD probe needed (and none available; see slot_pending).
         for (;;) {
-            int count = 0;
-            if (ioctl(slot.fd, FIONREAD, &count) < 0 || count <= 0)
-                break;
-
             uint8_t b;
-            int ret = recv(slot.fd, &b, 1, 0);
-            if (ret <= 0) {
-                if (ret == 0) slot_close(slot);  // peer closed
+            int ret = recv(slot.fd, &b, 1, MSG_DONTWAIT);
+            if (ret == 0) {
+                slot_close(slot);   // peer closed
                 break;
+            }
+            if (ret < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK)
+                    slot_close(slot);
+                break;              // nothing to read right now
             }
             slot.last_rx_ms = telnet_now_ms();   // peer is alive — defer the idle reap
 
@@ -291,14 +310,11 @@ int TelnetServer::read() {
 
             case 3: // subnegotiation — consume until IAC SE
                 if (b == IAC) {
-                    int cnt = 0;
-                    if (ioctl(slot.fd, FIONREAD, &cnt) == 0 && cnt > 0) {
-                        uint8_t se;
-                        if (recv(slot.fd, &se, 1, 0) == 1 && se == SE) {
-                            slot.iac_state = 0;
-                            slot.iac_sb_bytes = 0;
-                            break;
-                        }
+                    uint8_t se;
+                    if (recv(slot.fd, &se, 1, MSG_DONTWAIT) == 1 && se == SE) {
+                        slot.iac_state = 0;
+                        slot.iac_sb_bytes = 0;
+                        break;
                     }
                 }
                 // Guard against a malformed subneg that never ends — a peer
@@ -317,12 +333,9 @@ int TelnetServer::read() {
 int TelnetServer::peek() {
     for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
         if (clients[i].fd >= 0) {
-            int count = 0;
-            if (ioctl(clients[i].fd, FIONREAD, &count) == 0 && count > 0) {
-                uint8_t b;
-                if (recv(clients[i].fd, &b, 1, MSG_PEEK) == 1)
-                    return b;
-            }
+            uint8_t b;
+            if (recv(clients[i].fd, &b, 1, MSG_PEEK | MSG_DONTWAIT) == 1)
+                return b;
         }
     }
     return -1;
