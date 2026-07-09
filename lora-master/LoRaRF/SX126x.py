@@ -284,6 +284,9 @@ class SX126x(BaseLoRa) :
     _statusWait = STATUS_DEFAULT
     _statusIrq = STATUS_DEFAULT
     _transmitTime = 0.0
+    # True once the DIO1 edge alert is claimed. The handler is attached once and
+    # left in place; see _armIrq().
+    _irqArmed = False
 
     # callback functions
     _onTransmit = None
@@ -312,6 +315,8 @@ class SX126x(BaseLoRa) :
         self.sleep(self.SLEEP_COLD_START)
         spi.close()
         gpio.cleanup()
+        # cleanup() drops the alert claim, so the next begin() must re-arm
+        self._irqArmed = False
 
     def reset(self) -> bool :
 
@@ -375,6 +380,9 @@ class SX126x(BaseLoRa) :
 
         self._reset = reset
         self._busy = busy
+        if irq != self._irq :
+            # a different (or disabled) IRQ line: the old arm no longer applies
+            self._irqArmed = False
         self._irq = irq
         self._txen = txen
         self._rxen = rxen
@@ -672,9 +680,7 @@ class SX126x(BaseLoRa) :
         self._transmitTime = time.time()
 
         # set operation status to wait and attach TX interrupt handler
-        if self._irq != -1 :
-            gpio.remove_event_detect(self._irq)
-            gpio.add_event_detect(self._irq, gpio.RISING, callback=self._interruptTx, bouncetime=10)
+        self._armIrq()
         return True
 
     def write(self, data, length: int = 0) :
@@ -733,12 +739,7 @@ class SX126x(BaseLoRa) :
         self.setRx(rxTimeout)
 
         # set operation status to wait and attach RX interrupt handler
-        if self._irq != -1 :
-            gpio.remove_event_detect(self._irq)
-            if timeout == self.RX_CONTINUOUS :
-                gpio.add_event_detect(self._irq, gpio.RISING, callback=self._interruptRxContinuous, bouncetime=10)
-            else :
-                gpio.add_event_detect(self._irq, gpio.RISING, callback=self._interruptRx, bouncetime=10)
+        self._armIrq()
         return True
 
     def listen(self, rxPeriod: int, sleepPeriod: int) -> bool :
@@ -767,9 +768,7 @@ class SX126x(BaseLoRa) :
         self.setRxDutyCycle(rxPeriod, sleepPeriod)
 
         # set operation status to wait and attach RX interrupt handler
-        if self._irq != -1 :
-            gpio.remove_event_detect(self._irq)
-            gpio.add_event_detect(self._irq, gpio.RISING, callback=self._interruptRx, bouncetime=10)
+        self._armIrq()
         return True
 
     def available(self) -> int :
@@ -926,6 +925,34 @@ class SX126x(BaseLoRa) :
         elif self._dio == 3 : dio3Mask = irqMask
         else : dio1Mask = irqMask
         self.setDioIrqParams(irqMask, dio1Mask, dio2Mask, dio3Mask)
+
+    def _armIrq(self) :
+
+        # Attach the DIO1 edge handler exactly once, then leave it alone.
+        #
+        # The obvious approach -- remove_event_detect() + add_event_detect() on
+        # every TX/RX transition -- leaks the underlying claim. Debian's RPi.GPIO
+        # is the rpi-lgpio shim, whose remove_event_detect() cancels the Python
+        # callbacks but does NOT release the lgpio alert claim on the line. The
+        # following add_event_detect() then re-claims an already-claimed line.
+        # lgpio tolerates a few hundred of those before rejecting the claim with
+        # "bad event request", which killed the master mid-run.
+        #
+        # Since the handler is permanent, it dispatches on _statusWait, which
+        # every caller sets before arming -- the same value that used to select
+        # which handler got attached.
+        if self._irq != -1 and not self._irqArmed :
+            gpio.add_event_detect(self._irq, gpio.RISING, callback=self._interruptDispatch, bouncetime=10)
+            self._irqArmed = True
+
+    def _interruptDispatch(self, channel) :
+
+        if self._statusWait == self.STATUS_TX_WAIT :
+            self._interruptTx(channel)
+        elif self._statusWait == self.STATUS_RX_CONTINUOUS :
+            self._interruptRxContinuous(channel)
+        else :
+            self._interruptRx(channel)
 
     def _interruptTx(self, channel) :
 

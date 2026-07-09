@@ -47,6 +47,25 @@ pio run -e conez-v0-1 --target monitor --monitor-speed 115200
 pio run -e conez-v0-1 --target uploadfs
 ```
 
+**Windows hosts** need two one-time fixes before the first build:
+
+1. **A real `python3` on `PATH`.** `platformio.ini` evaluates a build flag via
+   `!python3 -c "..."`. Windows ships a `python3.exe` App-Execution-Alias stub that
+   prints *"Python was not found"* and exits `9009`, failing the build before it
+   compiles anything. Copy the real interpreter alongside itself
+   (`copy C:\Python\Python39\python.exe C:\Python\Python39\python3.exe`) — that
+   directory already precedes `WindowsApps` on `PATH`, so `python3` then resolves
+   correctly. (Disabling the alias in *Settings → App execution aliases* also works.)
+2. **`intelhex` for esptool.** The bundled esptool 4.9.0 imports `intelhex` at module
+   scope but the package isn't pulled into the IDF venv, so `bootloader.bin` fails with
+   `ModuleNotFoundError: No module named 'intelhex'`. Install it into the interpreter
+   that runs esptool: `%USERPROFILE%\.platformio\penv\.espidf-5.5.0\Scripts\python.exe -m pip install intelhex`.
+
+Do **not** run `pio device monitor` as a background/non-interactive process. It wraps
+pyserial's `miniterm`, which reads stdin to forward keystrokes to the board; backgrounded,
+it swallows the terminal's input. Use a plain pyserial reader to capture serial output
+non-interactively.
+
 ### Source Layout
 
 All source files are under `firmware/src/`, organized into subdirectories:
@@ -100,6 +119,7 @@ from source. This gives full control over ESP-IDF configuration via `sdkconfig.d
 - `CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y` — uses esp_timer (1 MHz) as counter source
 - `CONFIG_PM_ENABLE=y` — power management / DFS (dynamic frequency scaling between `cpu_min` and `cpu_max`)
 - `CONFIG_PARTITION_TABLE_CUSTOM=y` — uses our `partitions.csv`
+- `CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y` — **must be set explicitly.** IDF defaults to 2 MB when the flash size is unspecified (the board JSON's `8MB` does *not* propagate into `sdkconfig`). `partitions.csv` spans the full 8 MB — LittleFS at `0x410000`, `coredump` ending at `0x800000` — so a 2 MB image header leaves the filesystem and OTA slot `app1` unmapped: LittleFS fails to mount and OTA cannot write. Symptom during upload: `Warning! Flash memory size mismatch detected. Expected 8MB, found 2MB!`. (The pre-stub ROM loader can also misreport 2 MB; once esptool's stub runs it correctly reports `Embedded Flash 8MB`.)
 
 **IMPORTANT: Kconfig changes must go in the per-environment sdkconfig files.**
 PlatformIO uses `sdkconfig.<env-name>` (e.g. `sdkconfig.conez-v0-1`,
@@ -761,7 +781,7 @@ Python LoRa master node that runs on a Raspberry Pi (SX1262/SX1268 via the bundl
 - `lora_proto.py` — shared v1 wire format (header + packet layouts), kept byte-for-byte in sync with `firmware/src/lora/lora_proto.h`. Also the per-block compression helpers (`DIST_BLOCK_SIZE`, `split_blocks`, `encode_file` → zlib) and FEC knobs (`DIST_PARITY_FRAC`/`DIST_PARITY_MIN`) used by both `build_manifest.py` and the carousel, so they agree without sharing state. **To bench multi-block transfer with the tiny test files, lower `DIST_BLOCK_SIZE`** (e.g. 256) and rebuild the manifest — the cone follows the per-file `block_size` recorded in the manifest.
 - `reed_solomon.py` — systematic RS over GF(2^8) (Cauchy generator), the byte-for-byte mirror of `firmware/src/lora/rs.c`. `encode()` builds the per-block parity for the carousel; `decode()`/`parity_count()` round out the API. Change one side → change the other.
 - `build_manifest.py` — generates the distribution manifest. Walks `firmware/` for `*.bin` and `dist/` for files, MD5-hashes each, assigns content-stable file IDs (reused while content is unchanged), records per-file `algo`/`block_size`/`total_blocks` (via `lora_proto.encode_file`), and writes a new `dist-state/manifest_<serial>.txt` only when contents change. Counter state in `dist-state/serial.txt`. The manifest/serial live in `dist-state/` (not `dist/`) so `dist/` contains only what gets distributed to the herd. `[files]` line: `id⇥name⇥size⇥md5⇥algo⇥block_size⇥total_blocks` (algo 0=store, 1=deflate).
-- `LoRaRF/` — bundled SX126x/SX127x Python driver library.
+- `LoRaRF/` — bundled SX126x/SX127x Python driver library. **Locally patched — do not blindly re-vendor upstream.** `SX126x.py` used to swap the DIO1 interrupt handler on every mode change (`remove_event_detect()` + `add_event_detect()` in `endPacket()`, `request()`, and `listen()`). On Debian Bookworm, `RPi.GPIO` is the **`rpi-lgpio` shim**, whose `remove_event_detect()` cancels the Python callbacks but *does not release the underlying lgpio alert claim* (see its own `_unset_alert()` docstring). The paired `add_event_detect()` therefore re-claimed an already-claimed line on every transmit; lgpio tolerated a few hundred of those and then rejected the claim with `lgpio.error: 'bad event request'`, killing the master mid-run (observed at ~1900 transmits, ~8 min). Fixed by arming the IRQ **once** (`_armIrq()`) with a permanent handler (`_interruptDispatch()`) that routes to the TX/RX/RX-continuous handler based on `_statusWait` — which every caller already sets *before* arming, so handler selection is unchanged. `_irqArmed` is reset in `end()` (after `gpio.cleanup()`) and in `setPins()` when the IRQ line changes. Upstream LoRaRF still has the churn; it is latent on real `RPi.GPIO` and fatal on `rpi-lgpio`.
 - `dist/` — distribution payload only (test `.bas` scripts, `scanlist.txt` channel plan in the v1 `L`/`F` per-line format, or `LX`/`FX` for receive-only channels — see spec §15, ...). `dist-state/` holds the generated manifest + serial counter, kept out of `dist/`.
 - `firmware/<product>/<version>.bin` — firmware images to distribute. **Gitignored** (`lora-master/.gitignore` excludes `firmware/**/*.bin`) — copy a build artifact in (e.g. `firmware/.pio/build/conez-v0-1/firmware.bin`) rather than committing the binary.
 - `conez-masterctl.py` — CLI to control a **running** master over its Unix socket. Commands: `status` (TX state + current manifest + radio params), `reload` (re-read `conez-master.ini`, re-apply the radio, reload the latest manifest — runs in the main-loop thread, no transmit race), `enable`/`on` & `disable`/`off` (LoRa TX on/off; the master stays up and keeps serving RX while disabled), `stop` (graceful shutdown), `help`. Socket path via `$CONEZ_MASTER_SOCKET` (default `/tmp/conez-master.sock`).

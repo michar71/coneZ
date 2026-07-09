@@ -80,6 +80,13 @@ CONFIG_MBEDTLS_ECP_DP_BP512R1_ENABLED=n
 CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
 
+# Flash size — this board has 8 MB. The custom partition table below spans the full
+# 8 MB (littlefs data at 0x410000, coredump ending at 0x800000), but IDF defaults to
+# 2 MB when unspecified, which leaves the filesystem/OTA-slot-1 partitions unmapped.
+# Set it explicitly to match the hardware.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+
 # Partition table — use custom CSV
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
