@@ -67,6 +67,13 @@ void vprintfnl( source_e source, const char *format, va_list args )
     // Suppress all output while a fullscreen interactive app is active
     if (interactive_mode) return;
 
+    // The MQTT debug sink is published AFTER print_mutex is released — see the
+    // note at the publish site below. Staged here so it outlives the critical
+    // section (same stack frame, so no other task can clobber it).
+    char sink_buf[max_txt + 32];
+    char mqtt_topic[48];
+    bool mqtt_pending = false;
+
     //get Mutex
     if (xSemaphoreTake(print_mutex, portMAX_DELAY) != pdTRUE)
     {
@@ -137,7 +144,6 @@ void vprintfnl( source_e source, const char *format, va_list args )
     bool commands_gated = (source == SOURCE_COMMANDS || source == SOURCE_COMMANDS_PROMPT)
                           && !(debug & SOURCE_COMMANDS);
     if (sink_tag && !commands_gated) {
-        char sink_buf[max_txt + 32];
         unsigned long ms = uptime_ms();
         snprintf(sink_buf, sizeof(sink_buf), "[%lu.%03lu] [%s] %s", ms / 1000, ms % 1000, sink_tag, buf);
         // Strip ANSI escape sequences in-place. Handles:
@@ -181,16 +187,12 @@ void vprintfnl( source_e source, const char *format, va_list args )
             fflush(log_file);
         }
 
-        // MQTT sink (skip SOURCE_MQTT to prevent infinite feedback loop)
+        // MQTT sink (skip SOURCE_MQTT to prevent infinite feedback loop).
+        // Only STAGE it here — the actual publish happens after the mutex is
+        // released. See below.
         if (source != SOURCE_MQTT && mqtt_connected()) {
-            static bool in_mqtt_debug = false;
-            if (!in_mqtt_debug) {
-                in_mqtt_debug = true;
-                char topic[48];
-                snprintf(topic, sizeof(topic), "conez/%d/debug", config.cone_id);
-                mqtt_publish(topic, sink_buf);
-                in_mqtt_debug = false;
-            }
+            snprintf(mqtt_topic, sizeof(mqtt_topic), "conez/%d/debug", config.cone_id);
+            mqtt_pending = true;
         }
     }
 
@@ -200,6 +202,27 @@ void vprintfnl( source_e source, const char *format, va_list args )
 
     //return mutex
     xSemaphoreGive(print_mutex);
+
+    // ---- MQTT sink, OUTSIDE the lock ----
+    //
+    // mqtt_publish() calls esp_mqtt_client_publish(), which blocks on esp-mqtt's
+    // internal api_lock — a lock the MQTT task holds across reconnect attempts and
+    // socket writes. Publishing while holding print_mutex therefore deadlocks the
+    // entire console: getLock() (shell input), every printfnl(), and every debug
+    // sink all wait on print_mutex forever. The board keeps answering ping (lwIP
+    // never prints) while the CLI is dead — which is exactly how this presented.
+    //
+    // Triggered in practice by a duplicate-client-id reconnect storm: several cones
+    // sharing cone_id 0 evict each other from the broker, so the MQTT task is almost
+    // always mid-reconnect.
+    if (mqtt_pending) {
+        static volatile bool in_mqtt_debug = false;   // guard against re-entry via a printfnl inside the publish path
+        if (!in_mqtt_debug) {
+            in_mqtt_debug = true;
+            mqtt_publish(mqtt_topic, sink_buf);
+            in_mqtt_debug = false;
+        }
+    }
 }
 
 
