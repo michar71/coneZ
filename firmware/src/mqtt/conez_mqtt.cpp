@@ -199,6 +199,14 @@ static void mqtt_create_and_start(void)
     esp_mqtt_client_config_t cfg = {};
     cfg.broker.address.uri = uri;
     cfg.credentials.client_id = client_id;
+    // Auth is optional: a non-empty mqtt.username switches from anonymous to
+    // username/password. config.mqtt_* outlive this call (they live in the global
+    // config struct), so pointing esp-mqtt at them directly is safe. An empty
+    // password with a username is allowed (some brokers key ACLs on username alone).
+    if (config.mqtt_username[0] != '\0') {
+        cfg.credentials.username = config.mqtt_username;
+        cfg.credentials.authentication.password = config.mqtt_password;
+    }
     cfg.session.keepalive = MQTT_KEEPALIVE_SEC;
     cfg.network.disable_auto_reconnect = false;
     cfg.network.timeout_ms = 3000;       // default 10s — shorter reduces stop() blocking

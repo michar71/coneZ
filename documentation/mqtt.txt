@@ -292,11 +292,16 @@ Config file (/config.ini):
     broker=sewerpipe.local
     port=1883
     enabled=on
+    ; auth is optional; empty username = anonymous (the default)
+    username=cone
+    password=secret
 
-CLI hot-apply (no reboot needed):
+CLI hot-apply:
 
     mqtt broker 192.168.1.100
     mqtt port 1884
+    mqtt user cone           ; "" clears -> anonymous
+    mqtt pass secret          ; "" clears
     mqtt enable
     mqtt disable
 
@@ -304,7 +309,27 @@ Persistent (requires reboot):
 
     config set mqtt.broker 192.168.1.100
     config set mqtt.port 1884
+    config set mqtt.username cone
+    config set mqtt.password secret
     config set mqtt.enabled off
+
+Authentication
+--------------
+
+Set mqtt.username (and usually mqtt.password) to connect to a broker that
+requires auth. An empty username -- the default -- connects anonymously, which
+is what the in-tree sewerpipe and the show-LAN Mosquitto expect. An empty
+password with a set username is allowed (some brokers ACL on username alone).
+The `mqtt` status line shows "Auth: user <name> ..." or "Auth: anonymous"; the
+password is never printed, and the web config form masks it like wifi.password.
+
+APPLY BY REBOOT. Credentials are baked into the esp-mqtt client when it is
+created, so the reliable path is `config set mqtt.username/password` then
+reboot. The runtime `mqtt user`/`mqtt pass` commands update the value and drop
+the connection, but esp-mqtt does not reliably pick up new credentials on a live
+reconnect -- after changing them at runtime, reboot (or the client may keep
+retrying with the old ones). Changing auth is a rare, provisioning-time action,
+so this is a documented limitation, not a workflow anyone hits often.
 
 Connection Behavior
 -------------------

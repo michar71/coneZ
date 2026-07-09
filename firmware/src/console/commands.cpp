@@ -1835,7 +1835,7 @@ int cmd_mqtt(int argc, char **argv)
     if (argc >= 3 && !strcasecmp(argv[1], "broker")) {
         strlcpy(config.mqtt_broker, argv[2], CONFIG_MAX_MQTT_BROKER);
         printfnl(SOURCE_COMMANDS, "MQTT broker set to \"%s\"\n", config.mqtt_broker);
-        mqtt_force_disconnect();  // triggers reconnect to new broker
+        mqtt_force_disconnect();  // apply on next 'mqtt connect' or reboot
         return 0;
     }
 
@@ -1843,7 +1843,25 @@ int cmd_mqtt(int argc, char **argv)
     if (argc >= 3 && !strcasecmp(argv[1], "port")) {
         config.mqtt_port = parse_int(argv[2]);
         printfnl(SOURCE_COMMANDS, "MQTT port set to %d\n", config.mqtt_port);
-        mqtt_force_disconnect();  // triggers reconnect on new port
+        mqtt_force_disconnect();  // apply on next 'mqtt connect' or reboot
+        return 0;
+    }
+
+    // mqtt user <name>   (empty string "" clears -> anonymous)
+    if (argc >= 2 && !strcasecmp(argv[1], "user")) {
+        strlcpy(config.mqtt_username, argc >= 3 ? argv[2] : "", CONFIG_MAX_MQTT_USER);
+        printfnl(SOURCE_COMMANDS, "MQTT username %s; run 'mqtt connect' to apply\n",
+                 config.mqtt_username[0] ? "set" : "cleared (anonymous)");
+        mqtt_force_disconnect();  // credentials are baked in at connect; reconnect to apply
+        return 0;
+    }
+
+    // mqtt pass <password>   (empty string "" clears)
+    if (argc >= 2 && !strcasecmp(argv[1], "pass")) {
+        strlcpy(config.mqtt_password, argc >= 3 ? argv[2] : "", CONFIG_MAX_MQTT_PASS);
+        printfnl(SOURCE_COMMANDS, "MQTT password %s; run 'mqtt connect' to apply\n",
+                 config.mqtt_password[0] ? "set" : "cleared");
+        mqtt_force_disconnect();  // credentials are baked in at connect; reconnect to apply
         return 0;
     }
 
@@ -1894,6 +1912,12 @@ int cmd_mqtt(int argc, char **argv)
     printfnl(SOURCE_COMMANDS, "MQTT Status:\n");
     printfnl(SOURCE_COMMANDS, "  Enabled:    %s\n", config.mqtt_enabled ? "yes" : "no");
     printfnl(SOURCE_COMMANDS, "  Broker:     %s:%d\n", config.mqtt_broker, config.mqtt_port);
+    // Show whether auth is configured, but never the password.
+    if (config.mqtt_username[0])
+        printfnl(SOURCE_COMMANDS, "  Auth:       user \"%s\" (password %s)\n",
+                 config.mqtt_username, config.mqtt_password[0] ? "set" : "empty");
+    else
+        printfnl(SOURCE_COMMANDS, "  Auth:       anonymous\n");
     printfnl(SOURCE_COMMANDS, "  Interval:   %ds\n", config.mqtt_status_interval);
     printfnl(SOURCE_COMMANDS, "  State:      %s\n", mqtt_state_str());
     if (mqtt_connected()) {
@@ -3867,8 +3891,8 @@ static const char * const * tc_log(int wordIndex, const char **words, int nWords
 
 static const char * const subs_artnet[] = { "enable", "disable", "start", "stop",
                                             "universe", "dmx", NULL };
-static const char * const subs_mqtt[]   = { "broker", "port", "enable", "disable",
-                                            "connect", "disconnect", "pub", NULL };
+static const char * const subs_mqtt[]   = { "broker", "port", "user", "pass", "enable",
+                                            "disable", "connect", "disconnect", "pub", NULL };
 static const char * const subs_psram[]  = { "test", "freq", "cache", NULL };
 static const char * const subs_psram_test[] = { "forever", NULL };
 static const char * const subs_wasm[]   = { "status", "info", NULL };

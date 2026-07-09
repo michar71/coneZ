@@ -52,6 +52,11 @@ cone_group=0
 ; broker=sewerpipe.local
 ; port=1883
 enabled=on
+; username/password for an authenticated broker. Leave username empty (the
+; default) to connect anonymously. An empty password with a set username is
+; allowed -- some brokers key ACLs on username alone.
+; username=cone
+; password=secret
 
 [led]
 count1=50
