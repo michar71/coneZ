@@ -219,7 +219,7 @@ FreeRTOS on ESP32-S3 uses **preemptive scheduling with time slicing** (`configUS
 | lora | any | 1 | 6144 | `lora_task_fn` in `lora/lora.cpp` | Always running |
 | ShellTask | any | 1 | 8192 | `shell_task_fun` in `main.cpp` | Always running |
 | httpd | 1 | 6 | 4096 | `esp_http_server` in `http/http.cpp` | Always running |
-| mqtt_task | 1 | 5 | 4096 | ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp` | Created when MQTT connects |
+| mqtt_task | 1 | 5 | 4096 | ESP-IDF `esp_mqtt_client` in `mqtt/conez_mqtt.cpp` | Created when MQTT connects; on a `conez/{id}/cmd/#` message it **enqueues** the command (never executes it here — ShellTask runs it via `run_commands()`→`shell.executeExternal()`) |
 | mqtt_pub | 1 | 4 | 4096 | `mqtt_publisher_task` in `mqtt/conez_mqtt.cpp` | Created in `mqtt_setup()`; **the only caller of the blocking `esp_mqtt_client_publish()`** |
 | ArtNet | any | 5 | 4096 | `artnet_task_fun` in `led/artnet.cpp` | Created by `artnet_start()` when enabled |
 | led_render | 1 | 2 | 2048 | `led_task_fun` in `led/led.cpp` | Always running |

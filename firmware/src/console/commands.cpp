@@ -1903,6 +1903,8 @@ int cmd_mqtt(int argc, char **argv)
         // Non-zero means the publisher task is stuck in esp-mqtt and the queue
         // overflowed. Telemetry is being dropped, but the board stays responsive.
         printfnl(SOURCE_COMMANDS, "  Dropped:    %lu\n", (unsigned long)mqtt_dropped_count());
+        printfnl(SOURCE_COMMANDS, "  Cmd RX:     %lu received, %lu dropped\n",
+                 (unsigned long)mqtt_rx_count(), (unsigned long)mqtt_cmd_dropped_count());
     }
 
     return 0;
@@ -4172,6 +4174,14 @@ void init_commands(ConezStream *dev)
 void run_commands(void)
 {
     shell.executeIfInput();
+
+    // Run any commands received over MQTT (conez/{id}/cmd/#). They are dispatched
+    // here, on ShellTask, so they share the interactive shell's task and stack rather
+    // than executing on the MQTT event task. executeExternal() preserves a partially
+    // typed console line. Bounded by the queue depth, so this can't spin.
+    char mcmd[SHELL_BUFSIZE];
+    while (mqtt_pop_command(mcmd, sizeof(mcmd)))
+        shell.executeExternal(mcmd);
 }
 
 void setCLIEcho(bool echo)

@@ -148,12 +148,41 @@ so "conez/5/cmd/#" matches:
     conez/5/cmd/config        Configuration updates
     conez/5/cmd/anything      Future extensibility
 
-The subtopic after "cmd/" identifies the command type. The payload
-carries the command arguments (plain text or JSON).
+The command is built as "<topic-suffix> <payload>" and run through the
+same CLI as the serial/telnet console. Slashes in the suffix become
+spaces, so these are equivalent:
 
-Currently, incoming messages on cmd/# are logged via SOURCE_MQTT
-debug output. Command dispatch will be added as specific commands
-are defined.
+    topic conez/5/cmd/config       payload "set system.cone_id 4"
+    topic conez/5/cmd/config/set   payload "system.cone_id 4"
+    topic conez/5/cmd/config/set/system.cone_id/4   (no payload)
+
+all run:  config set system.cone_id 4
+
+A verb-only command needs no payload: conez/5/cmd/reboot with an empty
+payload runs "reboot". Any CLI command works (run, stop, led, cue,
+config, reboot, ...) -- see documentation/cli-commands.txt.
+
+Dispatch path (firmware/src/mqtt/conez_mqtt.cpp -> util/shell.cpp):
+  - The MQTT event task ENQUEUES the command (conez/{id}/cmd/# only) and
+    returns. It never executes it -- running a command there would use the
+    MQTT task's stack and could block the event loop.
+  - ShellTask drains the queue in run_commands() and runs each via
+    shell.executeExternal(), which shares the interactive shell's task and
+    stack and preserves any half-typed console line.
+  - Queue depth MQTT_CMD_QUEUE_DEPTH (8); overflow drops the command (shown
+    as "Cmd RX" dropped in the `mqtt` CLI status). Commands are capped at
+    SHELL_BUFSIZE (88) chars, same as a typed line.
+
+Output goes to the console (USB + telnet), NOT back over MQTT. There is
+no command-response topic yet; watch conez/{id}/debug (enable `debug mqtt`)
+or the serial console to see results.
+
+SECURITY: this is the full device CLI over an anonymous, unauthenticated
+broker. Anyone who can publish to conez/{id}/cmd/# can reboot the cone,
+rewrite its config, or delete files -- it is remote code execution by
+design. Acceptable only on a trusted, isolated show LAN. There is no
+allowlist; if the broker ever leaves a controlled network, add one (or
+gate dispatch behind a config flag) before doing so.
 
 Broadcast Commands
 ------------------
