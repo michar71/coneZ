@@ -279,9 +279,37 @@ package default.
 
 Cones then need no per-device configuration -- the compiled-in default resolves.
 
-Security: the broker is open (anonymous, no TLS) because the firmware cannot
-authenticate. Anyone on the network can publish conez/{id}/cmd/stop to any
-cone. Run it only on a controlled show LAN.
+Security: as shipped the broker is open (anonymous, no TLS). Anyone on the
+network can publish conez/{id}/cmd/# to any cone -- and cmd topics run the full
+device CLI (reboot, config, del, run). Fine on a controlled show LAN; lock it
+down before it touches anything wider.
+
+Locking it down (the firmware now supports username/password auth -- see the
+Authentication section). ORDER MATTERS: provision the cones BEFORE the broker
+starts requiring auth, or every cone drops off the instant you restart it.
+
+  1. On EVERY cone, set and persist credentials, then reboot to apply:
+         config set mqtt.username cone
+         config set mqtt.password <secret>
+         reboot
+     Reboot is required -- credentials are baked in at connect (see below). Do
+     all cones first; they keep working against the still-open broker meanwhile.
+
+  2. Only then require auth on the broker. Create the password file and flip
+     conez.conf:
+         mosquitto_passwd -c /etc/mosquitto/passwd cone      # prompts for secret
+         # in conez.conf:
+         #   allow_anonymous false
+         #   password_file /etc/mosquitto/passwd
+         systemctl restart mosquitto
+
+  3. Verify: `ss -tn state established '( sport = :1883 )'` shows all cones, and
+     the log has no "not authorised". A cone that missed step 1 will loop
+     connect -> not authorised; reboot it with credentials set.
+
+TLS is still not supported (no client-cert or server-cert verification in the
+firmware), so auth is username/password over cleartext -- keep it on a trusted
+LAN regardless.
 
 Configuration
 -------------
