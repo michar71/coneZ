@@ -540,6 +540,30 @@ void setup()
   shell.showPrompt();
 
   xTaskCreatePinnedToCore(shell_task_fun, "ShellTask", 8192, NULL, 1, NULL, tskNO_AFFINITY);
+
+  // Confirm this image to the bootloader.
+  //
+  // A bootloader built with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE boots a freshly
+  // OTA'd image in the PENDING_VERIFY state and reverts to the previous slot on the
+  // NEXT reboot unless the app cancels the rollback. Skipping this call makes an OTA
+  // look like it worked -- the new image runs -- and then silently disappears at the
+  // next power cycle. Older ConeZ bootloaders (the Arduino-era ones still in the
+  // field) enable rollback, so an OTA to those boards cannot stick without this.
+  //
+  // Reached only after LittleFS, WiFi, LoRa and the CLI came up, so a boot that dies
+  // before this point still gets the automatic revert that rollback exists to provide.
+  // Safe when rollback is disabled: the state is simply never PENDING_VERIFY.
+  {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (running && esp_ota_get_state_partition(running, &state) == ESP_OK
+        && state == ESP_OTA_IMG_PENDING_VERIFY) {
+      if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
+        printfnl(SOURCE_SYSTEM, "OTA image confirmed — rollback cancelled\n");
+      else
+        printfnl(SOURCE_SYSTEM, "WARNING: could not cancel rollback; image will revert on reboot\n");
+    }
+  }
 }
 
 

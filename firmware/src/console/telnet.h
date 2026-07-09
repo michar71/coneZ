@@ -4,7 +4,13 @@
 #include "conez_stream.h"
 #include "lwip/sockets.h"
 
-#define TELNET_MAX_CLIENTS 3
+#define TELNET_MAX_CLIENTS 8
+
+// Drop a client that has sent nothing for this long. Backstop for peers that
+// vanish without a clean FIN (or that close while leaving unread data, which
+// the MSG_PEEK check below cannot distinguish from a live session). Generous
+// enough that a human idling at the prompt is not disturbed.
+#define TELNET_IDLE_TIMEOUT_MS (30u * 60u * 1000u)
 
 struct TelnetClientSlot {
     int      fd;             // socket fd, -1 = empty
@@ -12,6 +18,7 @@ struct TelnetClientSlot {
     uint8_t  iac_cmd;        // command byte saved from state 1
     uint16_t iac_sb_bytes;   // bytes consumed in state 3 — bounded to abort malformed subneg
     bool     needs_prompt;   // true after connect, cleared by sendToNew()
+    uint32_t last_rx_ms;     // uptime of last byte received — drives the idle reap
 };
 
 // Telnet server with IAC negotiation (WILL ECHO + WILL SGA).

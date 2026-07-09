@@ -1,7 +1,13 @@
 #include "telnet.h"
+#include "esp_timer.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include <errno.h>
+
+// Local monotonic ms — avoids pulling main.h (board/led/i2c) into this module.
+static inline uint32_t telnet_now_ms(void) {
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
 
 // Telnet protocol bytes
 #define IAC   0xFF
@@ -25,6 +31,7 @@ TelnetServer::TelnetServer(uint16_t p)
         clients[i].iac_cmd = 0;
         clients[i].iac_sb_bytes = 0;
         clients[i].needs_prompt = false;
+        clients[i].last_rx_ms = 0;
     }
 }
 
@@ -51,7 +58,7 @@ void TelnetServer::begin() {
         return;
     }
 
-    if (listen(listen_fd, 2) < 0) {
+    if (listen(listen_fd, TELNET_MAX_CLIENTS) < 0) {
         close(listen_fd);
         listen_fd = -1;
         return;
@@ -92,18 +99,35 @@ int TelnetServer::slot_send(TelnetClientSlot &slot, const uint8_t *buf, size_t l
 }
 
 void TelnetServer::checkClient() {
+    uint32_t now = telnet_now_ms();
+
     // Clean up disconnected slots — peek with recv to detect closed connections
     for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
         if (clients[i].fd >= 0) {
-            // Check if peer closed by attempting a peek
+            // Check if peer closed by attempting a peek.
+            //
+            // NOTE: this only reports 0 for a peer that closed with an EMPTY
+            // receive buffer. A peer that sent a command and then closed leaves
+            // that data queued, so the peek returns >0 and looks identical to a
+            // live session. Such a slot is only reclaimed once read() drains the
+            // data and sees the subsequent 0 — and if nothing is draining input,
+            // it is never reclaimed at all. The idle timeout below is what
+            // guarantees the slot comes back either way.
             uint8_t tmp;
             int ret = recv(clients[i].fd, &tmp, 1, MSG_PEEK | MSG_DONTWAIT);
             if (ret == 0) {
                 // Peer closed
                 slot_close(clients[i]);
+                continue;
             } else if (ret < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 slot_close(clients[i]);
+                continue;
             }
+
+            // Idle reap — telnet_now_ms() wraps at ~49 days; unsigned subtraction
+            // stays correct across the wrap.
+            if ((uint32_t)(now - clients[i].last_rx_ms) > TELNET_IDLE_TIMEOUT_MS)
+                slot_close(clients[i]);
         }
     }
 
@@ -120,6 +144,7 @@ void TelnetServer::checkClient() {
             clients[i].iac_cmd = 0;
             clients[i].iac_sb_bytes = 0;
             clients[i].needs_prompt = true;
+            clients[i].last_rx_ms = now;   // fresh session — start the idle clock
 
             // Set non-blocking + TCP_NODELAY
             int flags = fcntl(incoming, F_GETFL, 0);
@@ -213,6 +238,7 @@ int TelnetServer::read() {
                 if (ret == 0) slot_close(slot);  // peer closed
                 break;
             }
+            slot.last_rx_ms = telnet_now_ms();   // peer is alive — defer the idle reap
 
             switch (slot.iac_state) {
             case 0: // normal

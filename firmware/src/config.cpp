@@ -731,11 +731,43 @@ void config_set_from_web(const char *body)
 
 // ---------- CLI handler ----------
 
+// Render one descriptor's current value (value only — no key, no padding).
+// Single source of truth for how each type prints, shared by `config` and
+// `config get`. Longest CFG_STR is 65 bytes (password / ntp_server / broker).
+#define CFG_VALUE_MAX 80
+
+static void config_format_field(const cfg_descriptor_t *d, char *buf, size_t bufsz)
+{
+    const uint8_t *base = (const uint8_t *)&config;
+
+    switch (d->type)
+    {
+    case CFG_STR:
+        snprintf(buf, bufsz, "%s", (const char *)(base + d->offset));
+        break;
+    case CFG_FLOAT:
+        snprintf(buf, bufsz, "%.9g", *(const float *)(base + d->offset));
+        break;
+    case CFG_INT:
+        snprintf(buf, bufsz, "%d", *(const int *)(base + d->offset));
+        break;
+    case CFG_HEX:
+        snprintf(buf, bufsz, "0x%04X", *(const int *)(base + d->offset));
+        break;
+    case CFG_BOOL:
+        snprintf(buf, bufsz, "%s", *(const bool *)(base + d->offset) ? "on" : "off");
+        break;
+    default:
+        snprintf(buf, bufsz, "?");
+        break;
+    }
+}
+
 // Display all current config values
 static void config_show(void)
 {
     const char *prev_section = "";
-    uint8_t *base = (uint8_t *)&config;
+    char val[CFG_VALUE_MAX];
 
     printfnl(SOURCE_COMMANDS, "Current configuration:\n");
 
@@ -749,24 +781,8 @@ static void config_show(void)
             prev_section = d->section;
         }
 
-        switch (d->type)
-        {
-        case CFG_STR:
-            printfnl(SOURCE_COMMANDS, "  %-16s = %s\n", d->key, (const char *)(base + d->offset));
-            break;
-        case CFG_FLOAT:
-            printfnl(SOURCE_COMMANDS, "  %-16s = %.9g\n", d->key, *(float *)(base + d->offset));
-            break;
-        case CFG_INT:
-            printfnl(SOURCE_COMMANDS, "  %-16s = %d\n", d->key, *(int *)(base + d->offset));
-            break;
-        case CFG_HEX:
-            printfnl(SOURCE_COMMANDS, "  %-16s = 0x%04X\n", d->key, *(int *)(base + d->offset));
-            break;
-        case CFG_BOOL:
-            printfnl(SOURCE_COMMANDS, "  %-16s = %s\n", d->key, *(bool *)(base + d->offset) ? "on" : "off");
-            break;
-        }
+        config_format_field(d, val, sizeof(val));
+        printfnl(SOURCE_COMMANDS, "  %-16s = %s\n", d->key, val);
     }
     printfnl(SOURCE_COMMANDS, "\n");
 }
@@ -787,6 +803,35 @@ int cmd_config(int argc, char **argv)
         config_reset();
         config_apply_debug();
         printfnl(SOURCE_COMMANDS, "Reboot to apply non-debug settings.\n");
+        return 0;
+    }
+
+    // "config get section.key" — print one key's current value
+    if (argc == 3 && strcasecmp(argv[1], "get") == 0)
+    {
+        char buf[48];
+        strlcpy(buf, argv[2], sizeof(buf));
+
+        char *dot = strchr(buf, '.');
+        if (!dot)
+        {
+            printfnl(SOURCE_COMMANDS, "Usage: config get section.key\n");
+            return 1;
+        }
+        *dot = '\0';
+        const char *section = buf;
+        const char *key     = dot + 1;
+
+        const cfg_descriptor_t *d = config_find(section, key);
+        if (!d)
+        {
+            printfnl(SOURCE_COMMANDS, "Unknown key: %s.%s\n", section, key);
+            return 1;
+        }
+
+        char val[CFG_VALUE_MAX];
+        config_format_field(d, val, sizeof(val));
+        printfnl(SOURCE_COMMANDS, "%s.%s = %s\n", section, key, val);
         return 0;
     }
 
