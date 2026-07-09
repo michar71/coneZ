@@ -33,6 +33,7 @@ const char  *wifi_state_str(void);
 
 // Info queries (valid when connected)
 void     wifi_get_ip_str(char *buf, size_t len);
+void     wifi_get_ip_bytes(uint8_t ip[4]);
 void     wifi_get_gateway_str(char *buf, size_t len);
 void     wifi_get_subnet_str(char *buf, size_t len);
 void     wifi_get_dns_str(char *buf, size_t len);

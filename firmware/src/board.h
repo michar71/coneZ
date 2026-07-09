@@ -45,6 +45,8 @@
     // Power Management
     #define ADC_BAT_PIN     1
     #define ADC_SOLAR_PIN   2
+    #define ADC_BAT_SCALE   23.0f
+    #define ADC_SOLAR_SCALE 23.0f
     #define SOLAR_PWM_PIN   21
     #define LOAD_ON_PIN     47
     #define PWR_SW_PIN      33
@@ -95,6 +97,7 @@
 
     // Battery ADC
     #define ADC_BAT_PIN     1
+    #define ADC_BAT_SCALE   1.0f
 
     // Vext power control
     #define VEXT_PIN        36

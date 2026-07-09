@@ -192,6 +192,23 @@ void wifi_get_ip_str(char *buf, size_t len)
     }
 }
 
+void wifi_get_ip_bytes(uint8_t ip[4])
+{
+    if (!ip) {
+        return;
+    }
+
+    esp_netif_ip_info_t ip_info;
+    if (s_sta_netif && esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK) {
+        ip[0] = ip4_addr1(&ip_info.ip);
+        ip[1] = ip4_addr2(&ip_info.ip);
+        ip[2] = ip4_addr3(&ip_info.ip);
+        ip[3] = ip4_addr4(&ip_info.ip);
+    } else {
+        memset(ip, 0, 4);
+    }
+}
+
 void wifi_get_gateway_str(char *buf, size_t len)
 {
     esp_netif_ip_info_t ip_info;

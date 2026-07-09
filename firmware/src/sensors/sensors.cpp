@@ -133,10 +133,22 @@ float getPitch(void)
     return atan2(ay, sqrt(ax * ax + az * az)) * 180.0 / M_PI;
 }
 
+static float normalize_degrees(float degrees)
+{
+    while (degrees > 180.0f) {
+        degrees -= 360.0f;
+    }
+    while (degrees <= -180.0f) {
+        degrees += 360.0f;
+    }
+    return degrees;
+}
+
 float getRoll(void)
 {
     float ax = v_accX, az = v_accZ;
-    return atan2(-ax, az) * 180.0 / M_PI;
+    float roll = atan2(-ax, az) * 180.0 / M_PI;
+    return normalize_degrees(roll + 180.0f);
 }
 
 float getYaw(void)
@@ -190,7 +202,11 @@ float bat_voltage(void)
     if (last_val < 0) last_val = adc_bat_mv;
     int newval = (last_val + adc_bat_mv)/2;
     last_val = adc_bat_mv;
-    return (newval / 1000.0); // Convert millivolts to volts
+    float volts = newval / 1000.0f;
+#ifdef ADC_BAT_SCALE
+    volts *= ADC_BAT_SCALE;
+#endif
+    return volts;
 }
 
 float solar_voltage(void)
@@ -200,5 +216,9 @@ float solar_voltage(void)
     if (last_val < 0) last_val = adc_solar_mv;
     int newval = (last_val + adc_solar_mv)/2;
     last_val = adc_solar_mv;
-    return (newval / 1000.0); // Convert millivolts to volts
+    float volts = newval / 1000.0f;
+#ifdef ADC_SOLAR_SCALE
+    volts *= ADC_SOLAR_SCALE;
+#endif
+    return volts;
 }

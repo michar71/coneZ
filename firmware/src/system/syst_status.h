@@ -35,9 +35,11 @@ struct node_status {
     uint8_t sat_cat;
     uint8_t v_bat;
     uint8_t v_solar;
+    uint8_t cpu_load;
+    uint8_t ip_addr[4];
 };
 
-static_assert(sizeof(node_status) == 40, "node_status layout changed");
+static_assert(sizeof(node_status) == 48, "node_status layout changed");
 
 void syst_status_setup(void);
 void syst_status_loop(void);

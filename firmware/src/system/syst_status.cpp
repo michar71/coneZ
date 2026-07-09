@@ -5,7 +5,9 @@
 #include <string.h>
 #include <atomic>
 
+#include "driver/temperature_sensor.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
 #include "config.h"
 #include "conez_wifi.h"
 #include "conez_mqtt.h"
@@ -13,11 +15,14 @@
 #include "lora.h"
 #include "main.h"
 #include "sensors.h"
+#include "loadavg.h"
 
 static node_status s_latest = {};
 static bool s_have_latest = false;
 static uint32_t s_last_sample_ms = 0;
 static std::atomic<bool> s_lora_activity_since_heartbeat{false};
+static temperature_sensor_handle_t s_temp_sensor = NULL;
+static bool s_temp_sensor_init_attempted = false;
 
 static uint32_t status_interval_ms(void)
 {
@@ -66,6 +71,27 @@ static int16_t temp_to_centi(float temp_c)
     return (int16_t)iv;
 }
 
+static uint8_t cpu_load_percent(void)
+{
+    if (!loadavg_valid()) {
+        return 0;
+    }
+
+    float cpu_count = (float)portNUM_PROCESSORS;
+    if (cpu_count <= 0.0f) {
+        return 0;
+    }
+
+    int iv = (int)lroundf((loadavg_1() / cpu_count) * 100.0f);
+    if (iv < 0) {
+        return 0;
+    }
+    if (iv > 100) {
+        return 100;
+    }
+    return (uint8_t)iv;
+}
+
 static uint32_t build_status_bits(void)
 {
     uint32_t status = (NODE_STATUS_VERSION & 0x0Fu) << 28;
@@ -109,10 +135,12 @@ static void collect_status(node_status *out)
     out->sat_cat = (uint8_t)((get_satellites() < 0) ? 0 : ((get_satellites() > 255) ? 255 : get_satellites()));
     out->v_bat = clamp_u8_from_tenths(bat_voltage());
     out->v_solar = clamp_u8_from_tenths(solar_voltage());
+    out->cpu_load = cpu_load_percent();
     out->b_temp = temp_to_centi(getTemp());
     out->c_temp = syst_status_get_cpu_temp_centi();
     out->tilt_x = imuAvailable() ? getRoll() : 0.0f;
     out->tilt_y = imuAvailable() ? getPitch() : 0.0f;
+    wifi_get_ip_bytes(out->ip_addr);
 
     if (lora_have_rx()) {
         out->l_rssi = (int8_t)lroundf(lora_get_rssi());
@@ -205,5 +233,30 @@ bool syst_status_get_solar_charging(void)
 
 int16_t syst_status_get_cpu_temp_centi(void)
 {
-    return INT16_MIN;
+    if (!s_temp_sensor_init_attempted) {
+        s_temp_sensor_init_attempted = true;
+
+        temperature_sensor_config_t cfg = {};
+        cfg.range_min = -10;
+        cfg.range_max = 80;
+        cfg.clk_src = TEMPERATURE_SENSOR_CLK_SRC_DEFAULT;
+        cfg.flags.allow_pd = 0;
+        if (temperature_sensor_install(&cfg, &s_temp_sensor) == ESP_OK) {
+            if (temperature_sensor_enable(s_temp_sensor) != ESP_OK) {
+                temperature_sensor_uninstall(s_temp_sensor);
+                s_temp_sensor = NULL;
+            }
+        }
+    }
+
+    if (!s_temp_sensor) {
+        return INT16_MIN;
+    }
+
+    float temp_c = 0.0f;
+    if (temperature_sensor_get_celsius(s_temp_sensor, &temp_c) != ESP_OK) {
+        return INT16_MIN;
+    }
+
+    return temp_to_centi(temp_c);
 }
