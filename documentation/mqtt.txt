@@ -225,4 +225,34 @@ Connection Behavior
   - Clean session (no persistent subscriptions on broker)
   - QoS 0 for all publishes (fire-and-forget)
   - mqtt_task runs on core 1 (CONFIG_MQTT_USE_CORE_1 in sdkconfig)
-  - mqtt_publish() is thread-safe (esp_mqtt uses a recursive mutex)
+  - mqtt_publish() is thread-safe and NON-BLOCKING: it copies the message onto a
+    queue and returns immediately
+
+Publish queue (why it exists)
+-----------------------------
+
+esp_mqtt_client_publish() is the BLOCKING esp-mqtt API. It waits on the client's
+internal api_lock, which the MQTT task holds across reconnect attempts and socket
+writes -- so it can stall its caller for as long as the broker is unhappy. One
+call was measured blocking for 91 seconds.
+
+Two callers made that fatal:
+
+  - mqtt_loop() -> send_heartbeat() runs on loopTask, the same task that blinks the
+    heartbeat LED and services http_loop(). A blocking publish froze the LED, killed
+    the HTTP server (so OTA became impossible) and made the board unpingable.
+  - The printManager debug sink publishes from whichever task happened to log, so a
+    LoRa or shell task could stall mid-print.
+
+The board looked like a network failure while the LoRa task carried on receiving
+beacons -- it was one blocked task, not a dead board. The giveaway is the heartbeat
+LED: it stops, because loopTask owns it.
+
+So mqtt_publish() now enqueues (MQTT_PUBLISH_QUEUE_DEPTH deep) and a dedicated
+"mqtt_pub" task is the only caller of esp_mqtt_client_publish(). Blocking there is
+harmless -- nothing waits on it. A full queue DROPS the message rather than waiting:
+telemetry is QoS 0 and a stalled broker must never stall a cone. Drops are counted
+and reported by the `mqtt` CLI command as "Dropped"; a non-zero value means the
+publisher is wedged inside esp-mqtt while the rest of the board stays responsive.
+
+Never call esp_mqtt_client_publish() from a producer.

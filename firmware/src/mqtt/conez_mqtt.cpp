@@ -6,11 +6,21 @@
  * to per-cone command topics.
  *
  * The esp_mqtt task runs on core 1 (CONFIG_MQTT_USE_CORE_1).
- * mqtt_publish() is thread-safe (esp_mqtt uses a recursive mutex).
+ *
+ * mqtt_publish() is thread-safe and NON-BLOCKING: it copies the message onto a
+ * queue and returns. A dedicated publisher task drains that queue and is the only
+ * caller of the blocking esp_mqtt_client_publish(). Never call that API directly
+ * from a producer -- see the MQTT_PUBLISH_QUEUE_DEPTH comment below for what
+ * happens when you do.
  */
 
 #include "esp_system.h"
 #include "mqtt_client.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include <stdlib.h>
+#include <string.h>
 #include "main.h"
 #include "conez_mqtt.h"
 #include "conez_wifi.h"
@@ -22,13 +32,39 @@
 // ---------- Tunables ----------
 #define MQTT_KEEPALIVE_SEC   60
 
+// Publish queue. esp_mqtt_client_publish() is the BLOCKING esp-mqtt API: it waits on
+// the client's internal api_lock, which the MQTT task holds across reconnect attempts
+// and socket writes. Calling it from a producer stalls that producer for as long as
+// the broker is unhappy -- measured at 91 s for one call, and unbounded in practice.
+//
+// mqtt_loop() runs on loopTask, which also blinks the heartbeat LED and services
+// http_loop(); the debug sink in printManager calls mqtt_publish() from whichever
+// task happened to log. A blocking publish therefore froze the LED, HTTP and the
+// board's whole foreground while the LoRa task carried on printing beacons.
+//
+// So: producers enqueue and return, and only this dedicated task ever blocks inside
+// esp-mqtt. A full queue drops the message rather than waiting -- telemetry is
+// fire-and-forget (QoS 0) and a stalled broker must never stall the cone.
+#define MQTT_PUBLISH_QUEUE_DEPTH   12
+#define MQTT_PUBLISH_MAX_PAYLOAD   MQTT_NODE_STATUS_JSON_MAX   // largest thing we publish
+#define MQTT_PUBLISH_TOPIC_MAX     64
+
+struct mqtt_msg {
+    char     topic[MQTT_PUBLISH_TOPIC_MAX];
+    uint16_t len;
+    char     payload[];   // NUL-terminated, len bytes
+};
+
 // ---------- State ----------
 static esp_mqtt_client_handle_t s_client = NULL;
 static volatile bool s_connected = false;
 static volatile uint32_t s_connected_at = 0;
 static volatile uint32_t s_tx_count = 0;
 static volatile uint32_t s_rx_count = 0;
+static volatile uint32_t s_drop_count = 0;   // messages dropped because the queue was full
 static uint32_t last_heartbeat_ms = 0;
+
+static QueueHandle_t s_pub_queue = NULL;     // holds struct mqtt_msg *
 
 static char topic_status[64];
 static char topic_cmd[64];
@@ -36,6 +72,8 @@ static char client_id[32];
 
 static bool s_started = false;       // esp_mqtt_client_start() has been called
 static bool s_user_stopped = false;  // user manually disconnected (suppress auto-start)
+
+static void mqtt_publisher_task(void *arg);
 
 static uint32_t mqtt_heartbeat_interval_ms(void)
 {
@@ -181,11 +219,11 @@ static void send_heartbeat(void)
         return;
     }
 
-    int msg_id = esp_mqtt_client_publish(s_client, topic_status, payload, 0, 0, 0);
-    if (msg_id >= 0) {
-        s_tx_count = s_tx_count + 1;
+    // Enqueue rather than publish: this runs on loopTask, which also drives the
+    // heartbeat LED and http_loop(). A blocking publish here freezes the board's
+    // whole foreground whenever the broker is slow or gone.
+    if (mqtt_publish(topic_status, payload) == 0)
         syst_status_on_heartbeat_sent();
-    }
     last_heartbeat_ms = uptime_ms();
 }
 
@@ -200,7 +238,22 @@ void mqtt_setup(void)
 
     s_tx_count = 0;
     s_rx_count = 0;
+    s_drop_count = 0;
     s_user_stopped = false;
+
+    // Publish queue + the only task allowed to block inside esp-mqtt. Created once;
+    // mqtt_setup() may run again after a config change.
+    if (!s_pub_queue) {
+        s_pub_queue = xQueueCreate(MQTT_PUBLISH_QUEUE_DEPTH, sizeof(struct mqtt_msg *));
+        if (s_pub_queue) {
+            // Core 1 alongside esp_mqtt (CONFIG_MQTT_USE_CORE_1); low priority, since
+            // it may sit blocked in a publish for a long time and must not starve
+            // anything. Stack covers esp-mqtt's publish path plus our frame.
+            xTaskCreatePinnedToCore(mqtt_publisher_task, "mqtt_pub", 4096, NULL, 4, NULL, 1);
+        } else {
+            printfnl(SOURCE_MQTT, "publish queue alloc failed; telemetry disabled\n");
+        }
+    }
 
     printfnl(SOURCE_MQTT, "Client ID: %s, broker: %s\n", client_id, config.mqtt_broker);
     last_heartbeat_ms = 0;
@@ -242,6 +295,11 @@ uint32_t mqtt_uptime_sec(void)
 uint32_t mqtt_tx_count(void) { return s_tx_count; }
 uint32_t mqtt_rx_count(void) { return s_rx_count; }
 
+uint32_t mqtt_dropped_count(void)
+{
+    return s_drop_count;
+}
+
 void mqtt_force_connect(void)
 {
     s_user_stopped = false;
@@ -259,13 +317,46 @@ void mqtt_force_disconnect(void)
     printfnl(SOURCE_MQTT, "Disconnected (user)\n");
 }
 
+// The one place esp_mqtt_client_publish() may be called from. Blocking here is
+// harmless: nothing else waits on this task.
+static void mqtt_publisher_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        struct mqtt_msg *m = NULL;
+        if (xQueueReceive(s_pub_queue, &m, portMAX_DELAY) != pdTRUE || !m)
+            continue;
+
+        // Re-check: the broker may have dropped while this sat in the queue.
+        if (s_connected && s_client) {
+            int msg_id = esp_mqtt_client_publish(s_client, m->topic, m->payload, m->len, 0, 0);
+            if (msg_id >= 0)
+                s_tx_count = s_tx_count + 1;
+        }
+        free(m);
+    }
+}
+
 int mqtt_publish(const char *topic, const char *payload)
 {
-    if (!s_connected || !s_client) return -1;
-    int msg_id = esp_mqtt_client_publish(s_client, topic, payload, 0, 0, 0);
-    if (msg_id >= 0) {
-        s_tx_count = s_tx_count + 1;
-        return 0;
+    if (!s_connected || !s_client || !s_pub_queue) return -1;
+
+    size_t plen = strlen(payload);
+    if (plen > MQTT_PUBLISH_MAX_PAYLOAD) return -1;
+
+    struct mqtt_msg *m = (struct mqtt_msg *)malloc(sizeof(*m) + plen + 1);
+    if (!m) { s_drop_count = s_drop_count + 1; return -1; }
+
+    strlcpy(m->topic, topic, sizeof(m->topic));
+    memcpy(m->payload, payload, plen + 1);
+    m->len = (uint16_t)plen;
+
+    // Zero wait. A producer must never block on the broker -- that is the entire
+    // point of this queue. Dropping QoS-0 telemetry is the correct trade.
+    if (xQueueSend(s_pub_queue, &m, 0) != pdTRUE) {
+        free(m);
+        s_drop_count = s_drop_count + 1;
+        return -1;
     }
-    return -1;
+    return 0;
 }

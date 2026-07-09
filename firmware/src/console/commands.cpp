@@ -1900,6 +1900,9 @@ int cmd_mqtt(int argc, char **argv)
         printfnl(SOURCE_COMMANDS, "  Uptime:     %lus\n", (unsigned long)mqtt_uptime_sec());
         printfnl(SOURCE_COMMANDS, "  TX packets: %lu\n", (unsigned long)mqtt_tx_count());
         printfnl(SOURCE_COMMANDS, "  RX packets: %lu\n", (unsigned long)mqtt_rx_count());
+        // Non-zero means the publisher task is stuck in esp-mqtt and the queue
+        // overflowed. Telemetry is being dropped, but the board stays responsive.
+        printfnl(SOURCE_COMMANDS, "  Dropped:    %lu\n", (unsigned long)mqtt_dropped_count());
     }
 
     return 0;

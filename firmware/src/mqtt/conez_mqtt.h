@@ -9,6 +9,8 @@ const char *mqtt_state_str(void);
 uint32_t mqtt_uptime_sec(void);
 uint32_t mqtt_tx_count(void);
 uint32_t mqtt_rx_count(void);
+// Publishes discarded because the queue was full (broker stalled or gone).
+uint32_t mqtt_dropped_count(void);
 
 void mqtt_force_connect(void);
 void mqtt_force_disconnect(void);
