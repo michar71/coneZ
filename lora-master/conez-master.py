@@ -559,7 +559,11 @@ def transmit(payload):
         LoRa.write([ord(c) for c in payload], len(payload))
 
     LoRa.endPacket()
-    LoRa.wait()                     # block until the radio finishes TX
+    # wait() is bounded now: False means the TX-done interrupt never arrived and the
+    # radio was re-armed. Log it -- a rising rate here means the DIO1 edge is being
+    # lost, which used to hang the master silently instead of dropping one packet.
+    if not LoRa.wait():         # block until the radio finishes TX
+        print("WARN: TX wait timed out (no DIO1 edge); radio re-armed, packet dropped")
     #time.sleep( 0.10 )		# RN - Avoid ghost RX?
     flush_rx_fifo()
     LoRa.request(LoRa.RX_CONTINUOUS)

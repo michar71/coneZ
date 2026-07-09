@@ -8,6 +8,16 @@ gpio = RPi.GPIO
 gpio.setmode(RPi.GPIO.BCM)
 gpio.setwarnings(False)
 
+# Upper bound on an interrupt-driven wait() that was asked to wait "forever".
+# A DIO1 edge that never arrives must not hang the caller; see wait().
+# Generous next to the longest legitimate operation (a slow SF12 packet is well
+# under a second), so this only ever fires on a genuinely missed interrupt.
+IRQ_WAIT_TIMEOUT_S = 5.0
+
+# Idle between polls of _statusIrq. The original loop spun with no sleep, pegging
+# a core for the duration of every transmit.
+IRQ_POLL_INTERVAL_S = 0.0002
+
 class SX126x(BaseLoRa) :
     """Class for SX1261/62/68 and LLCC68 LoRa chipsets from Semtech"""
 
@@ -824,13 +834,41 @@ class SX126x(BaseLoRa) :
             return True
 
         # wait transmit or receive process finish by checking IRQ status
+        #
+        # In interrupt mode (_irq != -1) this loop used to consult nothing at all: it
+        # spun on _statusIrq, which only the DIO1 callback sets, and with the default
+        # timeout of 0 the timeout check below could never fire. A single missed edge
+        # therefore hung the caller forever -- seen as the master falling silent mid
+        # transmit while the process stayed alive and still answered its control
+        # socket. Bound the wait, then read the IRQ register, which reports what the
+        # radio actually did regardless of whether the edge was ever delivered.
+        #
+        # Behaviour change: timeout=0 used to mean "wait forever" and now means "wait
+        # up to IRQ_WAIT_TIMEOUT_S". That bound applies to the polled path too -- it
+        # cannot miss an edge, but an unbounded wait on a radio that never finishes is
+        # a hang either way. An explicit timeout>0 keeps its original meaning exactly.
         irqStat = 0x0000
         t = time.time()
+        deadline = timeout if timeout > 0 else IRQ_WAIT_TIMEOUT_S
         while irqStat == 0x0000 and self._statusIrq == 0x0000 :
             # only check IRQ status register for non interrupt operation
             if self._irq == -1 : irqStat = self.getIrqStatus()
             # return when timeout reached
-            if (time.time() - t) > timeout and timeout > 0 : return False
+            if (time.time() - t) > deadline :
+                # An explicit caller timeout keeps its original meaning: give up.
+                if timeout > 0 or self._irq == -1 : return False
+                # Otherwise we are past the interrupt-mode backstop. Ask the radio.
+                irqStat = self.getIrqStatus()
+                if irqStat == 0x0000 :
+                    # The operation really has not completed and no edge is coming.
+                    # Re-arm in case the alert itself was lost, and report failure so
+                    # the caller can resynchronise rather than block.
+                    self._rearmIrq()
+                    return False
+                # Radio finished but the edge was missed — fall through and handle it
+                # exactly as the polled (non-interrupt) path would.
+                break
+            if self._irq != -1 : time.sleep(IRQ_POLL_INTERVAL_S)
 
         if self._statusIrq :
             # immediately return when interrupt signal hit
@@ -944,6 +982,26 @@ class SX126x(BaseLoRa) :
         if self._irq != -1 and not self._irqArmed :
             gpio.add_event_detect(self._irq, gpio.RISING, callback=self._interruptDispatch, bouncetime=10)
             self._irqArmed = True
+
+    def _rearmIrq(self) :
+
+        # Recovery path ONLY -- reached from wait() after a missed edge, never per
+        # operation. remove_event_detect() must come first: it pops the shim's _alerts
+        # entry and cancels the callbacks, so the following add_event_detect() installs
+        # a single fresh handler rather than appending a second one to the existing
+        # alert (which would fire the dispatcher twice per edge).
+        #
+        # This re-claims an already-claimed lgpio line, which is precisely the churn
+        # _armIrq() exists to avoid -- lgpio tolerates only a few hundred re-claims
+        # before failing with 'bad event request'. Safe here because a missed edge is
+        # rare; it must never move back onto the per-transmit path.
+        if self._irq == -1 : return
+        try :
+            gpio.remove_event_detect(self._irq)
+        except Exception :
+            pass
+        self._irqArmed = False
+        self._armIrq()
 
     def _interruptDispatch(self, channel) :
 
