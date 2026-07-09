@@ -14,6 +14,41 @@ The broker MUST allow anonymous connections. conez_mqtt.cpp populates only
 esp_mqtt_client_config_t.credentials.client_id -- it sets no username or
 password -- so a broker that requires auth rejects every cone.
 
+
+EVERY CONE NEEDS A UNIQUE system.cone_id
+----------------------------------------
+
+conez_mqtt.cpp derives BOTH the client id and the topics from cone_id:
+
+    snprintf(client_id,    ..., "conez-%d",        config.cone_id);
+    snprintf(topic_status, ..., "conez/%d/status", config.cone_id);
+    snprintf(topic_cmd,    ..., "conez/%d/cmd/#",  config.cone_id);
+
+DEFAULT_CONE_ID is 0 (config.h), so an unconfigured fleet all claims "conez-0".
+MQTT client ids must be unique: each connecting cone evicts the previous one, so
+the herd loops connect -> kicked -> reconnect and only one is ever attached. The
+broker log fills with
+
+    Client conez-0 already connected, closing old connection.
+
+The duplicate TOPICS are the more dangerous half: every cone publishes to
+conez/0/status, so telemetry is unattributable, and a command sent to
+conez/0/cmd/stop reaches whichever cone happens to hold the connection. Fixing
+only the client id leaves that in place.
+
+This is not merely untidy. The resulting reconnect storm kept the MQTT task
+permanently mid-reconnect, which is what exposed the blocking-publish hang that
+froze loopTask (LED, HTTP, OTA) on every cone in the field. See "Publish queue"
+below.
+
+Set it per device and reboot (the id is read once, at MQTT init):
+
+    config set system.cone_id 4      # CLI, persists to /config.ini
+    reboot
+
+Verify with `config get system.cone_id`, and check the broker shows one session
+per cone with no "already connected" lines.
+
 Endpoints on the master node: mqtt://sewerpipe.local:1883 (the cones) and
 ws://sewerpipe.local:9001 (browser dashboards; subprotocol "mqtt").
 
