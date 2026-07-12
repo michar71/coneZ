@@ -130,6 +130,108 @@
       padding: 8px 0;
     }
 
+    .alarm-strip {
+      display: grid;
+      gap: 8px;
+      margin: 0 0 14px;
+    }
+
+    .alarm-strip[hidden] {
+      display: none;
+    }
+
+    .alarm-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .alarm-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .alarm-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 88, 120, 0.28);
+      background: linear-gradient(180deg, rgba(54, 18, 24, 0.96), rgba(30, 10, 14, 0.98));
+      color: var(--text);
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+      transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    .alarm-item:hover {
+      transform: translateY(-1px);
+      border-color: rgba(255, 88, 120, 0.46);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+    }
+
+    .alarm-node {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      color: #fff4f6;
+    }
+
+    .alarm-badges {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .alarm-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 216, 255, 0.12);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .alarm-badge.alarm-bad {
+      border-color: rgba(255, 88, 120, 0.26);
+      background: rgba(82, 20, 30, 0.82);
+      color: #ffdce4;
+    }
+
+    .alarm-badge.alarm-warn {
+      border-color: rgba(243, 187, 72, 0.26);
+      background: rgba(74, 48, 10, 0.82);
+      color: #ffe7ad;
+    }
+
+    .alarm-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 10px;
+      line-height: 1;
+    }
+
     .pill {
       display: inline-flex;
       align-items: center;
@@ -181,6 +283,13 @@
       filter: grayscale(0.7) saturate(0.65);
       border-color: rgba(160, 176, 190, 0.16);
       box-shadow: 0 12px 26px rgba(0, 0, 0, 0.24);
+    }
+
+    .card.card-alarm {
+      border-color: rgba(255, 88, 120, 0.24);
+      box-shadow:
+        inset 0 0 0 1px rgba(255, 88, 120, 0.06),
+        0 18px 40px rgba(0, 0, 0, 0.35);
     }
 
     .card.card-stale .node-id,
@@ -245,6 +354,11 @@
     .updated {
       font-size: 12px;
       color: var(--muted);
+    }
+
+    .node-meta {
+      display: grid;
+      gap: 8px;
     }
 
     .card-actions {
@@ -742,6 +856,13 @@
           <strong id="retry-status">Every 2s when offline</strong>
         </div>
       </div>
+      <section class="alarm-strip" id="alarm-strip" hidden>
+        <div class="alarm-header">
+          <span>Active Alarms</span>
+          <strong id="alarm-count">0</strong>
+        </div>
+        <nav class="alarm-list" id="alarm-list" aria-label="Jump to nodes with alarms"></nav>
+      </section>
       <nav class="node-shortcuts" id="node-shortcuts" aria-label="Jump to node"></nav>
     </div>
     <section class="list" id="node-list" aria-live="polite"></section>
@@ -773,6 +894,8 @@
     const STATUS_URL = "./api/status";
     const TELNET_PAGE_URL = "./telnet.html";
     const NOTES_PAGE_URL = "./notes.html";
+    const LOW_BATTERY_V = 11.0;
+    const TILT_ALARM_DEG = 10.0;
     const MQTT_URLS = [
       "ws://sewerpipe.local:9001/mqtt",
       "ws://sewerpipe.local:9001",
@@ -785,6 +908,9 @@
     const nodeCountEl = document.getElementById("node-count");
     const topicStatusEl = document.getElementById("topic-status");
     const retryStatusEl = document.getElementById("retry-status");
+    const alarmStripEl = document.getElementById("alarm-strip");
+    const alarmCountEl = document.getElementById("alarm-count");
+    const alarmListEl = document.getElementById("alarm-list");
     const nodeShortcutsEl = document.getElementById("node-shortcuts");
     const nodeListEl = document.getElementById("node-list");
     const mapStatusEl = document.getElementById("map-status");
@@ -883,11 +1009,109 @@
       return Number(value).toFixed(6);
     }
 
+    function hasUsableCoordinatePair(latitude, longitude) {
+      return Number.isFinite(latitude) && Number.isFinite(longitude) && !(Number(latitude) === 0 && Number(longitude) === 0);
+    }
+
     function hasValidPosition(metrics) {
       if (!metrics) {
         return false;
       }
-      return Number.isFinite(metrics.latitude) && Number.isFinite(metrics.longitude);
+      return hasUsableCoordinatePair(metrics.latitude, metrics.longitude);
+    }
+
+    function hasGpsLock(metrics) {
+      return !!metrics && Number.isFinite(metrics.satellites) && Number(metrics.satellites) > 0;
+    }
+
+    function getNodeAlarms(metrics) {
+      if (!metrics) {
+        return [];
+      }
+
+      const alarms = [];
+      if (Number.isFinite(metrics.batteryV) && Number(metrics.batteryV) < LOW_BATTERY_V) {
+        alarms.push({
+          key: "battery",
+          label: "Low Battery",
+          shortLabel: "BAT",
+          severity: "bad"
+        });
+      }
+      if (!hasGpsLock(metrics)) {
+        alarms.push({
+          key: "gps",
+          label: "No GPS Lock",
+          shortLabel: "GPS",
+          severity: "warn"
+        });
+      }
+      if (
+        (Number.isFinite(metrics.tiltXDeg) && Math.abs(Number(metrics.tiltXDeg)) > TILT_ALARM_DEG) ||
+        (Number.isFinite(metrics.tiltYDeg) && Math.abs(Number(metrics.tiltYDeg)) > TILT_ALARM_DEG)
+      ) {
+        alarms.push({
+          key: "tilt",
+          label: "Tilt Alarm",
+          shortLabel: "TILT",
+          severity: "bad"
+        });
+      }
+      return alarms;
+    }
+
+    function alarmSeverityRank(alarm) {
+      return alarm?.severity === "bad" ? 2 : 1;
+    }
+
+    function renderAlarmBadges(alarms, compact = false) {
+      if (!Array.isArray(alarms) || alarms.length === 0) {
+        return "";
+      }
+
+      return `
+        <div class="alarm-badges">
+          ${alarms.map((alarm) => `
+            <span class="alarm-badge alarm-${escapeHtml(alarm.severity)}" title="${escapeHtml(alarm.label)}">
+              <span class="alarm-icon">${escapeHtml(alarm.shortLabel)}</span>
+              ${compact ? "" : `<span>${escapeHtml(alarm.label)}</span>`}
+            </span>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderAlarmStrip(entries) {
+      const alarmEntries = entries
+        .map((entry) => {
+          const metrics = getNodeMetrics(entry.payload);
+          const alarms = getNodeAlarms(metrics);
+          return alarms.length > 0 ? { entry, alarms } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => {
+          const severityDiff = Math.max(...b.alarms.map(alarmSeverityRank)) - Math.max(...a.alarms.map(alarmSeverityRank));
+          if (severityDiff !== 0) {
+            return severityDiff;
+          }
+          return a.entry.nodeId.localeCompare(b.entry.nodeId, undefined, { numeric: true, sensitivity: "base" });
+        });
+
+      if (alarmEntries.length === 0) {
+        alarmStripEl.hidden = true;
+        alarmCountEl.textContent = "0";
+        alarmListEl.innerHTML = "";
+        return;
+      }
+
+      alarmStripEl.hidden = false;
+      alarmCountEl.textContent = String(alarmEntries.length);
+      alarmListEl.innerHTML = alarmEntries.map(({ entry, alarms }) => `
+        <a class="alarm-item" href="#${escapeHtml(nodePanelId(entry.nodeId))}">
+          <span class="alarm-node">${escapeHtml(entry.nodeId)}</span>
+          ${renderAlarmBadges(alarms, true)}
+        </a>
+      `).join("");
     }
 
     function parseIpAddress(value) {
@@ -1148,6 +1372,7 @@
       );
 
       nodeCountEl.textContent = String(entries.length);
+      renderAlarmStrip(entries);
       renderNodeShortcuts(entries);
 
       if (entries.length === 0) {
@@ -1161,6 +1386,9 @@
         const stale = isNodeStale(entry);
         const staleClass = stale ? " card-stale" : "";
         const versionText = metrics ? formatVersion(metrics.verMajor, metrics.verMinor) : null;
+        const hasGpsFix = metrics ? hasUsableCoordinatePair(metrics.latitude, metrics.longitude) : false;
+        const alarms = metrics ? getNodeAlarms(metrics) : [];
+        const alarmClass = alarms.length > 0 ? " card-alarm" : "";
         const updatedText = stale
           ? `Topic ${escapeHtml(entry.topic)} | Stale since ${escapeHtml(entry.updatedAt.toLocaleTimeString())}`
           : `Topic ${escapeHtml(entry.topic)} | Updated ${escapeHtml(entry.updatedAt.toLocaleTimeString())}`;
@@ -1187,14 +1415,15 @@
         }
 
         return `
-          <article class="card${staleClass}" id="${escapeHtml(panelId)}">
+          <article class="card${staleClass}${alarmClass}" id="${escapeHtml(panelId)}">
             <div class="card-header">
-              <div>
+              <div class="node-meta">
                 <div class="node-title">
                   <div class="node-id">${escapeHtml(entry.nodeId)}</div>
                   ${versionText ? `<div class="node-version">${escapeHtml(versionText)}</div>` : ""}
                 </div>
                 <div class="updated">${updatedText}</div>
+                ${renderAlarmBadges(alarms)}
               </div>
               ${renderNodeActions(entry.nodeId, metrics)}
             </div>
@@ -1230,8 +1459,8 @@
                     "Satellites / Altitude",
                     `${Number.isFinite(metrics.satellites) ? String(metrics.satellites) : "--"} sats | ${formatMaybeNumber(metrics.altitudeM, 0)} m`
                   )}
-                  ${renderGpsItem("Latitude", formatCoordinate(metrics.latitude))}
-                  ${renderGpsItem("Longitude", formatCoordinate(metrics.longitude))}
+                  ${renderGpsItem("Latitude", hasGpsFix ? formatCoordinate(metrics.latitude) : "N/A")}
+                  ${renderGpsItem("Longitude", hasGpsFix ? formatCoordinate(metrics.longitude) : "N/A")}
                 </div>
               </section>
               <section class="module">
@@ -1730,6 +1959,18 @@
         return;
       }
       requestAnimationFrame(() => flashNodePanelFromHash(hash));
+    });
+    alarmListEl.addEventListener("click", (event) => {
+      const link = event.target.closest(".alarm-item");
+      if (!link) {
+        return;
+      }
+      event.preventDefault();
+      const nodeLabel = link.querySelector(".alarm-node");
+      const nodeId = nodeLabel ? nodeLabel.textContent.trim() : "";
+      if (nodeId) {
+        focusNodePanel(nodeId);
+      }
     });
     window.addEventListener("hashchange", () => {
       flashNodePanelFromHash(window.location.hash);
