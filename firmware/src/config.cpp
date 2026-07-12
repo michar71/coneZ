@@ -88,6 +88,8 @@ static const cfg_descriptor_t cfg_table[] = {
     CFG_ENTRY("mqtt",   "enabled",      CFG_BOOL,  mqtt_enabled),
     CFG_ENTRY_R("mqtt", "port",         CFG_INT,   mqtt_port,      1, 65535),
     CFG_ENTRY_R("mqtt", "status_interval", CFG_INT, mqtt_status_interval, 1, 86400),
+    CFG_ENTRY("mqtt",   "username",     CFG_STR,   mqtt_username),
+    CFG_ENTRY("mqtt",   "password",     CFG_STR,   mqtt_password),
     // [led]
     CFG_ENTRY_R("led",  "count1",       CFG_INT,   led_count1,     0, 1000),
     CFG_ENTRY_R("led",  "count2",       CFG_INT,   led_count2,     0, 1000),
@@ -244,6 +246,8 @@ static void config_fill_defaults(conez_config_t *cfg)
     cfg->mqtt_enabled     = DEFAULT_MQTT_ENABLED;
     cfg->mqtt_port        = DEFAULT_MQTT_PORT;
     cfg->mqtt_status_interval = DEFAULT_MQTT_STATUS_INTERVAL;
+    strlcpy(cfg->mqtt_username,   DEFAULT_MQTT_USER,      sizeof(cfg->mqtt_username));
+    strlcpy(cfg->mqtt_password,   DEFAULT_MQTT_PASS,      sizeof(cfg->mqtt_password));
 
     cfg->led_count1       = DEFAULT_LED_COUNT;
     cfg->led_count2       = DEFAULT_LED_COUNT;
@@ -620,7 +624,8 @@ const char* config_get_html(const char *msg)
         case CFG_STR:
         {
             const char *val = (const char *)(base + d->offset);
-            bool is_password = (strcmp(d->section, "wifi") == 0 && strcmp(d->key, "password") == 0);
+            bool is_password = (strcmp(d->key, "password") == 0 &&
+                                (strcmp(d->section, "wifi") == 0 || strcmp(d->section, "mqtt") == 0));
             cfg_catf("<input type='%s' name='%s' value='",
                 is_password ? "password" : "text", buf);
             cfg_cat_attr_escaped(val);

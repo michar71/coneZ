@@ -28,6 +28,7 @@
 #include "printManager.h"
 #include "syst_status.h"
 #include "node_status.h"
+#include "shell.h"          // SHELL_BUFSIZE
 
 // ---------- Tunables ----------
 #define MQTT_KEEPALIVE_SEC   60
@@ -55,6 +56,13 @@ struct mqtt_msg {
     char     payload[];   // NUL-terminated, len bytes
 };
 
+// Command dispatch: conez/{id}/cmd/<suffix> [payload] -> a CLI command line. The
+// MQTT event task enqueues (by value, no malloc); ShellTask drains and runs it, so
+// commands share the interactive shell's task/stack and never execute on the MQTT
+// task. A full queue drops the command rather than blocking the event task.
+#define MQTT_CMD_QUEUE_DEPTH   8
+#define MQTT_CMD_MAX           SHELL_BUFSIZE   // shell truncates past this anyway
+
 // ---------- State ----------
 static esp_mqtt_client_handle_t s_client = NULL;
 static volatile bool s_connected = false;
@@ -64,10 +72,14 @@ static volatile uint32_t s_rx_count = 0;
 static volatile uint32_t s_drop_count = 0;   // messages dropped because the queue was full
 static uint32_t last_heartbeat_ms = 0;
 
+static volatile uint32_t s_cmd_drop_count = 0;   // cmd messages dropped (queue full)
+
 static QueueHandle_t s_pub_queue = NULL;     // holds struct mqtt_msg *
+static QueueHandle_t s_cmd_queue = NULL;     // holds char[MQTT_CMD_MAX] by value
 
 static char topic_status[64];
 static char topic_cmd[64];
+static char topic_cmd_prefix[48];            // "conez/<id>/cmd/" — for matching RX topics
 static char client_id[32];
 
 static bool s_started = false;       // esp_mqtt_client_start() has been called
@@ -136,6 +148,29 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
         }
 
         printfnl(SOURCE_MQTT, "RX [%s] %s\n", topic, payload);
+
+        // Dispatch: topic conez/{id}/cmd/<suffix> -> CLI command "<suffix> <payload>".
+        // The suffix's '/' become spaces, so conez/id/cmd/config/set + "x 1" and
+        // conez/id/cmd/config + "set x 1" both yield "config set x 1". Enqueue only;
+        // ShellTask runs it (never the MQTT event task).
+        size_t plen_pfx = strlen(topic_cmd_prefix);
+        if (s_cmd_queue && plen_pfx > 0 && strncmp(topic, topic_cmd_prefix, plen_pfx) == 0) {
+            const char *suffix = topic + plen_pfx;
+            char cmd[MQTT_CMD_MAX];
+            size_t off = 0;
+            for (const char *p = suffix; *p && off < sizeof(cmd) - 1; ++p)
+                cmd[off++] = (*p == '/') ? ' ' : *p;
+            if (plen > 0 && off < sizeof(cmd) - 1) {
+                if (off > 0) cmd[off++] = ' ';
+                for (int i = 0; i < plen && off < sizeof(cmd) - 1; ++i)
+                    cmd[off++] = payload[i];
+            }
+            cmd[off] = '\0';
+            if (off > 0) {
+                if (xQueueSend(s_cmd_queue, cmd, 0) != pdTRUE)
+                    s_cmd_drop_count = s_cmd_drop_count + 1;
+            }
+        }
         break;
     }
 
@@ -164,6 +199,14 @@ static void mqtt_create_and_start(void)
     esp_mqtt_client_config_t cfg = {};
     cfg.broker.address.uri = uri;
     cfg.credentials.client_id = client_id;
+    // Auth is optional: a non-empty mqtt.username switches from anonymous to
+    // username/password. config.mqtt_* outlive this call (they live in the global
+    // config struct), so pointing esp-mqtt at them directly is safe. An empty
+    // password with a username is allowed (some brokers key ACLs on username alone).
+    if (config.mqtt_username[0] != '\0') {
+        cfg.credentials.username = config.mqtt_username;
+        cfg.credentials.authentication.password = config.mqtt_password;
+    }
     cfg.session.keepalive = MQTT_KEEPALIVE_SEC;
     cfg.network.disable_auto_reconnect = false;
     cfg.network.timeout_ms = 3000;       // default 10s — shorter reduces stop() blocking
@@ -235,11 +278,17 @@ void mqtt_setup(void)
     snprintf(client_id,    sizeof(client_id),    "conez-%d", config.cone_id);
     snprintf(topic_status, sizeof(topic_status), "conez/%d/status", config.cone_id);
     snprintf(topic_cmd,    sizeof(topic_cmd),    "conez/%d/cmd/#", config.cone_id);
+    snprintf(topic_cmd_prefix, sizeof(topic_cmd_prefix), "conez/%d/cmd/", config.cone_id);
 
     s_tx_count = 0;
     s_rx_count = 0;
     s_drop_count = 0;
+    s_cmd_drop_count = 0;
     s_user_stopped = false;
+
+    // Command queue, drained by ShellTask (see mqtt_pop_command). Created once.
+    if (!s_cmd_queue)
+        s_cmd_queue = xQueueCreate(MQTT_CMD_QUEUE_DEPTH, MQTT_CMD_MAX);
 
     // Publish queue + the only task allowed to block inside esp-mqtt. Created once;
     // mqtt_setup() may run again after a config change.
@@ -298,6 +347,17 @@ uint32_t mqtt_rx_count(void) { return s_rx_count; }
 uint32_t mqtt_dropped_count(void)
 {
     return s_drop_count;
+}
+
+bool mqtt_pop_command(char *buf, int bufsz)
+{
+    if (!s_cmd_queue || bufsz < MQTT_CMD_MAX) return false;   // buf must hold a full item
+    return xQueueReceive(s_cmd_queue, buf, 0) == pdTRUE;
+}
+
+uint32_t mqtt_cmd_dropped_count(void)
+{
+    return s_cmd_drop_count;
 }
 
 void mqtt_force_connect(void)

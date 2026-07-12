@@ -15,6 +15,8 @@
 #define CONFIG_MAX_LORA_MODE    8
 #define CONFIG_MAX_FSK_SYNCWORD 17      // 16 hex chars + NUL
 #define CONFIG_MAX_MQTT_BROKER  65
+#define CONFIG_MAX_MQTT_USER    33
+#define CONFIG_MAX_MQTT_PASS    65
 
 // ---------- Compiled defaults ----------
 // WiFi
@@ -71,6 +73,8 @@
 #define DEFAULT_MQTT_ENABLED    true
 #define DEFAULT_MQTT_PORT       1883
 #define DEFAULT_MQTT_STATUS_INTERVAL 30
+#define DEFAULT_MQTT_USER       ""    // empty = anonymous (matches an open broker)
+#define DEFAULT_MQTT_PASS       ""
 
 // LED counts per channel
 #define DEFAULT_LED_COUNT       50
@@ -149,6 +153,8 @@ typedef struct {
     bool    mqtt_enabled;
     int     mqtt_port;
     int     mqtt_status_interval;
+    char    mqtt_username[CONFIG_MAX_MQTT_USER];  // empty = anonymous connect
+    char    mqtt_password[CONFIG_MAX_MQTT_PASS];
 
     // [led]
     int     led_count1;

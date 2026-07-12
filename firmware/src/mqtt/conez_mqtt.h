@@ -16,4 +16,11 @@ void mqtt_force_connect(void);
 void mqtt_force_disconnect(void);
 int  mqtt_publish(const char *topic, const char *payload);
 
+// Pop one command received on conez/{id}/cmd/# (topic suffix + payload), if any.
+// Returns true and fills buf when a command was queued. Drained by ShellTask so the
+// command runs in the interactive shell's context, not the MQTT event task.
+bool mqtt_pop_command(char *buf, int bufsz);
+// Commands discarded because the cmd queue was full.
+uint32_t mqtt_cmd_dropped_count(void);
+
 #endif

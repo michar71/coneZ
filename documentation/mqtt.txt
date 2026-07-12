@@ -148,12 +148,41 @@ so "conez/5/cmd/#" matches:
     conez/5/cmd/config        Configuration updates
     conez/5/cmd/anything      Future extensibility
 
-The subtopic after "cmd/" identifies the command type. The payload
-carries the command arguments (plain text or JSON).
+The command is built as "<topic-suffix> <payload>" and run through the
+same CLI as the serial/telnet console. Slashes in the suffix become
+spaces, so these are equivalent:
 
-Currently, incoming messages on cmd/# are logged via SOURCE_MQTT
-debug output. Command dispatch will be added as specific commands
-are defined.
+    topic conez/5/cmd/config       payload "set system.cone_id 4"
+    topic conez/5/cmd/config/set   payload "system.cone_id 4"
+    topic conez/5/cmd/config/set/system.cone_id/4   (no payload)
+
+all run:  config set system.cone_id 4
+
+A verb-only command needs no payload: conez/5/cmd/reboot with an empty
+payload runs "reboot". Any CLI command works (run, stop, led, cue,
+config, reboot, ...) -- see documentation/cli-commands.txt.
+
+Dispatch path (firmware/src/mqtt/conez_mqtt.cpp -> util/shell.cpp):
+  - The MQTT event task ENQUEUES the command (conez/{id}/cmd/# only) and
+    returns. It never executes it -- running a command there would use the
+    MQTT task's stack and could block the event loop.
+  - ShellTask drains the queue in run_commands() and runs each via
+    shell.executeExternal(), which shares the interactive shell's task and
+    stack and preserves any half-typed console line.
+  - Queue depth MQTT_CMD_QUEUE_DEPTH (8); overflow drops the command (shown
+    as "Cmd RX" dropped in the `mqtt` CLI status). Commands are capped at
+    SHELL_BUFSIZE (88) chars, same as a typed line.
+
+Output goes to the console (USB + telnet), NOT back over MQTT. There is
+no command-response topic yet; watch conez/{id}/debug (enable `debug mqtt`)
+or the serial console to see results.
+
+SECURITY: this is the full device CLI over an anonymous, unauthenticated
+broker. Anyone who can publish to conez/{id}/cmd/# can reboot the cone,
+rewrite its config, or delete files -- it is remote code execution by
+design. Acceptable only on a trusted, isolated show LAN. There is no
+allowlist; if the broker ever leaves a controlled network, add one (or
+gate dispatch behind a config flag) before doing so.
 
 Broadcast Commands
 ------------------
@@ -250,9 +279,37 @@ package default.
 
 Cones then need no per-device configuration -- the compiled-in default resolves.
 
-Security: the broker is open (anonymous, no TLS) because the firmware cannot
-authenticate. Anyone on the network can publish conez/{id}/cmd/stop to any
-cone. Run it only on a controlled show LAN.
+Security: as shipped the broker is open (anonymous, no TLS). Anyone on the
+network can publish conez/{id}/cmd/# to any cone -- and cmd topics run the full
+device CLI (reboot, config, del, run). Fine on a controlled show LAN; lock it
+down before it touches anything wider.
+
+Locking it down (the firmware now supports username/password auth -- see the
+Authentication section). ORDER MATTERS: provision the cones BEFORE the broker
+starts requiring auth, or every cone drops off the instant you restart it.
+
+  1. On EVERY cone, set and persist credentials, then reboot to apply:
+         config set mqtt.username cone
+         config set mqtt.password <secret>
+         reboot
+     Reboot is required -- credentials are baked in at connect (see below). Do
+     all cones first; they keep working against the still-open broker meanwhile.
+
+  2. Only then require auth on the broker. Create the password file and flip
+     conez.conf:
+         mosquitto_passwd -c /etc/mosquitto/passwd cone      # prompts for secret
+         # in conez.conf:
+         #   allow_anonymous false
+         #   password_file /etc/mosquitto/passwd
+         systemctl restart mosquitto
+
+  3. Verify: `ss -tn state established '( sport = :1883 )'` shows all cones, and
+     the log has no "not authorised". A cone that missed step 1 will loop
+     connect -> not authorised; reboot it with credentials set.
+
+TLS is still not supported (no client-cert or server-cert verification in the
+firmware), so auth is username/password over cleartext -- keep it on a trusted
+LAN regardless.
 
 Configuration
 -------------
@@ -263,11 +320,16 @@ Config file (/config.ini):
     broker=sewerpipe.local
     port=1883
     enabled=on
+    ; auth is optional; empty username = anonymous (the default)
+    username=cone
+    password=secret
 
-CLI hot-apply (no reboot needed):
+CLI hot-apply:
 
     mqtt broker 192.168.1.100
     mqtt port 1884
+    mqtt user cone           ; "" clears -> anonymous
+    mqtt pass secret          ; "" clears
     mqtt enable
     mqtt disable
 
@@ -275,7 +337,27 @@ Persistent (requires reboot):
 
     config set mqtt.broker 192.168.1.100
     config set mqtt.port 1884
+    config set mqtt.username cone
+    config set mqtt.password secret
     config set mqtt.enabled off
+
+Authentication
+--------------
+
+Set mqtt.username (and usually mqtt.password) to connect to a broker that
+requires auth. An empty username -- the default -- connects anonymously, which
+is what the in-tree sewerpipe and the show-LAN Mosquitto expect. An empty
+password with a set username is allowed (some brokers ACL on username alone).
+The `mqtt` status line shows "Auth: user <name> ..." or "Auth: anonymous"; the
+password is never printed, and the web config form masks it like wifi.password.
+
+APPLY BY REBOOT. Credentials are baked into the esp-mqtt client when it is
+created, so the reliable path is `config set mqtt.username/password` then
+reboot. The runtime `mqtt user`/`mqtt pass` commands update the value and drop
+the connection, but esp-mqtt does not reliably pick up new credentials on a live
+reconnect -- after changing them at runtime, reboot (or the client may keep
+retrying with the old ones). Changing auth is a rare, provisioning-time action,
+so this is a documented limitation, not a workflow anyone hits often.
 
 Connection Behavior
 -------------------

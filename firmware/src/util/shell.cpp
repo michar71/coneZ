@@ -540,6 +540,27 @@ int ConezShell::execute(const char commandString[])
     return execute();
 }
 
+int ConezShell::executeExternal(const char commandString[])
+{
+    // Snapshot the interactive line state that execute() would clobber, run the
+    // injected command, then restore it. Same task as executeIfInput(), so there is
+    // no concurrent mutation to race — this only protects a partially-typed line
+    // that hasn't been submitted yet.
+    char saved_line[SHELL_BUFSIZE];
+    memcpy(saved_line, linebuffer, SHELL_BUFSIZE);
+    int saved_inptr  = inptr;
+    int saved_cursor = cursor;
+    int saved_esc    = escState;
+
+    int rc = execute(commandString);   // overwrites linebuffer, ends with resetBuffer()
+
+    memcpy(linebuffer, saved_line, SHELL_BUFSIZE);
+    inptr    = saved_inptr;
+    cursor   = saved_cursor;
+    escState = saved_esc;
+    return rc;
+}
+
 //////////////////////////////////////////////////////////////////////////////
 int ConezShell::execute(void)
 {

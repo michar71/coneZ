@@ -71,6 +71,12 @@ class ConezShell : public ConezStream {
 
         int execute( const char aCommandString[]);  // shell.execute("echo hello world");
 
+        // Run a command that did NOT arrive on the interactive input stream (e.g. an
+        // MQTT cmd topic). execute() overwrites linebuffer/inptr/cursor; this snapshots
+        // and restores them so an injected command can't eat a half-typed console line.
+        // Must be called on the same task as executeIfInput() (ShellTask).
+        int executeExternal( const char aCommandString[]);
+
         static int printHistory(int argc, char **argv);
 
         // PSRAM-backed history ring buffer (falls back to single DRAM entry)
