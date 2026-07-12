@@ -27,6 +27,8 @@ int mqtt_node_status_format_json(const node_status *status, char *buf, size_t bu
         buf, bufsz,
         "{"
         "\"status\":%u,"
+        "\"ver_major\":%u,"
+        "\"ver_minor\":%u,"
         "\"cpu_load\":%u,"
         "\"ip\":[%u,%u,%u,%u],"
         "\"wifi_rssi\":%d,"
@@ -46,6 +48,8 @@ int mqtt_node_status_format_json(const node_status *status, char *buf, size_t bu
         "\"tilt_y_deg\":%.2f"
         "}",
         (unsigned)status->status,
+        (unsigned)status->ver_major,
+        (unsigned)status->ver_minor,
         (unsigned)status->cpu_load,
         (unsigned)status->ip_addr[0],
         (unsigned)status->ip_addr[1],

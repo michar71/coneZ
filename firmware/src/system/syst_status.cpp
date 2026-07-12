@@ -2,10 +2,12 @@
 
 #include <limits.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <atomic>
 
 #include "driver/temperature_sensor.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "config.h"
@@ -23,6 +25,8 @@ static uint32_t s_last_sample_ms = 0;
 static std::atomic<bool> s_lora_activity_since_heartbeat{false};
 static temperature_sensor_handle_t s_temp_sensor = NULL;
 static bool s_temp_sensor_init_attempted = false;
+static uint8_t s_ver_major = 0;
+static uint8_t s_ver_minor = 0;
 
 static uint32_t status_interval_ms(void)
 {
@@ -92,6 +96,45 @@ static uint8_t cpu_load_percent(void)
     return (uint8_t)iv;
 }
 
+static uint8_t parse_version_component(const char *text)
+{
+    if (!text || !*text) {
+        return 0;
+    }
+
+    char *end = NULL;
+    unsigned long value = strtoul(text, &end, 10);
+    if (end == text) {
+        return 0;
+    }
+    if (value > 255ul) {
+        return 255;
+    }
+    return (uint8_t)value;
+}
+
+static void cache_firmware_version(void)
+{
+    const esp_app_desc_t *desc = esp_app_get_description();
+    if (!desc) {
+        s_ver_major = 0;
+        s_ver_minor = 0;
+        return;
+    }
+
+    char version_copy[sizeof(desc->version)];
+    strlcpy(version_copy, desc->version, sizeof(version_copy));
+
+    char *major = version_copy;
+    char *minor = strchr(version_copy, '.');
+    if (minor) {
+        *minor++ = '\0';
+    }
+
+    s_ver_major = parse_version_component(major);
+    s_ver_minor = parse_version_component(minor);
+}
+
 static uint32_t build_status_bits(void)
 {
     uint32_t status = (NODE_STATUS_VERSION & 0x0Fu) << 28;
@@ -135,6 +178,8 @@ static void collect_status(node_status *out)
     out->sat_cat = (uint8_t)((get_satellites() < 0) ? 0 : ((get_satellites() > 255) ? 255 : get_satellites()));
     out->v_bat = clamp_u8_from_tenths(bat_voltage());
     out->v_solar = clamp_u8_from_tenths(solar_voltage());
+    out->ver_major = s_ver_major;
+    out->ver_minor = s_ver_minor;
     out->cpu_load = cpu_load_percent();
     out->b_temp = temp_to_centi(getTemp());
     out->c_temp = syst_status_get_cpu_temp_centi();
@@ -163,6 +208,7 @@ static void collect_status(node_status *out)
 
 void syst_status_setup(void)
 {
+    cache_firmware_version();
     collect_status(&s_latest);
     s_have_latest = true;
     s_last_sample_ms = uptime_ms();

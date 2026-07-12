@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import csv
 import hashlib
 import json
 import os
 import select
 import socket
 import socketserver
+import sqlite3
 import struct
 import threading
 import time
@@ -42,10 +44,70 @@ DEFAULT_KEEPALIVE_S = 30
 RETRY_INTERVAL_S = 2
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 DEFAULT_TELNET_PORT = 23
+DEFAULT_DB_NAME = "tracker_log.sqlite3"
+DEFAULT_PI_DATA_DIR = Path.home() / ".local" / "share" / "conez-tracker"
+
+DB_COLUMNS = (
+    "received_at",
+    "topic",
+    "node_id",
+    "raw_payload",
+    "payload_json",
+    "wifi_rssi",
+    "lora_rssi",
+    "lora_snr",
+    "solar_v",
+    "battery_v",
+    "uptime_s",
+    "heap_b",
+    "cpu_load",
+    "board_temp_c",
+    "cpu_temp_c",
+    "satellites",
+    "lat",
+    "longitude",
+    "alt_m",
+    "tilt_x_deg",
+    "tilt_y_deg",
+    "ver_major",
+    "ver_minor",
+    "ip_0",
+    "ip_1",
+    "ip_2",
+    "ip_3",
+    "unknown_fields_json",
+)
 
 
 class WebSocketClosed(Exception):
     pass
+
+
+def default_local_db_path() -> Path:
+    return Path(__file__).resolve().parent / DEFAULT_DB_NAME
+
+
+def detect_advertise_host(bind_host: str, mqtt_host: str, mqtt_port: int) -> str:
+    if bind_host not in ("0.0.0.0", "::", ""):
+        return bind_host
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect((mqtt_host, mqtt_port))
+            local_ip = probe.getsockname()[0]
+            if local_ip:
+                return local_ip
+    except OSError:
+        pass
+
+    try:
+        hostname_ip = socket.gethostbyname(socket.gethostname())
+        if hostname_ip and not hostname_ip.startswith("127."):
+            return hostname_ip
+    except OSError:
+        pass
+
+    return "127.0.0.1"
 
 
 def encode_remaining_length(value: int) -> bytes:
@@ -257,10 +319,252 @@ class NodeEntry:
     updated_at: str
 
 
+def local_timestamp() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S%z", time.localtime())
+
+
+def parse_ip_octets(value: object) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
+    if not isinstance(value, list) or len(value) != 4:
+        return (None, None, None, None)
+
+    octets: List[Optional[int]] = []
+    for item in value:
+        if isinstance(item, bool):
+            return (None, None, None, None)
+        if isinstance(item, (int, float)) and int(item) == item and 0 <= int(item) <= 255:
+            octets.append(int(item))
+        else:
+            return (None, None, None, None)
+    return tuple(octets)  # type: ignore[return-value]
+
+
+def scalar_number(value: object) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def scalar_int(value: object) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    integer = int(value)
+    if integer != value:
+        return None
+    return integer
+
+
+def normalize_db_row(topic: str, node_id: str, payload: object, payload_text: str, received_at: str) -> dict:
+    row = {column: None for column in DB_COLUMNS}
+    row["received_at"] = received_at
+    row["topic"] = topic
+    row["node_id"] = node_id
+    row["raw_payload"] = payload_text
+    row["payload_json"] = json.dumps(payload, separators=(",", ":"), sort_keys=True) if isinstance(payload, dict) else None
+
+    if not isinstance(payload, dict):
+        return row
+
+    ip_0, ip_1, ip_2, ip_3 = parse_ip_octets(payload.get("ip"))
+    known_keys = {
+        "wifi_rssi",
+        "lora_rssi",
+        "lora_snr",
+        "solar_v",
+        "battery_v",
+        "uptime_s",
+        "heap_b",
+        "cpu_load",
+        "board_temp_c",
+        "cpu_temp_c",
+        "satellites",
+        "lat",
+        "longitude",
+        "alt_m",
+        "tilt_x_deg",
+        "tilt_y_deg",
+        "ver_major",
+        "ver_minor",
+        "ip",
+    }
+
+    row.update({
+        "wifi_rssi": scalar_int(payload.get("wifi_rssi")),
+        "lora_rssi": scalar_int(payload.get("lora_rssi")),
+        "lora_snr": scalar_number(payload.get("lora_snr")),
+        "solar_v": scalar_number(payload.get("solar_v")),
+        "battery_v": scalar_number(payload.get("battery_v")),
+        "uptime_s": scalar_number(payload.get("uptime_s")),
+        "heap_b": scalar_int(payload.get("heap_b")),
+        "cpu_load": scalar_int(payload.get("cpu_load")),
+        "board_temp_c": scalar_number(payload.get("board_temp_c")),
+        "cpu_temp_c": scalar_number(payload.get("cpu_temp_c")),
+        "satellites": scalar_int(payload.get("satellites")),
+        "lat": scalar_number(payload.get("lat")),
+        "longitude": scalar_number(payload.get("longitude")),
+        "alt_m": scalar_number(payload.get("alt_m")),
+        "tilt_x_deg": scalar_number(payload.get("tilt_x_deg")),
+        "tilt_y_deg": scalar_number(payload.get("tilt_y_deg")),
+        "ver_major": scalar_int(payload.get("ver_major")),
+        "ver_minor": scalar_int(payload.get("ver_minor")),
+        "ip_0": ip_0,
+        "ip_1": ip_1,
+        "ip_2": ip_2,
+        "ip_3": ip_3,
+    })
+
+    unknown = {key: value for key, value in payload.items() if key not in known_keys}
+    if unknown:
+        row["unknown_fields_json"] = json.dumps(unknown, separators=(",", ":"), sort_keys=True)
+    return row
+
+
+class TrafficDatabase:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock = threading.Lock()
+        self.conn = sqlite3.connect(str(path), check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        with self.conn:
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mqtt_traffic (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    received_at TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    node_id TEXT NOT NULL,
+                    raw_payload TEXT NOT NULL,
+                    payload_json TEXT,
+                    wifi_rssi INTEGER,
+                    lora_rssi INTEGER,
+                    lora_snr REAL,
+                    solar_v REAL,
+                    battery_v REAL,
+                    uptime_s REAL,
+                    heap_b INTEGER,
+                    cpu_load INTEGER,
+                    board_temp_c REAL,
+                    cpu_temp_c REAL,
+                    satellites INTEGER,
+                    lat REAL,
+                    longitude REAL,
+                    alt_m REAL,
+                    tilt_x_deg REAL,
+                    tilt_y_deg REAL,
+                    ver_major INTEGER,
+                    ver_minor INTEGER,
+                    ip_0 INTEGER,
+                    ip_1 INTEGER,
+                    ip_2 INTEGER,
+                    ip_3 INTEGER,
+                    unknown_fields_json TEXT
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mqtt_traffic_received_at ON mqtt_traffic(received_at)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mqtt_traffic_node_id ON mqtt_traffic(node_id)"
+            )
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS node_notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    note_text TEXT NOT NULL
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_node_notes_node_id ON node_notes(node_id)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_node_notes_created_at ON node_notes(created_at)"
+            )
+
+    def close(self) -> None:
+        with self.lock:
+            self.conn.close()
+
+    def reset(self) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM mqtt_traffic")
+            self.conn.execute("DELETE FROM node_notes")
+            self.conn.execute("DELETE FROM sqlite_sequence WHERE name = 'mqtt_traffic'")
+            self.conn.execute("DELETE FROM sqlite_sequence WHERE name = 'node_notes'")
+
+    def insert_publish(self, topic: str, node_id: str, payload: object, payload_text: str, received_at: str) -> None:
+        row = normalize_db_row(topic, node_id, payload, payload_text, received_at)
+        ordered = [row[column] for column in DB_COLUMNS]
+        placeholders = ", ".join("?" for _ in DB_COLUMNS)
+        columns = ", ".join(DB_COLUMNS)
+        with self.lock, self.conn:
+            self.conn.execute(
+                f"INSERT INTO mqtt_traffic ({columns}) VALUES ({placeholders})",
+                ordered,
+            )
+
+    def export_csv(self, csv_path: Path) -> int:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT id, " + ", ".join(DB_COLUMNS) + " FROM mqtt_traffic ORDER BY id"
+            ).fetchall()
+
+        with csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["id", *DB_COLUMNS])
+            for row in rows:
+                writer.writerow([row["id"], *[row[column] for column in DB_COLUMNS]])
+        return len(rows)
+
+    def list_notes(self, node_id: str) -> List[dict]:
+        with self.lock:
+            rows = self.conn.execute(
+                """
+                SELECT id, node_id, created_at, note_text
+                FROM node_notes
+                WHERE node_id = ?
+                ORDER BY id DESC
+                """,
+                (node_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "nodeId": row["node_id"],
+                "createdAt": row["created_at"],
+                "text": row["note_text"],
+            }
+            for row in rows
+        ]
+
+    def add_note(self, node_id: str, note_text: str) -> dict:
+        created_at = local_timestamp()
+        with self.lock, self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO node_notes (node_id, created_at, note_text)
+                VALUES (?, ?, ?)
+                """,
+                (node_id, created_at, note_text),
+            )
+            note_id = cursor.lastrowid
+        return {
+            "id": note_id,
+            "nodeId": node_id,
+            "createdAt": created_at,
+            "text": note_text,
+        }
+
+
 @dataclass
 class TrackerState:
     mqtt_host: str
     mqtt_port: int
+    database: TrafficDatabase
     topic: str = TOPIC_STATUS_PATTERN
     connected: bool = False
     last_error: str = ""
@@ -277,11 +581,12 @@ class TrackerState:
 
     def update_from_publish(self, topic: str, payload_text: str) -> None:
         parsed = self._try_parse_json(payload_text)
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()) + time.strftime("%z")
+        timestamp = local_timestamp()
         with self.lock:
             if topic == TOPIC_ROOT:
                 if isinstance(parsed, dict):
                     for node_id, node_payload in parsed.items():
+                        self.database.insert_publish(topic, str(node_id), node_payload, payload_text, timestamp)
                         self.nodes[str(node_id)] = NodeEntry(
                             node_id=str(node_id),
                             topic=topic,
@@ -289,6 +594,7 @@ class TrackerState:
                             updated_at=timestamp,
                         )
                 else:
+                    self.database.insert_publish(topic, TOPIC_ROOT, parsed if parsed is not None else payload_text, payload_text, timestamp)
                     self.nodes[TOPIC_ROOT] = NodeEntry(
                         node_id=TOPIC_ROOT,
                         topic=topic,
@@ -303,6 +609,7 @@ class TrackerState:
             else:
                 node_id = topic
 
+            self.database.insert_publish(topic, node_id, parsed if parsed is not None else payload_text, payload_text, timestamp)
             self.nodes[node_id] = NodeEntry(
                 node_id=node_id,
                 topic=topic,
@@ -449,12 +756,23 @@ class TrackerRequestHandler(SimpleHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:
-        if self.path in ("/api/status", "/api/status/"):
+        parsed = urlparse(self.path)
+        if parsed.path in ("/api/status", "/api/status/"):
             self._serve_status()
+            return
+        if parsed.path in ("/api/notes", "/api/notes/"):
+            self._serve_notes(parsed)
             return
         if self.path in ("/", "/tracker.html"):
             self.path = "/tracker.html"
         return super().do_GET()
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path in ("/api/notes", "/api/notes/"):
+            self._create_note()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
@@ -463,6 +781,54 @@ class TrackerRequestHandler(SimpleHTTPRequestHandler):
     def _serve_status(self) -> None:
         payload = json.dumps(self.state.snapshot()).encode("utf-8")
         self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _serve_notes(self, parsed) -> None:
+        node_id = (parse_qs(parsed.query).get("node_id") or [""])[0].strip()
+        if not node_id:
+            self._send_json({"error": "Missing node_id"}, HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json({
+            "nodeId": node_id,
+            "notes": self.state.database.list_notes(node_id),
+        })
+
+    def _create_note(self) -> None:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json({"error": "Invalid Content-Length"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        if content_length <= 0:
+            self._send_json({"error": "Missing request body"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        raw_body = self.rfile.read(content_length)
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json({"error": "Invalid JSON body"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        node_id = str(payload.get("node_id", "")).strip()
+        note_text = str(payload.get("text", "")).strip()
+        if not node_id:
+            self._send_json({"error": "Missing node_id"}, HTTPStatus.BAD_REQUEST)
+            return
+        if not note_text:
+            self._send_json({"error": "Missing note text"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        note = self.state.database.add_note(node_id, note_text)
+        self._send_json({"ok": True, "note": note}, HTTPStatus.CREATED)
+
+    def _send_json(self, payload_obj: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+        payload = json.dumps(payload_obj).encode("utf-8")
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -571,48 +937,91 @@ class TelnetWebSocketHandler(socketserver.BaseRequestHandler):
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve ConeZ tracker page with a TCP MQTT shim.")
+    parser.add_argument("--pi", action="store_true", help="Enable Raspberry Pi friendly defaults (bind HTTP/WebSocket on all interfaces and prefer a persistent data directory)")
     parser.add_argument("--mqtt-host", default=DEFAULT_MQTT_HOST, help=f"MQTT broker host (default: {DEFAULT_MQTT_HOST})")
     parser.add_argument("--mqtt-port", type=int, default=DEFAULT_MQTT_PORT, help=f"MQTT broker port (default: {DEFAULT_MQTT_PORT})")
     parser.add_argument("--http-host", default=DEFAULT_HTTP_HOST, help=f"HTTP bind host (default: {DEFAULT_HTTP_HOST})")
     parser.add_argument("--http-port", type=int, default=DEFAULT_HTTP_PORT, help=f"HTTP bind port (default: {DEFAULT_HTTP_PORT})")
     parser.add_argument("--ws-port", type=int, default=0, help="WebSocket telnet bridge port (default: http-port + 1)")
     parser.add_argument("--keepalive", type=int, default=DEFAULT_KEEPALIVE_S, help=f"MQTT keepalive in seconds (default: {DEFAULT_KEEPALIVE_S})")
+    parser.add_argument("--data-dir", help="Directory for persistent shim data such as the SQLite database")
+    parser.add_argument("--db-path", help="SQLite database path for MQTT traffic logging")
+    parser.add_argument("--advertise-host", help="Hostname or IP to print in startup URLs for remote browsers")
+    parser.add_argument("--export-csv", metavar="PATH", help="Export the logged MQTT traffic database to CSV and exit")
+    parser.add_argument("--reset-db", action="store_true", help="Delete all logged MQTT traffic from the SQLite database and exit")
     return parser
 
 
 def main() -> int:
     args = build_arg_parser().parse_args()
     tracker_dir = Path(__file__).resolve().parent
-    state = TrackerState(mqtt_host=args.mqtt_host, mqtt_port=args.mqtt_port)
-    bridge = MqttBridge(state=state, keepalive_s=args.keepalive)
-    bridge.start()
-    ws_port = args.ws_port if args.ws_port > 0 else args.http_port + 1
+    http_host = args.http_host
+    if args.pi and http_host == DEFAULT_HTTP_HOST:
+        http_host = "0.0.0.0"
 
-    def handler(*handler_args, **handler_kwargs):
-        return TrackerRequestHandler(
-            *handler_args,
-            directory=str(tracker_dir),
-            state=state,
-            **handler_kwargs,
-        )
+    data_dir = Path(args.data_dir).expanduser() if args.data_dir else None
+    if data_dir is None and args.pi and args.db_path is None:
+        data_dir = DEFAULT_PI_DATA_DIR
 
-    with ReusableThreadingHTTPServer((args.http_host, args.http_port), handler) as server, \
-         ReusableThreadingTCPServer((args.http_host, ws_port), TelnetWebSocketHandler) as ws_server:
-        ws_thread = threading.Thread(target=ws_server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True)
-        ws_thread.start()
-        print(f"Tracker HTTP server: http://{args.http_host}:{args.http_port}/")
-        print(f"Telnet WebSocket bridge: ws://{args.http_host}:{ws_port}/telnet")
-        print(f"MQTT broker target: {args.mqtt_host}:{args.mqtt_port}")
-        try:
-            server.serve_forever(poll_interval=0.5)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            ws_server.shutdown()
-            ws_thread.join(timeout=2.0)
-            bridge.stop()
-            bridge.join(timeout=2.0)
-    return 0
+    if args.db_path:
+        db_path = Path(args.db_path).expanduser()
+    elif data_dir is not None:
+        db_path = data_dir / DEFAULT_DB_NAME
+    else:
+        db_path = default_local_db_path()
+
+    advertise_host = args.advertise_host or detect_advertise_host(http_host, args.mqtt_host, args.mqtt_port)
+    db = TrafficDatabase(db_path)
+
+    try:
+        if args.reset_db:
+            db.reset()
+            print(f"Reset database: {db.path}")
+            return 0
+
+        if args.export_csv:
+            export_path = Path(args.export_csv).expanduser()
+            count = db.export_csv(export_path)
+            print(f"Exported {count} rows to {export_path}")
+            return 0
+
+        state = TrackerState(mqtt_host=args.mqtt_host, mqtt_port=args.mqtt_port, database=db)
+        bridge = MqttBridge(state=state, keepalive_s=args.keepalive)
+        bridge.start()
+        ws_port = args.ws_port if args.ws_port > 0 else args.http_port + 1
+
+        def handler(*handler_args, **handler_kwargs):
+            return TrackerRequestHandler(
+                *handler_args,
+                directory=str(tracker_dir),
+                state=state,
+                **handler_kwargs,
+            )
+
+        with ReusableThreadingHTTPServer((http_host, args.http_port), handler) as server, \
+             ReusableThreadingTCPServer((http_host, ws_port), TelnetWebSocketHandler) as ws_server:
+            ws_thread = threading.Thread(target=ws_server.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True)
+            ws_thread.start()
+            print(f"Tracker HTTP bind: http://{http_host}:{args.http_port}/")
+            print(f"Tracker HTTP URL:  http://{advertise_host}:{args.http_port}/")
+            print(f"Telnet WS bind:    ws://{http_host}:{ws_port}/telnet")
+            print(f"Telnet WS URL:     ws://{advertise_host}:{ws_port}/telnet")
+            print(f"MQTT broker target: {args.mqtt_host}:{args.mqtt_port}")
+            print(f"Traffic database: {db.path}")
+            if data_dir is not None:
+                print(f"Data directory: {data_dir}")
+            try:
+                server.serve_forever(poll_interval=0.5)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                ws_server.shutdown()
+                ws_thread.join(timeout=2.0)
+                bridge.stop()
+                bridge.join(timeout=2.0)
+        return 0
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

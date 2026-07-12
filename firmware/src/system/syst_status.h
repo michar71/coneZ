@@ -35,6 +35,8 @@ struct node_status {
     uint8_t sat_cat;
     uint8_t v_bat;
     uint8_t v_solar;
+    uint8_t ver_major;
+    uint8_t ver_minor;
     uint8_t cpu_load;
     uint8_t ip_addr[4];
 };

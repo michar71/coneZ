@@ -8,9 +8,39 @@ MQTT_HOST="${MQTT_HOST:-sewerpipe.local}"
 MQTT_PORT="${MQTT_PORT:-1883}"
 HTTP_HOST="${HTTP_HOST:-127.0.0.1}"
 HTTP_PORT="${HTTP_PORT:-8080}"
+WS_PORT="${WS_PORT:-0}"
 KEEPALIVE="${KEEPALIVE:-30}"
+DB_PATH="${DB_PATH:-}"
+DATA_DIR="${DATA_DIR:-}"
+ADVERTISE_HOST="${ADVERTISE_HOST:-}"
+PI_MODE="${PI_MODE:-0}"
 
 cd "$SCRIPT_DIR"
+
+args=(
+  --mqtt-host "$MQTT_HOST"
+  --mqtt-port "$MQTT_PORT"
+  --http-host "$HTTP_HOST"
+  --http-port "$HTTP_PORT"
+  --ws-port "$WS_PORT"
+  --keepalive "$KEEPALIVE"
+)
+
+if [[ "$PI_MODE" != "0" ]]; then
+  args+=(--pi)
+fi
+
+if [[ -n "$DB_PATH" ]]; then
+  args+=(--db-path "$DB_PATH")
+fi
+
+if [[ -n "$DATA_DIR" ]]; then
+  args+=(--data-dir "$DATA_DIR")
+fi
+
+if [[ -n "$ADVERTISE_HOST" ]]; then
+  args+=(--advertise-host "$ADVERTISE_HOST")
+fi
 
 existing_pid=""
 if command -v lsof >/dev/null 2>&1; then
@@ -36,9 +66,4 @@ if [[ -n "$existing_pid" ]]; then
   fi
 fi
 
-exec python3 "$SCRIPT_DIR/tracker_shim.py" \
-  --mqtt-host "$MQTT_HOST" \
-  --mqtt-port "$MQTT_PORT" \
-  --http-host "$HTTP_HOST" \
-  --http-port "$HTTP_PORT" \
-  --keepalive "$KEEPALIVE"
+exec python3 "$SCRIPT_DIR/tracker_shim.py" "${args[@]}"

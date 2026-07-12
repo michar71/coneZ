@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ConeZ Notes</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06111d;
+      --panel: rgba(10, 23, 38, 0.96);
+      --panel-soft: rgba(12, 27, 42, 0.98);
+      --border: rgba(96, 196, 255, 0.2);
+      --text: #dff6ff;
+      --muted: #7ea4bb;
+      --cyan: #53d8ff;
+      --good: #2df7a3;
+      --bad: #ff5878;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Mono", Monaco, Consolas, "Liberation Mono", monospace;
+      background:
+        radial-gradient(circle at top left, rgba(83, 216, 255, 0.14), transparent 24%),
+        linear-gradient(180deg, #081525 0%, var(--bg) 55%, #030910 100%);
+      color: var(--text);
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 20px 14px;
+    }
+
+    .shell {
+      display: grid;
+      gap: 14px;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px 16px;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: -0.03em;
+      text-transform: uppercase;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(13, 31, 48, 0.94), rgba(7, 19, 31, 0.94));
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .pill strong {
+      color: var(--text);
+    }
+
+    .pill.ok strong {
+      color: var(--good);
+    }
+
+    .pill.error strong {
+      color: var(--bad);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .btn {
+      min-height: 36px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 216, 255, 0.18);
+      background: linear-gradient(180deg, rgba(18, 40, 62, 0.96), rgba(8, 20, 33, 0.96));
+      color: var(--cyan);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: wait;
+    }
+
+    .composer {
+      display: grid;
+      gap: 10px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 160px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(83, 216, 255, 0.16);
+      background: var(--panel-soft);
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      line-height: 1.45;
+      resize: vertical;
+    }
+
+    .history {
+      display: grid;
+      gap: 10px;
+    }
+
+    .history-empty {
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px dashed rgba(83, 216, 255, 0.16);
+      color: var(--muted);
+      background: rgba(6, 17, 29, 0.45);
+    }
+
+    .note-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(83, 216, 255, 0.12);
+      background: linear-gradient(180deg, rgba(8, 18, 28, 0.98), rgba(3, 9, 16, 0.98));
+    }
+
+    .note-meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .note-text {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    @media (max-width: 720px) {
+      main {
+        padding: 14px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="shell">
+      <div class="header">
+        <div>
+          <h1 id="title">ConeZ Notes</h1>
+          <div class="meta">
+            <div class="pill">
+              <span>Node</span>
+              <strong id="node-label">--</strong>
+            </div>
+            <div class="pill" id="status-pill">
+              <span>Status</span>
+              <strong id="status-label">LOADING</strong>
+            </div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button class="btn" type="button" id="refresh-btn">Refresh</button>
+          <button class="btn" type="button" id="close-btn">Close</button>
+        </div>
+      </div>
+
+      <form class="composer" id="note-form">
+        <textarea id="note-input" placeholder="Enter a note for this node..."></textarea>
+        <div class="toolbar">
+          <button class="btn" type="submit" id="save-btn">Save Note</button>
+        </div>
+      </form>
+
+      <section>
+        <h2>Previous Notes</h2>
+        <div class="history" id="history"></div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const nodeId = (params.get("node_id") || "").trim();
+    const title = params.get("title") || nodeId || "ConeZ";
+    const notesApiUrl = `./api/notes?node_id=${encodeURIComponent(nodeId)}`;
+
+    const titleEl = document.getElementById("title");
+    const nodeLabelEl = document.getElementById("node-label");
+    const statusPillEl = document.getElementById("status-pill");
+    const statusLabelEl = document.getElementById("status-label");
+    const refreshBtnEl = document.getElementById("refresh-btn");
+    const closeBtnEl = document.getElementById("close-btn");
+    const noteFormEl = document.getElementById("note-form");
+    const noteInputEl = document.getElementById("note-input");
+    const saveBtnEl = document.getElementById("save-btn");
+    const historyEl = document.getElementById("history");
+
+    let busy = false;
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function setStatus(kind, text) {
+      statusPillEl.classList.toggle("ok", kind === "ok");
+      statusPillEl.classList.toggle("error", kind === "error");
+      statusLabelEl.textContent = text;
+    }
+
+    function setBusy(nextBusy) {
+      busy = nextBusy;
+      saveBtnEl.disabled = nextBusy;
+      refreshBtnEl.disabled = nextBusy;
+    }
+
+    function renderNotes(notes) {
+      if (!Array.isArray(notes) || notes.length === 0) {
+        historyEl.innerHTML = '<div class="history-empty">No notes saved for this node yet.</div>';
+        return;
+      }
+
+      historyEl.innerHTML = notes.map((note) => `
+        <article class="note-card">
+          <div class="note-meta">${escapeHtml(note.createdAt || "--")}</div>
+          <div class="note-text">${escapeHtml(note.text || "")}</div>
+        </article>
+      `).join("");
+    }
+
+    async function loadNotes() {
+      if (!nodeId) {
+        setStatus("error", "MISSING NODE");
+        historyEl.innerHTML = '<div class="history-empty">No node ID was provided for this notes window.</div>';
+        return;
+      }
+
+      setBusy(true);
+      setStatus("", "LOADING");
+      try {
+        const response = await fetch(notesApiUrl, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        renderNotes(payload.notes);
+        setStatus("ok", "READY");
+      } catch (error) {
+        renderNotes([]);
+        setStatus("error", "LOAD FAILED");
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function saveNote(event) {
+      event.preventDefault();
+      const text = noteInputEl.value.trim();
+      if (!nodeId || !text) {
+        return;
+      }
+
+      setBusy(true);
+      setStatus("", "SAVING");
+      try {
+        const response = await fetch("./api/notes", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            node_id: nodeId,
+            text
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        noteInputEl.value = "";
+        await loadNotes();
+        setStatus("ok", "SAVED");
+      } catch (error) {
+        setStatus("error", "SAVE FAILED");
+        setBusy(false);
+      }
+    }
+
+    titleEl.textContent = `Notes: ${title}`;
+    nodeLabelEl.textContent = nodeId || "--";
+    noteFormEl.addEventListener("submit", saveNote);
+    refreshBtnEl.addEventListener("click", () => {
+      loadNotes();
+    });
+    closeBtnEl.addEventListener("click", () => {
+      window.close();
+    });
+    loadNotes();
+  </script>
+</body>
+</html>

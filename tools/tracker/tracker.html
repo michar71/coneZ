@@ -227,6 +227,21 @@
       color: #f3fbff;
     }
 
+    .node-title {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 8px 10px;
+    }
+
+    .node-version {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--cyan);
+    }
+
     .updated {
       font-size: 12px;
       color: var(--muted);
@@ -757,6 +772,7 @@
     const STALE_AFTER_MS = 2 * 60 * 1000;
     const STATUS_URL = "./api/status";
     const TELNET_PAGE_URL = "./telnet.html";
+    const NOTES_PAGE_URL = "./notes.html";
     const MQTT_URLS = [
       "ws://sewerpipe.local:9001/mqtt",
       "ws://sewerpipe.local:9001",
@@ -897,6 +913,21 @@
       return Array.isArray(ipAddress) && ipAddress.length === 4 && ipAddress.some((part) => part !== 0);
     }
 
+    function parseUint8(value) {
+      const number = Number(value);
+      if (!Number.isInteger(number) || number < 0 || number > 255) {
+        return null;
+      }
+      return number;
+    }
+
+    function formatVersion(major, minor) {
+      if (major === null || minor === null) {
+        return null;
+      }
+      return `v${major}.${minor}`;
+    }
+
     function getNodeMetrics(payload) {
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         return null;
@@ -919,6 +950,8 @@
         altitudeM: Number(payload.alt_m),
         tiltXDeg: Number(payload.tilt_x_deg),
         tiltYDeg: Number(payload.tilt_y_deg),
+        verMajor: parseUint8(payload.ver_major),
+        verMinor: parseUint8(payload.ver_minor),
         ipAddress: parseIpAddress(payload.ip)
       };
     }
@@ -1032,6 +1065,9 @@
             <div class="card-ip-value">${escapeHtml(ipText)}</div>
           </div>
           <div class="card-actions">
+            <button class="action-btn" type="button" data-node-action="notes" data-node-id="${escapeHtml(nodeId)}">
+              Notes
+            </button>
             <button class="action-btn" type="button" data-node-action="web" data-node-id="${escapeHtml(nodeId)}" data-ip="${escapeHtml(ipText)}"${disabledAttr}>
               Open Web
             </button>
@@ -1065,6 +1101,21 @@
         telnetPopupUrl(nodeId, ipText),
         `telnet-${String(nodeId).replace(/[^a-zA-Z0-9_-]/g, "-")}`,
         "popup=yes,width=980,height=720,resizable=yes,scrollbars=yes"
+      );
+    }
+
+    function notesPopupUrl(nodeId) {
+      const popupUrl = new URL(NOTES_PAGE_URL, window.location.href);
+      popupUrl.searchParams.set("node_id", nodeId);
+      popupUrl.searchParams.set("title", nodeId);
+      return popupUrl.toString();
+    }
+
+    function openNodeNotes(nodeId) {
+      window.open(
+        notesPopupUrl(nodeId),
+        `notes-${String(nodeId).replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+        "popup=yes,width=860,height=760,resizable=yes,scrollbars=yes"
       );
     }
 
@@ -1109,6 +1160,7 @@
         const panelId = nodePanelId(entry.nodeId);
         const stale = isNodeStale(entry);
         const staleClass = stale ? " card-stale" : "";
+        const versionText = metrics ? formatVersion(metrics.verMajor, metrics.verMinor) : null;
         const updatedText = stale
           ? `Topic ${escapeHtml(entry.topic)} | Stale since ${escapeHtml(entry.updatedAt.toLocaleTimeString())}`
           : `Topic ${escapeHtml(entry.topic)} | Updated ${escapeHtml(entry.updatedAt.toLocaleTimeString())}`;
@@ -1120,7 +1172,9 @@
             <article class="card${staleClass}" id="${escapeHtml(panelId)}">
               <div class="card-header">
                 <div>
-                  <div class="node-id">${escapeHtml(entry.nodeId)}</div>
+                  <div class="node-title">
+                    <div class="node-id">${escapeHtml(entry.nodeId)}</div>
+                  </div>
                   <div class="updated">${updatedText}</div>
                 </div>
               </div>
@@ -1136,7 +1190,10 @@
           <article class="card${staleClass}" id="${escapeHtml(panelId)}">
             <div class="card-header">
               <div>
-                <div class="node-id">${escapeHtml(entry.nodeId)}</div>
+                <div class="node-title">
+                  <div class="node-id">${escapeHtml(entry.nodeId)}</div>
+                  ${versionText ? `<div class="node-version">${escapeHtml(versionText)}</div>` : ""}
+                </div>
                 <div class="updated">${updatedText}</div>
               </div>
               ${renderNodeActions(entry.nodeId, metrics)}
@@ -1230,6 +1287,24 @@
       // Force reflow so repeated clicks retrigger the animation.
       void target.offsetWidth;
       target.classList.add("card-flash");
+    }
+
+    function focusNodePanel(nodeId, updateHash = true) {
+      const panelId = nodePanelId(nodeId);
+      const target = document.getElementById(panelId);
+      if (!target) {
+        return;
+      }
+
+      if (updateHash) {
+        history.replaceState(null, "", `#${panelId}`);
+      }
+
+      target.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+      requestAnimationFrame(() => flashNodePanelFromHash(`#${panelId}`));
     }
 
     function startStaleRefreshLoop() {
@@ -1346,6 +1421,9 @@
           marker = L.marker(position, {
             title: entry.nodeId
           }).addTo(mapInstance);
+          marker.on("click", () => {
+            focusNodePanel(entry.nodeId);
+          });
           marker.bindTooltip(entry.nodeId, {
             permanent: true,
             direction: "top",
@@ -1641,8 +1719,14 @@
       if (!link) {
         return;
       }
+      event.preventDefault();
       const hash = link.getAttribute("href");
       if (!hash) {
+        return;
+      }
+      const nodeId = link.textContent ? link.textContent.trim() : "";
+      if (nodeId) {
+        focusNodePanel(nodeId);
         return;
       }
       requestAnimationFrame(() => flashNodePanelFromHash(hash));
@@ -1652,12 +1736,21 @@
     });
     nodeListEl.addEventListener("click", (event) => {
       const button = event.target.closest("[data-node-action]");
-      if (!button || button.disabled) {
+      if (!button) {
+        return;
+      }
+
+      const nodeId = button.dataset.nodeId || "ConeZ";
+      if (button.dataset.nodeAction === "notes") {
+        openNodeNotes(nodeId);
+        return;
+      }
+
+      if (button.disabled) {
         return;
       }
 
       const ipText = button.dataset.ip || "";
-      const nodeId = button.dataset.nodeId || "ConeZ";
       if (!ipText || ipText === "--") {
         return;
       }
