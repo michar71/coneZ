@@ -38,11 +38,14 @@ void adc_setup(void)
     adc_initialized = true;
 }
 
-// Lazily configure a channel on first read (for gpio analog command).
-// WARNING: this switches the pin to analog mode — will break SPI/GPIO on that pin.
+// Lazily configure a channel on first read.
+// Only ADC1 channels 0-2 (GPIO 1-3) are ever allowed: GPIO 4-7 are PSRAM SPI
+// and 8-10 are LoRa SPI, and adc_oneshot_config_channel() switches the pin to
+// analog, permanently breaking those buses until power-cycle. A user script
+// (WASM/BASIC analog_read) or the CLI must not be able to trigger that.
 static void adc_ensure_channel(int ch)
 {
-    if (ch < 0 || ch > 9) return;
+    if (ch < 0 || ch > 2) return;
     if (!adc_chan_configured[ch]) {
         adc_oneshot_chan_cfg_t chan_cfg = {};
         chan_cfg.atten = ADC_ATTEN_DB_12;
@@ -55,7 +58,7 @@ static void adc_ensure_channel(int ch)
 int adc_read_mv(int gpio)
 {
     if (!adc_initialized) return 0;
-    if (gpio < 1 || gpio > 10) return 0;
+    if (gpio < 1 || gpio > 3) return 0;   // only GPIO 1-3 are safe (see adc_ensure_channel)
 
     int ch = gpio - 1;
     adc_ensure_channel(ch);
@@ -72,7 +75,7 @@ int adc_read_mv(int gpio)
 int adc_read_raw(int gpio)
 {
     if (!adc_initialized) return 0;
-    if (gpio < 1 || gpio > 10) return 0;
+    if (gpio < 1 || gpio > 3) return 0;   // only GPIO 1-3 are safe (see adc_ensure_channel)
 
     int ch = gpio - 1;
     adc_ensure_channel(ch);

@@ -33,6 +33,8 @@ static const uint8_t *detect_format(const uint8_t *in, size_t in_len,
         }
         if (flg & 0x02) off += 2; // FHCRC
         if (off >= in_len) return NULL;
+        if (in_len - off < 8) return NULL;   // truncated: no room for the 8-byte
+                                             // trailer -> would underflow data_len
         *data_len = in_len - off - 8; // 8-byte trailer (CRC32 + ISIZE)
         return in + off;
     }

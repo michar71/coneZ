@@ -48,7 +48,11 @@ static bool valid_path(const char *p)
 {
     if (!p || p[0] != '/') return false;
     if (strstr(p, "..")) return false;
-    if (strcmp(p, "/config.ini") == 0) return false;
+    // Reject any path whose final component is "config.ini" (covers /config.ini,
+    // //config.ini, /./config.ini -- an exact strcmp missed the redundant forms).
+    const char *base = strrchr(p, '/');
+    base = base ? base + 1 : p;
+    if (strcmp(base, "config.ini") == 0) return false;
     return true;
 }
 

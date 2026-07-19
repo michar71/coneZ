@@ -583,7 +583,11 @@ static esp_err_t http_update_apply(httpd_req_t *req, bool is_firmware)
             printfnl(SOURCE_SYSTEM, "OTA end failed: %s", esp_err_to_name(err));
             httpd_resp_sendstr(req, "FAIL: verify error"); goto fail;
         }
-        esp_ota_set_boot_partition(part);
+        esp_err_t serr = esp_ota_set_boot_partition(part);   // final image validity check
+        if (serr != ESP_OK) {
+            printfnl(SOURCE_SYSTEM, "OTA set_boot_partition failed: %s", esp_err_to_name(serr));
+            httpd_resp_sendstr(req, "FAIL: image rejected (boot partition not set)"); goto fail;
+        }
     } else {
         // VERIFY: read the partition back and compare its MD5 to what we streamed --
         // catches a bad flash write BEFORE we reboot into a corrupt FS. On a mismatch

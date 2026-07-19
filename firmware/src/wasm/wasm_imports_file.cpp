@@ -38,7 +38,14 @@ static bool wasm_path_ok(const char *path, int len)
     if (path[0] != '/') return false;
     for (int i = 0; i < len - 1; i++)
         if (path[i] == '.' && path[i+1] == '.') return false;
-    if (len == 11 && memcmp(path, "/config.ini", 11) == 0) return false;
+    // Protect the device config. Comparing the whole string missed redundant
+    // forms (//config.ini, /./config.ini) that resolve to the same file, so
+    // reject any path whose final component is "config.ini". (path is NUL-
+    // terminated by the caller.)
+    const char *base = path;
+    for (int i = 0; i < len; i++)
+        if (path[i] == '/') base = &path[i + 1];
+    if (strcmp(base, "config.ini") == 0) return false;
     return true;
 }
 
@@ -285,7 +292,9 @@ m3ApiRawFunction(m3_file_readln)
         m3ApiReturn(-1);
 
     char line[256];
-    int cap = (buf_len - 1 < (int)sizeof(line)) ? (buf_len - 1) : (int)sizeof(line);
+    // Leave room for the NUL: readln_into can fill all `cap` bytes, so cap must
+    // be at most sizeof(line)-1 or line[n] below writes one past the buffer.
+    int cap = (buf_len - 1 < (int)sizeof(line) - 1) ? (buf_len - 1) : (int)sizeof(line) - 1;
     int n = readln_into(wasm_files[handle], line, cap);
     line[n] = '\0';
     wasm_mem_write(runtime, (uint32_t)buf_ptr, line, (size_t)n + 1);

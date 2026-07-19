@@ -58,7 +58,10 @@ static int wasm_vformat(IM3Runtime runtime,
             int32_t w; wasm_mem_read(runtime, aoff, &w, 4); aoff += 4;
             if (w < -999) w = -999;
             if (w > 999) w = 999;
-            sp += snprintf(spec + sp, 28 - sp, "%d", (int)w);
+            if (sp < (int)sizeof(spec) - 1) {
+                int wn = snprintf(spec + sp, sizeof(spec) - sp, "%d", (int)w);
+                if (wn > 0) sp += wn;
+            }
             i++;
         } else {
             while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
@@ -76,7 +79,10 @@ static int wasm_vformat(IM3Runtime runtime,
                 int32_t p; wasm_mem_read(runtime, aoff, &p, 4); aoff += 4;
                 if (p < 0) p = 0;
                 if (p > 999) p = 999;
-                sp += snprintf(spec + sp, 28 - sp, "%d", (int)p);
+                if (sp < (int)sizeof(spec) - 1) {
+                    int pn = snprintf(spec + sp, sizeof(spec) - sp, "%d", (int)p);
+                    if (pn > 0) sp += pn;
+                }
                 i++;
             } else {
                 while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
@@ -93,6 +99,10 @@ static int wasm_vformat(IM3Runtime runtime,
 
         if (i >= fmt_len) break;
         char conv = fmt[i];
+
+        // A hostile format ("%*.*", long flag runs) can drive sp past the
+        // buffer; keep every following spec[sp] write in bounds.
+        if (sp > (int)sizeof(spec) - 1) sp = (int)sizeof(spec) - 1;
 
         char tmp[192];
         int n = 0;
@@ -164,6 +174,12 @@ static int wasm_vformat(IM3Runtime runtime,
         }
 
         if (err) break;
+
+        // snprintf returns the length it WOULD have written; tmp holds at most
+        // sizeof(tmp)-1 valid bytes. Clamp before copying or a wide field
+        // ("%600d") would read past tmp and leak host stack into guest output.
+        if (n < 0) n = 0;
+        if (n > (int)sizeof(tmp) - 1) n = (int)sizeof(tmp) - 1;
 
         for (int j = 0; j < n; j++) {
             if (pos < out_size - 1) out[pos] = tmp[j];

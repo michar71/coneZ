@@ -311,6 +311,7 @@ static void complete(void)
     }
 
     if (rx_file_id == LP_DIST_MANIFEST_ID) {
+        rx_buf[rx_file_len] = '\0';   // strtok_r needs a terminator (buffer is flen+1)
         manifest_parse((char *)rx_buf, rx_file_len);
     } else {
         dist_file_t *df = find_file(rx_file_id);
@@ -380,7 +381,10 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
             rx_reset(); return;
         }
         dist_holds_ota = true;
-        fw_block    = (uint8_t *)malloc(block_size);
+        // Round up to 4 bytes: the flash-commit loop rounds the final segment to
+        // a 4-byte write (wseg), which can exceed a non-4-aligned block_size and
+        // read/write past this allocation otherwise.
+        fw_block    = (uint8_t *)malloc(((size_t)block_size + 3) & ~(size_t)3);
         rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
         if (!fw_block || !rx_block_bm) { printfnl(SOURCE_LORA_DIST, "dist: OTA alloc fail\n"); rx_reset(); return; }
         rx_is_fw = true;
@@ -396,7 +400,8 @@ static void start_rx(uint16_t fid, uint16_t serial, uint32_t flen, uint16_t tota
     }
     rx_file_id = fid; rx_serial = serial; rx_file_len = flen;
     rx_total_blocks = total_blocks; rx_algo = algo; rx_block_size = block_size; rx_blocks_have = 0;
-    rx_buf      = (uint8_t *)malloc(flen ? flen : 1);
+    // +1 so the manifest (a data file) can be NUL-terminated before strtok_r.
+    rx_buf      = (uint8_t *)malloc((flen ? flen : 1) + 1);
     rx_block_bm = (uint8_t *)calloc((total_blocks >> 3) + 1, 1);
     if (!rx_buf || !rx_block_bm) { printfnl(SOURCE_LORA_DIST, "dist: alloc fail id %u\n", (unsigned)fid); rx_reset(); }
 }
@@ -436,6 +441,19 @@ static void finalize_block(bool use_rs)
                    : (rx_file_len - off_u < rx_block_size ? rx_file_len - off_u : rx_block_size);
 
     uint8_t *dest = rx_is_fw ? fw_block : (rx_buf + off_u);
+
+    // A crafted DIST_DATA chunk can declare a compressed/decompressed length far
+    // larger than this block's buffer (blk_N*DIST_L bytes). Both inflate_buf and
+    // the raw memcpy below read from blk_data, so bound the lengths first or a
+    // hostile packet forces a heap over-read.
+    size_t blk_cap = (size_t)blk_N * DIST_L;
+    if ((size_t)blk_comp_len > blk_cap || (size_t)ulen > blk_cap) {
+        printfnl(SOURCE_LORA_DIST, "dist: id %u block %u len out of range (comp %u ulen %u cap %u)\n",
+                 (unsigned)rx_file_id, (unsigned)blk_idx,
+                 (unsigned)blk_comp_len, (unsigned)ulen, (unsigned)blk_cap);
+        blk_reset();
+        return;
+    }
 
     if (rx_algo == LP_DIST_ALGO_DEFLATE) {
         int n = inflate_buf(blk_data, blk_comp_len, dest, ulen);

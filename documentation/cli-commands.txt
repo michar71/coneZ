@@ -516,10 +516,13 @@ led
         led set 3 all #0000FF      Set all channel 3 LEDs to blue
 
   led count <ch> <n>
-      Resize channel ch to n LEDs (0 to disable). Existing colors
-      are preserved; any new LEDs are set to black. Hot-applied
-      immediately. Not saved to flash; use "config set led.countN
-      <n>" to persist.
+      Set channel ch to n LEDs (0 to disable). n may range from 0 up
+      to the channel's boot-time count: the buffer is allocated once
+      at startup to that capacity and is never reallocated at runtime,
+      so writers in other tasks (ArtNet, scripts) can't race a freed
+      buffer. To grow beyond the boot size, "config set led.countN <n>"
+      and reboot. Existing colors are preserved; new LEDs are set to
+      black. Hot-applied immediately; not saved to flash.
       Examples: led count 1 100
                 led count 2 0
 

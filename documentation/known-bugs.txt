@@ -324,3 +324,167 @@ ROUND 3 NEW FEATURES (2026-04-19)
     HTML-escaped strings, and hex dumps for blobs (first 32 bytes
     with "... (N more)" suffix for the tail). Previously returned
     literal "FIXME..." text.
+
+
+ROUND 4 FIXES (2026-07-19)
+==========================
+Multi-agent code review of the full firmware tree. Fixes span the BASIC
+interpreter, LED driver, WASM host layer, LoRa firmware-distribution
+receiver, console/log, and config. Matching fixes were mirrored into the
+Qt simulator (sim_wasm_imports_*, led_state.cpp) where the same code lives.
+
+CRITICAL
+--------
+
+#80 FIXED -- BASIC array access gave scripts arbitrary heap read/write.
+    bound() raised BOUNDS but still returned mem+n, and STOREI_/LOADI_
+    dereferenced it before the driver checked globalerror. bound() now
+    returns NULL on an out-of-range/non-array index and the opcodes bail.
+    A(i) on an un-DIMed variable also compiled to STOREI_ with no mode
+    check (NULL/scalar deref); opcodes now require a live DIM allocation.
+    (basic.h)
+
+#81 FIXED -- BASIC DIM double-free / free-of-scalar, within and across runs.
+    freedim() freed on compile-time VARMODE_DIM, so a DIM in a dead branch
+    -- or a re-DIM in the next program over the persistent symbol table --
+    freed a stale or scalar value. Added runtime dim_alloc[] tracking:
+    freedim() frees only real allocations and clears them, and initbasic()
+    now frees leftovers and resets the symbol table per program.
+    SETARRAY/SHIFTARRAY/ROTATEARRAY/SCALELIMITARRAY now validate with
+    is_dim_ptr() instead of a bare !=0, closing an arbitrary-pointer
+    read/write. SUB params/LOCALs bounded to LOCS; interp() no longer leaks
+    the script FILE* on a compile error. (basic.h, basic_extensions.h)
+
+#82 FIXED -- LED channel resize was a use-after-free.
+    led_resize_channel() delete[]'d the old buffer outside led_mutex while
+    ArtNet/BASIC/WASM/CLI writers held the raw leds* pointer with no lock.
+    Buffers are now allocated once at boot to a fixed capacity; resize only
+    moves the logical count within that capacity and never frees. Growth
+    beyond the boot size returns -2 ("reboot to grow"). (led.cpp, commands.cpp)
+
+#83 FIXED -- LoRa dist heap over-read from a crafted DIST_DATA chunk.
+    finalize_block() read blk_comp_len / ulen bytes out of a blk_N*DIST_L
+    buffer with no bound, so a chunk declaring a huge length forced an
+    over-read (up to 64 KB from a 200-byte block). Now rejected. (dist.cpp)
+
+#84 FIXED -- WASM printf/snprintf host imports leaked host stack / smashed a
+    stack buffer. The copy loop ran to snprintf's would-be length (not the
+    truncated count), so "%600d" read past tmp[] into host memory handed back
+    to the guest; a long flag / *-width / precision run also drove the spec[]
+    index past its buffer. Clamped the length and bounded spec[] (and added
+    the -999..999 width/precision clamps). (wasm_format.cpp)
+
+#85 FIXED -- WASM analog_read could brick PSRAM/LoRa SPI.
+    adc_read_*/adc_ensure_channel accepted GPIO 1-10 and lazily configured
+    any of them as analog; GPIO 4-7 (PSRAM) and 8-10 (LoRa) then lose SPI
+    until power cycle. Restricted to GPIO 1-3 at the source (protects the
+    WASM and BASIC analog_read and the CLI). (adc.cpp)
+
+#86 FIXED -- WASM /config.ini write guard was bypassable.
+    The exact-string check missed //config.ini and /./config.ini. Now rejects
+    any path whose final component is config.ini. (wasm_imports_file.cpp,
+    wasm_imports_compression.cpp, wasm_imports_deflate.cpp)
+
+HIGH
+----
+
+#87 FIXED -- "load" held the print mutex across an unbounded, no-yield receive
+    loop, stalling every printing task and starving the idle task into a WDT
+    reset if a transfer hung. Now takes the lock only for the flush, polls
+    with a yield + 30 s idle timeout, and writes a final line that has no
+    trailing newline (previously dropped). (commands.cpp)
+
+#88 FIXED -- "top" heap overflow when the task count grew mid-session.
+    Only curr/order were reallocated on growth; the end-of-frame swap then
+    made the smaller stale buffer the next curr and uxTaskGetSystemState()
+    overran it. Now grows all three via realloc. (commands.cpp)
+
+#89 FIXED -- log_open/log_close/log_free raced the vprintfnl sinks.
+    Teardown ran without print_mutex, so a concurrent sink could fprintf/
+    fclose a closing FILE*, or write to a freed ring and divide by a zeroed
+    slot count. Lifecycle functions now take print_mutex. (printManager.cpp)
+
+#90 FIXED -- MQTT publisher task could publish on a destroyed client.
+    mqtt_force_disconnect() esp_mqtt_client_destroy()'d s_client while the
+    publisher task held and used it. Added a client mutex serializing the
+    publish against the destroy. (conez_mqtt.cpp)
+
+#91 FIXED -- inflate underflowed on truncated gzip input.
+    data_len = in_len - off - 8 with no check that >= 8 bytes remain, so a
+    truncated file produced a huge size_t and a massive over-read. Guarded.
+    (inflate.cpp)
+
+#92 FIXED -- LoRa dist manifest parsed with strtok_r over a non-terminated
+    buffer. rx_buf was malloc(flen); strtok_r scanned past the end on every
+    manifest reception. Allocate flen+1 and NUL-terminate before parsing.
+    (dist.cpp)
+
+MEDIUM
+------
+
+#93 FIXED -- /config web page truncated, dropping the Save button.
+    The rendered page (~7 KB, more once strings are filled in) exceeded the
+    6144-byte cfg_page buffer, so the form's submit button never rendered and
+    settings could not be saved from the web UI. Enlarged to 16 KB. (config.cpp)
+
+#94 FIXED -- "dir *.bas" (root wildcard) matched nothing. The filter pointer
+    aliased path[1], which the root-case path[1]='\0' truncation clobbered to
+    "". Copy the pattern out first. (commands.cpp)
+
+#95 FIXED -- Load average pegged at 2.00 forever once the task count exceeded
+    the sample array. uxTaskGetSystemState returned 0 without writing the
+    total, wrapping the delta into a false 100%. Skip the sample on overflow;
+    bumped the array from 20 to 32. (loadavg.cpp)
+
+#96 FIXED -- WASM file_readln one-byte stack overflow (line[256]='\0' when cap
+    reached sizeof(line)) and led_shift(INT_MIN) wild memmove (negating INT_MIN
+    stayed negative and slipped past the "> cnt" clamp). Both fixed.
+    (wasm_imports_file.cpp, wasm_imports_led.cpp)
+
+#97 FIXED -- HTTP OTA reported success even if esp_ota_set_boot_partition
+    rejected the just-written image (the device rebooted into the old
+    firmware). Now fails loudly. (http.cpp)
+
+LOW
+---
+
+#98 FIXED -- LoRa dist fw_block over-read on a non-4-aligned block_size from a
+    crafted manifest (the 4-byte-rounded final flash write exceeded the
+    allocation). fw_block is now rounded up to 4 bytes. (dist.cpp)
+
+#99 FIXED -- BASIC ROTATEARRAY spun BasicTask for a huge rotate count; it now
+    reduces the amount modulo the array size. (basic_extensions.h)
+
+SIMULATOR
+---------
+
+#100 FIXED -- Mirrored the WASM host-layer fixes into the Qt simulator's
+    parallel copies: format host-memory leak + spec overflow + width/precision
+    clamps (sim_wasm_imports_format.cpp), led_shift(INT_MIN) (led_state.cpp),
+    and the config.ini path-guard bypass (sim_wasm_imports_file/compression/
+    deflate.cpp). The firmware readln, analog_read, and inflate fixes have no
+    counterpart in the sim (different or stubbed code).
+
+OPEN (reported this round, not yet fixed)
+-----------------------------------------
+
+#101 BASIC PRINTS and FORMAT "$" dereference an arbitrary stack value as a C
+    string (info leak / crash from a one-character script mistake). A safe fix
+    needs to validate the value points into the string table; the code path
+    treats string values inconsistently (stab+offset for the format string vs
+    a raw pointer for $ args), so it was deferred pending a closer look.
+
+#102 GPS/time cluster (gps.cpp/nmea.cpp): epoch can be anchored to a stale PPS
+    edge and run ahead; datetime_to_epoch_ms()==0 is stored unchecked (clock to
+    1970); GGA-before-RMC at UTC midnight steps the clock back a day; ntp_loop()
+    overwrites the epoch from the un-synced RTC. Reported, not yet fixed.
+
+#103 getRoll() +180 offset contradicts the Z-up convention used by IMU
+    calibration and the boot sanity check, so an upright cone reports tilt_x
+    ~ +/-180 and raises a permanent TILT alarm. MPU6500 I2C read failure also
+    keeps stale accel silently (frozen tilt feeds the alarm). Reported, not
+    yet fixed.
+
+#104 Cue engine assumes effective start times are monotonic, so one spatially-
+    offset cue stalls all later cues; cue_start() uses raw GPS with no
+    fix-validity check. Reported, not yet fixed.

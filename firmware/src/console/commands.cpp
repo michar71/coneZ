@@ -547,6 +547,7 @@ int listFile(int argc, char **argv)
 int listDir(int argc, char **argv)
 {
     char path[64];
+    char filterbuf[64];
     const char *filter = NULL;
 
     if (argc >= 2) {
@@ -555,7 +556,11 @@ int listDir(int argc, char **argv)
         if (has_glob_chars(path)) {
             const char *lastSlash = strrchr(path, '/');
             if (lastSlash) {
-                filter = lastSlash + 1;
+                // Copy the pattern out before truncating path: for a root-level
+                // pattern ("/*.bas") filter would alias path[1], which the
+                // path[1]='\0' truncation below would then clobber to "".
+                strlcpy(filterbuf, lastSlash + 1, sizeof(filterbuf));
+                filter = filterbuf;
                 // Trim path to directory part
                 if (lastSlash == path)
                     path[1] = '\0';  // root "/"
@@ -1056,72 +1061,89 @@ int loadFile(int argc, char **argv)
         char inchar;
         bool isDone = false;
         printfnl(SOURCE_COMMANDS, "Ready for file. Press CTRL+Z to end transmission and save file %s\n", path);
-        //Flush serial buffer
+        //Flush serial buffer (brief lock only)
         getLock();
         getStream()->flush();
+        releaseLock();
         //create file
         char load_fp[256];
         lfs_path(load_fp, sizeof(load_fp), path);
         FILE *file = fopen(load_fp, "w");
         if (!file)
         {
-            releaseLock();
             printfnl(SOURCE_COMMANDS, "- failed to open file for writing\n" );
             return 1;
         }
 
+        // Do NOT hold print_mutex across this receive loop. The transfer is
+        // sender-paced and unbounded: holding the lock would stall every other
+        // task's printfnl(), and the old loop had no yield, so it also starved
+        // the idle task into a task-WDT reset. Poll with a yield and an idle
+        // timeout, and take the lock only for the actual reads/writes we need.
+        uint32_t last_rx = uptime_ms();
+        bool write_error = false;
         do
         {
             //Get one character from serial port
             if (getStream()->available())
             {
                 inchar = getStream()->read();
+                last_rx = uptime_ms();
                 //Check if its a break character
-                if (inchar == 0x1A) 
+                if (inchar == 0x1A)
                 {
-                    //Break loop 
+                    //Break loop
                     break;
                 }
-                else
+                //Wait for a full line
+                if (charcount >= 254)
                 {
-                    //Wait for a full line
-                    if (charcount >= 254)
-                    {
-                        getStream()->printf("Line %d too long\n",linecount+1);
-                        break;
-                    }
-                    line[charcount] = inchar;
-                    charcount++;
-                    if (inchar == '\n')
-                    {
-                        //Write line
-                        line[charcount] = '\0';
-                        if (fputs(line, file) >= 0)
-                        {
-                        } 
-                        else 
-                        {
-                          getStream()->printf("Write Error\n");
-                          fclose(file);
-                          releaseLock();
-                          return 1;
-                        }
-                        //increase line counter
-                        linecount++;
-                        //clear line
-                        charcount = 0;
-                        line[0] = 0;
-            
-                    }
+                    printfnl(SOURCE_COMMANDS, "Line %d too long\n", linecount+1);
+                    break;
+                }
+                line[charcount] = inchar;
+                charcount++;
+                if (inchar == '\n')
+                {
+                    //Write line
+                    line[charcount] = '\0';
+                    if (fputs(line, file) < 0) { write_error = true; break; }
+                    //increase line counter
+                    linecount++;
+                    //clear line
+                    charcount = 0;
+                    line[0] = 0;
+                }
+            }
+            else
+            {
+                vTaskDelay(pdMS_TO_TICKS(2));
+                if ((uptime_ms() - last_rx) > 30000)   // 30s idle -> give up
+                {
+                    printfnl(SOURCE_COMMANDS, "Timed out waiting for data\n");
+                    break;
                 }
             }
         }
         while (isDone == false);
+
+        // Flush a final line that didn't end in a newline (else it's lost).
+        if (!write_error && charcount > 0)
+        {
+            line[charcount] = '\0';
+            if (fputs(line, file) >= 0) linecount++;
+            else write_error = true;
+        }
+
         //close file
         fclose(file);
-        releaseLock();
+        if (write_error)
+        {
+            printfnl(SOURCE_COMMANDS, "Write Error\n");
+            return 1;
+        }
         printfnl(SOURCE_COMMANDS, "%d Lines written to file\n", linecount);
-        
+
         return 0;
     }
 
@@ -1380,11 +1402,19 @@ int cmd_top(int argc, char **argv)
         // Grow arrays if task count increased
         UBaseType_t numNow = uxTaskGetNumberOfTasks();
         if (numNow + 4 > maxTasks) {
-            maxTasks = numNow + 4;
-            free(curr); free(order);
-            curr = (TaskStatus_t *)malloc(maxTasks * sizeof(TaskStatus_t));
-            order = (uint32_t *)malloc(maxTasks * sizeof(uint32_t));
-            if (!curr || !order) break;
+            UBaseType_t newMax = numNow + 4;
+            // Grow BOTH TaskStatus_t buffers, not just curr: prev and curr are
+            // swapped every frame, so growing only curr would leave the smaller
+            // buffer as next frame's curr and uxTaskGetSystemState() would
+            // overflow it. realloc keeps prev's prior snapshot for the delta.
+            TaskStatus_t *np = (TaskStatus_t *)realloc(prev,  newMax * sizeof(TaskStatus_t));
+            TaskStatus_t *nc = (TaskStatus_t *)realloc(curr,  newMax * sizeof(TaskStatus_t));
+            uint32_t     *no = (uint32_t *)    realloc(order, newMax * sizeof(uint32_t));
+            if (np) prev = np;
+            if (nc) curr = nc;
+            if (no) order = no;
+            if (!np || !nc || !no) break;   // OOM: bail; post-loop free() cleans up
+            maxTasks = newMax;
         }
 
         uint32_t currTotal = 0;
@@ -2937,7 +2967,10 @@ int cmd_led(int argc, char **argv)
             return 1;
         }
         int rc = led_resize_channel(ch, n);
-        if (rc != 0)
+        if (rc == -2)
+            printfnl(SOURCE_COMMANDS, "Can't grow channel %d beyond its boot size at runtime. "
+                     "Set led.count%d in config and reboot.\n", ch, ch);
+        else if (rc != 0)
             printfnl(SOURCE_COMMANDS, "Failed to resize channel %d\n", ch);
         else
             printfnl(SOURCE_COMMANDS, "Channel %d set to %d LEDs\n", ch, n);

@@ -370,8 +370,13 @@ void log_init(void)
     }
 }
 
+// The ring/file sinks run inside vprintfnl() under print_mutex from any task.
+// These teardown/setup paths run on ShellTask, so they MUST take the same lock
+// or a concurrent sink can write to a just-freed ring (and divide by a zeroed
+// log_ring_slots) or fprintf/fclose a FILE* being closed underneath it.
 void log_free(void)
 {
+    xSemaphoreTake(print_mutex, portMAX_DELAY);
     if (log_ring_base) {
         psram_free(log_ring_base);
         log_ring_base = 0;
@@ -379,26 +384,32 @@ void log_free(void)
         log_ring_head = 0;
         log_ring_count = 0;
     }
+    xSemaphoreGive(print_mutex);
 }
 
 bool log_open(const char *path)
 {
+    char fpath[128];
+    lfs_path(fpath, sizeof(fpath), path);
+    xSemaphoreTake(print_mutex, portMAX_DELAY);
     if (log_file) {
         fclose(log_file);
         log_file = NULL;
     }
-    char fpath[128];
-    lfs_path(fpath, sizeof(fpath), path);
     log_file = fopen(fpath, "a");
-    return log_file != NULL;
+    bool ok = (log_file != NULL);
+    xSemaphoreGive(print_mutex);
+    return ok;
 }
 
 void log_close(void)
 {
+    xSemaphoreTake(print_mutex, portMAX_DELAY);
     if (log_file) {
         fclose(log_file);
         log_file = NULL;
     }
+    xSemaphoreGive(print_mutex);
 }
 
 bool log_save(const char *path)

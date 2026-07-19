@@ -70,7 +70,12 @@ static int wasm_vformat(char *out, int out_size,
         // Width
         if (*fmt == '*') {
             int w = read_i32();
-            si += snprintf(spec_buf + si, 60 - si, "%d", w);
+            if (w < -999) w = -999;
+            if (w > 999) w = 999;
+            if (si < (int)sizeof(spec_buf) - 1) {
+                int wn = snprintf(spec_buf + si, sizeof(spec_buf) - si, "%d", w);
+                if (wn > 0) si += wn;
+            }
             fmt++;
         } else {
             while (*fmt >= '0' && *fmt <= '9') {
@@ -85,7 +90,12 @@ static int wasm_vformat(char *out, int out_size,
             fmt++;
             if (*fmt == '*') {
                 int p = read_i32();
-                si += snprintf(spec_buf + si, 60 - si, "%d", p);
+                if (p < 0) p = 0;
+                if (p > 999) p = 999;
+                if (si < (int)sizeof(spec_buf) - 1) {
+                    int pn = snprintf(spec_buf + si, sizeof(spec_buf) - si, "%d", p);
+                    if (pn > 0) si += pn;
+                }
                 fmt++;
             } else {
                 while (*fmt >= '0' && *fmt <= '9') {
@@ -101,6 +111,10 @@ static int wasm_vformat(char *out, int out_size,
             if (*fmt == 'l') is_long++;
             fmt++;
         }
+
+        // Keep the spec_buf writes in the switch (up to "lld"+NUL) in bounds
+        // even for a hostile format with long flag/width runs.
+        if (si > (int)sizeof(spec_buf) - 4) si = (int)sizeof(spec_buf) - 4;
 
         char conv = *fmt;
         if (conv) fmt++;
@@ -169,6 +183,10 @@ static int wasm_vformat(char *out, int out_size,
             EMIT('%'); EMIT(conv); continue;
         }
 
+        // n is snprintf's would-be length; tmp holds at most sizeof(tmp)-1 valid
+        // bytes. Clamp or a wide field ("%600d") reads past tmp into host memory.
+        if (n < 0) n = 0;
+        if (n > (int)sizeof(tmp) - 1) n = (int)sizeof(tmp) - 1;
         for (int i = 0; i < n; i++) EMIT(tmp[i]);
     }
 

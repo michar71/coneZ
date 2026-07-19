@@ -16,7 +16,12 @@ static bool path_ok(const char *path, int len)
     if (path[0] != '/') return false;
     for (int i = 0; i < len - 1; i++)
         if (path[i] == '.' && path[i+1] == '.') return false;
-    if (len == 11 && memcmp(path, "/config.ini", 11) == 0) return false;
+    // Reject any path whose final component is "config.ini" (covers /config.ini,
+    // //config.ini, /./config.ini). path is NUL-terminated by the caller.
+    const char *base = path;
+    for (int i = 0; i < len; i++)
+        if (path[i] == '/') base = &path[i + 1];
+    if (strcmp(base, "config.ini") == 0) return false;
     return true;
 }
 

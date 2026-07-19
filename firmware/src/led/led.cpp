@@ -23,6 +23,12 @@ CRGB *leds4 = nullptr;
 // volatile is sufficient: single writer (render task clears), multiple setters (any task sets).
 static volatile bool led_dirty = false;
 
+// Physical capacity of each leds* allocation, fixed at led_setup().
+// led_resize_channel() only moves the logical count within this capacity and
+// never reallocates -- other tasks hold the raw leds* pointer without the mutex,
+// so freeing it at runtime would be a use-after-free.
+static int led_cap[4] = { 0, 0, 0, 0 };
+
 #ifdef BOARD_HAS_RGB_LEDS
 
 // Mutex protects buffer pointer/count swaps in led_resize_channel().
@@ -252,6 +258,12 @@ void led_setup( void )
     leds3 = new CRGB[config.led_count3]();
     leds4 = new CRGB[config.led_count4]();
 
+    // Record the physical capacity; led_resize_channel() will not exceed it.
+    led_cap[0] = config.led_count1;
+    led_cap[1] = config.led_count2;
+    led_cap[2] = config.led_count3;
+    led_cap[3] = config.led_count4;
+
     static bool rmt_initialized = false;
     if (!rmt_initialized) {
         rmt_init();
@@ -323,42 +335,32 @@ int led_resize_channel( int ch, int count )
     if (ch < 1 || ch > 4 || count < 0)
         return -1;
 
-    CRGB **buf_ptr;
+    CRGB *buf;
     int *count_ptr;
+    int cap;
 
     switch (ch) {
-        case 1: buf_ptr = &leds1; count_ptr = &config.led_count1; break;
-        case 2: buf_ptr = &leds2; count_ptr = &config.led_count2; break;
-        case 3: buf_ptr = &leds3; count_ptr = &config.led_count3; break;
-        case 4: buf_ptr = &leds4; count_ptr = &config.led_count4; break;
+        case 1: buf = leds1; count_ptr = &config.led_count1; cap = led_cap[0]; break;
+        case 2: buf = leds2; count_ptr = &config.led_count2; cap = led_cap[1]; break;
+        case 3: buf = leds3; count_ptr = &config.led_count3; cap = led_cap[2]; break;
+        case 4: buf = leds4; count_ptr = &config.led_count4; cap = led_cap[3]; break;
         default: return -1;
     }
 
-    int old_count = *count_ptr;
-    if (count == old_count)
-        return 0;
+    // The buffer is never reallocated at runtime (see led_cap comment). Growth
+    // beyond the boot capacity requires persisting led.countN and rebooting.
+    if (count > cap)
+        return -2;
 
-    CRGB *old_buf = *buf_ptr;
-    CRGB *new_buf = nullptr;
-
-    if (count > 0) {
-        new_buf = new(std::nothrow) CRGB[count]();
-        if (!new_buf)
-            return -1;
-
-        // Copy existing LED data
-        int copy_count = (count < old_count) ? count : old_count;
-        if (old_buf && copy_count > 0)
-            memcpy(new_buf, old_buf, copy_count * sizeof(CRGB));
-    }
-
-    // Swap pointer and count under mutex.
+    // Only the logical count changes; the pointer is stable, so the unlocked
+    // writers in other tasks can't be left holding a freed buffer.
     xSemaphoreTake(led_mutex, portMAX_DELAY);
-    *buf_ptr = new_buf;
+    int old_count = *count_ptr;
+    if (buf && count > old_count)                                  // new LEDs black
+        memset(buf + old_count, 0, (size_t)(count - old_count) * sizeof(CRGB));
     *count_ptr = count;
     xSemaphoreGive(led_mutex);
 
-    delete[] old_buf;
     led_show();
     return 0;
 #else

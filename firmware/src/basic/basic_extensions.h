@@ -928,15 +928,19 @@ int ROTATEARRAY_()
 {
     //Pull the values off the stack
     int amount = (int)*sp++;
-    Val *arr = (Val*)*sp;  
+    Val *arr = (Val*)*sp;
 
-    if (arr == 0)
+    if (!is_dim_ptr((Val)arr))
     {
-        bad((char*)"SETARRAY: BAD ARRAY POINTER");
+        bad((char*)"ROTATEARRAY: NOT A DIM ARRAY");
         return 0;
     }
 
     int size = (int)arr[0];
+
+    //Rotating by a multiple of size is a no-op; reduce first so a huge
+    //amount can't spin BasicTask for hours (abs(INT_MIN) is also UB -> reduce).
+    if (size > 0) amount %= size;
 
     //We do this in an annoyingly slow way by just repeating it n times
     //There are faster ways to do this but that requires more buffer memeory
@@ -970,11 +974,11 @@ int SHIFTARRAY_()
     //Pull the values off the stack
     int val = (int)*sp++;
     int amount = (int)*sp++;
-    Val *arr = (Val*)*sp;  
+    Val *arr = (Val*)*sp;
 
-    if (arr == 0)
+    if (!is_dim_ptr((Val)arr))
     {
-        bad((char*)"SETARRAY: BAD ARRAY POINTER");
+        bad((char*)"SHIFTARRAY: NOT A DIM ARRAY");
         return 0;
     }
 
@@ -1028,11 +1032,11 @@ int SETARRAY_()
     int val = (int)*sp++;
     int end = (int)*sp++;
     int start = (int)*sp++;
-    Val *arr = (Val*)*sp;  
+    Val *arr = (Val*)*sp;
 
-    if (arr == 0)
+    if (!is_dim_ptr((Val)arr))
     {
-        bad((char*)"SETARRAY: BAD ARRAY POINTER");
+        bad((char*)"SETARRAY: NOT A DIM ARRAY");
         return 0;
     }
 
@@ -1062,11 +1066,11 @@ int SCALELIMITARRAY_()
     int max = (int)*sp++;
     int min = (int)*sp++;
     int perc = (int)*sp++;
-    Val *arr = (Val*)*sp;  
+    Val *arr = (Val*)*sp;
 
-    if (arr == 0)
+    if (!is_dim_ptr((Val)arr))
     {
-        bad((char*)"SCALELIMITARRAY: BAD ARRAY POINTER");
+        bad((char*)"SCALELIMITARRAY: NOT A DIM ARRAY");
         return 0;
     }
 

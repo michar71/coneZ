@@ -270,12 +270,18 @@ m3ApiRawFunction(m3_led_shift) {
     CRGB *buf = led_buf_for_channel(channel, &cnt);
     if (!buf || cnt == 0) { m3ApiSuccess(); }
     CRGB fill_col(r, g, b);
-    if (amount > 0) {
-        int shift = amount > cnt ? cnt : amount;
+    // Clamp magnitude to cnt via 64-bit first: negating INT_MIN is UB and leaves
+    // it negative, which would slip past a "> cnt" clamp and make memmove run
+    // with a wild pointer/length. Any |amount| >= cnt fills the whole strip.
+    int64_t amt = amount;
+    if (amt >  cnt) amt =  cnt;
+    if (amt < -cnt) amt = -cnt;
+    if (amt > 0) {
+        int shift = (int)amt;
         memmove(buf + shift, buf, (cnt - shift) * sizeof(CRGB));
         for (int i = 0; i < shift; i++) buf[i] = fill_col;
-    } else if (amount < 0) {
-        int shift = (-amount) > cnt ? cnt : (-amount);
+    } else if (amt < 0) {
+        int shift = (int)(-amt);
         memmove(buf, buf + shift, (cnt - shift) * sizeof(CRGB));
         for (int i = cnt - shift; i < cnt; i++) buf[i] = fill_col;
     }

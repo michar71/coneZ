@@ -78,12 +78,18 @@ void LedState::shift(int channel, int amount, uint8_t r, uint8_t g, uint8_t b)
     int cnt = (int)v.size();
     if (cnt == 0) return;
     RGB fill_col{r, g, b};
-    if (amount > 0) {
-        int s = std::min(amount, cnt);
+    // Clamp magnitude to cnt via 64-bit first: negating INT_MIN is UB and leaves
+    // it negative, so std::min(-amount, cnt) would pass it through and memmove
+    // would run with a wild pointer/length. Any |amount| >= cnt fills the strip.
+    int64_t amt = amount;
+    if (amt >  cnt) amt =  cnt;
+    if (amt < -cnt) amt = -cnt;
+    if (amt > 0) {
+        int s = (int)amt;
         std::memmove(&v[s], &v[0], (cnt - s) * sizeof(RGB));
         for (int i = 0; i < s; i++) v[i] = fill_col;
-    } else if (amount < 0) {
-        int s = std::min(-amount, cnt);
+    } else if (amt < 0) {
+        int s = (int)(-amt);
         std::memmove(&v[0], &v[s], (cnt - s) * sizeof(RGB));
         for (int i = cnt - s; i < cnt; i++) v[i] = fill_col;
     }

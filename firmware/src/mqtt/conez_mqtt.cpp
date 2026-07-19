@@ -75,6 +75,7 @@ static uint32_t last_heartbeat_ms = 0;
 static volatile uint32_t s_cmd_drop_count = 0;   // cmd messages dropped (queue full)
 
 static QueueHandle_t s_pub_queue = NULL;     // holds struct mqtt_msg *
+static SemaphoreHandle_t s_client_mtx = NULL; // serializes esp_mqtt_client_publish() vs destroy()
 static QueueHandle_t s_cmd_queue = NULL;     // holds char[MQTT_CMD_MAX] by value
 
 static char topic_status[64];
@@ -233,6 +234,10 @@ static void mqtt_create_and_start(void)
 
 static void mqtt_stop_client(void)
 {
+    // Serialize against the publisher task, which reads s_client and calls the
+    // blocking esp_mqtt_client_publish() -- destroying the handle underneath it
+    // is a use-after-free.
+    if (s_client_mtx) xSemaphoreTake(s_client_mtx, portMAX_DELAY);
     if (s_client && s_started) {
         esp_mqtt_client_stop(s_client);
         s_started = false;
@@ -243,6 +248,7 @@ static void mqtt_stop_client(void)
     }
     s_connected = false;
     s_connected_at = 0;
+    if (s_client_mtx) xSemaphoreGive(s_client_mtx);
 }
 
 // ---------- Heartbeat ----------
@@ -289,6 +295,11 @@ void mqtt_setup(void)
     // Command queue, drained by ShellTask (see mqtt_pop_command). Created once.
     if (!s_cmd_queue)
         s_cmd_queue = xQueueCreate(MQTT_CMD_QUEUE_DEPTH, MQTT_CMD_MAX);
+
+    // Guards s_client between the publisher task and mqtt_stop_client(). Must
+    // exist before the publisher task starts.
+    if (!s_client_mtx)
+        s_client_mtx = xSemaphoreCreateMutex();
 
     // Publish queue + the only task allowed to block inside esp-mqtt. Created once;
     // mqtt_setup() may run again after a config change.
@@ -387,12 +398,16 @@ static void mqtt_publisher_task(void *arg)
         if (xQueueReceive(s_pub_queue, &m, portMAX_DELAY) != pdTRUE || !m)
             continue;
 
-        // Re-check: the broker may have dropped while this sat in the queue.
+        // Re-check under the client mutex: mqtt_force_disconnect() on another
+        // task can esp_mqtt_client_destroy() the handle, so the non-NULL check
+        // and the publish must be atomic or this dereferences a freed client.
+        if (s_client_mtx) xSemaphoreTake(s_client_mtx, portMAX_DELAY);
         if (s_connected && s_client) {
             int msg_id = esp_mqtt_client_publish(s_client, m->topic, m->payload, m->len, 0, 0);
             if (msg_id >= 0)
                 s_tx_count = s_tx_count + 1;
         }
+        if (s_client_mtx) xSemaphoreGive(s_client_mtx);
         free(m);
     }
 }

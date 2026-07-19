@@ -4,7 +4,8 @@
 #include "esp_timer.h"
 #include <string.h>
 
-#define LOADAVG_MAX_TASKS   20          // headroom over typical ~12-15 tasks
+#define LOADAVG_MAX_TASKS   32          // headroom over typical ~12-15 tasks
+                                        // (+ArtNet/BASIC/WASM/telnet can push past 20)
 #define SAMPLE_INTERVAL_US  5000000LL   // 5 seconds
 
 // EWMA decay constants: exp(-5/window), precomputed
@@ -38,6 +39,11 @@ void loadavg_sample(void)
     uint32_t curr_total = 0;
     UBaseType_t curr_count = uxTaskGetSystemState(
         curr_snap, LOADAVG_MAX_TASKS, &curr_total);
+
+    // uxTaskGetSystemState() returns 0 (and leaves curr_total untouched) if the
+    // array was too small for the live task count. Skip the sample instead of
+    // computing a bogus 100%/2.0 load from the zeroed total; keep the last EWMA.
+    if (curr_count == 0) return;
 
     if (!have_baseline) {
         have_baseline = true;

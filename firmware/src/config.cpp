@@ -528,7 +528,11 @@ void config_apply_debug(void)
 // ---------- Web interface ----------
 
 // ---- Config page buffer ----
-static char cfg_page[6144];
+// Sized for the full descriptor table: ~75 entries render to ~7 KB with default
+// (empty) string values and more once SSID/passwords/etc. are filled in. At 6144
+// the page truncated mid-table, dropping the Save button so the web UI couldn't
+// save at all. cfg_cat/cfg_catf still skip cleanly if this is ever exceeded.
+static char cfg_page[16384];
 static int cfg_pos;
 
 static void cfg_reset() { cfg_pos = 0; cfg_page[0] = '\0'; }

@@ -60,6 +60,7 @@ static EXT_RAM_ATTR Val	value[VARS];								/* VARIABLE VALUES */
 static EXT_RAM_ATTR char name[VARS][SYMSZ];							/* VARIABLE NAMES */
 static EXT_RAM_ATTR int	sub[VARS][LOCS+2];							/* N,LOCAL VAR INDEXES */
 static EXT_RAM_ATTR uint8_t	mode[VARS];								/* 0=NONE, 1=DIM, 2=SUB*/
+static EXT_RAM_ATTR uint8_t	dim_alloc[VARS];						/* 1 = value[] holds a DIM heap block we own (runtime, not compile-time mode) */
 Val	ret;															/* FUNCTION RETURN VALUE */
 static EXT_RAM_ATTR int	cstk[STKSZ];								/* COMPILER STACK */
 int *csp;															/* COMPILER STACK POINTER */
@@ -91,14 +92,24 @@ void DRIVER()
 int	(*kwdhook)(char *kwd);						/* KEYWORD HOOK */
 int	(*funhook)(char *kwd, int n);				/* FUNCTION CALL HOOK */
 
-void initbasic(int comp) 
-  { 
-	pc=prg; sp=stk+(int)STKSZ; 
-	csp=cstk+(int)STKSZ; 
-	stabp=stab; 
-	compile=comp; 
-	cpc = 0; 
-	registerhook(); 
+void freedim(void);
+void initbasic(int comp)
+  {
+	freedim();			/* release DIM allocations left over from a previous program */
+	/* Each loaded program gets a fresh symbol table. Without this, nvar/name/
+	   mode/value/sub persisted across runs -- a var that was DIM or SUB in one
+	   program stayed flagged in the next, and value[] held dangling pointers. */
+	nvar=0; cursub=0;
+	memset(mode, 0, sizeof(mode));
+	memset(dim_alloc, 0, sizeof(dim_alloc));
+	memset(value, 0, sizeof(value));
+	memset(sub, 0, sizeof(sub));
+	pc=prg; sp=stk+(int)STKSZ;
+	csp=cstk+(int)STKSZ;
+	stabp=stab;
+	compile=comp;
+	cpc = 0;
+	registerhook();
 
 }
 void bad(char *msg) 
@@ -112,18 +123,26 @@ void err(char *msg)
 	globalerror = 2; 
 }
 
-void freedim() { int i; for (i=0; i<nvar; i++) if (mode[i]==VARMODE_DIM) free((Val*)value[i]); }
+// Free only blocks that DIM_ actually allocated at runtime (dim_alloc), not
+// every var the compiler flagged VARMODE_DIM -- a DIM inside a never-taken
+// branch sets mode but never allocates, so freeing on mode alone would free a
+// scalar. Clearing value/dim_alloc also stops a re-DIM from double-freeing.
+void freedim() { int i; for (i=0; i<nvar; i++) if (dim_alloc[i]) { free((Val*)value[i]); value[i]=0; dim_alloc[i]=0; } }
 
-// Validate that a pointer is a known DIM allocation
+// Validate that a pointer is a live DIM allocation this program owns.
 bool is_dim_ptr(Val ptr) {
 	if (!ptr) return false;
 	for (int i = 0; i < nvar; i++)
-		if (mode[i] == VARMODE_DIM && value[i] == ptr) return true;
+		if (dim_alloc[i] && value[i] == ptr) return true;
 	return false;
 }
 void emit(int opcode()) { if (cpc >= PRGSZ) { bad((char*)"PROGRAM TOO LARGE"); return; } lmap[cpc]=lnum; prg[cpc++]=opcode; }
 void inst(int opcode(), Val x) { emit(opcode); emit((Code)x); }
-Val *bound(Val *mem, int n) { if (n<1 || n>*mem) err((char*)"BOUNDS"); return mem+n;  }
+// Returns NULL (and raises BOUNDS) on an out-of-range or non-array access.
+// Callers MUST check for NULL before dereferencing -- previously this returned
+// mem+n even on error, and STOREI_/LOADI_ wrote/read through it before the
+// driver noticed globalerror, giving a script arbitrary heap access.
+Val *bound(Val *mem, int n) { if (!mem || n<1 || n>*mem) { err((char*)"BOUNDS"); return NULL; } return mem+n; }
 void BYE_() { freedim();globalerror = 4; }
 void BREAK_() { globalerror = 3; }
 
@@ -212,14 +231,16 @@ int DROP_() { sp+=PCV; STEP; }
 void DIM_()
 {
 	int v=PCV, n=*sp++;
-	if (mode[v]==VARMODE_DIM && value[v]) free((Val*)value[v]);
+	if (n<0) { err((char*)"BAD DIM SIZE"); return; }
+	if (dim_alloc[v] && value[v]) free((Val*)value[v]);
+	dim_alloc[v]=0; value[v]=0;
 	Val *mem=(Val*)calloc(sizeof(Val),n+1);
 	if (!mem) { err((char*)"OUT OF MEMORY"); return; }
-	mem[0]=n; value[v]=(Val)mem; mode[v]=VARMODE_DIM;
+	mem[0]=n; value[v]=(Val)mem; mode[v]=VARMODE_DIM; dim_alloc[v]=1;
 }
-int LOADI_() { Val x=*sp++; x=*bound((Val*)value[PCV],x); *--sp=x; STEP; }
-int STOREI_() { Val x=*sp++, i=*sp++; *bound((Val*)value[PCV],i)=x; STEP; }
-int UBOUND_() { *--sp=*(Val*)value[PCV]; STEP; }
+int LOADI_() { int v=PCV; Val x=*sp++; if (!dim_alloc[v]) { err((char*)"NOT AN ARRAY"); return 0; } Val *p=bound((Val*)value[v],x); if (!p) return 0; *--sp=*p; STEP; }
+int STOREI_() { int v=PCV; Val x=*sp++, i=*sp++; if (!dim_alloc[v]) { err((char*)"NOT AN ARRAY"); return 0; } Val *p=bound((Val*)value[v],i); if (!p) return 0; *p=x; STEP; }
+int UBOUND_() { int v=PCV; if (!dim_alloc[v]) { err((char*)"NOT AN ARRAY"); return 0; } *--sp=*(Val*)value[v]; STEP; }
 
 int find(char *var) 
 {
@@ -340,7 +361,7 @@ void stmt()
 		if (!compile) bad((char*)"SUB MUST BE COMPILED");
 		compile++;										/* MUST BALANCE WITH END */
 		need(NAME), mode[cursub=var=tokv]=2; 			/* SUB NAME */
-		n=0; LIST(need(NAME); sub[var][n+++2]=tokv); 	/* PARAMS */
+		n=0; LIST(need(NAME); if (n<LOCS) { sub[var][n+2]=tokv; n++; } else bad((char*)"TOO MANY PARAMS")); 	/* PARAMS */
 		CSP_CHECK();
 		*--csp=cpc+1;									/* JUMP OVER CODE */
 		 inst(JMP_,0);
@@ -349,7 +370,7 @@ void stmt()
 		*--csp=var, *--csp=i;							/* FOR "END" CLAUSE */
 		break;
 	case LOCAL:
-		LIST(need(NAME); sub[cursub][sub[cursub][0]+++2]=tokv;);
+		LIST(need(NAME); if (sub[cursub][0]<LOCS) { sub[cursub][sub[cursub][0]+2]=tokv; sub[cursub][0]++; } else bad((char*)"TOO MANY LOCALS"););
 		break;
 	case RETURN:
 		if (temp) inst(DROP_, temp);
@@ -523,7 +544,7 @@ int interp(char* filen)
 			lnum++, ungot=0, stmt();	/* PARSE AND COMPILE */
 
 			//Handle Errors
-			if ((error=check_error(filen)) > -1) return error; 
+			if ((error=check_error(filen)) > -1) { if (file) { fclose(file); file = NULL; } return error; }
 
 			if (compile) continue;						/* CONTINUE COMPILING */
 			opc=pc, pc=prg+ipc;							/* START OF IMMEDIATE */
@@ -531,7 +552,7 @@ int interp(char* filen)
 			DRIVER();  									/* MOVE PROGRAM FORWARD */	
 
 			//Handle Errors
-			if ((error=check_error(filen)) > -1) return error; 
+			if ((error=check_error(filen)) > -1) { if (file) { fclose(file); file = NULL; } return error; }
 		}
 		printfnl(SOURCE_BASIC,"Compiled Size: %d Bytes\n", cpc * 4);
 		ipc=cpc+1, compile=0, filen=NULL; if (file) { fclose(file); file = NULL; } /* DONE COMPILING */
