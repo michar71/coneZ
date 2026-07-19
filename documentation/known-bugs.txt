@@ -474,10 +474,21 @@ OPEN (reported this round, not yet fixed)
     treats string values inconsistently (stab+offset for the format string vs
     a raw pointer for $ args), so it was deferred pending a closer look.
 
-#102 GPS/time cluster (gps.cpp/nmea.cpp): epoch can be anchored to a stale PPS
-    edge and run ahead; datetime_to_epoch_ms()==0 is stored unchecked (clock to
-    1970); GGA-before-RMC at UTC midnight steps the clock back a day; ntp_loop()
-    overwrites the epoch from the un-synced RTC. Reported, not yet fixed.
+#102 FIXED -- GPS/time cluster (gps.cpp, nmea.cpp). Four issues:
+    (a) the epoch anchor gated only on pps_count>0, so a module that stopped PPS
+        but kept emitting NMEA time from its RTC made get_epoch_ms() run ahead
+        without bound -- now also requires the PPS edge to be fresh (age <1.2s);
+    (b) datetime_to_epoch_ms()==0 was stored unchecked (clock jumped to 1970) --
+        now the anchor skips a zero result;
+    (c) the anchor fired on any position update, so a GGA's new-day time paired
+        with the previous RMC's date at UTC midnight and stepped back 24 h --
+        nmea.cpp now bumps a datetime_count only on an RMC that carries a
+        consistent date+time pair, and the anchor keys on that (never a GGA);
+    (d) both ntp_loop() variants overwrote the epoch from the system clock even
+        when SNTP had not synced this session -- since the ESP32 RTC survives
+        soft resets, a stale >2024 clock clobbered the beacon/GPS/compile epoch.
+        Now gated on ntp_last_sync!=0; unsynced, the display fields advance from
+        the free-running epoch without overwriting it.
 
 #103 getRoll() +180 offset contradicts the Z-up convention used by IMU
     calibration and the boot sanity check, so an upright cone reports tilt_x
@@ -488,3 +499,77 @@ OPEN (reported this round, not yet fixed)
 #104 Cue engine assumes effective start times are monotonic, so one spatially-
     offset cue stalls all later cues; cue_start() uses raw GPS with no
     fix-validity check. Reported, not yet fixed.
+
+#105 FIXED -- [HIGH] LUT double-free and TOCTOU heap overflow (util/lut.cpp,
+    util/lut.h). lut.h exported pLUT/lutSize/currentLUTIndex as raw globals
+    while lut_mutex was private, so BASIC's unlocked free(pLUT) raced
+    loadLut()'s locked free and WASM's pLUT[index]=value -- double-free /
+    use-after-free across BasicTask and WasmTask. The globals are now static;
+    all access goes through locked accessors (lut_read/lut_write/lut_get_size/
+    lut_current_index/lut_replace_from_array). loadLut()'s read loop is bounded
+    by i<size against a file that changed since checkLut()'s count.
+
+#106 FIXED -- [HIGH] Editor destroyed files longer than 512 lines on save
+    (console/editor.cpp). editor_load() now sets a load_truncated flag when the
+    file exceeds ED_MAX_LINES (or a PSRAM OOM cuts the load short), shows a
+    READ-ONLY status, and editor_save() refuses so the original isn't
+    overwritten with the truncated prefix.
+
+#107 FIXED -- [HIGH] Unbounded dir/grep recursion on the 8 KB ShellTask stack
+    (console/commands.cpp). dir_list/dir_max_name/grep_dir carried ~550 B of
+    path buffers per frame and recursed to filesystem depth. Added a
+    MAX_DIR_DEPTH (12) cap to all three.
+
+#108 deflate LZ match finder is inert (util/deflate.c). The current position is
+    inserted into the hash chain before the search and is also the probe-loop
+    sentinel, so find_match always returns 0 and every byte is emitted as a
+    literal -- valid gzip but ~2:1 instead of ~10-20:1. build_tree also
+    miscomputes max-bits oversubscription (invalid Huffman on the code-length
+    tree), and overlapping matches compare against stale/uninitialized dict
+    bytes.
+
+#109 Console/shell robustness (console/): telnet client slots are mutated from
+    the unlocked line_editor read path (can send to a reused fd); usb_write
+    blocks 10 ms under print_mutex when no USB host is attached; the file-log
+    sink does flash fprintf+fflush while holding print_mutex; the shell/editor
+    CSI parsers leak VT220/xterm function-key bytes into the line/file; Ctrl+D
+    farewell sends 5 of the 6-byte reset; telnet IAC/SE is lost across a recv
+    boundary; log_save/log_show read the ring without print_mutex (torn
+    entries).
+
+#110 CLI argument handling (console/commands.cpp): cmd_lora writes user values
+    into config before the driver validates them (bad RF settings persist on
+    the next save); dir silently caps a directory at 32 entries; cmd_deflate
+    treats a digit-leading output filename as the compression level; grep
+    truncates the pattern to 63 chars; cmd_game puts ~1.8 KB of grid arrays on
+    the ShellTask stack.
+
+#111 PSRAM raw transfers cross the LY68L6400 1 KB page boundary
+    (psram/psram.cpp). Chunks start at arbitrary offsets and are never split at
+    1 KB, so an odd 512-byte cache page straddles a boundary; if the chip wraps
+    the burst within the page the tail bytes hit wrong addresses -- silent
+    corruption the 64-byte-aligned self-test can't detect. CE# low time also
+    exceeds the chip's tCEM budget at full chunk size, and psram_free() on an
+    untracked heap-fallback address can double-free.
+
+#112 Sensor/alarm quality (sensors/): GSA fix-type/PDOP/VDOP are committed
+    before checksum validation; ADC error paths return 0 mV indistinguishable
+    from a real reading (feeds the low-battery alarm, no hysteresis);
+    mpu6500_calibrate() divides by a fixed N despite skipping failed reads; fix
+    loss with empty position fields relies only on the 10 s staleness timeout;
+    get_epoch_ms() elapsed math wraps if the anchor is >49.7 days old.
+
+#113 Config locking / web form (config.cpp, util/pm.cpp): config_save opens/
+    truncates /config.ini before taking the lock and has no temp+rename;
+    several struct writes skip CONFIG_LOCK; the web form can't clear a string
+    setting (empty values are discarded); pm.cpp s_lock_count is non-atomic.
+
+#114 Misc: node uptime and several effect timers (effects.cpp) wrap at ~49.7
+    days (uint32_t uptime_ms); EVENT_SYS_TIMER (basic_wrapper.cpp) uses 32-bit
+    long ms arithmetic; get_basic_param() accepts negative IDs (OOB read);
+    LUTTOARRAY overwrites the DIM array's size header; a BasicTask-creation
+    TOCTOU can spawn two interpreters; artnet_start() ignores xTaskCreate
+    failure; sunUpdateViaGPS() blanks sun data on a transient GPS drop;
+    checkLut() rejects a valid single-value file; cue_matches() group-mask
+    shifts by a config value that can reach 65535 (UB on int); the tracker web
+    UI infers GPS lock from satellite count with no hysteresis.

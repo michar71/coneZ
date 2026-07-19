@@ -230,6 +230,11 @@ static bool commit_sentence(nmea_data_t *d) {
             d->year = d->s_year;
             d->date_valid = true;
         }
+        // Bump only when this RMC carried BOTH a date and a time: they come from
+        // the same fix, so the epoch anchor can pair them safely. Anchoring off a
+        // GGA (time only, no date) pairs a new-day time with the previous day's
+        // date at UTC midnight and steps the clock back 24 h.
+        if (d->s_date_valid && d->s_time_valid) d->datetime_count++;
         return true;
 
     case NMEA_GGA:

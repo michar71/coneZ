@@ -28,6 +28,7 @@ struct EditorState {
     int scroll_x;                   // horizontal scroll offset
     bool modified;
     bool quit_pending;
+    bool load_truncated;            // file didn't fully fit -> saving would destroy the tail
     char filepath[64];
     char clipboard[ED_LINE_MAX];
     bool clipboard_valid;
@@ -175,21 +176,28 @@ static bool editor_load(EditorState *ed, const char *path)
 
     if (!ed_ensure_capacity(ed, 1)) return false;
 
+    ed->load_truncated = false;
+
     char fpath[128];
     lfs_path(fpath, sizeof(fpath), path);
     FILE *f = fopen(fpath, "r");
     if (f) {
         char buf[ED_LINE_MAX];
-        while (fgets(buf, sizeof(buf), f) && ed->num_lines < ED_MAX_LINES) {
+        while (ed->num_lines < ED_MAX_LINES && fgets(buf, sizeof(buf), f)) {
             int len = strlen(buf);
             // Strip trailing newline/CR
             while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
                 buf[--len] = '\0';
 
-            if (!ed_ensure_capacity(ed, ed->num_lines + 1)) break;
+            if (!ed_ensure_capacity(ed, ed->num_lines + 1)) { ed->load_truncated = true; break; }
             psram_write(ed_line_addr(ed, ed->num_lines), (const uint8_t *)buf, ED_LINE_MAX);
             ed->num_lines++;
         }
+        // If we stopped at the line cap but the file still has data, the buffer
+        // holds only a prefix -- saving now would overwrite the original with
+        // the truncated version. Mark it so editor_save() refuses.
+        if (!ed->load_truncated && ed->num_lines >= ED_MAX_LINES && fgetc(f) != EOF)
+            ed->load_truncated = true;
         fclose(f);
     }
 
@@ -208,13 +216,26 @@ static bool editor_load(EditorState *ed, const char *path)
     ed->modified = false;
     ed->quit_pending = false;
     ed->clipboard_valid = false;
-    ed->status_msg[0] = '\0';
+    if (ed->load_truncated)
+        snprintf(ed->status_msg, sizeof(ed->status_msg),
+                 "READ-ONLY: file over %d lines; save disabled", ED_MAX_LINES);
+    else
+        ed->status_msg[0] = '\0';
     return true;
 }
 
 static bool editor_save(EditorState *ed)
 {
     ed_flush_work(ed);
+
+    // The file was longer than the editor could hold, so the buffer is only a
+    // prefix. Refuse to save rather than overwrite the original with the
+    // truncated version and silently destroy the tail.
+    if (ed->load_truncated) {
+        snprintf(ed->status_msg, sizeof(ed->status_msg),
+                 "Save refused: file was truncated at %d lines on load", ED_MAX_LINES);
+        return false;
+    }
 
     // Write to a tmp file, then rename — so a crash or power-loss mid-save
     // can't leave the user with a truncated or empty original.
@@ -227,7 +248,10 @@ static bool editor_save(EditorState *ed)
     lfs_path(ftmp, sizeof(ftmp), tmp_rel);
 
     FILE *f = fopen(ftmp, "w");
-    if (!f) return false;
+    if (!f) {
+        snprintf(ed->status_msg, sizeof(ed->status_msg), "Save failed: can't open temp file");
+        return false;
+    }
 
     char buf[ED_LINE_MAX];
     for (int i = 0; i < ed->num_lines; i++) {
@@ -236,16 +260,19 @@ static bool editor_save(EditorState *ed)
         if (fputs(buf, f) < 0 || fputc('\n', f) == EOF) {
             fclose(f);
             unlink(ftmp);
+            snprintf(ed->status_msg, sizeof(ed->status_msg), "Save failed: write error (disk full?)");
             return false;
         }
     }
     if (fflush(f) != 0 || fclose(f) != 0) {
         unlink(ftmp);
+        snprintf(ed->status_msg, sizeof(ed->status_msg), "Save failed: flush/close error");
         return false;
     }
 
     if (rename(ftmp, fpath) != 0) {
         unlink(ftmp);
+        snprintf(ed->status_msg, sizeof(ed->status_msg), "Save failed: rename error");
         return false;
     }
 
@@ -809,7 +836,8 @@ static int line_editor(EditorState *ed)
                 modified = false;
                 printfnl(SOURCE_NONE, "Saved %d lines\n", ed->num_lines);
             } else {
-                printfnl(SOURCE_NONE, "Save FAILED\n");
+                printfnl(SOURCE_NONE, "%s\n",
+                         ed->status_msg[0] ? ed->status_msg : "Save FAILED");
             }
             continue;
         }
@@ -1192,9 +1220,8 @@ int cmd_edit(int argc, char **argv)
                     ed.cx = ed_line_len(&ed, ed.cy);
                     break;
 
-                case 0x17:  // Ctrl-W — Save
-                    if (!editor_save(&ed))
-                        snprintf(ed.status_msg, sizeof(ed.status_msg), "Save FAILED");
+                case 0x17:  // Ctrl-W — Save (editor_save sets status_msg with the reason)
+                    editor_save(&ed);
                     break;
 
                 case 0x03:  // Ctrl-C — Quit

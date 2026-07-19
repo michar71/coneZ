@@ -120,6 +120,7 @@ static volatile bool     pps_edge_flag = false; // rising-edge flag, clear-on-re
 static nmea_data_t nmea;
 static uint32_t nmea_last_update_ms = 0;     // uptime_ms() at last location commit
 static uint32_t nmea_last_update_count = 0;  // tracks nmea.update_count
+static uint32_t nmea_last_datetime_count = 0; // tracks nmea.datetime_count (epoch anchor)
 
 #define GPS_UART     UART_NUM_0
 #define GPS_UART_BUF 256
@@ -279,19 +280,6 @@ int gps_loop()
                 gps_minute = nmea.minute;
                 gps_second = nmea.second;
 
-                // Compute epoch from NMEA time and anchor to last PPS edge
-                if (pps_count > 0 && nmea.date_valid && nmea.time_valid) {
-                    uint64_t ep = datetime_to_epoch_ms(gps_year, gps_month, gps_day,
-                                                        gps_hour, gps_minute, gps_second);
-                    uint32_t pm = pps_millis;  // snapshot atomic 32-bit read
-                    portENTER_CRITICAL(&time_mux);
-                    epoch_at_pps = ep;
-                    millis_at_pps = pm;
-                    epoch_valid = true;
-                    time_source = 2;  // GPS+PPS — highest priority
-                    portEXIT_CRITICAL(&time_mux);
-                }
-
                 int date_raw = nmea.date_valid ? nmea.day * 10000 + nmea.month * 100 + (nmea.year % 100) : -1;
                 int time_raw = nmea.time_valid ? nmea.hour * 10000 + nmea.minute * 100 + nmea.second : -1;
                 printfnl( SOURCE_GPS, "GPS updated: valid=%u  lat=%0.6f  lon=%0.6f  alt=%dm  date=%d  time=%d\n",
@@ -301,6 +289,31 @@ int gps_loop()
                     (int)gps_alt,
                     date_raw,
                     time_raw );
+            }
+
+            // Anchor the epoch. Gate on datetime_count (a fresh RMC carrying a
+            // consistent date+time pair, not a GGA), and on PPS freshness -- a
+            // module that stops PPS but keeps emitting NMEA time from its RTC
+            // would otherwise make get_epoch_ms() run ahead without bound.
+            if (nmea.datetime_count != nmea_last_datetime_count)
+            {
+                nmea_last_datetime_count = nmea.datetime_count;
+                uint32_t pps_age = uptime_ms() - pps_millis;
+                if (pps_count > 0 && pps_age < 1200)
+                {
+                    uint64_t ep = datetime_to_epoch_ms(nmea.year, nmea.month, nmea.day,
+                                                       nmea.hour, nmea.minute, nmea.second);
+                    if (ep != 0)   // reject a checksum-passing but out-of-range datetime
+                    {
+                        uint32_t pm = pps_millis;  // snapshot atomic 32-bit read
+                        portENTER_CRITICAL(&time_mux);
+                        epoch_at_pps = ep;
+                        millis_at_pps = pm;
+                        epoch_valid = true;
+                        time_source = 2;  // GPS+PPS — highest priority
+                        portEXIT_CRITICAL(&time_mux);
+                    }
+                }
             }
         }
     }
@@ -587,9 +600,13 @@ void ntp_loop(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    // ESP32 SNTP sets the system clock; check if it's been set (> year 2024)
-    if (tv.tv_sec < 1704067200L) {
-        // NTP not available — keep time fields advancing from free-running epoch
+    // Only discipline the epoch from the system clock if SNTP actually synced
+    // THIS session. The ESP32 RTC survives soft resets, so a >2024 system clock
+    // can be a stale value from a previous boot -- overwriting the GPS/beacon/
+    // compile epoch with it desyncs the cone. ntp_sync_cb() sets ntp_last_sync.
+    if (ntp_last_sync == 0 || tv.tv_sec < 1704067200L) {
+        // NTP not synced this session — advance the display fields from the
+        // free-running epoch without overwriting it.
         if (epoch_valid) {
             uint64_t ep = get_epoch_ms();
             time_t t = (time_t)(ep / 1000);
@@ -765,8 +782,26 @@ void ntp_loop(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
 
-    // ESP32 SNTP sets the system clock; check if it's been set (> year 2024)
-    if (tv.tv_sec < 1704067200L) return;  // 2024-01-01 00:00:00 UTC
+    // Only trust the system clock if SNTP synced THIS session. A >2024 clock can
+    // be RTC-retained-stale from a previous boot; overwriting the beacon/compile
+    // epoch with it desyncs the cone. ntp_sync_cb() sets ntp_last_sync.
+    if (ntp_last_sync == 0 || tv.tv_sec < 1704067200L) {
+        // Not synced this session — advance the display fields from the
+        // free-running epoch (beacon/compile) without overwriting it.
+        if (epoch_valid) {
+            uint64_t fep = get_epoch_ms();
+            time_t ft = (time_t)(fep / 1000);
+            struct tm ftm;
+            gmtime_r(&ft, &ftm);
+            gps_year   = ftm.tm_year + 1900;
+            gps_month  = ftm.tm_mon + 1;
+            gps_day    = ftm.tm_mday;
+            gps_hour   = ftm.tm_hour;
+            gps_minute = ftm.tm_min;
+            gps_second = ftm.tm_sec;
+        }
+        return;
+    }
 
     uint64_t ep = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000);
     uint32_t now_m = uptime_ms();
@@ -775,8 +810,7 @@ void ntp_loop(void)
     epoch_at_pps = ep;
     millis_at_pps = now_m;
     epoch_valid = true;
-    // Don't promote time_source here — only ntp_sync_cb() should set it to 1.
-    // The system clock may be valid from RTC retention across soft resets.
+    // time_source promotion stays with ntp_sync_cb() only.
     portEXIT_CRITICAL(&time_mux);
 
     // Populate date/time volatiles so existing getters work

@@ -138,6 +138,11 @@ static const char *tz_label(int tz_hours);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
+// Cap recursion depth: each frame carries ~450-550 B of path buffers, and the
+// ShellTask stack is only 8 KB, so an unbounded mkdir-deep tree would overflow
+// it. 12 levels is far beyond any real layout on this filesystem.
+#define MAX_DIR_DEPTH 12
+
 static void dir_list(const char *dirname, int indent,
                      ConezStream *out, bool showTime, int nameWidth,
                      int *fileCount, int *dirCount, uint32_t *totalSize,
@@ -187,8 +192,12 @@ static void dir_list(const char *dirname, int indent,
             snprintf(subpath, sizeof(subpath), "%s%s%s",
                      dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
                      e->name);
-            dir_list(subpath, indent + 2, out, showTime, nameWidth,
-                     fileCount, dirCount, totalSize);
+            // indent encodes depth (2 per level); stop descending at the cap.
+            if (indent < 2 * MAX_DIR_DEPTH)
+                dir_list(subpath, indent + 2, out, showTime, nameWidth,
+                         fileCount, dirCount, totalSize);
+            else
+                out->printf("%*s  ...(max depth %d reached)\n", indent, "", MAX_DIR_DEPTH);
         } else {
             *totalSize += e->size;
             (*fileCount)++;
@@ -215,7 +224,7 @@ static void dir_list(const char *dirname, int indent,
 // Pre-scan to find longest filename at any level
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-static void dir_max_name(const char *dirname, int *maxLen)
+static void dir_max_name(const char *dirname, int *maxLen, int depth = 0)
 {
     char dpath[128];
     lfs_path(dpath, sizeof(dpath), dirname);
@@ -229,12 +238,12 @@ static void dir_max_name(const char *dirname, int *maxLen)
         char fullpath[192];
         snprintf(fullpath, sizeof(fullpath), "%s/%s", dpath, ent->d_name);
         struct stat st;
-        if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode)) {
+        if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode) && depth < MAX_DIR_DEPTH) {
             char subpath[128];
             snprintf(subpath, sizeof(subpath), "%s%s%s",
                      dirname, (dirname[strlen(dirname)-1] == '/') ? "" : "/",
                      ent->d_name);
-            dir_max_name(subpath, maxLen);
+            dir_max_name(subpath, maxLen, depth + 1);
         }
     }
     closedir(dir);
@@ -651,7 +660,7 @@ static void grep_file(const char *pattern, const char *path, bool show_filename)
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-static void grep_dir(const char *pattern, const char *dirname)
+static void grep_dir(const char *pattern, const char *dirname, int depth = 0)
 {
     char dpath[128];
     lfs_path(dpath, sizeof(dpath), dirname);
@@ -671,7 +680,8 @@ static void grep_dir(const char *pattern, const char *dirname)
         struct stat st;
         if (stat(fullpath, &st) != 0) continue;
         if (S_ISDIR(st.st_mode)) {
-            grep_dir(pattern, apppath);
+            if (depth < MAX_DIR_DEPTH)
+                grep_dir(pattern, apppath, depth + 1);
         } else {
             grep_file(pattern, apppath, true);
         }

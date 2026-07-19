@@ -81,15 +81,16 @@ m3ApiRawFunction(m3_lut_get)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, index);
-    if (!pLUT || index < 0 || index >= lutSize) m3ApiReturn(0);
-    m3ApiReturn(pLUT[index]);
+    int v = 0;
+    lut_read(index, &v);   // leaves v=0 if no LUT / out of range
+    m3ApiReturn(v);
 }
 
 // i32 lut_size() -> current LUT size
 m3ApiRawFunction(m3_lut_size)
 {
     m3ApiReturnType(int32_t);
-    m3ApiReturn(lutSize);
+    m3ApiReturn(lut_get_size());
 }
 
 // void lut_set(i32 index, i32 value) — bounds-checked
@@ -97,9 +98,7 @@ m3ApiRawFunction(m3_lut_set)
 {
     m3ApiGetArg(int32_t, index);
     m3ApiGetArg(int32_t, value);
-    if (pLUT && index >= 0 && index < lutSize) {
-        pLUT[index] = value;
-    }
+    lut_write(index, value);
     m3ApiSuccess();
 }
 

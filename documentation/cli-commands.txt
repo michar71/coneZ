@@ -398,6 +398,10 @@ edit {filename}
   s(ubstitute) old new, w(rite), q(uit).
   Example: edit /startup.bas
 
+  Note: the editor holds up to 512 lines. A file longer than that opens
+  READ-ONLY and saving is disabled, so the tail can't be lost by
+  overwriting the original with the truncated buffer.
+
 gpio
   With no arguments, shows all GPIO pin states (direction and level).
   Only shows pins valid for the current board.
@@ -420,7 +424,8 @@ grep {pattern} [file]
   searches that file and shows matching lines with line numbers. Without
   a filename, searches all files on LittleFS recursively and prefixes
   matches with the file path. The file argument supports wildcards
-  (* and ?) to search multiple files.
+  (* and ?) to search multiple files. Recursive search (and "dir")
+  descend at most 12 directory levels.
   Examples: grep PRINT /test.bas
             grep TODO
             grep TODO *.bas

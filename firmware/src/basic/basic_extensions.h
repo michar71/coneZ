@@ -478,17 +478,18 @@ int LUT_()
         bad((char*)"LUT: NEGATIVE INDEX");
         return 0;
     }
-    if (pLUT == NULL || currentLUTIndex < 0)
+    if (lut_current_index() < 0)
     {
         bad((char*)"LUT: NO LUT LOADED");
         return 0; //No LUT loaded
     }
-    if (val >= lutSize)
+    int lval;
+    if (!lut_read(val, &lval))
     {
         bad((char*)"LUT: INDEX OUT OF BOUNDS");
         return 0; //Index out of bounds
     }
-    *sp = pLUT[val]; //Push the value from the LUT to the stack
+    *sp = lval; //Push the value from the LUT to the stack
     STEP;
 }
 
@@ -539,19 +540,22 @@ int LUTTOARRAY_()
         return 0;
     }
 
-    if (pLUT == NULL || currentLUTIndex < 0)
+    if (lut_current_index() < 0)
     {
         bad((char*)"LUTTOARRAY: NO LUT LOADED");
         return 0; //No LUT loaded
     }
 
-    //Copy LUT to array
-    int size = lutSize < arr[0] ? lutSize : arr[0]; //Limit to array size
+    //Copy LUT to array (each read is bounds-checked under the LUT lock)
+    int lsize = lut_get_size();
+    int size = lsize < (int)arr[0] ? lsize : (int)arr[0]; //Limit to array size
     for (int ii=1; ii<=size; ii++)
     {
-        arr[ii] = pLUT[ii-1]; //Copy LUT value to array
+        int v = 0;
+        lut_read(ii-1, &v);
+        arr[ii] = v; //Copy LUT value to array
     }
-    
+
     arr[0] = size; //Set the first element to the size of the LUT
 
     *sp = 0; //Push 0 to the stack
@@ -568,27 +572,34 @@ int ARRAYTOLUT_()
         return 0;
     }
 
-    if (pLUT != NULL)
-        free(pLUT); 
+    int count = (int)arr[0];
+    if (count <= 0)
+    {
+        bad((char*)"ARRAYTOLUT: EMPTY ARRAY");
+        return 0;
+    }
 
-    pLUT = (int*)calloc(arr[0], sizeof(int)); //Allocate memory for LUT
-    if (pLUT == NULL)
+    // Marshal the DIM (Val) elements into an int buffer, then hand it to the LUT
+    // module which does the free/alloc/copy under lut_mutex. Doing the free +
+    // realloc here (unlocked) is what raced loadLut()/lutReset().
+    int *tmp = (int*)malloc((size_t)count * sizeof(int));
+    if (!tmp)
+    {
+        bad((char*)"ARRAYTOLUT: MEMORY ALLOCATION FAILED");
+        return 0;
+    }
+    for (int ii = 0; ii < count; ii++)
+        tmp[ii] = (int)arr[ii+1];
+    int n = lut_replace_from_array(tmp, count);
+    free(tmp);
+    if (n <= 0)
     {
         bad((char*)"ARRAYTOLUT: MEMORY ALLOCATION FAILED");
         return 0; //Memory allocation failed
     }
-    lutSize = arr[0]; //Set the size of the LUT
-    currentLUTIndex = -1; //No index set yet
-    
-    //Copy array to LUT
-    int size = arr[0] < lutSize ? arr[0] : lutSize; //Limit to LUT size
-    for (int ii=1; ii<=size; ii++)
-    {
-        pLUT[ii-1] = arr[ii]; //Copy array value to LUT
-    }
 
     *sp = 0; //Push 0 to the stack to indicate success
-    STEP;    
+    STEP;
 }
 
 int LUTSIZE_()
@@ -600,9 +611,9 @@ int LUTSIZE_()
         return 0;
     }
     //If we have a LUT loaded just return the size of the current LUT
-    if (pLUT != NULL && currentLUTIndex == index)
+    if (lut_current_index() == index)
     {
-        *sp = lutSize; //If we already have the LUT loaded, return its size
+        *sp = lut_get_size(); //If we already have the LUT loaded, return its size
         STEP;
     }
 

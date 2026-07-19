@@ -4,9 +4,13 @@
 #include "freertos/semphr.h"
 #include "printManager.h"
 
-int* pLUT = NULL;
-int lutSize = 0;
-int currentLUTIndex = -1; //-1 means no LUT loaded
+// LUT state is private. All access is through the locked accessors below --
+// exporting these raw let BASIC (BasicTask) and WASM (WasmTask) read/write and
+// free/realloc pLUT without lut_mutex, racing loadLut()/lutReset() (double-free,
+// use-after-free).
+static int* pLUT = NULL;
+static int lutSize = 0;
+static int currentLUTIndex = -1; //-1 means no LUT loaded
 
 static SemaphoreHandle_t lut_mutex = NULL;
 
@@ -113,6 +117,10 @@ int loadLut(uint8_t index)
     {
         if (c == ',')
         {
+            // i < size guards against the file gaining commas between checkLut()'s
+            // count and this re-read (the lock is dropped in between, and file
+            // writers -- cp/HTTP upload -- take no LUT lock at all).
+            if (i >= size) break;
             valbuf[vi] = '\0';
             pLUT[i++] = atoi(valbuf);
             vi = 0;
@@ -184,4 +192,58 @@ void lutReset(void)
     lutSize = 0;
     currentLUTIndex = -1;
     lut_unlock();
+}
+
+// ---- Locked accessors (the only way external code may touch LUT state) ----
+
+bool lut_read(int index, int *out)
+{
+    if (!lut_lock()) return false;
+    bool ok = (pLUT != NULL && index >= 0 && index < lutSize);
+    if (ok && out) *out = pLUT[index];
+    lut_unlock();
+    return ok;
+}
+
+bool lut_write(int index, int value)
+{
+    if (!lut_lock()) return false;
+    bool ok = (pLUT != NULL && index >= 0 && index < lutSize);
+    if (ok) pLUT[index] = value;
+    lut_unlock();
+    return ok;
+}
+
+int lut_get_size(void)
+{
+    if (!lut_lock()) return 0;
+    int sz = lutSize;
+    lut_unlock();
+    return sz;
+}
+
+int lut_current_index(void)
+{
+    if (!lut_lock()) return -1;
+    int idx = currentLUTIndex;
+    lut_unlock();
+    return idx;
+}
+
+// Replace the in-memory LUT with `count` values (used by BASIC ARRAYTOLUT).
+// Frees the old buffer and clears currentLUTIndex under the lock so it can't
+// race a concurrent free/read. Returns the new size, or 0 on failure.
+int lut_replace_from_array(const int *vals, int count)
+{
+    if (count <= 0 || !vals) return 0;
+    if (!lut_lock()) return 0;
+    int *buf = (int*)calloc(count, sizeof(int));
+    if (!buf) { lut_unlock(); return 0; }
+    for (int i = 0; i < count; i++) buf[i] = vals[i];
+    if (pLUT != NULL) free(pLUT);
+    pLUT = buf;
+    lutSize = count;
+    currentLUTIndex = -1;
+    lut_unlock();
+    return count;
 }

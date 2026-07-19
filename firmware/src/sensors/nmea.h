@@ -32,6 +32,7 @@ typedef struct {
     bool time_valid;
     bool altitude_valid;
     uint32_t update_count;     // incremented on each valid location commit
+    uint32_t datetime_count;   // incremented when RMC commits a consistent date+time pair
 
     // --- Internal parser state ---
     char     term[NMEA_MAX_TERM]; // current term being accumulated
