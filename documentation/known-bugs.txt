@@ -587,13 +587,25 @@ OPEN (reported this round, not yet fixed)
     truncates the pattern to 63 chars; cmd_game puts ~1.8 KB of grid arrays on
     the ShellTask stack.
 
-#111 PSRAM raw transfers cross the LY68L6400 1 KB page boundary
-    (psram/psram.cpp). Chunks start at arbitrary offsets and are never split at
-    1 KB, so an odd 512-byte cache page straddles a boundary; if the chip wraps
-    the burst within the page the tail bytes hit wrong addresses -- silent
-    corruption the 64-byte-aligned self-test can't detect. CE# low time also
-    exceeds the chip's tCEM budget at full chunk size, and psram_free() on an
-    untracked heap-fallback address can double-free.
+#111 FIXED -- PSRAM raw-transfer / timing / free (psram/psram.cpp, ConeZ
+    improvised-PSRAM path). Three items:
+    (a) tCEM budget [reachable]: a data chunk was sized to fill the full ~8 us
+        max CE#-low time, but cs_low()/cmd.update sync/SPI2_WAIT hold CS# low
+        around the clocking, so the transaction overshoots tCEM and risks DRAM
+        refresh loss (bit decay) at temperature. Budget cut to 7 us (chunks
+        ~35->30 B), leaving margin; chunk size floored at 1.
+    (b) psram_free() double-free [reachable]: an untracked mapped (heap-fallback)
+        address was free()d directly, so a fallback handle freed twice -- or
+        freed after psram_free_all() released it -- was free()d again, corrupting
+        the heap. Now only frees addresses still in the fallback table (a rare
+        leak on table-full-at-alloc is the safe trade; PSRAM-range double-free
+        was already safe via the block lookup).
+    (c) 1 KB device-page crossing [defensive]: psram_raw_read/write now clamp
+        each SPI burst to the 1 KB boundary so the chip can't wrap the tail. The
+        cached path (the only raw-transfer user on ConeZ) was already safe --
+        512-aligned 512-byte pages sit within one 1 KB page and the last chunk
+        is len-truncated -- but this hardens the raw layer for the non-cached
+        path (PSRAM_CACHE_PAGES=0) and any future direct caller.
 
 #112 Sensor/alarm quality (sensors/): GSA fix-type/PDOP/VDOP are committed
     before checksum validation; ADC error paths return 0 mV indistinguishable

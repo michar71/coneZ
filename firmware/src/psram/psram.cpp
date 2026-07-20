@@ -90,6 +90,10 @@ static void psram_fb_free_all(void) {
 #define PSRAM_CMD_RESET      0x99
 #define PSRAM_CMD_READ_ID    0x9F
 
+// LY68L6400 wraps a read/write burst within this device page: a single SPI
+// transaction that crosses the boundary corrupts its tail. Bursts must not span it.
+#define PSRAM_DEVICE_PAGE    1024
+
 #define PSRAM_SPI_FREQ_DEFAULT  40000000  // 40 MHz boot default (exact APB/2 divider)
 #define PSRAM_SPI_FREQ_MAX      80000000  // ESP32-S3 FSPI bus max
 
@@ -243,12 +247,17 @@ static void psram_set_freq(uint32_t freq_hz) {
     psram_freq = psram_actual_freq(freq_hz);
     psram_fast_read = (psram_freq > 33000000);
     psram_read_overhead = psram_fast_read ? 5 : 4;
-    int bytes_per_cem = (psram_freq / 1000000) * 8 / 8;
+    // Bytes clockable within the LY68L6400's ~8 us max CE#-low time (tCEM), but
+    // budgeted for 7 us: cs_low(), the cmd.update sync and SPI2_WAIT spins hold
+    // CS# low around the actual clocking, so a full 8 us of data would overshoot
+    // tCEM and risk DRAM refresh loss (bit decay) at elevated temperature.
+    int bytes_per_cem = (psram_freq / 1000000) * 7 / 8;
     int read_data  = bytes_per_cem - psram_read_overhead;
     int write_data = bytes_per_cem - 4;
-    // Cap to FIFO size (64 bytes) — hardware cmd/addr/dummy phases are outside FIFO
-    psram_read_chunk  = (read_data  > 64) ? 64 : read_data;
-    psram_write_chunk = (write_data > 64) ? 64 : write_data;
+    // Cap to FIFO size (64 bytes) — hardware cmd/addr/dummy phases are outside
+    // FIFO — and floor at 1 so the raw-transfer loop always makes progress.
+    psram_read_chunk  = (read_data  > 64) ? 64 : (read_data  < 1 ? 1 : read_data);
+    psram_write_chunk = (write_data > 64) ? 64 : (write_data < 1 ? 1 : write_data);
     // SPI clock register is set by the caller (direct GPSPI2.clock.val write).
 }
 
@@ -400,9 +409,19 @@ static void psram_read_chunk_fn(uint32_t addr, uint8_t *buf, size_t len) {
 
 // ---- Internal bulk API (raw 0-based SPI addresses, loops over chunks) ----
 
+// Cap a chunk so one SPI burst never crosses a 1 KB device-page boundary.
+// The chunk size (e.g. 35 B) is unaligned, so even a 512-aligned cache-page
+// transfer lands a chunk astride the boundary (raw 1002 + 35 -> 1037); the chip
+// wraps within the page and the tail bytes hit page-start addresses.
+static inline size_t psram_clamp_page(uint32_t addr, size_t n) {
+    size_t to_end = PSRAM_DEVICE_PAGE - (addr & (PSRAM_DEVICE_PAGE - 1));
+    return (n > to_end) ? to_end : n;
+}
+
 static void psram_raw_read(uint32_t addr, uint8_t *buf, size_t len) {
     while (len > 0) {
         size_t n = (len > (size_t)psram_read_chunk) ? psram_read_chunk : len;
+        n = psram_clamp_page(addr, n);
         psram_read_chunk_fn(addr, buf, n);
         addr += n; buf += n; len -= n;
     }
@@ -411,6 +430,7 @@ static void psram_raw_read(uint32_t addr, uint8_t *buf, size_t len) {
 static void psram_raw_write(uint32_t addr, const uint8_t *buf, size_t len) {
     while (len > 0) {
         size_t n = (len > (size_t)psram_write_chunk) ? psram_write_chunk : len;
+        n = psram_clamp_page(addr, n);
         psram_write_chunk_fn(addr, buf, n);
         addr += n; buf += n; len -= n;
     }
@@ -666,8 +686,13 @@ void psram_free(uint32_t addr) {
     PSRAM_LOCK();
 
     if (IS_ADDRESS_MAPPED(addr)) {
-        if (!psram_fb_free(addr))
-            free((void *)addr);  // not tracked (table was full), free directly
+        // Only free addresses still in the fallback table. An untracked address
+        // here is either never-tracked (the table was full at alloc -- rare,
+        // since PSRAM must also be exhausted) or already freed; calling free()
+        // on it directly would double-free / corrupt the heap (e.g. a handle
+        // freed twice, or freed after psram_free_all() already released it).
+        // A rare leak is the safe trade.
+        psram_fb_free(addr);
         PSRAM_UNLOCK();
         return;
     }
