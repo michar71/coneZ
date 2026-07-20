@@ -1084,9 +1084,15 @@ int cmd_edit(int argc, char **argv)
         return 1;
     }
 
-    // Non-ANSI: use line editor fallback
+    // Non-ANSI: use line editor fallback. Suppress background output for the
+    // session (as the full-screen path does): line_editor reads without holding
+    // print_mutex, and those reads drive telnet checkClient() (slot close +
+    // accept/reuse). A concurrent printfnl -> telnet.write on another task would
+    // otherwise race the slot table and could send console bytes to a reused fd.
     if (!getAnsiEnabled()) {
+        setInteractive(true);
         int result = line_editor(&ed);
+        setInteractive(false);
         ed_free_blocks(&ed);
         return result;
     }
@@ -1128,6 +1134,7 @@ int cmd_edit(int argc, char **argv)
             // Escape sequence state machine
             if (escState == 1) {
                 if (c == '[') escState = 2;
+                else if (c == 'O') escState = 7;   // SS3 (F1-F4 etc.)
                 else escState = 0;
                 continue;
             }
@@ -1187,6 +1194,10 @@ int cmd_edit(int argc, char **argv)
                 continue;
             }
             if (escState == 4) {
+                // Multi-digit / multi-param CSI (e.g. ESC[15~ = F5). Consume all
+                // digits and ';' until the final byte, then ignore -- consuming
+                // only one byte left the trailing '~' to be inserted into the file.
+                if ((c >= '0' && c <= '9') || c == ';') continue;
                 escState = 0;
                 continue;
             }
@@ -1204,6 +1215,10 @@ int cmd_edit(int argc, char **argv)
                     ed.cy += ED_CONTENT_ROWS;
                     ed.quit_pending = false;
                 }
+                continue;
+            }
+            if (escState == 7) {   // SS3 (ESC O <byte>) — consume the final byte
+                escState = 0;
                 continue;
             }
 

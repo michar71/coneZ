@@ -2,6 +2,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "soc/usb_serial_jtag_struct.h"
 #include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -32,10 +33,35 @@ bool usb_connected(void)
     return c1 != c2;
 }
 
+// Cheap, no-delay link check. The host emits an SOF every 1 ms, so the frame
+// counter advances constantly while attached and freezes when detached. We
+// sample it (no busy-wait, unlike usb_connected()) each write and treat "SOF
+// changed within the last ~100 ms" as up. When it's down we write non-blocking
+// so a full TX ring can't stall the caller for the 10 ms timeout -- callers hold
+// print_mutex, so that stall otherwise throttles every task's console output.
+static uint32_t s_last_sof = 0;
+static uint32_t s_last_sof_change_ms = 0;
+static bool     s_link_up = false;
+
+static bool usb_link_up(void)
+{
+    uint32_t sof = USB_SERIAL_JTAG.fram_num.sof_frame_index;
+    uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    if (sof != s_last_sof) {
+        s_last_sof = sof;
+        s_last_sof_change_ms = now;
+        s_link_up = true;
+    } else if ((uint32_t)(now - s_last_sof_change_ms) > 100) {
+        s_link_up = false;   // no SOF for 100 ms -> no host attached
+    }
+    return s_link_up;
+}
+
 size_t usb_write(const uint8_t *buf, size_t len)
 {
     if (len == 0) return 0;
-    int n = usb_serial_jtag_write_bytes(buf, len, USB_WRITE_TIMEOUT_TICKS);
+    TickType_t timeout = usb_link_up() ? USB_WRITE_TIMEOUT_TICKS : 0;
+    int n = usb_serial_jtag_write_bytes(buf, len, timeout);
     return (n > 0) ? (size_t)n : 0;
 }
 

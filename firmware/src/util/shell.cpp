@@ -288,8 +288,9 @@ bool ConezShell::prepInput(void)
 
         // Escape sequence state machine
         if (escState == 1) {
-            if (c == '[') { escState = 2; }
-            else          { escState = 0; } // unknown escape, discard
+            if (c == '[')      { escState = 2; }          // CSI
+            else if (c == 'O') { escState = 6; }          // SS3 (F1-F4 etc.)
+            else               { escState = 0; }          // unknown 2-byte escape, discard
             releaseLock();
             continue;
         }
@@ -370,24 +371,35 @@ bool ConezShell::prepInput(void)
                     }
                     cursor = inptr;
                     break;
-                case '3': // Delete key (ESC[3~)
-                    escState = 3;
-                    break;
-                case '2': // Insert (ESC[2~) — ignore
-                case '5': // PgUp   (ESC[5~) — ignore
-                case '6': // PgDn   (ESC[6~) — ignore
-                    escState = 4;
-                    break;
-                default:  // unknown CSI sequence, discard
+                default:
+                    if (c >= '0' && c <= '9') {
+                        // Start of a numeric CSI parameter (ESC[<digits>~ etc.):
+                        // Home/End/Ins/Del/PgUp/PgDn and F5-F12. Collect the rest
+                        // in state 5 so multi-digit params (ESC[15~) don't leak
+                        // their trailing bytes into the command line.
+                        escParam = c - '0';
+                        escState = 5;
+                    }
+                    // else: unknown CSI final byte, discard
                     break;
             }
             releaseLock();
             continue;
         }
-        if (escState == 3) {
-            escState = 0;
-            if (c == '~') {
-                // Delete key: remove char at cursor
+        if (escState == 5) {
+            // Collecting a CSI numeric parameter until its final byte.
+            if (c >= '0' && c <= '9') {
+                escParam = escParam * 10 + (c - '0');
+                releaseLock();
+                continue;
+            }
+            if (c == ';') {   // multi-parameter (e.g. modified keys) — keep eating
+                releaseLock();
+                continue;
+            }
+            escState = 0;     // final byte
+            if (c == '~' && escParam == 3) {
+                // Delete key (ESC[3~): remove char at cursor
                 if (cursor < inptr) {
                     int prevLen = inptr;
                     memmove(&linebuffer[cursor], &linebuffer[cursor + 1], inptr - cursor - 1);
@@ -396,11 +408,13 @@ bool ConezShell::prepInput(void)
                     redrawLine(prevLen);
                 }
             }
+            // Home/End/Ins/PgUp/PgDn/F-keys — consumed, no action.
             releaseLock();
             continue;
         }
-        if (escState == 4) {
-            escState = 0;  // consume trailing ~ from Insert/PgUp/PgDn
+        if (escState == 6) {
+            // SS3 (ESC O <byte>): F1-F4 / keypad. Consume the final byte.
+            escState = 0;
             releaseLock();
             continue;
         }

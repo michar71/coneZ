@@ -266,8 +266,10 @@ int TelnetServer::read() {
                     break; // consume, continue inner loop
                 }
                 if (b == 0x04) {
-                    // Ctrl+D — disconnect this telnet session
-                    slot_send(slot, (const uint8_t *)"\r\n\033[0m", 5);
+                    // Ctrl+D — disconnect this telnet session. The farewell is
+                    // 6 bytes (\r \n ESC [ 0 m); sending 5 dropped the final 'm'
+                    // and left a dangling ESC[0 on the client.
+                    slot_send(slot, (const uint8_t *)"\r\n\033[0m", 6);
                     slot_close(slot);
                     break; // consume, try next slot
                 }
@@ -310,18 +312,34 @@ int TelnetServer::read() {
 
             case 3: // subnegotiation — consume until IAC SE
                 if (b == IAC) {
-                    uint8_t se;
-                    if (recv(slot.fd, &se, 1, MSG_DONTWAIT) == 1 && se == SE) {
-                        slot.iac_state = 0;
-                        slot.iac_sb_bytes = 0;
-                        break;
-                    }
+                    // Don't peek the next byte with a nested recv: if the SE is
+                    // in the next TCP segment that recv returns EAGAIN, the IAC
+                    // is lost and the SE is then swallowed as data, pinning us in
+                    // state 3 until TELNET_SB_MAX and eating real input. Track it
+                    // as its own state instead so IAC/SE can span recv calls.
+                    slot.iac_state = 4;
+                    break;
                 }
                 // Guard against a malformed subneg that never ends — a peer
                 // could otherwise pin us in this state indefinitely.
                 if (++slot.iac_sb_bytes > TELNET_SB_MAX) {
                     slot.iac_state = 0;
                     slot.iac_sb_bytes = 0;
+                }
+                break;
+
+            case 4: // subnegotiation, saw IAC — this byte decides
+                if (b == SE) {
+                    slot.iac_state = 0;      // IAC SE ends the subnegotiation
+                    slot.iac_sb_bytes = 0;
+                } else {
+                    // IAC IAC (literal 0xFF) or IAC <other> inside SB: stay in
+                    // the subnegotiation, still bounded by TELNET_SB_MAX.
+                    slot.iac_state = 3;
+                    if (++slot.iac_sb_bytes > TELNET_SB_MAX) {
+                        slot.iac_state = 0;
+                        slot.iac_sb_bytes = 0;
+                    }
                 }
                 break;
             }

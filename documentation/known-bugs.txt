@@ -557,14 +557,28 @@ OPEN (reported this round, not yet fixed)
     data now shrinks ~10-300x (e.g. 500 KB repeated text 287 KB -> 1.3 KB,
     a real source file 62% -> 29%) where it was ~58-62% before.
 
-#109 Console/shell robustness (console/): telnet client slots are mutated from
-    the unlocked line_editor read path (can send to a reused fd); usb_write
-    blocks 10 ms under print_mutex when no USB host is attached; the file-log
-    sink does flash fprintf+fflush while holding print_mutex; the shell/editor
-    CSI parsers leak VT220/xterm function-key bytes into the line/file; Ctrl+D
-    farewell sends 5 of the 6-byte reset; telnet IAC/SE is lost across a recv
-    boundary; log_save/log_show read the ring without print_mutex (torn
-    entries).
+#109 FIXED (5 of 7; 2 deferred) -- console/shell robustness (console/, util/).
+    Fixed: (a) usb_write blocked 10 ms under print_mutex when no USB host was
+    attached (full TX ring), throttling every task's console output -- now a
+    cheap no-delay SOF-frame-counter check falls back to a non-blocking write
+    when the link is down. (b) The shell AND full-screen editor CSI parsers
+    leaked VT220/xterm function-key bytes (ESC[15~, ESC O P) into the command
+    line / edited file -- both now collect the full parameter run and consume
+    SS3. (c) Ctrl+D telnet farewell sent 5 of the 6-byte "\r\n\033[0m" reset
+    (dropped the 'm') -- now 6. (d) Telnet IAC/SE split across a recv boundary
+    was lost (nested recv returned EAGAIN, SE then swallowed as data, pinning
+    the subneg state) -- added an explicit "saw IAC in SB" state so it spans
+    recv calls. (e) The color-off line_editor read without print_mutex while
+    driving telnet checkClient() (slot close/reuse), racing background
+    printfnl->telnet.write -- now wraps the session in setInteractive(true) to
+    suppress background output, matching the full-screen editor.
+    Deferred (lower impact / design trade-off): the file-log sink does
+    fprintf+fflush (flash) under print_mutex -- opt-in via `log to`, bounded
+    latency, and fflush-per-line is intentional for crash durability; moving it
+    out needs a dedicated log-file mutex to avoid the log_close UAF. And
+    log_save/log_show read the PSRAM ring without print_mutex (only torn
+    diagnostic output) -- deliberately unlocked to avoid holding print_mutex
+    across a full-ring dump.
 
 #110 CLI argument handling (console/commands.cpp): cmd_lora writes user values
     into config before the driver validates them (bad RF settings persist on
