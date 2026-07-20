@@ -534,13 +534,24 @@ OPEN (reported this round, not yet fixed)
     path buffers per frame and recursed to filesystem depth. Added a
     MAX_DIR_DEPTH (12) cap to all three.
 
-#108 deflate LZ match finder is inert (util/deflate.c). The current position is
-    inserted into the hash chain before the search and is also the probe-loop
-    sentinel, so find_match always returns 0 and every byte is emitted as a
-    literal -- valid gzip but ~2:1 instead of ~10-20:1. build_tree also
-    miscomputes max-bits oversubscription (invalid Huffman on the code-length
-    tree), and overlapping matches compare against stale/uninitialized dict
-    bytes.
+#108 FIXED -- deflate LZ match finder was inert (util/deflate.c). Three coupled
+    issues: (a) the current position was inserted as the hash-chain head before
+    the search, and that head is also find_match's "candidate != dict_pos" loop
+    sentinel, so the loop never ran, find_match always returned 0, and every
+    byte was emitted as a literal (valid gzip but Huffman-only, ~2:1). Now
+    find_match skips the just-inserted head (starts from NEXT). (b) Once matches
+    fire, overlapping matches (dist < len) compared the lookahead against dict
+    bytes at/after the write pointer that are stale -- now compared against the
+    lookahead itself (cur_buf[len-dist]). (c) build_tree's max-bits
+    oversubscription check computed a floored Kraft (repeated >>1) and missed
+    every 1 < Kraft < 2 case; worse, a naive "reduce below 2^max_bits" fix left
+    the lit/len tree INCOMPLETE (decoder rejects it). Replaced with the exact
+    zlib gen_bitlen redistribution that brings the code to exactly complete.
+    Verified with a host round-trip harness (PSRAM stub + gzip_buf) over
+    empty/tiny/overlap/text/random/500KB/Fibonacci-skew/self-source inputs at
+    all levels: every stream decompresses via system gunzip, and compressible
+    data now shrinks ~10-300x (e.g. 500 KB repeated text 287 KB -> 1.3 KB,
+    a real source file 62% -> 29%) where it was ~58-62% before.
 
 #109 Console/shell robustness (console/): telnet client slots are mutated from
     the unlocked line_editor read path (can send to a reused fd); usb_write

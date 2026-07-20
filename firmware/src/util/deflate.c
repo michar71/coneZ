@@ -350,25 +350,29 @@ static void build_tree(const uint16_t *freqs, uint8_t *lens, uint16_t *codes,
         for (int i = 0; i < n; i++)
             if (lens[i]) bl_count[lens[i]]++;
 
-        int overflow = 0;
-        for (int b = max_bits; b >= 1; b--) {
-            overflow += bl_count[b];
-            overflow >>= 1;
-        }
-        overflow -= 1;
+        /* Enforce the Kraft inequality *exactly*. Clamping natural depths to
+           max_bits leaves the code over-subscribed (sum 2^-len > 1); the old
+           check computed a floored Kraft via repeated >>1 and missed every
+           1 < Kraft < 2 case (e.g. bl_count[2]=3,[1]=1 -> Kraft 1.25 -> computed
+           overflow 0), emitting an invalid code. It must be brought to EXACTLY
+           complete (Kraft == 1): the lit/len and distance codes have to be
+           complete or the decoder rejects the block, so we can't just push the
+           scaled sum under 2^max_bits. Move leaves one tree level at a time
+           (zlib gen_bitlen style); each move reduces the scaled Kraft sum by
+           exactly 1, so `excess` counts the moves needed. */
+        uint32_t total = 0;
+        for (int b = 1; b <= max_bits; b++)
+            total += (uint32_t)bl_count[b] << (max_bits - b);
 
-        while (overflow > 0) {
-            int found = 0;
-            for (int b = max_bits - 1; b >= 1 && !found; b--) {
-                if (bl_count[b] > 0) {
-                    bl_count[b]--;
-                    bl_count[b + 1] += 2;
-                    bl_count[max_bits]--;
-                    overflow--;
-                    found = 1;
-                }
-            }
-            if (!found) break;
+        int excess = (int)total - (1 << max_bits);
+        while (excess > 0) {
+            int b = max_bits - 1;
+            while (b >= 1 && bl_count[b] == 0) b--;
+            if (b < 1) break;              /* nothing shallower to lengthen */
+            bl_count[b]--;
+            bl_count[b + 1] += 2;
+            bl_count[max_bits]--;
+            excess--;
         }
 
         int bits = max_bits;
@@ -623,25 +627,41 @@ static int find_match(conez_deflate_t *c, const uint8_t *cur_buf, int avail,
     int probes = c->max_probes;
     uint32_t dict_pos = cur_pos & c->dict_mask;
 
+    /* The caller inserts cur_pos as the chain head BEFORE calling us, so the
+       head is the current position itself. Skip it to search the previous
+       positions -- otherwise the "candidate != dict_pos" guard below fires
+       immediately, no match is ever found, and every byte is emitted as a
+       literal (compression effectively disabled). */
+    if (candidate == dict_pos)
+        candidate = NEXT_RD16(c, candidate);
+
     while (candidate != dict_pos && probes-- > 0) {
         int dist = (int)((dict_pos - candidate) & c->dict_mask);
         if (dist == 0 || (uint32_t)dist > c->src_pos || (uint32_t)dist > c->dict_size)
             break;
 
-        /* Bulk-read candidate bytes into DRAM for comparison */
+        /* Read only the candidate's already-written bytes. For an overlapping
+           match (dist < max_len) the dict bytes at offset >= dist are at/after
+           the current write position and are stale; for those we compare
+           against the lookahead itself (cur_buf[len - dist]), which is what the
+           decoder will reproduce. */
+        int copy_len = (dist < max_len) ? dist : max_len;
         uint8_t probe_buf[MAX_MATCH];
-        int read_len = max_len;
-        if ((uint32_t)candidate + read_len <= c->dict_size) {
-            DICT_READ(c, candidate, probe_buf, read_len);
+        if ((uint32_t)candidate + copy_len <= c->dict_size) {
+            DICT_READ(c, candidate, probe_buf, copy_len);
         } else {
             int first = (int)(c->dict_size - candidate);
             DICT_READ(c, candidate, probe_buf, first);
-            DICT_READ(c, 0, probe_buf + first, read_len - first);
+            DICT_READ(c, 0, probe_buf + first, copy_len - first);
         }
 
-        if (probe_buf[0] == cur_buf[0] && probe_buf[best_len] == cur_buf[best_len]) {
+        if (probe_buf[0] == cur_buf[0]) {
             int len = 0;
-            while (len < max_len && probe_buf[len] == cur_buf[len]) len++;
+            while (len < max_len) {
+                uint8_t ref = (len < dist) ? probe_buf[len] : cur_buf[len - dist];
+                if (ref != cur_buf[len]) break;
+                len++;
+            }
             if (len > best_len) {
                 best_len = len;
                 best_dist = dist;
