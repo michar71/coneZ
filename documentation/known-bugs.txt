@@ -490,15 +490,29 @@ OPEN (reported this round, not yet fixed)
         Now gated on ntp_last_sync!=0; unsynced, the display fields advance from
         the free-running epoch without overwriting it.
 
-#103 getRoll() +180 offset contradicts the Z-up convention used by IMU
-    calibration and the boot sanity check, so an upright cone reports tilt_x
-    ~ +/-180 and raises a permanent TILT alarm. MPU6500 I2C read failure also
-    keeps stale accel silently (frozen tilt feeds the alarm). Reported, not
-    yet fixed.
+#103 FIXED (partly a mis-diagnosis) -- IMU tilt handling (sensors.cpp,
+    mpu6500.cpp). CORRECTION: the original report claimed getRoll()'s +180
+    offset was wrong and caused a permanent tilt alarm on every cone. That was
+    based on a wrong assumption -- the PCB is mounted UPSIDE DOWN, so upright
+    reads az = -1 g and the +180 is CORRECT (upright -> 0 deg). getRoll/getPitch
+    were left as-is. The real, orientation-independent fixes: (a) the boot
+    sanity check "in space" test now uses fabs(v_accZ) (works either way up);
+    (b) mpu6500_calibrate() divides by the number of SUCCESSFUL samples (not a
+    fixed 50) and targets +/-1 g on Z by the sign it actually reads, so running
+    MPU_Calibrate on the upside-down device no longer flips the axis and creates
+    the alarm; (c) mpu6500_read() returns success and sensors_loop() logs a
+    sustained I2C failure instead of silently holding stale data (IMU is left
+    uncalibrated in the field, so the calibration path was latent).
 
-#104 Cue engine assumes effective start times are monotonic, so one spatially-
-    offset cue stalls all later cues; cue_start() uses raw GPS with no
-    fix-validity check. Reported, not yet fixed.
+#104 FIXED -- Cue engine ordering + fix-validity (cue.cpp; mirrored in the
+    simulator's cue_engine.cpp). The loop advanced a single monotonic cursor and
+    broke at the first not-yet-due cue, but spatial offsets make effective start
+    times non-monotonic, so one offset cue stalled every later cue. Replaced the
+    cursor with a per-cue "fired" flag and a precomputed effective-start (offset
+    is fixed for the run), scanning all cues each tick. cue_start() also gates
+    spatial timing on a real GPS fix (get_gpsstatus()); with no fix it falls
+    back to base start times instead of computing continent-scale offsets that
+    would leave the cone dark.
 
 #105 FIXED -- [HIGH] LUT double-free and TOCTOU heap overflow (util/lut.cpp,
     util/lut.h). lut.h exported pLUT/lutSize/currentLUTIndex as raw globals

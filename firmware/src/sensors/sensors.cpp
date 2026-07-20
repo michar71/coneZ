@@ -72,7 +72,9 @@ void sensors_setup(void)
 
     usb_printf("TMP102 Temperature: %.2f C\n", temperature);
     usb_printf("MPU6500 Acceleration - X: %.2f, Y: %.2f, Z: %.2f\n", v_accX, v_accY, v_accZ);
-    if (v_accZ < 0.5) {
+    // Upright is ~1 G on Z in EITHER direction (the PCB is mounted upside down),
+    // so test the magnitude, not the sign.
+    if (fabs(v_accZ) < 0.5) {
         usb_printf("Looks like we are in space, not on earth...\n");
     } else {
         usb_printf("Seems we are on earth and upright, not in space...\n");
@@ -87,15 +89,31 @@ void sensors_loop(void)
 
     // Read accelerometer data from MPU6500
     if (IMU_available) {
-        mpu6500_read();
-        mpu_vec3_t acc = mpu6500_accel();
-        mpu_temp = mpu6500_temp();
-        resultantG = sqrtf(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+        static uint32_t imu_fail_count = 0;
+        static bool imu_reported_down = false;
+        if (mpu6500_read()) {
+            if (imu_reported_down) {
+                printfnl(SOURCE_SENSORS, "MPU6500 responding again\n");
+                imu_reported_down = false;
+            }
+            imu_fail_count = 0;
 
-        // Cache volatile copies for cross-core reads
-        v_accX = acc.x;
-        v_accY = acc.y;
-        v_accZ = acc.z;
+            mpu_vec3_t acc = mpu6500_accel();
+            mpu_temp = mpu6500_temp();
+            resultantG = sqrtf(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+
+            // Cache volatile copies for cross-core reads
+            v_accX = acc.x;
+            v_accY = acc.y;
+            v_accZ = acc.z;
+        } else {
+            // Read failed: keep the last-good values (don't fabricate a reading),
+            // but surface a sustained failure so a wedged I2C bus isn't silent.
+            if (++imu_fail_count == 20 && !imu_reported_down) {
+                printfnl(SOURCE_SENSORS, "MPU6500 not responding — tilt data is stale\n");
+                imu_reported_down = true;
+            }
+        }
     }
 
     //Read ADC's

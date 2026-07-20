@@ -92,8 +92,13 @@ The uint16_t fields land on 2-byte-aligned offsets. No padding is
 wasted — the struct is naturally aligned at 64 bytes and safe for
 direct access on Xtensa (ESP32-S3) without packed tricks.
 
-The engine keeps a cursor into the sorted cue list and advances it as
-elapsed time progresses.
+Each tick the engine fires every cue whose effective start time has
+arrived and that hasn't fired yet, tracked with a per-cue "fired" flag.
+(A single monotonic cursor does NOT work: the spatial offset makes
+effective start times non-monotonic across the list, so one cue with a
+large offset would otherwise block every cue after it.) Effective start
+times are precomputed at "cue start" since the per-cone offset is fixed
+for the run.
 
 
 Cue Types
@@ -248,6 +253,12 @@ Example spatial_delay values:
 
 No inter-cone communication needed. Every cone independently computes
 the same timing from its own GPS position.
+
+Spatial timing requires a GPS fix. If a cone has no fix when "cue start"
+runs, spatial offsets are disabled (treated as 0) and it fires cues at
+their base start_ms — otherwise its position reads 0,0 and the
+continent-scale distance to origin would push every spatial cue far into
+the future, leaving the cone dark.
 
 Duration note: spatially-offset cues keep their full duration, so the
 wave effect ripples through both start and end. The show designer must

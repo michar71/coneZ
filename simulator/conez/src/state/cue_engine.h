@@ -96,7 +96,7 @@ public:
     bool isPlaying() const { return m_playing.load(); }
     qint64 elapsedMs() const;
     int cueCount() const { return (int)m_cues.size(); }
-    int cueCursor() const { return m_cursor; }
+    int cueFiredCount() const { return m_firedCount; }
     QString loadedFile() const { return m_loadedFile; }
 
     void setOutputCallback(std::function<void(const QString&)> cb) { m_output = cb; }
@@ -111,7 +111,13 @@ private:
     void output(const QString &msg);
 
     std::vector<cue_entry> m_cues;
-    int m_cursor = 0;
+    // Per-cue runtime state parallel to m_cues: precomputed effective start
+    // (base + spatial offset) and whether it fired. A fired flag rather than a
+    // single cursor is required because spatial offsets make effective start
+    // times non-monotonic -- one offset cue must not block later cues.
+    struct CueRt { int64_t effStart; bool fired; };
+    std::vector<CueRt> m_rt;
+    int m_firedCount = 0;
     std::atomic<bool> m_playing{false};
     std::atomic<qint64> m_startEpochMs{0};
 

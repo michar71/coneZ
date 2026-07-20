@@ -16,10 +16,18 @@
 static SemaphoreHandle_t cue_mutex = nullptr;  // protects cue_list/count/cursor/playing
 
 static cue_entry *cue_list = nullptr;
+
+// Per-cue runtime state, parallel to cue_list: the effective start time for
+// THIS cone (base start + spatial offset, precomputed at cue_start since the
+// offset is fixed during playback) and whether the cue has already fired.
+struct cue_rt { int64_t eff_start; uint8_t fired; };
+static cue_rt *cue_rt_arr = nullptr;
+
 static int   cue_count   = 0;
-static int   cue_cursor  = 0;       // next cue index to evaluate
+static int   cue_fired_count = 0;   // cues fired this run (progress + completion)
 static uint64_t music_start_ms = 0; // epoch ms when music started
 static bool  playing = false;
+static bool  spatial_enabled = false; // false when no GPS fix -> spatial offsets forced to 0
 
 // Precomputed cone position in meter-space
 static float my_x = 0, my_y = 0;
@@ -48,6 +56,7 @@ static bool cue_matches(uint16_t group)
 // Compute per-cone spatial time offset in milliseconds.
 static int32_t compute_spatial_offset(const cue_entry *cue)
 {
+    if (!spatial_enabled) return 0;   // no GPS fix -> no per-cone spatial timing
     if (cue->spatial_mode == SPATIAL_NONE) return 0;
 
     float ox, oy;   // effective origin in meter-space
@@ -153,8 +162,9 @@ void cue_setup(void)
 {
     if (!cue_mutex) cue_mutex = xSemaphoreCreateMutex();
     cue_list   = nullptr;
+    cue_rt_arr = nullptr;
     cue_count  = 0;
-    cue_cursor = 0;
+    cue_fired_count = 0;
     playing    = false;
 }
 
@@ -164,7 +174,7 @@ void cue_loop(void)
     if (!playing) return;
     if (xSemaphoreTake(cue_mutex, 0) != pdTRUE) return;  // non-blocking
 
-    if (!playing || !cue_list) {
+    if (!playing || !cue_list || !cue_rt_arr) {
         xSemaphoreGive(cue_mutex);
         return;
     }
@@ -176,29 +186,22 @@ void cue_loop(void)
     // 64-bit elapsed avoids the ~49-day wrap of uint32_t.
     uint64_t elapsed_ms = (now_ms > music_start_ms) ? (now_ms - music_start_ms) : 0;
 
-    // Walk cue list from cursor forward
-    while (cue_cursor < cue_count) {
-        cue_entry *cue = &cue_list[cue_cursor];
+    // Fire every cue whose (precomputed) effective start has arrived and that
+    // hasn't fired yet. A per-cue fired flag rather than a single monotonic
+    // cursor is required: spatial offsets make effective start times
+    // non-monotonic, so one cue with a large offset must not block later cues.
+    for (int i = 0; i < cue_count; i++) {
+        if (cue_rt_arr[i].fired) continue;
+        if ((uint64_t)cue_rt_arr[i].eff_start > elapsed_ms) continue;  // not yet — keep scanning
 
-        // Compute this cone's effective start time including spatial offset
-        int32_t spatial_off = compute_spatial_offset(cue);
-        int64_t effective_start = (int64_t)cue->start_ms + spatial_off;
-        if (effective_start < 0) effective_start = 0;
-
-        // Not yet time for this cue?
-        if ((uint64_t)effective_start > elapsed_ms)
-            break;
-
-        // Check group targeting
-        if (cue_matches(cue->group)) {
-            dispatch_cue(cue);
-        }
-
-        cue_cursor++;
+        if (cue_matches(cue_list[i].group))
+            dispatch_cue(&cue_list[i]);
+        cue_rt_arr[i].fired = 1;
+        cue_fired_count++;
     }
 
-    // If we've exhausted all cues, stop playback
-    if (cue_cursor >= cue_count) {
+    // Once every cue has fired, stop playback
+    if (cue_fired_count >= cue_count) {
         playing = false;
         printfnl(SOURCE_SYSTEM, "cue: playback complete (%d cues)\n", cue_count);
     }
@@ -255,10 +258,17 @@ bool cue_load(const char *path)
         return false;
     }
 
-    // Allocate cue array
+    // Allocate cue array + parallel runtime-state array
     cue_entry *new_list = new (std::nothrow) cue_entry[hdr.num_cues];
     if (!new_list) {
         printfnl(SOURCE_SYSTEM, "cue: alloc failed for %d cues\n", hdr.num_cues);
+        fclose(f);
+        return false;
+    }
+    cue_rt *new_rt = new (std::nothrow) cue_rt[hdr.num_cues]();  // zero-init (fired=0)
+    if (!new_rt) {
+        printfnl(SOURCE_SYSTEM, "cue: alloc failed for %d cues\n", hdr.num_cues);
+        delete[] new_list;
         fclose(f);
         return false;
     }
@@ -269,6 +279,7 @@ bool cue_load(const char *path)
         if (fread(&new_list[i], 1, sizeof(cue_entry), f) != sizeof(cue_entry)) {
             printfnl(SOURCE_SYSTEM, "cue: read failed at entry %d\n", i);
             delete[] new_list;
+            delete[] new_rt;
             fclose(f);
             return false;
         }
@@ -280,16 +291,19 @@ bool cue_load(const char *path)
 
     fclose(f);
 
-    // Replace previous cue list under mutex (cue_loop may be reading)
+    // Replace previous cue list + runtime state under mutex (cue_loop may read)
     xSemaphoreTake(cue_mutex, portMAX_DELAY);
     cue_entry *old_list = cue_list;
+    cue_rt    *old_rt   = cue_rt_arr;
     cue_list   = new_list;
+    cue_rt_arr = new_rt;
     cue_count  = hdr.num_cues;
-    cue_cursor = 0;
+    cue_fired_count = 0;
     playing    = false;
     xSemaphoreGive(cue_mutex);
 
     delete[] old_list;
+    delete[] old_rt;
 
     printfnl(SOURCE_SYSTEM, "cue: loaded %d cues from %s\n", cue_count, path);
     return true;
@@ -299,18 +313,37 @@ bool cue_load(const char *path)
 void cue_start(uint64_t epoch_start_ms)
 {
     xSemaphoreTake(cue_mutex, portMAX_DELAY);
-    if (!cue_list || cue_count == 0) {
+    if (!cue_list || !cue_rt_arr || cue_count == 0) {
         xSemaphoreGive(cue_mutex);
         printfnl(SOURCE_SYSTEM, "cue: no cue file loaded\n");
         return;
     }
 
     music_start_ms = epoch_start_ms;
-    cue_cursor = 0;
+    cue_fired_count = 0;
 
-    // Precompute cone and origin positions in meter-space
-    latlon_to_meters(get_lat(), get_lon(), &my_x, &my_y);
+    // Precompute origin, then the cone position. Only enable per-cone spatial
+    // timing with a real GPS fix: without one, get_lat/lon read 0,0 and the
+    // continent-scale distance to origin would push every spatial cue far into
+    // the future (cone stays dark). Fall back to base start times (offset 0).
     latlon_to_meters(config.origin_lat, config.origin_lon, &origin_x, &origin_y);
+    spatial_enabled = get_gpsstatus();
+    if (spatial_enabled) {
+        latlon_to_meters(get_lat(), get_lon(), &my_x, &my_y);
+    } else {
+        my_x = origin_x;
+        my_y = origin_y;
+        printfnl(SOURCE_SYSTEM, "cue: no GPS fix — spatial timing disabled (base times only)\n");
+    }
+
+    // Precompute each cue's effective start for this cone (the offset is fixed
+    // for the run) and clear the fired flags.
+    for (int i = 0; i < cue_count; i++) {
+        int64_t eff = (int64_t)cue_list[i].start_ms + compute_spatial_offset(&cue_list[i]);
+        if (eff < 0) eff = 0;
+        cue_rt_arr[i].eff_start = eff;
+        cue_rt_arr[i].fired = 0;
+    }
 
     playing = true;
     xSemaphoreGive(cue_mutex);
@@ -356,7 +389,7 @@ int cmd_cue(int argc, char **argv)
             uint64_t now_ms = get_epoch_ms();
             uint32_t elapsed = (now_ms > music_start_ms) ? (uint32_t)(now_ms - music_start_ms) : 0;
             printfnl(SOURCE_COMMANDS, "  Elapsed: %lu ms\n", (unsigned long)elapsed);
-            printfnl(SOURCE_COMMANDS, "  Cursor:  %d / %d\n", cue_cursor, cue_count);
+            printfnl(SOURCE_COMMANDS, "  Fired:   %d / %d\n", cue_fired_count, cue_count);
         }
         return 0;
     }

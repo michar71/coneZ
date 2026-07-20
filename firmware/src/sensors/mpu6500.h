@@ -6,8 +6,8 @@
 typedef struct { float x, y, z; } mpu_vec3_t;
 
 bool       mpu6500_init(void);       // Reset, check WHO_AM_I, configure
-void       mpu6500_read(void);       // Read accel + gyro + temp in one burst
-void       mpu6500_calibrate(void);  // Average 50 samples, store offsets
+bool       mpu6500_read(void);       // Read accel+gyro+temp; false = I2C read failed
+void       mpu6500_calibrate(void);  // Average up to 50 samples, store offsets
 
 mpu_vec3_t mpu6500_accel(void);      // Last accel in G
 mpu_vec3_t mpu6500_gyro(void);       // Last gyro in deg/s

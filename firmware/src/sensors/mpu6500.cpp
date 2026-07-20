@@ -92,12 +92,12 @@ bool mpu6500_init(void)
     return true;
 }
 
-void mpu6500_read(void)
+bool mpu6500_read(void)
 {
     // Burst-read 14 bytes: accel(6) + temp(2) + gyro(6) from 0x3B
     uint8_t buf[14];
     if (mpu_read_regs(REG_ACCEL_XOUT_H, buf, 14) != ESP_OK)
-        return;
+        return false;   // leave last_* unchanged; caller decides what to do
 
     int16_t raw_ax = (int16_t)((buf[0]  << 8) | buf[1]);
     int16_t raw_ay = (int16_t)((buf[2]  << 8) | buf[3]);
@@ -124,6 +124,7 @@ void mpu6500_read(void)
     last_gyro.z = raw_gz * GYRO_SCALE;
 
     last_temp = raw_t / 333.87f + 21.0f;
+    return true;
 }
 
 void mpu6500_calibrate(void)
@@ -136,27 +137,36 @@ void mpu6500_calibrate(void)
     off_gx = off_gy = off_gz = 0;
 
     const int N = 50;
+    int valid = 0;
     for (int i = 0; i < N; i++) {
         uint8_t buf[14];
-        if (mpu_read_regs(REG_ACCEL_XOUT_H, buf, 14) != ESP_OK)
-            continue;
-
-        sum_ax += (int16_t)((buf[0]  << 8) | buf[1]);
-        sum_ay += (int16_t)((buf[2]  << 8) | buf[3]);
-        sum_az += (int16_t)((buf[4]  << 8) | buf[5]);
-        sum_gx += (int16_t)((buf[8]  << 8) | buf[9]);
-        sum_gy += (int16_t)((buf[10] << 8) | buf[11]);
-        sum_gz += (int16_t)((buf[12] << 8) | buf[13]);
-
+        if (mpu_read_regs(REG_ACCEL_XOUT_H, buf, 14) == ESP_OK) {
+            sum_ax += (int16_t)((buf[0]  << 8) | buf[1]);
+            sum_ay += (int16_t)((buf[2]  << 8) | buf[3]);
+            sum_az += (int16_t)((buf[4]  << 8) | buf[5]);
+            sum_gx += (int16_t)((buf[8]  << 8) | buf[9]);
+            sum_gy += (int16_t)((buf[10] << 8) | buf[11]);
+            sum_gz += (int16_t)((buf[12] << 8) | buf[13]);
+            valid++;
+        }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    off_ax = (int16_t)(sum_ax / N);
-    off_ay = (int16_t)(sum_ay / N);
-    off_az = (int16_t)(sum_az / N - 16384);  // Subtract 1G on Z axis
-    off_gx = (int16_t)(sum_gx / N);
-    off_gy = (int16_t)(sum_gy / N);
-    off_gz = (int16_t)(sum_gz / N);
+    // Divide by the number of samples that actually succeeded, not a fixed 50 --
+    // failed reads would otherwise bias every offset toward zero.
+    if (valid == 0) return;   // no samples; leave offsets at 0
+
+    int32_t avg_az = sum_az / valid;
+    // Preserve 1 G of gravity on Z in whatever direction the board reads it (the
+    // PCB may be mounted either way up), so calibration removes bias without
+    // flipping the axis and breaking the getRoll orientation.
+    int32_t g_z = (avg_az >= 0) ? 16384 : -16384;
+    off_ax = (int16_t)(sum_ax / valid);
+    off_ay = (int16_t)(sum_ay / valid);
+    off_az = (int16_t)(avg_az - g_z);
+    off_gx = (int16_t)(sum_gx / valid);
+    off_gy = (int16_t)(sum_gy / valid);
+    off_gz = (int16_t)(sum_gz / valid);
 }
 
 mpu_vec3_t mpu6500_accel(void) { return last_accel; }

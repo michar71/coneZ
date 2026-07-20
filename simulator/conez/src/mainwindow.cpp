@@ -931,7 +931,7 @@ void MainWindow::cmdCue(const QStringList &args)
         m_console->appendText(QString("  Playing: %1\n").arg(eng.isPlaying() ? "yes" : "no"));
         if (eng.isPlaying()) {
             m_console->appendText(QString("  Elapsed: %1 ms\n").arg(eng.elapsedMs()));
-            m_console->appendText(QString("  Cursor:  %1 / %2\n").arg(eng.cueCursor()).arg(eng.cueCount()));
+            m_console->appendText(QString("  Fired:   %1 / %2\n").arg(eng.cueFiredCount()).arg(eng.cueCount()));
         }
     } else if (sub == "load") {
         if (args.size() < 3) {

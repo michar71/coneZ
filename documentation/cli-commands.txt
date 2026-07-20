@@ -327,12 +327,15 @@ cue
       Start cue playback. With no argument, starts from now. With an
       offset in ms, treats playback as having started that many ms ago
       (useful for syncing to a track already in progress).
+      Per-cone spatial timing requires a GPS fix; without one the cone
+      runs the show at each cue's base start time (spatial offset 0).
 
   cue stop
       Stop cue playback.
 
   cue status
-      Show cue engine state: loaded file, playing/stopped, position.
+      Show cue engine state: loaded file, playing/stopped, and how many
+      cues have fired so far.
 
 debug
   With no arguments, shows the current on/off state of each debug source.

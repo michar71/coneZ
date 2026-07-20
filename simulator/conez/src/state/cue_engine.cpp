@@ -111,7 +111,8 @@ bool CueEngine::load(const QString &path)
     }
 
     m_cues = std::move(newCues);
-    m_cursor = 0;
+    m_rt.assign(m_cues.size(), CueRt{0, false});
+    m_firedCount = 0;
     m_playing.store(false);
     m_loadedFile = path;
 
@@ -128,12 +129,22 @@ void CueEngine::start(qint64 offsetMs)
 
     qint64 now = QDateTime::currentMSecsSinceEpoch();
     m_startEpochMs.store(now - offsetMs);
-    m_cursor = 0;
 
     // Precompute positions in meter-space
     auto sm = sensorState().read();
     latlonToMeters(sm.lat, sm.lon, &m_myX, &m_myY);
     latlonToMeters(simConfig().origin_lat, simConfig().origin_lon, &m_originX, &m_originY);
+
+    // Precompute each cue's effective start (the offset is fixed for the run)
+    // and clear the fired flags.
+    m_rt.resize(m_cues.size());
+    for (size_t i = 0; i < m_cues.size(); i++) {
+        int64_t eff = (int64_t)m_cues[i].start_ms + computeSpatialOffset(&m_cues[i]);
+        if (eff < 0) eff = 0;
+        m_rt[i].effStart = eff;
+        m_rt[i].fired = false;
+    }
+    m_firedCount = 0;
 
     m_playing.store(true);
     m_timer.start();
@@ -164,23 +175,20 @@ void CueEngine::tick()
     qint64 start = m_startEpochMs.load();
     uint32_t elapsed_ms = (now > start) ? (uint32_t)(now - start) : 0;
 
-    while (m_cursor < (int)m_cues.size()) {
-        const cue_entry *cue = &m_cues[m_cursor];
+    // Fire every cue whose precomputed effective start has arrived and hasn't
+    // fired yet (see the CueRt comment) so a spatially-offset cue can't stall
+    // the ones after it.
+    for (size_t i = 0; i < m_cues.size(); i++) {
+        if (m_rt[i].fired) continue;
+        if (m_rt[i].effStart > (int64_t)elapsed_ms) continue;  // not yet — keep scanning
 
-        int32_t spatial_off = computeSpatialOffset(cue);
-        int32_t effective_start = (int32_t)cue->start_ms + spatial_off;
-        if (effective_start < 0) effective_start = 0;
-
-        if ((uint32_t)effective_start > elapsed_ms)
-            break;
-
-        if (cueMatches(cue->group))
-            dispatchCue(cue);
-
-        m_cursor++;
+        if (cueMatches(m_cues[i].group))
+            dispatchCue(&m_cues[i]);
+        m_rt[i].fired = true;
+        m_firedCount++;
     }
 
-    if (m_cursor >= (int)m_cues.size()) {
+    if (m_firedCount >= (int)m_cues.size()) {
         m_playing.store(false);
         m_timer.stop();
         output(QString("cue: playback complete (%1 cues)\n").arg(m_cues.size()));
