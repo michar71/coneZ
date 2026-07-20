@@ -468,11 +468,15 @@ SIMULATOR
 OPEN (reported this round, not yet fixed)
 -----------------------------------------
 
-#101 BASIC PRINTS and FORMAT "$" dereference an arbitrary stack value as a C
-    string (info leak / crash from a one-character script mistake). A safe fix
-    needs to validate the value points into the string table; the code path
-    treats string values inconsistently (stab+offset for the format string vs
-    a raw pointer for $ args), so it was deferred pending a closer look.
+#101 FIXED -- BASIC PRINTS and FORMAT "$" dereferenced an arbitrary stack value
+    as a C string (info leak / crash from e.g. `PRINTS 42`). In this tree-walk
+    interpreter every string value is a pointer into the string table stab[]
+    (string literals push (Val)(stab+off); there are no dynamic string ops), so
+    added is_str_ptr(v) = (stab <= v < stab+STRSZ) and gated both derefs on it:
+    PRINTS raises an error on a non-string arg, FORMAT "$" substitutes "(?)".
+    (The earlier "inconsistency" note was a misread: FORMAT's format-string arg
+    is a compile-time offset via need(STRING), while "$" value args are ordinary
+    expression strings that push absolute stab pointers -- both correct.)
 
 #102 FIXED -- GPS/time cluster (gps.cpp, nmea.cpp). Four issues:
     (a) the epoch anchor gated only on pps_count>0, so a module that stopped PPS

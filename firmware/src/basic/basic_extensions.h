@@ -633,11 +633,13 @@ int LUTSIZE_()
 //------------------------------------
 
 
-int PRINTS_() 
-{ 
+int PRINTS_()
+{
     //Output the string on the Run-time Stack and return for next command.
-	printfnl(SOURCE_BASIC,"%s\n",(char*)*sp++); 
-    STEP; 
+	Val v = *sp++;
+	if (!is_str_ptr(v)) { err((char*)"PRINTS: ARGUMENT IS NOT A STRING"); return 0; }
+	printfnl(SOURCE_BASIC,"%s\n",(char*)v);
+    STEP;
 }
 
 

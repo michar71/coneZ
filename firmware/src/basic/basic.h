@@ -156,6 +156,15 @@ void ECHO_()
 }
 
 
+// True only if v points into the string table -- the sole place BASIC string
+// values live (string literals; there are no dynamic string ops). Guards
+// PRINTS and FORMAT "$" against a numeric value being dereferenced as a char*,
+// e.g. `PRINTS 42` walking memory from address 42 until a NUL or a fault.
+static int is_str_ptr(Val v)
+{
+	return v >= (Val)stab && v < (Val)(stab + STRSZ);
+}
+
 int FORMAT_()
 {
 	char *f;
@@ -174,7 +183,8 @@ int FORMAT_()
 		}
 		else if (*f=='$' && consumed < n)
 		{
-			snprintf(local, sizeof(local)-1, "%s", (char*)*ap--);
+			Val sv = *ap--;
+			snprintf(local, sizeof(local)-1, "%s", is_str_ptr(sv) ? (char*)sv : "(?)");
 			consumed++;
 		}
 		else
