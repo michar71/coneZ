@@ -206,8 +206,18 @@ static void led_push_hw(void)
             grb_buf[i * 3 + 2] = bufs[ch][i].b;
         }
 
-        rmt_transmit(rmt_chan[ch], rmt_enc, grb_buf, counts[ch] * 3, &tx_cfg);
-        rmt_tx_wait_all_done(rmt_chan[ch], pdMS_TO_TICKS(100));
+        if (rmt_transmit(rmt_chan[ch], rmt_enc, grb_buf, counts[ch] * 3, &tx_cfg) != ESP_OK)
+            continue;   // couldn't queue -- nothing reading grb_buf, safe to move on
+        // rmt_transmit reads grb_buf asynchronously, so we MUST wait before the
+        // next channel overwrites the shared buffer. If the channel stalls, reset
+        // it: rmt_disable aborts the in-flight transmit (so it stops reading
+        // grb_buf) and rmt_enable restores it for the next frame -- otherwise the
+        // stuck transmit would keep reading a buffer we're about to overwrite,
+        // and the channel would stay wedged.
+        if (rmt_tx_wait_all_done(rmt_chan[ch], pdMS_TO_TICKS(100)) != ESP_OK) {
+            rmt_disable(rmt_chan[ch]);
+            rmt_enable(rmt_chan[ch]);
+        }
     }
 
     xSemaphoreGive(led_mutex);

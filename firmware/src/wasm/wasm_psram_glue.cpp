@@ -222,6 +222,14 @@ int wasm_mem_strlen(IM3Runtime rt, uint32_t ptr)
 // Bulk copy between two WASM memory offsets
 void wasm_mem_copy(IM3Runtime rt, uint32_t dst, uint32_t src, size_t len)
 {
+    // Bounds-check BOTH regions against linear memory, like wasm_mem_read/write/
+    // set do. Every current caller pre-bounds its offsets, but this helper (and
+    // the m3_split_* primitives it uses) trusted them blindly -- a latent
+    // over-read/over-write trap for any future host import that forwards a
+    // guest-supplied length here.
+    uint64_t mem_len = rt->memory.mallocated->length;
+    if ((uint64_t)src + len > mem_len || (uint64_t)dst + len > mem_len)
+        return;
 #if d_m3UsePsramMemory
     M3MemoryHeader *hdr = rt->memory.mallocated;
     uint8_t tmp[256];

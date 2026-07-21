@@ -695,10 +695,13 @@ Items missed by the original #101-114 consolidation, or reconsidered.
     avoids -- and a mutex here couldn't protect those unlocked readers. Runtime
     count changes go through led_resize_channel(); growth past the boot capacity
     needs a reboot.
-  - OPEN: led.cpp render loop ignores rmt_tx_wait_all_done()'s timeout and
-    reuses the shared GRB buffer while a stalled channel may still be
-    transmitting (only on an RMT/interrupt stall; no recovery once wedged).
-  - OPEN: wasm_mem_copy()/m3_split_*() (wasm_psram_glue.cpp) don't bounds-check
-    against the linear-memory length like the other wasm_mem_* helpers. No live
-    caller passes an unchecked guest length today, but it's a latent trap for a
-    future host import.
+  - FIXED: led.cpp render loop now checks rmt_transmit()/rmt_tx_wait_all_done()
+    and, on a stall, resets the channel (rmt_disable + rmt_enable) so the
+    aborted transmit stops reading the shared grb_buf the next channel is about
+    to overwrite, and the channel recovers for the next frame instead of
+    staying wedged.
+  - FIXED: wasm_mem_copy() (wasm_psram_glue.cpp) now bounds-checks both the
+    source and destination regions against linear memory before copying, like
+    the sibling wasm_mem_read/write/set. The m3_split_* primitives stay trusted
+    -- their only caller (wasm_mem_copy) now validates, so the latent
+    over-read/over-write trap for a future host import is closed.
