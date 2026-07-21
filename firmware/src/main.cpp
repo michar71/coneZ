@@ -602,6 +602,10 @@ void loop()
   // NTP time sync (runs on all boards when WiFi is connected)
   ntp_loop();
 
+  // Reboot just before the get_epoch_ms() 49.7-day wrap if no time source has
+  // refreshed the anchor (only bites a cone with no GPS/NTP/beacon).
+  time_check_wrap_reboot();
+
   // Periodic shared node-status sampling for MQTT/LoRa transport
   syst_status_loop();
 

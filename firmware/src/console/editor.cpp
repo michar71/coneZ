@@ -190,6 +190,10 @@ static bool editor_load(EditorState *ed, const char *path)
                 buf[--len] = '\0';
 
             if (!ed_ensure_capacity(ed, ed->num_lines + 1)) { ed->load_truncated = true; break; }
+            // Zero the tail before storing the full ED_LINE_MAX: fgets doesn't
+            // clear past its NUL, so stale stack bytes would otherwise be
+            // persisted after the line's terminator.
+            memset(buf + len, 0, ED_LINE_MAX - len);
             psram_write(ed_line_addr(ed, ed->num_lines), (const uint8_t *)buf, ED_LINE_MAX);
             ed->num_lines++;
         }
@@ -378,8 +382,26 @@ static void editor_draw(EditorState *ed, ConezStream *out)
 // Editing operations (work on DRAM work buffer for current line)
 // ---------------------------------------------------------------------------
 
+// Sync the work buffer to the cursor line and clamp the cursor into range.
+// Editing ops MUST call this first: input is drained in batches, so cy/cx can
+// be stale (past the current line) before the next redraw would clamp them --
+// e.g. Down onto a shorter line then a keystroke. Without it,
+// memmove(len - cx + 1) with cx > len gets a negative (huge) size_t and runs
+// off the 256-byte buffer, and editor_enter would splice post-NUL bytes.
+static void ed_sync_cursor(EditorState *ed)
+{
+    if (ed->num_lines < 1) ed->num_lines = 1;
+    if (ed->cy < 0) ed->cy = 0;
+    if (ed->cy >= ed->num_lines) ed->cy = ed->num_lines - 1;
+    ed_load_work(ed, ed->cy);
+    int len = (int)strlen(ed->work);
+    if (ed->cx > len) ed->cx = len;
+    if (ed->cx < 0) ed->cx = 0;
+}
+
 static void editor_insert_char(EditorState *ed, char c)
 {
+    ed_sync_cursor(ed);
     int len = (int)strlen(ed->work);
     if (len >= ED_LINE_MAX - 1) return;
 
@@ -393,6 +415,7 @@ static void editor_insert_char(EditorState *ed, char c)
 
 static void editor_backspace(EditorState *ed)
 {
+    ed_sync_cursor(ed);
     if (ed->cx > 0) {
         int len = (int)strlen(ed->work);
         memmove(ed->work + ed->cx - 1, ed->work + ed->cx, len - ed->cx + 1);
@@ -423,6 +446,7 @@ static void editor_backspace(EditorState *ed)
 
 static void editor_delete_char(EditorState *ed)
 {
+    ed_sync_cursor(ed);
     int len = (int)strlen(ed->work);
 
     if (ed->cx < len) {
@@ -454,9 +478,18 @@ static void editor_enter(EditorState *ed)
     if (ed->num_lines >= ED_MAX_LINES) return;
     if (!ed_ensure_capacity(ed, ed->num_lines + 1)) return;
 
+    if (ed->cy < 0) ed->cy = 0;
+    if (ed->cy >= ed->num_lines) ed->cy = ed->num_lines - 1;
+
     char cur[ED_LINE_MAX];
     ed_invalidate_work(ed);
     ed_read_line(ed, ed->cy, cur);
+
+    // Clamp cx into the line: batched keys can leave it past the end, which
+    // would splice post-NUL bytes into the tail (see ed_sync_cursor).
+    int len = (int)strlen(cur);
+    if (ed->cx > len) ed->cx = len;
+    if (ed->cx < 0) ed->cx = 0;
 
     // Tail goes to new line below
     char tail[ED_LINE_MAX];

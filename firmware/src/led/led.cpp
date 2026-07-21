@@ -244,14 +244,18 @@ static void rmt_init(void)
 void led_setup( void )
 {
 #ifdef BOARD_HAS_RGB_LEDS
-    if (!led_mutex) led_mutex = xSemaphoreCreateMutex();
+    // Boot-only, and deliberately NOT re-invocable. The leds* buffers back the
+    // render task and are read by writers that do NOT hold led_mutex (ArtNet's
+    // snapshot, BASIC/WASM host imports, the CLI), so freeing/reallocating them
+    // at runtime would be a use-after-free -- and a mutex here couldn't protect
+    // those unlocked readers. Runtime count changes go through
+    // led_resize_channel() (which never frees, capped at the boot capacity);
+    // growing past that needs a reboot. So allocate exactly once.
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
 
-    // Safe to re-invoke (e.g. config reload): free the old buffers first so
-    // the CRGB arrays don't leak when led_count* changes.
-    delete[] leds1; leds1 = nullptr;
-    delete[] leds2; leds2 = nullptr;
-    delete[] leds3; leds3 = nullptr;
-    delete[] leds4; leds4 = nullptr;
+    if (!led_mutex) led_mutex = xSemaphoreCreateMutex();
 
     leds1 = new CRGB[config.led_count1]();
     leds2 = new CRGB[config.led_count2]();
@@ -264,11 +268,7 @@ void led_setup( void )
     led_cap[2] = config.led_count3;
     led_cap[3] = config.led_count4;
 
-    static bool rmt_initialized = false;
-    if (!rmt_initialized) {
-        rmt_init();
-        rmt_initialized = true;
-    }
+    rmt_init();
 #endif
 }
 

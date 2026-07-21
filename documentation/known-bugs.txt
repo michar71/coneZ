@@ -655,3 +655,50 @@ OPEN (reported this round, not yet fixed)
     Deferred: the effect timers in effects.cpp (SOS_effect2 etc.) also use the
     32-bit uptime_ms() wrap, but those effects are commented out in main.cpp
     (dead code) -- left as-is until they're wired up.
+
+
+ROUND 4 FOLLOW-UP (2026-07-21)
+==============================
+Items missed by the original #101-114 consolidation, or reconsidered.
+
+#115 FIXED -- Editor batched-keystroke corruption / OOB (console/editor.cpp).
+    Input is drained in batches, so cy/cx could go stale (past the current
+    line) before the next redraw clamped them. editor_enter then spliced
+    post-NUL bytes into the split tail (garbage into the file), and -- worse
+    than the original review noted -- editor_insert_char/backspace did
+    memmove(ed->work + ed->cx, ..., len - ed->cx + 1) with cx > len, i.e. a
+    negative -> huge size_t, running off the 256-byte work buffer (crash /
+    heap corruption), not merely inside it. Added ed_sync_cursor() (sync work
+    buffer to cy, clamp cy/cx) called at the top of insert/backspace/delete,
+    and the same clamp in editor_enter. Also zero the tail of each line in
+    editor_load so no uninitialized stack bytes are ever persisted past the
+    NUL.
+
+#116 FIXED (mitigated by reboot) -- get_epoch_ms() elapsed wrap (sensors/gps.cpp).
+    elapsed = uptime_ms() - millis_at_pps is uint32 and wraps if the time anchor
+    goes un-refreshed for 49.7 days, reporting a clock that jumps ~49.7 days
+    backward. Only reachable on a cone with NO GPS/NTP/beacon for that long
+    (running on the compile seed); any live time source re-anchors within
+    seconds/hours and resets the age. A correct in-place fix would need a 64-bit
+    anchor threaded through the PPS ISR's sub-ms edge capture -- untestable
+    without hardware + a multi-week soak -- so instead time_check_wrap_reboot()
+    (called from loop()) detects the impending wrap directly from the existing
+    anchor age and reboots at ~48 days (just before the wrap) to re-seed the
+    clock cleanly. No new state, no change to the epoch math; never fires on a
+    healthy cone.
+
+#117 Latent/minor, untracked in the original pass:
+  - FIXED: led_setup() now allocates the leds* buffers exactly once (a static
+    guard) rather than claiming to be re-invocable. A runtime re-invoke would
+    free/realloc buffers held by unlocked writers (ArtNet snapshot, scripts,
+    CLI) -- the same use-after-free class the fixed-capacity resize design
+    avoids -- and a mutex here couldn't protect those unlocked readers. Runtime
+    count changes go through led_resize_channel(); growth past the boot capacity
+    needs a reboot.
+  - OPEN: led.cpp render loop ignores rmt_tx_wait_all_done()'s timeout and
+    reuses the shared GRB buffer while a stalled channel may still be
+    transmitting (only on an RMT/interrupt stall; no recovery once wedged).
+  - OPEN: wasm_mem_copy()/m3_split_*() (wasm_psram_glue.cpp) don't bounds-check
+    against the linear-memory length like the other wasm_mem_* helpers. No live
+    caller passes an unchecked guest length today, but it's a latent trap for a
+    future host import.

@@ -49,5 +49,6 @@ uint32_t get_ntp_last_sync_ms(void); // millis() at last NTP sync (0 = never)
 bool     get_pps_flag(void);     // rising-edge flag, clear-on-read
 void     ntp_setup(void);        // call after WiFi connects
 void     ntp_loop(void);         // periodic re-sync check
+void     time_check_wrap_reboot(void); // reboot near the 49.7-day epoch wrap if no time source refreshes the anchor
 
 #endif

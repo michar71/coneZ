@@ -2,6 +2,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include "esp_sntp.h"
+#include "esp_system.h"   // esp_restart()
 #include "conez_wifi.h"
 #include "driver/gpio.h"
 #include "main.h"
@@ -82,6 +83,34 @@ bool time_set_from_beacon(uint64_t epoch_ms)
     }
     portEXIT_CRITICAL(&time_mux);
     return applied;
+}
+
+// Guard against the get_epoch_ms() 49.7-day wrap. Its elapsed math is
+// (uint32_t)(uptime_ms() - millis_at_pps), which wraps -- reporting a clock that
+// jumps ~49.7 days backward -- if the time anchor goes un-refreshed that long.
+// That only happens on a cone with NO GPS/NTP/beacon (running on the compile
+// seed); any live time source re-anchors within seconds/hours and resets the
+// age. So rather than surgery on the anchor (which would touch the PPS sub-ms
+// path), reboot a little before the wrap to re-seed the clock cleanly. Call
+// periodically from loop().
+void time_check_wrap_reboot(void)
+{
+    // 48 days < the 49.7-day wrap; leaves ~1.7 days of margin.
+    static const uint32_t WRAP_REBOOT_MS = 48u * 86400000u;
+    uint32_t age;
+    bool valid;
+    portENTER_CRITICAL(&time_mux);
+    valid = epoch_valid;
+    age   = uptime_ms() - millis_at_pps;   // same uint32 elapsed get_epoch_ms uses
+    portEXIT_CRITICAL(&time_mux);
+
+    if (valid && age > WRAP_REBOOT_MS) {
+        printfnl(SOURCE_SYSTEM,
+                 "Time anchor ~48 days old with no time source; rebooting before "
+                 "the epoch clock wraps\n");
+        vTaskDelay(pdMS_TO_TICKS(1500));   // let the log drain
+        esp_restart();
+    }
 }
 
 #ifdef BOARD_HAS_GPS
