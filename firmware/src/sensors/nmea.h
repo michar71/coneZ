@@ -49,6 +49,8 @@ typedef struct {
     double   s_lat, s_lon;
     float    s_alt, s_speed, s_course;
     int      s_satellites, s_hdop;
+    int      s_fix_type;         // staged GSA fix type (committed on checksum pass)
+    float    s_pdop, s_vdop;     // staged GSA DOP
     uint8_t  s_hour, s_minute, s_second;
     uint8_t  s_day, s_month;
     uint16_t s_year;

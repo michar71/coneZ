@@ -154,7 +154,7 @@ static void dir_list(const char *dirname, int indent,
     if (!dir) return;
 
     // Collect entries (heap-allocated to avoid stack overflow on recursion)
-    const int MAX_ENTRIES = 32;
+    const int MAX_ENTRIES = 64;
     DirEntry *entries = (DirEntry *)malloc(MAX_ENTRIES * sizeof(DirEntry));
     if (!entries) { closedir(dir); return; }
 
@@ -217,6 +217,10 @@ static void dir_list(const char *dirname, int indent,
             }
         }
     }
+    // Don't truncate silently: if we filled the buffer there may be more.
+    if (n == MAX_ENTRIES)
+        out->printf("%*s  ...(only first %d entries shown; use a filter, e.g. dir *.bas)\n",
+                    indent, "", MAX_ENTRIES);
     free(entries);
 }
 #pragma GCC diagnostic pop
@@ -639,14 +643,15 @@ static void grep_file(const char *pattern, const char *path, bool show_filename)
 
         // Case-insensitive substring search
         // Build lowercase copies for comparison
-        char lower_buf[256], lower_pat[64];
+        char lower_buf[256], lower_pat[256];
         for (int i = 0; buf[i]; i++)
             lower_buf[i] = (buf[i] >= 'A' && buf[i] <= 'Z') ? buf[i] + 32 : buf[i];
         lower_buf[len] = '\0';
         int plen = strlen(pattern);
-        for (int i = 0; i < plen && i < 63; i++)
+        if (plen > 255) plen = 255;   // patterns longer than a line can't match anyway
+        for (int i = 0; i < plen; i++)
             lower_pat[i] = (pattern[i] >= 'A' && pattern[i] <= 'Z') ? pattern[i] + 32 : pattern[i];
-        lower_pat[plen < 63 ? plen : 63] = '\0';
+        lower_pat[plen] = '\0';
 
         if (strstr(lower_buf, lower_pat)) {
             if (show_filename)
@@ -901,7 +906,14 @@ int cmd_deflate(int argc, char **argv)
     char src[64], dst[64];
     normalize_path(src, sizeof(src), argv[1]);
 
-    if (argc >= 3 && argv[2][0] != '\0' && (argv[2][0] < '0' || argv[2][0] > '9')) {
+    // argv[2] is the level only if it's ENTIRELY numeric; otherwise it's the
+    // output filename -- which may legitimately start with a digit (e.g.
+    // "2024-log.gz"), which the old first-char test misparsed as a level.
+    bool arg2_is_level = (argc >= 3 && argv[2][0] != '\0');
+    for (const char *p = argv[2]; arg2_is_level && *p; p++)
+        if (*p < '0' || *p > '9') arg2_is_level = false;
+
+    if (argc >= 3 && !arg2_is_level) {
         normalize_path(dst, sizeof(dst), argv[2]);
     } else {
         strlcpy(dst, src, sizeof(dst));
@@ -910,7 +922,7 @@ int cmd_deflate(int argc, char **argv)
 
     int level = 6;
     if (argc == 4) level = parse_int(argv[3]);
-    else if (argc == 3 && argv[2][0] >= '0' && argv[2][0] <= '9') level = parse_int(argv[2]);
+    else if (argc == 3 && arg2_is_level) level = parse_int(argv[2]);
     if (level < 0) level = 0;
     if (level > 10) level = 10;
 
@@ -2651,12 +2663,13 @@ int cmd_lora(int argc, char **argv)
         if (strcasecmp(sub, "freq") == 0)
         {
             float freq = atof(val);
-            config.lora_frequency = freq;
             int rc = lora_set_frequency(freq);
             if (rc != 0)
                 printfnl(SOURCE_COMMANDS, "Error setting frequency (code %d)\n", rc);
-            else
+            else {
+                config.lora_frequency = freq;   // persist only what the driver accepted
                 printfnl(SOURCE_COMMANDS, "Frequency set to %.3f MHz\n", freq);
+            }
             return 0;
         }
         else if (strcasecmp(sub, "scan") == 0)
@@ -2673,12 +2686,13 @@ int cmd_lora(int argc, char **argv)
         else if (strcasecmp(sub, "power") == 0)
         {
             int power = parse_int(val);
-            config.lora_tx_power = power;
             int rc = lora_set_tx_power(power);
             if (rc != 0)
                 printfnl(SOURCE_COMMANDS, "Error setting TX power (code %d)\n", rc);
-            else
+            else {
+                config.lora_tx_power = power;
                 printfnl(SOURCE_COMMANDS, "TX power set to %d dBm\n", power);
+            }
             return 0;
         }
         else if (strcasecmp(sub, "bw") == 0)
@@ -2688,12 +2702,13 @@ int cmd_lora(int argc, char **argv)
                 return 0;
             }
             float bw = atof(val);
-            config.lora_bandwidth = bw;
             int rc = lora_set_bandwidth(bw);
             if (rc != 0)
                 printfnl(SOURCE_COMMANDS, "Error setting bandwidth (code %d)\n", rc);
-            else
+            else {
+                config.lora_bandwidth = bw;
                 printfnl(SOURCE_COMMANDS, "Bandwidth set to %.1f kHz\n", bw);
+            }
             return 0;
         }
         else if (strcasecmp(sub, "sf") == 0)
@@ -2703,12 +2718,13 @@ int cmd_lora(int argc, char **argv)
                 return 0;
             }
             int sf = parse_int(val);
-            config.lora_sf = sf;
             int rc = lora_set_sf(sf);
             if (rc != 0)
                 printfnl(SOURCE_COMMANDS, "Error setting SF (code %d)\n", rc);
-            else
+            else {
+                config.lora_sf = sf;
                 printfnl(SOURCE_COMMANDS, "SF set to %d\n", sf);
+            }
             return 0;
         }
         else if (strcasecmp(sub, "cr") == 0)
@@ -2718,12 +2734,13 @@ int cmd_lora(int argc, char **argv)
                 return 0;
             }
             int cr = parse_int(val);
-            config.lora_cr = cr;
             int rc = lora_set_cr(cr);
             if (rc != 0)
                 printfnl(SOURCE_COMMANDS, "Error setting CR (code %d)\n", rc);
-            else
+            else {
+                config.lora_cr = cr;
                 printfnl(SOURCE_COMMANDS, "CR set to 4/%d\n", cr);
+            }
             return 0;
         }
         else if (strcasecmp(sub, "mode") == 0)
@@ -3310,7 +3327,9 @@ int cmd_game(int argc, char **argv)
     }
     setInteractive(true);
     const int W = 30, H = 20;
-    uint8_t grid[H][W], next[H][W], age[H][W];
+    // static (not stack): ~1.8 KB of grids would eat most of ShellTask's 8 KB
+    // stack. Safe because only one game runs at a time (single ShellTask).
+    static uint8_t grid[H][W], next[H][W], age[H][W];
 
     // Age palette: cyan-green → green → yellow-green → yellow → orange → red
     static const uint8_t pal[][3] = {

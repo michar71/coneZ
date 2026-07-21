@@ -185,16 +185,16 @@ static void process_term(nmea_data_t *d) {
         // $G?GSA,mode,fixtype,sv1..sv12,PDOP,HDOP,VDOP
         //         1    2      3..14      15   16   17
         switch (d->term_num) {
-        case 2: // Fix type: 1=no fix, 2=2D, 3=3D
-            d->fix_type = parse_int(d->term);
+        case 2: // Fix type: 1=no fix, 2=2D, 3=3D — stage; commit on checksum pass
+            d->s_fix_type = parse_int(d->term);
             break;
         case 15: // PDOP
-            d->pdop = parse_float(d->term);
+            d->s_pdop = parse_float(d->term);
             break;
         case 16: // HDOP (from GSA — separate from GGA HDOP)
             break; // We use GGA HDOP which is more standard
         case 17: // VDOP
-            d->vdop = parse_float(d->term);
+            d->s_vdop = parse_float(d->term);
             break;
         }
         break;
@@ -217,6 +217,11 @@ static bool commit_sentence(nmea_data_t *d) {
                 d->update_count++;
             }
             d->location_valid = d->s_has_fix;
+        } else if (!d->s_has_fix) {
+            // Fix lost: a status-V RMC commonly carries empty position fields, so
+            // s_location_set is false. Clear validity now instead of waiting out
+            // the 10 s staleness timeout on stale coordinates.
+            d->location_valid = false;
         }
         if (d->s_time_valid) {
             d->hour = d->s_hour;
@@ -246,6 +251,9 @@ static bool commit_sentence(nmea_data_t *d) {
                 d->update_count++;
             }
             d->location_valid = d->s_has_fix;
+        } else if (!d->s_has_fix) {
+            // Fix lost: quality-0 GGA with empty position -> clear now (see RMC).
+            d->location_valid = false;
         }
         d->satellites = d->s_satellites;
         d->hdop = d->s_hdop;
@@ -262,7 +270,12 @@ static bool commit_sentence(nmea_data_t *d) {
         return true;
 
     case NMEA_GSA:
-        // GSA fields (fix_type, pdop, vdop) are committed directly in process_term
+        // Commit staged GSA fields now that the checksum has validated (they were
+        // written directly in process_term before, so a corrupt GSA overwrote the
+        // reported fix type / DOP with garbage).
+        d->fix_type = d->s_fix_type;
+        d->pdop = d->s_pdop;
+        d->vdop = d->s_vdop;
         return true;
 
     default:

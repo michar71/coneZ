@@ -116,10 +116,14 @@ void sensors_loop(void)
         }
     }
 
-    //Read ADC's
-    adc_bat_mv = adc_read_mv(ADC_BAT_PIN);
+    //Read ADC's — keep the last good value on error (adc_read_mv returns -1),
+    //otherwise a transient failure would read as 0 mV and false-trip the
+    //low-battery alarm (bat_voltage() averages it in).
+    int bat = adc_read_mv(ADC_BAT_PIN);
+    if (bat >= 0) adc_bat_mv = bat;
 #ifdef ADC_SOLAR_PIN
-    adc_solar_mv = adc_read_mv(ADC_SOLAR_PIN);
+    int solar = adc_read_mv(ADC_SOLAR_PIN);
+    if (solar >= 0) adc_solar_mv = solar;
 #endif
 }
 

@@ -55,20 +55,24 @@ static void adc_ensure_channel(int ch)
     }
 }
 
+// Returns millivolts, or -1 on any error (uninitialized, bad pin, read failure,
+// or missing/failed calibration). Callers must distinguish -1 from a real 0 mV
+// reading -- returning 0 on error false-trips the low-battery alarm.
 int adc_read_mv(int gpio)
 {
-    if (!adc_initialized) return 0;
-    if (gpio < 1 || gpio > 3) return 0;   // only GPIO 1-3 are safe (see adc_ensure_channel)
+    if (!adc_initialized) return -1;
+    if (gpio < 1 || gpio > 3) return -1;   // only GPIO 1-3 are safe (see adc_ensure_channel)
 
     int ch = gpio - 1;
     adc_ensure_channel(ch);
 
     int raw = 0;
     if (adc_oneshot_read(adc_handle, (adc_channel_t)ch, &raw) != ESP_OK)
-        return 0;
+        return -1;
 
     int mv = 0;
-    adc_cali_raw_to_voltage(adc_cali, raw, &mv);
+    if (!adc_cali || adc_cali_raw_to_voltage(adc_cali, raw, &mv) != ESP_OK)
+        return -1;
     return mv;
 }
 

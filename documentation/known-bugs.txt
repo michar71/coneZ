@@ -580,12 +580,15 @@ OPEN (reported this round, not yet fixed)
     diagnostic output) -- deliberately unlocked to avoid holding print_mutex
     across a full-ring dump.
 
-#110 CLI argument handling (console/commands.cpp): cmd_lora writes user values
-    into config before the driver validates them (bad RF settings persist on
-    the next save); dir silently caps a directory at 32 entries; cmd_deflate
-    treats a digit-leading output filename as the compression level; grep
-    truncates the pattern to 63 chars; cmd_game puts ~1.8 KB of grid arrays on
-    the ShellTask stack.
+#110 FIXED -- CLI argument handling (console/commands.cpp). cmd_lora now
+    persists freq/power/bw/sf/cr to config only after lora_set_*() accepts the
+    value (a rejected value no longer survives to the next config_save). dir
+    raised to 64 entries and prints a "only first N shown" note instead of
+    truncating silently. cmd_deflate treats argv[2] as the level only when it's
+    ENTIRELY numeric, so a digit-leading output filename (2024-log.gz) is used
+    as the filename. grep's lowercase pattern buffer grew 64->256 (was
+    truncating patterns to 63 chars -> false matches). cmd_game's ~1.8 KB grids
+    are now static (off the 8 KB ShellTask stack; safe, single game instance).
 
 #111 FIXED -- PSRAM raw-transfer / timing / free (psram/psram.cpp, ConeZ
     improvised-PSRAM path). Three items:
@@ -607,12 +610,18 @@ OPEN (reported this round, not yet fixed)
         is len-truncated -- but this hardens the raw layer for the non-cached
         path (PSRAM_CACHE_PAGES=0) and any future direct caller.
 
-#112 Sensor/alarm quality (sensors/): GSA fix-type/PDOP/VDOP are committed
-    before checksum validation; ADC error paths return 0 mV indistinguishable
-    from a real reading (feeds the low-battery alarm, no hysteresis);
-    mpu6500_calibrate() divides by a fixed N despite skipping failed reads; fix
-    loss with empty position fields relies only on the 10 s staleness timeout;
-    get_epoch_ms() elapsed math wraps if the anchor is >49.7 days old.
+#112 FIXED (mostly) -- Sensor/alarm quality (sensors/). GSA fix-type/PDOP/VDOP
+    are now staged and committed only after the checksum validates (a corrupt
+    GSA no longer overwrites the reported fix type / DOP). adc_read_mv() returns
+    -1 on error (uninitialized / read failure / missing calibration) instead of
+    0, and sensors_loop keeps the last good value, so a transient ADC error no
+    longer reads as 0 mV and false-trips the low-battery alarm. Fix loss with
+    empty position fields (status-V RMC / quality-0 GGA) now clears
+    location_valid immediately instead of waiting out the 10 s staleness
+    timeout. (mpu6500_calibrate's divide-by-N was already fixed under #103.)
+    Still open: alarm hysteresis and the tracker's satellite-count GPS-lock
+    inference live in tracker.html (#114), and get_epoch_ms()'s >49.7-day anchor
+    wrap is the uptime-wrap item in #114.
 
 #113 Config locking / web form (config.cpp, util/pm.cpp): config_save opens/
     truncates /config.ini before taking the lock and has no temp+rename;
