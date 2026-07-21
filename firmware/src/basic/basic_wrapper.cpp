@@ -21,6 +21,7 @@ void set_basic_param(uint8_t paramID, int val)
 
 int get_basic_param(int paramID)
 {
+  if (paramID < 0) paramID = 0;   // a negative id (e.g. WAITFOR) would read OOB
   if (paramID > MAX_PARAMS-1)
      paramID = MAX_PARAMS-1;
   return params[paramID];
@@ -225,12 +226,15 @@ bool set_basic_program(char* prog)
     {
         strncpy(next_code, prog, sizeof(next_code) - 1);
         next_code[sizeof(next_code) - 1] = '\0';
-        xSemaphoreGive(basic_mutex);
 
-        // Create task on first use
+        // Create the task on first use INSIDE the lock: a check-then-create
+        // after releasing let two concurrent callers (e.g. HTTP + shell at boot)
+        // both see NULL and spawn two BasicTasks over the single interpreter
+        // globals.
         if (basic_task == NULL)
             xTaskCreatePinnedToCore(basic_task_fun, "BasicTask", 16384, NULL, 1, &basic_task, tskNO_AFFINITY);
 
+        xSemaphoreGive(basic_mutex);
         return true;
     }
     return false;
@@ -258,7 +262,11 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
         {
             //For Sys-Timer the condition options are different.
             //First we take the trigger value and convert it to a duration in milliseconds,
-            long duration_ms = triggerValue;
+            // 64-bit throughout: `long` is 32-bit here, so a multi-hour wait
+            // overflowed `deadline` (and uptime_ms() wraps at ~24.8 days for a
+            // signed compare / ~49.7 days unsigned). esp_timer_get_time() is a
+            // 64-bit microsecond clock that doesn't wrap in any realistic run.
+            int64_t duration_ms = triggerValue;
             switch (condition)
             {
                 case CONDITON_HOUR:
@@ -276,13 +284,13 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
                 default:
                     break;
             }
-            long start = uptime_ms();
-            long deadline = start + duration_ms;
-            while (uptime_ms() < deadline)
+            int64_t start_us = esp_timer_get_time();
+            int64_t deadline_us = start_us + duration_ms * 1000;
+            while (esp_timer_get_time() < deadline_us)
             {
                 vTaskDelay(pdMS_TO_TICKS(1));
                 inc_thread_count(xPortGetCoreID());
-                if (timeout_ms > 0 && (uptime_ms() - start) > timeout_ms)
+                if (timeout_ms > 0 && (esp_timer_get_time() - start_us) > (int64_t)timeout_ms * 1000)
                 {
                     return 0; //Timeout
                 }

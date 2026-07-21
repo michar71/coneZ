@@ -623,17 +623,35 @@ OPEN (reported this round, not yet fixed)
     inference live in tracker.html (#114), and get_epoch_ms()'s >49.7-day anchor
     wrap is the uptime-wrap item in #114.
 
-#113 Config locking / web form (config.cpp, util/pm.cpp): config_save opens/
-    truncates /config.ini before taking the lock and has no temp+rename;
-    several struct writes skip CONFIG_LOCK; the web form can't clear a string
-    setting (empty values are discarded); pm.cpp s_lock_count is non-atomic.
+#113 FIXED -- Config locking / web form (config.cpp). config_save now takes the
+    lock BEFORE opening and writes to config.ini.tmp then atomically renames, so
+    a crash/power loss mid-write can't leave a truncated config and concurrent
+    savers (CLI + web) are serialized. config_set_default_field (config unset)
+    takes CONFIG_LOCK around its string memcpy. The web form now applies an empty
+    value for CFG_STR fields, so a string setting can be cleared (numeric fields
+    still skip empty = leave-unchanged). Not changed: the remaining unlocked
+    config writes (web CFG_BOOL, the cpu_min/max clamp, pm.cpp cpu writes and
+    s_lock_count) are single-word writes that are atomic on the 32-bit MCU -- no
+    torn read, so the lock churn isn't warranted.
 
-#114 Misc: node uptime and several effect timers (effects.cpp) wrap at ~49.7
-    days (uint32_t uptime_ms); EVENT_SYS_TIMER (basic_wrapper.cpp) uses 32-bit
-    long ms arithmetic; get_basic_param() accepts negative IDs (OOB read);
-    LUTTOARRAY overwrites the DIM array's size header; a BasicTask-creation
-    TOCTOU can spawn two interpreters; artnet_start() ignores xTaskCreate
-    failure; sunUpdateViaGPS() blanks sun data on a transient GPS drop;
-    checkLut() rejects a valid single-value file; cue_matches() group-mask
-    shifts by a config value that can reach 65535 (UB on int); the tracker web
-    UI infers GPS lock from satellite count with no hysteresis.
+#114 FIXED -- Misc tail. Node uptime now comes from the 64-bit
+    esp_timer_get_time() (was uint32_t uptime_ms(), wrapping at 49.7 days).
+    EVENT_SYS_TIMER (basic_wrapper.cpp) uses 64-bit esp_timer microseconds
+    instead of 32-bit long ms (a multi-hour wait overflowed the deadline).
+    get_basic_param() clamps negative IDs (was an OOB read). LUTTOARRAY no
+    longer overwrites the DIM array's size header -- it fills entries and
+    zero-pads the rest, leaving UBOUND intact (shrinking it raised BOUNDS on
+    memory the script owns), and returns the copied count. The BasicTask
+    check-then-create moved inside basic_mutex (two callers could spawn two
+    interpreters). artnet_start() checks xTaskCreate and clears s_running on
+    failure. sunUpdateViaGPS() no longer blanks dataIsValid up front, so a
+    transient GPS drop keeps the last good sunrise/sunset (was returning -1 for
+    up to a minute). checkLut() counts a value with no comma as one entry (was
+    reporting a single-value file empty). cue_matches() guards the group-mask
+    shift (cone_group >= 12 can't be in a 12-bit mask; a shift >= 32 was UB).
+    Tracker web UI (tracker.html) now reads the firmware's GPS-lock status bit
+    instead of inferring lock from satellite count (which flagged every non-GPS
+    Heltec as "No Lock"), and applies hysteresis to the battery/tilt alarms.
+    Deferred: the effect timers in effects.cpp (SOS_effect2 etc.) also use the
+    32-bit uptime_ms() wrap, but those effects are commented out in main.cpp
+    (dead code) -- left as-is until they're wired up.

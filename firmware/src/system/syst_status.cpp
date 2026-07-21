@@ -172,7 +172,7 @@ static void collect_status(node_status *out)
     memset(out, 0, sizeof(*out));
 
     out->status = build_status_bits();
-    out->uptime = uptime_ms() / 1000u;
+    out->uptime = (uint32_t)(esp_timer_get_time() / 1000000LL);  // 64-bit: no 49.7-day wrap
     out->heap = esp_get_free_heap_size();
     out->w_rssi = wifi_is_connected() ? wifi_get_rssi() : 0;
     out->sat_cat = (uint8_t)((get_satellites() < 0) ? 0 : ((get_satellites() > 255) ? 255 : get_satellites()));

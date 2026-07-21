@@ -896,6 +896,10 @@
     const NOTES_PAGE_URL = "./notes.html";
     const LOW_BATTERY_V = 11.0;
     const TILT_ALARM_DEG = 10.0;
+    const BATTERY_HYST_V = 0.3;   // clear the battery alarm only above LOW_BATTERY_V + this
+    const TILT_HYST_DEG = 2.0;    // clear the tilt alarm only below TILT_ALARM_DEG - this
+    const GPS_LOCK_BIT = 1;       // NODE_STATUS_BIT_GPS_LOCK (bit 0 of the status word)
+    const alarmHysteresis = new Map();   // nodeId -> { battery: bool, tilt: bool }
     const MQTT_URLS = [
       "ws://sewerpipe.local:9001/mqtt",
       "ws://sewerpipe.local:9001",
@@ -1021,16 +1025,32 @@
     }
 
     function hasGpsLock(metrics) {
-      return !!metrics && Number.isFinite(metrics.satellites) && Number(metrics.satellites) > 0;
+      if (!metrics) return false;
+      // Prefer the firmware's published GPS-lock status bit; fall back to the
+      // satellite count only for older firmware that doesn't send `status`.
+      // (Satellites > 0 wrongly flagged every non-GPS Heltec node as "No Lock".)
+      if (Number.isFinite(metrics.status))
+        return (Number(metrics.status) & GPS_LOCK_BIT) !== 0;
+      return Number.isFinite(metrics.satellites) && Number(metrics.satellites) > 0;
     }
 
-    function getNodeAlarms(metrics) {
+    function getNodeAlarms(metrics, nodeId) {
       if (!metrics) {
         return [];
       }
 
+      // Hysteresis so a value hovering at the threshold doesn't flap the alarm
+      // strip on every 30 s status message.
+      const prev = (nodeId != null && alarmHysteresis.get(nodeId)) || { battery: false, tilt: false };
+      const state = { battery: prev.battery, tilt: prev.tilt };
+
       const alarms = [];
-      if (Number.isFinite(metrics.batteryV) && Number(metrics.batteryV) < LOW_BATTERY_V) {
+      if (Number.isFinite(metrics.batteryV)) {
+        const v = Number(metrics.batteryV);
+        if (v < LOW_BATTERY_V) state.battery = true;
+        else if (v > LOW_BATTERY_V + BATTERY_HYST_V) state.battery = false;
+      }
+      if (state.battery) {
         alarms.push({
           key: "battery",
           label: "Low Battery",
@@ -1046,10 +1066,13 @@
           severity: "warn"
         });
       }
-      if (
-        (Number.isFinite(metrics.tiltXDeg) && Math.abs(Number(metrics.tiltXDeg)) > TILT_ALARM_DEG) ||
-        (Number.isFinite(metrics.tiltYDeg) && Math.abs(Number(metrics.tiltYDeg)) > TILT_ALARM_DEG)
-      ) {
+      const tilt = Math.max(
+        Number.isFinite(metrics.tiltXDeg) ? Math.abs(Number(metrics.tiltXDeg)) : 0,
+        Number.isFinite(metrics.tiltYDeg) ? Math.abs(Number(metrics.tiltYDeg)) : 0
+      );
+      if (tilt > TILT_ALARM_DEG) state.tilt = true;
+      else if (tilt < TILT_ALARM_DEG - TILT_HYST_DEG) state.tilt = false;
+      if (state.tilt) {
         alarms.push({
           key: "tilt",
           label: "Tilt Alarm",
@@ -1057,6 +1080,8 @@
           severity: "bad"
         });
       }
+
+      if (nodeId != null) alarmHysteresis.set(nodeId, state);
       return alarms;
     }
 
@@ -1085,7 +1110,7 @@
       const alarmEntries = entries
         .map((entry) => {
           const metrics = getNodeMetrics(entry.payload);
-          const alarms = getNodeAlarms(metrics);
+          const alarms = getNodeAlarms(metrics, entry.nodeId);
           return alarms.length > 0 ? { entry, alarms } : null;
         })
         .filter(Boolean)
@@ -1176,7 +1201,8 @@
         tiltYDeg: Number(payload.tilt_y_deg),
         verMajor: parseUint8(payload.ver_major),
         verMinor: parseUint8(payload.ver_minor),
-        ipAddress: parseIpAddress(payload.ip)
+        ipAddress: parseIpAddress(payload.ip),
+        status: Number(payload.status)
       };
     }
 
@@ -1387,7 +1413,7 @@
         const staleClass = stale ? " card-stale" : "";
         const versionText = metrics ? formatVersion(metrics.verMajor, metrics.verMinor) : null;
         const hasGpsFix = metrics ? hasUsableCoordinatePair(metrics.latitude, metrics.longitude) : false;
-        const alarms = metrics ? getNodeAlarms(metrics) : [];
+        const alarms = metrics ? getNodeAlarms(metrics, entry.nodeId) : [];
         const alarmClass = alarms.length > 0 ? " card-alarm" : "";
         const updatedText = stale
           ? `Topic ${escapeHtml(entry.topic)} | Stale since ${escapeHtml(entry.updatedAt.toLocaleTimeString())}`

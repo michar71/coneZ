@@ -44,10 +44,12 @@ static bool cue_matches(uint16_t group)
         case 0: return true;                                    // all
         case 1: return config.cone_id == value;                 // cone_id
         case 2: return config.cone_group == value;              // group_id
-        case 3: return (value >> config.cone_group) & 1;        // group_mask
+        // value is a 12-bit mask; a shift by cone_group >= 12 is UB (and >= 32
+        // aliases wrong groups on Xtensa). Groups >= 12 simply aren't in the mask.
+        case 3: return config.cone_group < 12 && ((value >> config.cone_group) & 1);   // group_mask
         case 4: return config.cone_id != value;                 // not_cone_id
         case 5: return config.cone_group != value;              // not_group_id
-        case 6: return !((value >> config.cone_group) & 1);     // not_mask
+        case 6: return !(config.cone_group < 12 && ((value >> config.cone_group) & 1)); // not_mask
         default: return false;
     }
 }

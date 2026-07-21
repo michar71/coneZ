@@ -337,9 +337,13 @@ static void config_set_default_field(const cfg_descriptor_t *d)
 {
     conez_config_t defaults;
     config_fill_defaults(&defaults);
+    // Lock: this memcpy can be a multi-byte string field, so a cross-task reader
+    // must not observe it half-written (config unset runs on ShellTask).
+    CONFIG_LOCK();
     memcpy((uint8_t *)&config + d->offset,
            (uint8_t *)&defaults + d->offset,
            d->size);
+    CONFIG_UNLOCK();
 }
 
 
@@ -441,15 +445,23 @@ void config_save(void)
     }
 
     char fpath[64];
+    char ftmp[80];
     lfs_path(fpath, sizeof(fpath), CONFIG_PATH);
-    FILE *f = fopen(fpath, "w");
+    snprintf(ftmp, sizeof(ftmp), "%s.tmp", fpath);
+
+    // Lock BEFORE opening, and write to a temp file then atomically rename: a
+    // crash or power loss mid-write can no longer leave a truncated/corrupt
+    // config.ini, and the lock serializes concurrent savers (CLI + web) and the
+    // struct reads below.
+    CONFIG_LOCK();
+
+    FILE *f = fopen(ftmp, "w");
     if (!f)
     {
+        CONFIG_UNLOCK();
         printfnl(SOURCE_COMMANDS, "Error: cannot open %s for writing\n", CONFIG_PATH);
         return;
     }
-
-    CONFIG_LOCK();
 
     const char *prev_section = "";
     uint8_t *base = (uint8_t *)&config;
@@ -487,10 +499,17 @@ void config_save(void)
         }
     }
 
+    bool ok = (fflush(f) == 0);
+    if (fclose(f) != 0) ok = false;
+    if (ok && rename(ftmp, fpath) != 0) ok = false;
+    if (!ok) unlink(ftmp);
+
     CONFIG_UNLOCK();
 
-    fclose(f);
-    printfnl(SOURCE_COMMANDS, "Config saved to %s\n", CONFIG_PATH);
+    if (ok)
+        printfnl(SOURCE_COMMANDS, "Config saved to %s\n", CONFIG_PATH);
+    else
+        printfnl(SOURCE_COMMANDS, "Error: failed to write %s\n", CONFIG_PATH);
 }
 
 
@@ -727,7 +746,9 @@ void config_set_from_web(const char *body)
         {
             if (httpd_query_key_value(body, buf, val, sizeof(val)) == ESP_OK) {
                 url_decode(val);
-                if (val[0])
+                // Empty is a valid value for a string (clears it); for numeric
+                // types an empty field means leave-unchanged (can't parse "").
+                if (val[0] || d->type == CFG_STR)
                     config_set_field(d, val);
             }
         }

@@ -95,10 +95,13 @@ bool sunUpdate()
 
 bool sunUpdateViaGPS()
 {
-    dataIsValid = false;
+    // Don't blank dataIsValid up front: on a transient GPS drop (or any failure
+    // below) we keep the last good sunrise/sunset instead of returning -1 from
+    // sunRise()/sunSet() for up to a minute. dataIsValid/cached values are only
+    // overwritten on a successful sunUpdate() at the end.
     //Get Data from GPS module
     if (!get_gpsstatus()) {
-        return false;   
+        return false;
     }
     lastLat = get_lat();
     lastLong = get_lon();

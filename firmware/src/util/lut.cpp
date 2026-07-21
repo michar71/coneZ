@@ -47,13 +47,16 @@ int checkLut(uint8_t index)
     }
     int count = 0;
     int c;
+    bool has_content = false;
     while ((c = fgetc(file)) != EOF)
     {
         if (c == ',')
             count++;
+        else if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+            has_content = true;   // a value with no comma is still one entry
     }
     fclose(file);
-    if (count == 0)
+    if (!has_content)
     {
         lut_unlock();
         printfnl(SOURCE_BASIC,"LUT %d is empty\n", index);

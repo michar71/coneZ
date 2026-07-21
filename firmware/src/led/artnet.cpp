@@ -197,7 +197,14 @@ void artnet_start(void)
     s_running    = true;
     s_rx_packets = 0;
     s_rx_frames  = 0;
-    xTaskCreate(artnet_task_fun, "ArtNet", 4096, NULL, 5, &s_task);
+    if (xTaskCreate(artnet_task_fun, "ArtNet", 4096, NULL, 5, &s_task) != pdPASS) {
+        // Don't leave s_running=true with no task: artnet_running() would then
+        // report a receiver that doesn't exist.
+        s_running = false;
+        s_task = NULL;
+        printfnl(SOURCE_SYSTEM, "[ArtNet] task create failed\n");
+        return;
+    }
     printfnl(SOURCE_SYSTEM, "[ArtNet] Started\n");
 }
 

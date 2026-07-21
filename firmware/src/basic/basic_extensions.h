@@ -546,21 +546,26 @@ int LUTTOARRAY_()
         return 0; //No LUT loaded
     }
 
-    //Copy LUT to array (each read is bounds-checked under the LUT lock)
+    //Copy LUT to array (each read is bounds-checked under the LUT lock).
+    //arr[0] is the DIM array's size header (its UBOUND) -- DON'T shrink it:
+    //overwriting it with the copied count permanently shrank the array so later
+    //A(i) beyond the LUT length raised BOUNDS on memory the script owns. Keep
+    //the array size, fill entries, and zero-pad the remainder.
+    int cap = (int)arr[0];
     int lsize = lut_get_size();
-    int size = lsize < (int)arr[0] ? lsize : (int)arr[0]; //Limit to array size
-    for (int ii=1; ii<=size; ii++)
+    int copied = lsize < cap ? lsize : cap;
+    for (int ii=1; ii<=copied; ii++)
     {
         int v = 0;
         lut_read(ii-1, &v);
         arr[ii] = v; //Copy LUT value to array
     }
+    for (int ii=copied+1; ii<=cap; ii++)
+        arr[ii] = 0; //Zero-pad the remainder
 
-    arr[0] = size; //Set the first element to the size of the LUT
-
-    *sp = 0; //Push 0 to the stack
-    STEP;    
-}   
+    *sp = copied; //Push the number of entries copied
+    STEP;
+}
 
 int ARRAYTOLUT_()
 {
