@@ -170,7 +170,8 @@ OPEN (won't fix / deferred)
 
 #57 FIXED (2026-07-25, round 4) -- see the ROUND 4 FOLLOW-UP entry below.
 
-#58 check_serial() 512-byte buffer has no overflow protection.
+#58 CLOSED (2026-07-25, round 4) -- stale/misattributed; see the ROUND 4
+    FOLLOW-UP entry below.
 
 #59 SOS_effect()/CIRCLE_effect() still use blocking delay() calls.
     Kept intentionally for now.
@@ -724,3 +725,30 @@ Items missed by the original #101-114 consolidation, or reconsidered.
     the PARAM_Func callback) and bas2wasm-compiled code (via the get_param
     import). The simulator already rejected rather than clamped, so firmware now
     matches it.
+
+#58 CLOSED (not applicable) + follow-on fix -- "check_serial() 512-byte buffer
+    has no overflow protection" (util/shell.*).
+    The reported bug does not exist and never did. check_serial() was deleted in
+    c146127 (dual-stream CLI rewrite) and has no references left in the tree;
+    both surviving historical versions had NO buffer at all -- they only polled
+    Serial.available() and switched the output stream. There is no 512-byte
+    buffer in any serial/command path (the only [512]s are in wasm_format.cpp,
+    covered by round 3). The successor shell is bounds-checked at every entry:
+    the keystroke path guards on SHELL_BUFSIZE-1, history recall uses
+    strncpy(..., SHELL_BUFSIZE-1) + explicit NUL, the `pending` snapshot matches
+    its source size, and execute(str)/executeExternal() copy exactly
+    SHELL_BUFSIZE with explicit termination. SHELL_BUFSIZE is 88, not 512.
+
+    What the audit DID turn up (fixed here) is silent truncation, not overflow:
+      - The interactive path auto-submitted the line the moment it filled, so
+        typing/pasting past 87 chars RAN a command the user hadn't finished --
+        and dropped the rest. Now the line stops growing and refuses further
+        keystrokes with a single BEL (one per fill, not per char, so a long
+        paste doesn't machine-gun the bell); the line is only submitted on
+        Enter, so what's on screen is exactly what runs. Tracked by a lineFull
+        flag cleared in resetBuffer() and whenever there's room again.
+      - execute(const char[]) silently truncated an over-long command to 87
+        bytes and ran it. Since this is the MQTT `cmd` topic's entry point, a
+        clipped `config set` could write a half value and a clipped `rm` could
+        match a different path. Now rejected with "Command too long".
+    The simulator has no parallel shell, so nothing to mirror.

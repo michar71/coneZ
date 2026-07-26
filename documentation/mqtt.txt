@@ -170,8 +170,11 @@ Dispatch path (firmware/src/mqtt/conez_mqtt.cpp -> util/shell.cpp):
     shell.executeExternal(), which shares the interactive shell's task and
     stack and preserves any half-typed console line.
   - Queue depth MQTT_CMD_QUEUE_DEPTH (8); overflow drops the command (shown
-    as "Cmd RX" dropped in the `mqtt` CLI status). Commands are capped at
-    SHELL_BUFSIZE (88) chars, same as a typed line.
+    as "Cmd RX" dropped in the `mqtt` CLI status). Commands must fit in
+    SHELL_BUFSIZE (88) chars, same as a typed line; a longer command is
+    REJECTED with "Command too long", not truncated -- running the first 87
+    bytes of a clipped `config set` or `rm` could do something the sender
+    never asked for.
 
 Output goes to the console (USB + telnet), NOT back over MQTT. There is
 no command-response topic yet; watch conez/{id}/debug (enable `debug mqtt`)

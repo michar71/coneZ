@@ -127,6 +127,7 @@ class ConezShell : public ConezStream {
         int cursor;         // cursor position within linebuffer (0..inptr)
         int escState;       // escape state: 0=normal 1=ESC 2=ESC[ 5=CSI params 6=SS3 (ESC O)
         int escParam;       // accumulated numeric CSI parameter while in state 5
+        bool lineFull;      // line hit SHELL_BUFSIZE-1; bell once, not per refused char
         // History ring buffer (PSRAM-backed when available, else single DRAM entry)
         static const int HIST_MAX = 32;
         uint32_t hist_addr;         // PSRAM address of ring buffer (0 = not allocated)

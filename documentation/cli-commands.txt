@@ -18,6 +18,9 @@ Hardware-only commands are not available in the simulator.
 Line editing: arrow keys, Home/End, Delete, Ctrl-A/E, Ctrl-U (clear).
 Up/Down arrows navigate command history (32 entries on PSRAM boards,
 1 entry on Heltec). Duplicate consecutive commands are suppressed.
+A command line holds 87 characters. When it fills, further keystrokes are
+refused with a bell (the line is never auto-submitted, so what you see on
+screen is exactly what Enter will run); backspace to make room.
 File paths are auto-normalized (/ prepended if missing).
 
 Quoting: arguments with spaces must be enclosed in double quotes.

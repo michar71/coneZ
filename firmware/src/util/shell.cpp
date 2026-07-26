@@ -505,10 +505,21 @@ bool ConezShell::prepInput(void)
                 break;
 
             default:
+                // Line full: refuse the character instead of auto-submitting.
+                // Submitting on the 87th char ran a command the user hadn't
+                // finished typing (and silently dropped the rest of a paste).
+                // Now the line simply stops growing -- what's on screen is
+                // exactly what Enter will run. BEL once per fill, not per
+                // refused char, so a long paste doesn't machine-gun the bell.
                 if (inptr >= SHELL_BUFSIZE - 1) {
-                    bufferReady = true;
+                    if (!lineFull) {
+                        lineFull = true;
+                        if (echoEnabled && shellConnection)
+                            shellConnection->write('\a');
+                    }
                     break;
                 }
+                lineFull = false;   // room again (e.g. after a backspace)
                 if (cursor == inptr) {
                     // append at end (fast path)
                     linebuffer[inptr++] = c;
@@ -525,9 +536,6 @@ bool ConezShell::prepInput(void)
                     cursor++;
                     linebuffer[inptr] = '\0';
                     redrawLine(prevLen);
-                }
-                if (inptr >= SHELL_BUFSIZE - 1) {
-                    bufferReady = true;
                 }
                 break;
         }
@@ -548,6 +556,14 @@ void ConezShell::setEcho(bool echo)
 //////////////////////////////////////////////////////////////////////////////
 int ConezShell::execute(const char commandString[])
 {
+    // Reject an over-long command instead of truncating it. Running the first
+    // SHELL_BUFSIZE-1 bytes of a command nobody finished sending (an MQTT `cmd`
+    // payload, a script-issued command) could do something the sender never
+    // asked for -- a clipped `config set` writing a half value, or an `rm` whose
+    // path lost its tail and matched something else.
+    if (strlen(commandString) >= SHELL_BUFSIZE)
+        return report("Command too long", -1);
+
     // overwrites anything in linebuffer; hope you don't need it!
     strncpy(linebuffer, commandString, SHELL_BUFSIZE);
     linebuffer[SHELL_BUFSIZE - 1] = '\0';
@@ -669,6 +685,7 @@ void ConezShell::resetBuffer(void)
     inptr = 0;
     cursor = 0;
     escState = 0;
+    lineFull = false;
 }
 
 //////////////////////////////////////////////////////////////////////////////
