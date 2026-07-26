@@ -25,7 +25,9 @@ m3ApiRawFunction(m3_set_param)
 {
     m3ApiGetArg(int32_t, id);
     m3ApiGetArg(int32_t, val);
-    set_basic_param((uint8_t)id, val);
+    // No uint8_t cast: it truncated a guest id of 256 to 0 (the stop flag), so a
+    // wild set_param() could halt the script. Out-of-range ids are now rejected.
+    set_basic_param(id, val);
     m3ApiSuccess();
 }
 

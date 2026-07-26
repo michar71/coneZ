@@ -168,8 +168,7 @@ OPEN (won't fix / deferred)
 #56 Commented-out code in gps.cpp, effects.cpp, main.cpp, etc.
     Dead commented blocks left from development/debugging.
 
-#57 set_basic_param/get_basic_param silently clamp invalid index
-    to MAX_PARAMS-1 instead of rejecting out-of-range values.
+#57 FIXED (2026-07-25, round 4) -- see the ROUND 4 FOLLOW-UP entry below.
 
 #58 check_serial() 512-byte buffer has no overflow protection.
 
@@ -705,3 +704,23 @@ Items missed by the original #101-114 consolidation, or reconsidered.
     the sibling wasm_mem_read/write/set. The m3_split_* primitives stay trusted
     -- their only caller (wasm_mem_copy) now validates, so the latent
     over-read/over-write trap for a future host import is closed.
+
+#57 FIXED -- Param ids clamped instead of rejected (basic/basic_wrapper.*).
+    set_basic_param()/get_basic_param() clamped an out-of-range id to
+    MAX_PARAMS-1, so a typo'd `param 99 1` silently overwrote param 15 -- which
+    a running script may be reading -- and a bad get returned param 15's value
+    as if it were real. Worse, set_basic_param took a uint8_t: id 256 truncated
+    to 0, the STOP flag, so a wild set_param() from a WASM guest could halt the
+    script. Now: the id parameter is int (no truncation), out-of-range ids are
+    rejected -- set returns false and writes nothing, get returns 0 -- and
+    basic_param_valid() is exported for callers that need to pre-check.
+    Fallout fixed with it: the m3_set_param import dropped its (uint8_t) cast;
+    the `param` CLI command reports "Invalid param id N (valid: 0-15)" and
+    returns 1 instead of silently writing elsewhere; getSyncEvent()'s
+    EVENT_PARAM rejects a bad sourceID up front (get now returns a constant 0,
+    so an untimed WAITFOR on a typo'd source would otherwise spin forever); and
+    BASIC's GETPARAM_ no longer clamps a negative id to 0, which had returned
+    the stop flag for GETPARAM(-1). Applies to both the BASIC interpreter (via
+    the PARAM_Func callback) and bas2wasm-compiled code (via the get_param
+    import). The simulator already rejected rather than clamped, so firmware now
+    matches it.

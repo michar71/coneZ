@@ -1214,7 +1214,13 @@ int paramBasic(int argc, char **argv)
     }
     else
     {
-        set_basic_param(parse_int(argv[1]),parse_int(argv[2]));      
+        int id = parse_int(argv[1]);
+        if (!set_basic_param(id, parse_int(argv[2])))
+        {
+            printfnl(SOURCE_COMMANDS, "Invalid param id %d (valid: 0-%d)\n",
+                     id, BASIC_MAX_PARAMS - 1);
+            return 1;
+        }
         return 0;
     }
 }

@@ -9,21 +9,33 @@
 
 // ---------- Params (always available) ----------
 
-#define MAX_PARAMS 16
+#define MAX_PARAMS BASIC_MAX_PARAMS
 volatile int params[MAX_PARAMS];
 
-void set_basic_param(uint8_t paramID, int val)
+bool basic_param_valid(int paramID)
 {
-  if (paramID > MAX_PARAMS-1)
-     paramID = MAX_PARAMS-1;
-  params[paramID] = val;
+  return paramID >= 0 && paramID < MAX_PARAMS;
 }
 
+// Reject out-of-range ids rather than clamping them. Clamping aliased every bad
+// id onto param 15, so a typo'd `param 99 1` silently overwrote a real param
+// that a running script was reading -- a bug that looked like data corruption
+// rather than a bad argument.
+bool set_basic_param(int paramID, int val)
+{
+  if (!basic_param_valid(paramID))
+     return false;
+  params[paramID] = val;
+  return true;
+}
+
+// Returns 0 for an out-of-range id. Also clamped before; returning the value of
+// param 15 for id 99 (or param 0 -- the stop flag -- for a negative id) made a
+// bad read look like a plausible value.
 int get_basic_param(int paramID)
 {
-  if (paramID < 0) paramID = 0;   // a negative id (e.g. WAITFOR) would read OOB
-  if (paramID > MAX_PARAMS-1)
-     paramID = MAX_PARAMS-1;
+  if (!basic_param_valid(paramID))
+     return 0;
   return params[paramID];
 }
 
@@ -351,6 +363,11 @@ int8_t getSyncEvent(int event, int sourceID, int condition, int triggerValue, in
         }
         case EVENT_PARAM:
         {
+            // Reject a bad source up front. get_basic_param() now returns 0 for
+            // an out-of-range id, so without this an untimed WAITFOR on a typo'd
+            // source would spin forever on a value that can never change.
+            if (!basic_param_valid(sourceID))
+                return -1;
             long t = uptime_ms();
             if (condition == CONDITON_LARGER)
             {

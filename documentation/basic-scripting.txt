@@ -262,6 +262,8 @@ System
   GETPARAM(id)
       Read a shared parameter (0..15). Param 0 is the stop flag.
       Returns 0 if the parameter callback is not registered.
+      An id outside 0..15 is rejected and returns 0 (it is not clamped onto
+      a valid parameter). Same in the interpreter and in compiled code.
 
   WAITFOR(event, source, condition, trigger, timeout)
       Block until an event occurs. See WAITFOR Reference below.

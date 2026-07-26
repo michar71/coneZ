@@ -1320,8 +1320,8 @@ int GETPARAM_()
         *sp=0; //Push back to to the stack
         STEP;  
     }
-    if (val < 0)
-        val = 0;
+    // Don't clamp a negative id to 0 -- that returned param 0 (the stop flag)
+    // for GETPARAM(-1). The callback rejects out-of-range ids and returns 0.
     val = PARAM_Func(val);
     *sp=val; //Push back to to the stack
     STEP;

@@ -676,6 +676,8 @@ param {id} {value}
   Set a script parameter. Parameters are a 16-slot integer array shared
   between the main loop and running scripts (BASIC or WASM). BASIC reads
   them with GETPARAM(id); WASM reads them with get_param(id).
+  Valid ids are 0-15; anything else is rejected with an error (it is not
+  clamped onto a valid slot, which used to silently overwrite param 15).
   Example: param 1 42
 
 ps

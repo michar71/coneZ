@@ -327,9 +327,12 @@ Params (inter-task communication)
 
   int  get_param(int id)
       Read a shared parameter (0-15). Param 0 == 1 means stop requested.
+      An id outside 0-15 is rejected and returns 0 -- it is not clamped onto
+      a valid parameter.
 
   void set_param(int id, int val)
       Write a shared parameter (0-15).
+      An id outside 0-15 is rejected and writes nothing.
 
   int  should_stop()
       Returns 1 if the host has requested this module to stop.
