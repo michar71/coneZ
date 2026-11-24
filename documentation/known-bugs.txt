@@ -752,3 +752,130 @@ Items missed by the original #101-114 consolidation, or reconsidered.
         clipped `config set` could write a half value and a clipped `rm` could
         match a different path. Now rejected with "Command too long".
     The simulator has no parallel shell, so nothing to mirror.
+
+#118 FIXED -- LoRa dist rejected every deflate-compressed block (regression from
+    the #83 fix) (lora/dist.cpp).
+    finalize_block()'s over-read guard rejected a block when EITHER the
+    compressed length or the UNCOMPRESSED length (ulen) exceeded blk_N*DIST_L.
+    But the master sizes N from the compressed length (N = ceil(comp_len /
+    DIST_CHUNK_SIZE), conez-master.py), so ulen is legitimately larger than that
+    for any block that deflates by a chunk or more -- i.e. essentially every
+    firmware block and every compressible data file. Each one logged "len out of
+    range" and was dropped on every pass, so LoRa firmware OTA could never
+    complete (and held the OTA lock while it kept trying). Only blk_comp_len is
+    a READ bound on blk_data; ulen is the WRITE bound on dest (already limited
+    to rx_block_size within fw_block / rx_buf), and the store path requires
+    blk_comp_len == ulen, so its memcpy is covered by the comp_len check alone.
+    The ulen test is removed; the #83 over-read protection is unchanged.
+
+#119 FIXED -- Raising an LED count at runtime overflowed the LED buffers
+    (led/led.cpp + every LED writer).
+    The leds1..4 buffers are allocated once at boot (led_cap), but every runtime
+    bound read config.led_countN directly -- and "config set led.countN" (the
+    documented way to grow a strip: set, then reboot), the web config form and
+    "config reset"/"unset" all change that value immediately. Between the set
+    and the reboot the render task read, and cue BLACKOUT/FILL, WASM/BASIC LED
+    calls, effects, ArtNet and "led clear" wrote, up to the NEW count into the
+    OLD allocation: boot at 50, set 300, and the next fill wrote 300 CRGBs into
+    a 50-pixel buffer. New led_live_count(ch) returns config.led_countN clamped
+    to led_cap, and all runtime users go through it (led_push_hw,
+    led_set_channel, led_snapshot, led_resize_channel, cue.cpp, effects.cpp,
+    basic_extensions.h, wasm_imports_led.cpp, the `led` and `status` commands).
+    config.led_countN is now only the persisted setting plus the source for the
+    boot allocation. On boards without RGB LEDs there are no buffers, so the
+    count is returned unclamped as before. The simulator sizes its channels as
+    vectors and bounds by their size, so nothing to mirror.
+
+#120 FIXED -- WiFi never reconnected after a drop or a failed first attempt
+    (util/conez_wifi.cpp, main.cpp).
+    The WIFI_EVENT_STA_DISCONNECTED handler only recorded the state, and
+    esp_wifi_connect() was called solely from wifi_start()/wifi_reconnect()
+    (boot and the `wifi` CLI). ESP-IDF does not retry by itself -- the Arduino
+    layer used to, and the pure-IDF migration dropped that. So an AP reboot, or
+    an AP that wasn't up yet at boot, left the cone "Disconnected" (no MQTT,
+    NTP, ArtNet, telnet or HTTP) until a manual `wifi enable` or a reboot. New
+    wifi_loop(), called from loop(), re-issues the connect while the state is
+    DISCONNECTED and WiFi is wanted (set by wifi_start/wifi_reconnect, cleared
+    by wifi_stop), with a backoff of 2 s doubling to 30 s that resets on
+    GOT_IP. It logs once when retries start and once on recovery.
+
+#121 FIXED -- Over-long MQTT commands were still truncated and executed
+    (mqtt/conez_mqtt.cpp). Follow-on to the #58 fix.
+    The MQTT event handler built the command into cmd[MQTT_CMD_MAX] (= 88) and
+    simply stopped copying at 87 chars, so the string it queued was always
+    shorter than SHELL_BUFSIZE and execute()'s "Command too long" check could
+    never fire for the one caller it was written for. The payload was also
+    clipped to 255 bytes before that, and a payload larger than esp-mqtt's
+    512-byte buffer arrives fragmented (only the first piece carries the topic).
+    The handler now computes the command length from the untruncated sizes
+    (topic_len, total_data_len) and drops a command that doesn't fit: counted in
+    the `mqtt` status "Cmd RX ... dropped" figure and logged as "cmd dropped: N
+    chars, max 87". Nothing is clipped on the way to the shell any more.
+
+#122 FIXED -- `mqtt connect`/`mqtt enable` raced the auto-start and could create
+    two clients (mqtt/conez_mqtt.cpp).
+    mqtt_force_connect() (ShellTask) cleared s_user_stopped and called
+    mqtt_create_and_start(); mqtt_loop() (loopTask, every pass) saw the same
+    !s_started && !s_user_stopped and called it too. s_started is only set at
+    the end of mqtt_create_and_start() -- after esp_mqtt_client_init/start --
+    and nothing serialized the two. Outcomes: two clients (one leaked, both
+    using the same client id, so the broker evicted them in a reconnect loop),
+    or the second caller's leading esp_mqtt_client_destroy(s_client) freeing the
+    handle the first was still registering events on. New mqtt_start_once()
+    does the s_started check and the create+start atomically under
+    s_client_mtx; mqtt_loop() uses a zero-wait take so loopTask never blocks
+    behind a stop. mqtt_force_connect()'s esp_mqtt_client_reconnect() now also
+    runs under the mutex (mqtt_stop_client() destroys the handle).
+
+#123 FIXED -- A stalled upload hung the web server forever with the OTA lock held
+    (http/http.cpp).
+    http_update_apply() and http_config_post() retried httpd_req_recv() on every
+    HTTPD_SOCK_ERR_TIMEOUT with no limit. A client that vanished without a FIN
+    (WiFi dropped mid-upload) never produces any other error, so the single
+    httpd task spun on 5 s timeouts indefinitely: web UI dead, ota_lock stuck on
+    "http-fw"/"http-fs" (so LoRa firmware OTA was refused too). Both loops now
+    give up after HTTP_RECV_MAX_TIMEOUTS (6) consecutive timeouts (~30 s; the
+    count resets whenever data arrives), answer 408 and fail the request, which
+    releases the OTA lock and closes the socket. Note an aborted FILESYSTEM
+    upload still leaves LittleFS unmounted and partly rewritten, as with any
+    other mid-upload failure -- but the server is now alive to re-upload.
+
+#124 FIXED -- WASM scripts could reconfigure any GPIO, including the PSRAM/LoRa
+    SPI, USB, GPS and flash pins (wasm/wasm_imports_gpio.cpp).
+    pin_set, pin_clear and pin_read called gpio_set_direction() with only a
+    `< GPIO_NUM_MAX` check, while the `gpio` CLI command refuses invalid and
+    reserved pins. pin_read(6) switched the PSRAM SCK to a plain input and the
+    bus was dead until reboot. gpio_valid_pin()/gpio_is_reserved() moved from
+    commands.cpp to util/util.cpp so both share one table. pin_set/pin_clear on
+    an invalid or reserved pin are now no-ops; pin_read on a reserved pin
+    returns its level without reconfiguring it (same as `gpio read`), and 0 on
+    an invalid pin. The simulator's GPIO imports are logging stubs -- nothing to
+    mirror. (analog_read was already restricted, #85.)
+
+#125 FIXED -- The scanner's transient channel could be saved into config.ini
+    (lora/scan.cpp, lora/lora.cpp).
+    scan_apply() overwrote config.lora_*/fsk_* with the scanlist entry, called
+    lora_reinit(), then restored them -- holding only the radio mutex. A
+    config_save() from another task inside that window (`config set`, `lora
+    on/off`, the web config form) persisted the scanned frequency/mode as the
+    user's setting; an invalid scanlist entry saved that way made the next
+    boot's radio.begin() fail and left LoRa off. The channel is now passed
+    explicitly: new lora_phy_t + lora_reinit_phy(), with lora_reinit() reduced
+    to lora_phy_from_config() + lora_reinit_phy(). scan_apply() builds a
+    lora_phy_t from the entry and never writes config.*. Radio behaviour is
+    unchanged (TX power, preamble, FSK shaping and CRC still come from config,
+    as before).
+
+#126 FIXED -- Every valid NMEA sentence was committed twice (sensors/nmea.cpp).
+    nmea_encode() returned commit_sentence() on the '\r' without clearing
+    in_sentence/in_checksum, so the '\n' of the CRLF passed the same checksum
+    test and committed the same staged sentence again: update/datetime counters
+    bumped twice and the epoch re-anchored twice per RMC/GGA. The sentence
+    state is now reset after the commit as well.
+
+#127 FIXED -- /nvs web page printed only the first namespace header
+    (http/http.cpp).
+    prev_ns pointed at info.namespace_name, but `info` is a loop-local that
+    nvs_entry_info() rewrites in place, so the strcmp always compared the buffer
+    with itself and every key was listed under the first namespace. prev_ns is
+    now a separate copy.

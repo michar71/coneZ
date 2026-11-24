@@ -33,10 +33,10 @@ static inline uint8_t wasm_gamma(uint8_t v) {
 
 static CRGB *led_buf_for_channel(int ch, int *count_out) {
     switch (ch) {
-        case 1: *count_out = config.led_count1; return leds1;
-        case 2: *count_out = config.led_count2; return leds2;
-        case 3: *count_out = config.led_count3; return leds3;
-        case 4: *count_out = config.led_count4; return leds4;
+        case 1: *count_out = led_live_count(1); return leds1;
+        case 2: *count_out = led_live_count(2); return leds2;
+        case 3: *count_out = led_live_count(3); return leds3;
+        case 4: *count_out = led_live_count(4); return leds4;
         default: *count_out = 0; return NULL;
     }
 }
@@ -59,10 +59,10 @@ m3ApiRawFunction(m3_led_set_pixel)
     CRGB *buf = NULL;
     int count = 0;
     switch (channel) {
-        case 1: buf = leds1; count = config.led_count1; break;
-        case 2: buf = leds2; count = config.led_count2; break;
-        case 3: buf = leds3; count = config.led_count3; break;
-        case 4: buf = leds4; count = config.led_count4; break;
+        case 1: buf = leds1; count = led_live_count(1); break;
+        case 2: buf = leds2; count = led_live_count(2); break;
+        case 3: buf = leds3; count = led_live_count(3); break;
+        case 4: buf = leds4; count = led_live_count(4); break;
     }
     if (buf && pos >= 0 && pos < count) {
         buf[pos] = CRGB(wasm_gamma((uint8_t)r), wasm_gamma((uint8_t)g), wasm_gamma((uint8_t)b));
@@ -83,10 +83,10 @@ m3ApiRawFunction(m3_led_fill)
     if (channel >= 1 && channel <= 4) {
         int cnt = 0;
         switch (channel) {
-            case 1: cnt = config.led_count1; break;
-            case 2: cnt = config.led_count2; break;
-            case 3: cnt = config.led_count3; break;
-            case 4: cnt = config.led_count4; break;
+            case 1: cnt = led_live_count(1); break;
+            case 2: cnt = led_live_count(2); break;
+            case 3: cnt = led_live_count(3); break;
+            case 4: cnt = led_live_count(4); break;
         }
         led_set_channel(channel, cnt, col);
     }
@@ -109,10 +109,10 @@ m3ApiRawFunction(m3_led_count)
 
     int cnt = 0;
     switch (channel) {
-        case 1: cnt = config.led_count1; break;
-        case 2: cnt = config.led_count2; break;
-        case 3: cnt = config.led_count3; break;
-        case 4: cnt = config.led_count4; break;
+        case 1: cnt = led_live_count(1); break;
+        case 2: cnt = led_live_count(2); break;
+        case 3: cnt = led_live_count(3); break;
+        case 4: cnt = led_live_count(4); break;
     }
     m3ApiReturn(cnt);
 }
@@ -131,10 +131,10 @@ m3ApiRawFunction(m3_led_set_pixel_hsv)
     CRGB *buf = NULL;
     int count = 0;
     switch (channel) {
-        case 1: buf = leds1; count = config.led_count1; break;
-        case 2: buf = leds2; count = config.led_count2; break;
-        case 3: buf = leds3; count = config.led_count3; break;
-        case 4: buf = leds4; count = config.led_count4; break;
+        case 1: buf = leds1; count = led_live_count(1); break;
+        case 2: buf = leds2; count = led_live_count(2); break;
+        case 3: buf = leds3; count = led_live_count(3); break;
+        case 4: buf = leds4; count = led_live_count(4); break;
     }
     if (buf && pos >= 0 && pos < count) {
         CHSV hsv((uint8_t)h, (uint8_t)s, (uint8_t)v);
@@ -166,10 +166,10 @@ m3ApiRawFunction(m3_led_fill_hsv)
         rgb.b = wasm_gamma(rgb.b);
         int cnt = 0;
         switch (channel) {
-            case 1: cnt = config.led_count1; break;
-            case 2: cnt = config.led_count2; break;
-            case 3: cnt = config.led_count3; break;
-            case 4: cnt = config.led_count4; break;
+            case 1: cnt = led_live_count(1); break;
+            case 2: cnt = led_live_count(2); break;
+            case 3: cnt = led_live_count(3); break;
+            case 4: cnt = led_live_count(4); break;
         }
         led_set_channel(channel, cnt, rgb);
     }
@@ -234,10 +234,10 @@ m3ApiRawFunction(m3_led_set_buffer) {
     CRGB *buf = NULL;
     int max_count = 0;
     switch (channel) {
-        case 1: buf = leds1; max_count = config.led_count1; break;
-        case 2: buf = leds2; max_count = config.led_count2; break;
-        case 3: buf = leds3; max_count = config.led_count3; break;
-        case 4: buf = leds4; max_count = config.led_count4; break;
+        case 1: buf = leds1; max_count = led_live_count(1); break;
+        case 2: buf = leds2; max_count = led_live_count(2); break;
+        case 3: buf = leds3; max_count = led_live_count(3); break;
+        case 4: buf = leds4; max_count = led_live_count(4); break;
     }
     if (!buf || count <= 0) { m3ApiSuccess(); }
 

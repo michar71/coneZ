@@ -128,12 +128,12 @@ void SOS_effect(void)
           col.r = ii;
           col.g = ii;
           col.b = ii;
-          led_set_channel(1, config.led_count1, col);
+          led_set_channel(1, led_live_count(1), col);
           led_show();
           vTaskDelay(pdMS_TO_TICKS(20));
         }
         vTaskDelay(pdMS_TO_TICKS(25));
-        led_set_channel(1, config.led_count1, CRGB::Black);
+        led_set_channel(1, led_live_count(1), CRGB::Black);
         led_show();
       }
 }
@@ -204,7 +204,7 @@ void SOS_effect2(void)
         col.r = brightness;
         col.g = brightness;
         col.b = brightness;
-        led_set_channel(1, config.led_count1, col);
+        led_set_channel(1, led_live_count(1), col);
         led_show();
 
         s_sos2_step++;
@@ -229,7 +229,7 @@ void SOS_effect2(void)
         col.r = brightness;
         col.g = brightness;
         col.b = brightness;
-        led_set_channel(1, config.led_count1, col);
+        led_set_channel(1, led_live_count(1), col);
         led_show();
 
         s_sos2_step++;
@@ -251,7 +251,7 @@ void SOS_effect2(void)
                 baseline.g = 0;
                 baseline.b = 10;
             }
-            led_set_channel(1, config.led_count1, baseline);
+            led_set_channel(1, led_live_count(1), baseline);
             led_show();
 
             s_sos2_state = IDLE;
@@ -307,7 +307,7 @@ void CIRCLE_effect(void)
 
         CRGB col;
         col.setHSV(hue,255,255);
-        led_set_channel(1, config.led_count1, col);
+        led_set_channel(1, led_live_count(1), col);
         led_show();
         vTaskDelay(pdMS_TO_TICKS(20));
       }

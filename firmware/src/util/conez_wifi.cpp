@@ -13,6 +13,7 @@
 #include "esp_mac.h"
 #include "lwip/netif.h"
 #include "main.h"
+#include "printManager.h"
 #include <atomic>
 #include <string.h>
 
@@ -23,6 +24,16 @@ static volatile uint32_t     s_connected_since = 0;  // uptime_ms at IP_EVENT_ST
 static esp_netif_t          *s_sta_netif = NULL;
 static bool                  s_initialized = false;
 static char                  s_hostname[64] = "";
+
+// Auto-reconnect. ESP-IDF does not retry a dropped/failed STA connection on its
+// own (the Arduino layer used to), so wifi_loop() re-issues esp_wifi_connect()
+// with a backoff whenever we want to be connected but aren't.
+#define WIFI_RETRY_MIN_MS   2000
+#define WIFI_RETRY_MAX_MS   30000
+static volatile bool         s_want_connected = false;  // wifi_start()/reconnect() set, wifi_stop() clears
+static volatile uint32_t     s_disconnected_at = 0;     // uptime_ms of the last STA_DISCONNECTED
+static uint32_t              s_retry_delay_ms = WIFI_RETRY_MIN_MS;  // loopTask only
+static uint32_t              s_retry_count = 0;                     // loopTask only
 
 // ---------- Byte counting ----------
 // ESP-IDF's wlanif.c doesn't increment LWIP's MIB2 byte counters,
@@ -72,6 +83,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
             if (s_state != WIFI_ST_OFF)
                 s_state = WIFI_ST_DISCONNECTED;
             s_connected_since = 0;
+            s_disconnected_at = uptime_ms();   // wifi_loop() retries from here
             break;
         case WIFI_EVENT_STA_START:
             s_state = WIFI_ST_CONNECTING;
@@ -132,12 +144,14 @@ void wifi_start(const char *ssid, const char *password, const char *hostname)
     esp_wifi_set_config(WIFI_IF_STA, &wcfg);
 
     s_state = WIFI_ST_CONNECTING;
+    s_want_connected = true;
     esp_wifi_start();
     esp_wifi_connect();
 }
 
 void wifi_stop(void)
 {
+    s_want_connected = false;   // before the disconnect event, so wifi_loop() won't retry
     esp_wifi_disconnect();
     esp_wifi_stop();
     s_state = WIFI_ST_OFF;
@@ -156,7 +170,43 @@ void wifi_reconnect(const char *ssid, const char *password)
     esp_wifi_set_config(WIFI_IF_STA, &wcfg);
 
     s_state = WIFI_ST_CONNECTING;
+    s_want_connected = true;
     esp_wifi_connect();
+}
+
+void wifi_loop(void)
+{
+    wifi_state_e st = s_state;
+
+    if (st == WIFI_ST_CONNECTED) {
+        if (s_retry_count) {
+            printfnl(SOURCE_SYSTEM, "WiFi reconnected after %u attempt%s\n",
+                     (unsigned)s_retry_count, s_retry_count == 1 ? "" : "s");
+            s_retry_count = 0;
+        }
+        s_retry_delay_ms = WIFI_RETRY_MIN_MS;
+        return;
+    }
+
+    // Only a dropped/failed link is retried: OFF means the radio is stopped, and
+    // CONNECTING means an attempt is already in flight (it ends in GOT_IP or
+    // another STA_DISCONNECTED).
+    if (st != WIFI_ST_DISCONNECTED || !s_want_connected) return;
+    if ((uint32_t)(uptime_ms() - s_disconnected_at) < s_retry_delay_ms) return;
+
+    // A deliberate esp_wifi_disconnect() in wifi_reconnect() also raises
+    // STA_DISCONNECTED, possibly after that call already started its own connect;
+    // esp_wifi_connect() then just returns ESP_ERR_WIFI_CONN and we leave the
+    // state alone. Same for a wifi_stop() racing us (ESP_ERR_WIFI_NOT_STARTED).
+    if (s_retry_count == 0)
+        printfnl(SOURCE_SYSTEM, "WiFi disconnected -- retrying\n");
+    s_retry_count++;
+    s_disconnected_at = uptime_ms();   // re-arm in case no event follows
+    if (esp_wifi_connect() == ESP_OK && s_want_connected && s_state == WIFI_ST_DISCONNECTED)
+        s_state = WIFI_ST_CONNECTING;
+
+    s_retry_delay_ms *= 2;
+    if (s_retry_delay_ms > WIFI_RETRY_MAX_MS) s_retry_delay_ms = WIFI_RETRY_MAX_MS;
 }
 
 wifi_state_e wifi_get_state(void)

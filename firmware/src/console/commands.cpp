@@ -19,6 +19,7 @@
 #include "wasm_wrapper.h"
 #endif
 #include "main.h"
+#include "util.h"
 #include "freertos/task.h"
 #include "esp_private/freertos_debug.h"
 #include "printManager.h"
@@ -1772,7 +1773,7 @@ int cmd_status(int argc, char **argv)
     // LEDs
 #ifdef BOARD_HAS_RGB_LEDS
     out->printf("LEDs:    ch1=%d ch2=%d ch3=%d ch4=%d\n",
-        config.led_count1, config.led_count2, config.led_count3, config.led_count4);
+        led_live_count(1), led_live_count(2), led_live_count(3), led_live_count(4));
 #endif
 
     // Sensors
@@ -2156,37 +2157,6 @@ static const char *pin_name_lookup(int gpio)
     for (const PinInfo *p = pin_table; p->pin >= 0; p++)
         if (p->pin == gpio) return p->name;
     return "";
-}
-
-// Returns true if the pin is a valid ESP32-S3 GPIO (0-21, 33-48)
-static bool gpio_valid_pin(int pin)
-{
-    return (pin >= 0 && pin <= 21) || (pin >= 33 && pin <= 48);
-}
-
-// Returns true if the pin is reserved for critical hardware and should not be reconfigured
-static bool gpio_is_reserved(int pin)
-{
-    // USB
-    if (pin == 19 || pin == 20) return true;
-#ifdef BOARD_CONEZ_V0_1
-    // PSRAM SPI
-    if (pin >= 4 && pin <= 7) return true;
-    // LoRa SPI + control
-    if (pin >= 8 && pin <= 14) return true;
-    // GPS UART
-    if (pin == 43 || pin == 44) return true;
-    // GPS PPS
-    if (pin == 42) return true;
-    // I2C
-    if (pin == 17 || pin == 18) return true;
-#elif defined(BOARD_HELTEC_LORA32_V3)
-    // LoRa SPI + control
-    if (pin >= 8 && pin <= 14) return true;
-    // I2C / OLED
-    if (pin == 17 || pin == 18 || pin == 21) return true;
-#endif
-    return false;
 }
 
 static void gpio_show_all(void)
@@ -2984,8 +2954,8 @@ int cmd_led(int argc, char **argv)
         return true;
     };
     CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
-    int   counts[] = { config.led_count1, config.led_count2,
-                       config.led_count3, config.led_count4 };
+    int   counts[] = { led_live_count(1), led_live_count(2),
+                       led_live_count(3), led_live_count(4) };
 
     // led count <ch> <n> — resize a channel
     if (argc >= 4 && !strcasecmp(argv[1], "count")) {

@@ -442,12 +442,19 @@ static void finalize_block(bool use_rs)
 
     uint8_t *dest = rx_is_fw ? fw_block : (rx_buf + off_u);
 
-    // A crafted DIST_DATA chunk can declare a compressed/decompressed length far
-    // larger than this block's buffer (blk_N*DIST_L bytes). Both inflate_buf and
-    // the raw memcpy below read from blk_data, so bound the lengths first or a
+    // A crafted DIST_DATA chunk can declare a compressed length far larger than
+    // this block's buffer (blk_N*DIST_L bytes). Both inflate_buf and the raw
+    // memcpy below read blk_comp_len bytes from blk_data, so bound it first or a
     // hostile packet forces a heap over-read.
+    //
+    // Only the COMPRESSED length is bounded by blk_cap: the master sizes N from
+    // it (N = ceil(comp_len / DIST_L)), so the uncompressed ulen legitimately
+    // exceeds blk_cap for any block that deflates by a chunk or more. ulen is
+    // the WRITE bound on dest (<= rx_block_size, within fw_block / rx_buf), and
+    // the store path below requires blk_comp_len == ulen, so its memcpy read is
+    // covered by this same check.
     size_t blk_cap = (size_t)blk_N * DIST_L;
-    if ((size_t)blk_comp_len > blk_cap || (size_t)ulen > blk_cap) {
+    if ((size_t)blk_comp_len > blk_cap) {
         printfnl(SOURCE_LORA_DIST, "dist: id %u block %u len out of range (comp %u ulen %u cap %u)\n",
                  (unsigned)rx_file_id, (unsigned)blk_idx,
                  (unsigned)blk_comp_len, (unsigned)ulen, (unsigned)blk_cap);

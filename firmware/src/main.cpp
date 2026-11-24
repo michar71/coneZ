@@ -392,7 +392,7 @@ void setup()
   // Apply default colors from config (if any channel has a non-black color)
   {
     int colors[] = { config.led_color1, config.led_color2, config.led_color3, config.led_color4 };
-    int counts[] = { config.led_count1, config.led_count2, config.led_count3, config.led_count4 };
+    int counts[] = { led_live_count(1), led_live_count(2), led_live_count(3), led_live_count(4) };
     for (int ch = 0; ch < 4; ch++) {
       if (colors[ch] != 0) {
         CRGB c((colors[ch] >> 16) & 0xFF, (colors[ch] >> 8) & 0xFF, colors[ch] & 0xFF);
@@ -598,6 +598,9 @@ void loop()
     }
   }
 #endif
+
+  // WiFi auto-reconnect (IDF doesn't retry a dropped link by itself)
+  wifi_loop();
 
   // NTP time sync (runs on all boards when WiFi is connected)
   ntp_loop();

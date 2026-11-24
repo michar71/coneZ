@@ -110,10 +110,10 @@ static void dispatch_cue(const cue_entry *cue)
         if (cue->channel >= 1 && cue->channel <= 4) {
             int cnt = 0;
             switch (cue->channel) {
-                case 1: cnt = config.led_count1; break;
-                case 2: cnt = config.led_count2; break;
-                case 3: cnt = config.led_count3; break;
-                case 4: cnt = config.led_count4; break;
+                case 1: cnt = led_live_count(1); break;
+                case 2: cnt = led_live_count(2); break;
+                case 3: cnt = led_live_count(3); break;
+                case 4: cnt = led_live_count(4); break;
             }
             led_set_channel(cue->channel, cnt, CRGB::Black);
             led_show();
@@ -125,10 +125,10 @@ static void dispatch_cue(const cue_entry *cue)
         if (cue->channel >= 1 && cue->channel <= 4) {
             int cnt = 0;
             switch (cue->channel) {
-                case 1: cnt = config.led_count1; break;
-                case 2: cnt = config.led_count2; break;
-                case 3: cnt = config.led_count3; break;
-                case 4: cnt = config.led_count4; break;
+                case 1: cnt = led_live_count(1); break;
+                case 2: cnt = led_live_count(2); break;
+                case 3: cnt = led_live_count(3); break;
+                case 4: cnt = led_live_count(4); break;
             }
             led_set_channel(cue->channel, cnt, col);
             led_show();
@@ -137,10 +137,10 @@ static void dispatch_cue(const cue_entry *cue)
     }
 
     case CUE_TYPE_BLACKOUT:
-        led_set_channel(1, config.led_count1, CRGB::Black);
-        led_set_channel(2, config.led_count2, CRGB::Black);
-        led_set_channel(3, config.led_count3, CRGB::Black);
-        led_set_channel(4, config.led_count4, CRGB::Black);
+        led_set_channel(1, led_live_count(1), CRGB::Black);
+        led_set_channel(2, led_live_count(2), CRGB::Black);
+        led_set_channel(3, led_live_count(3), CRGB::Black);
+        led_set_channel(4, led_live_count(4), CRGB::Black);
         led_show();
         break;
 

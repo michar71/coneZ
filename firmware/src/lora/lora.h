@@ -3,6 +3,26 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "config.h"
+
+// The per-channel PHY parameters -- everything a scanlist entry can vary. The
+// rest of the radio setup (TX power, preamble, FSK shaping/CRC) always comes
+// from config. Units match the config fields.
+typedef struct {
+    bool  fsk;                  // true = FSK, false = LoRa
+    float freq_mhz;
+    // LoRa
+    float bw_khz;
+    int   sf;
+    int   cr;
+    int   sync_word;            // same encoding as config.lora_sync_word
+    // FSK
+    float bitrate_kbps;
+    float freqdev_khz;
+    float rxbw_khz;
+    bool  whitening;
+    char  fsk_syncword[CONFIG_MAX_FSK_SYNCWORD];
+} lora_phy_t;
 
 void lora_rx( void );
 int lora_setup( void );
@@ -43,5 +63,7 @@ int lora_set_bandwidth(float bw);
 int lora_set_sf(int sf);
 int lora_set_cr(int cr);
 int lora_reinit(void);   // full re-init from config (for mode switch)
+void lora_phy_from_config(lora_phy_t *p);   // snapshot the user's configured channel
+int lora_reinit_phy(const lora_phy_t *p);   // full re-init on an explicit channel (scanner)
 
 #endif

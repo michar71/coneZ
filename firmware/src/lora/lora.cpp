@@ -109,9 +109,9 @@ static int parse_hex_syncword(const char *hex, uint8_t *out, int maxlen)
 //   MSB = (syncWord & 0xF0) | ((controlBits & 0xF0) >> 4)
 //   LSB = ((syncWord & 0x0F) << 4) | (controlBits & 0x0F)
 // so we invert that mapping to hit an arbitrary 16-bit register value.
-static void lora_apply_sync_word( void )
+static void lora_apply_sync_word( int sync_word )
 {
-    uint32_t sw = (uint32_t)config.lora_sync_word;
+    uint32_t sw = (uint32_t)sync_word;
 
     uint16_t reg;
     if (sw <= 0xFF)
@@ -213,7 +213,7 @@ int lora_setup( void )
     radio.setBandwidth( config.lora_bandwidth );
     radio.setCodingRate( config.lora_cr );
     radio.setPreambleLength( config.lora_preamble );
-    lora_apply_sync_word();
+    lora_apply_sync_word( config.lora_sync_word );
     radio.setCRC( true );
   }
 
@@ -663,20 +663,46 @@ int lora_set_cr(int cr)
     return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
 
+void lora_phy_from_config(lora_phy_t *p)
+{
+    p->fsk          = (strcasecmp(config.lora_rf_mode, "fsk") == 0);
+    p->freq_mhz     = config.lora_frequency;
+    p->bw_khz       = config.lora_bandwidth;
+    p->sf           = config.lora_sf;
+    p->cr           = config.lora_cr;
+    p->sync_word    = config.lora_sync_word;
+    p->bitrate_kbps = config.fsk_bitrate;
+    p->freqdev_khz  = config.fsk_freqdev;
+    p->rxbw_khz     = config.fsk_rxbw;
+    p->whitening    = config.fsk_whitening;
+    strlcpy(p->fsk_syncword, config.fsk_syncword, sizeof(p->fsk_syncword));
+}
+
 int lora_reinit(void)
 {
-    fsk_mode = (strcasecmp(config.lora_rf_mode, "fsk") == 0);
+    lora_phy_t p;
+    lora_phy_from_config(&p);
+    return lora_reinit_phy(&p);
+}
 
+// Re-init the radio on an explicit channel. The scanner hops through here with
+// its scanlist entry; it must NOT route the channel through the global config
+// (it used to borrow + restore config.lora_*/fsk_*, and a config_save() from
+// another task inside that window persisted the scanned channel).
+int lora_reinit_phy(const lora_phy_t *p)
+{
     lora_radio_lock();          // recursive: scan_step() may already hold it
+
+    fsk_mode = p->fsk;
 
     int status;
     if (fsk_mode)
     {
         status = radio.beginFSK(
-            config.lora_frequency,
-            config.fsk_bitrate,
-            config.fsk_freqdev,
-            config.fsk_rxbw,
+            p->freq_mhz,
+            p->bitrate_kbps,
+            p->freqdev_khz,
+            p->rxbw_khz,
             config.lora_tx_power,
             config.lora_preamble,
             1.8,    // TCXO voltage -- MUST be set: beginFSK() resets the chip
@@ -687,7 +713,7 @@ int lora_reinit(void)
     }
     else
     {
-        status = radio.begin(config.lora_frequency);
+        status = radio.begin(p->freq_mhz);
     }
 
     if (status == RADIOLIB_ERR_NONE)
@@ -706,11 +732,11 @@ int lora_reinit(void)
                 idx = 0;
             radio.setDataShaping(shaping_map[idx]);
 
-            if (config.fsk_whitening)
+            if (p->whitening)
                 radio.setWhitening(true);
 
             uint8_t sw_bytes[8];
-            int sw_len = parse_hex_syncword(config.fsk_syncword, sw_bytes, 8);
+            int sw_len = parse_hex_syncword(p->fsk_syncword, sw_bytes, 8);
             if (sw_len > 0)
                 radio.setSyncWord(sw_bytes, sw_len);
 
@@ -718,11 +744,11 @@ int lora_reinit(void)
         }
         else
         {
-            radio.setSpreadingFactor(config.lora_sf);
-            radio.setBandwidth(config.lora_bandwidth);
-            radio.setCodingRate(config.lora_cr);
+            radio.setSpreadingFactor(p->sf);
+            radio.setBandwidth(p->bw_khz);
+            radio.setCodingRate(p->cr);
             radio.setPreambleLength(config.lora_preamble);
-            lora_apply_sync_word();
+            lora_apply_sync_word(p->sync_word);
             radio.setCRC(true);
         }
 

@@ -26,6 +26,11 @@ void wifi_stop(void);
 // Reconnect with new credentials (keeps STA mode active)
 void wifi_reconnect(const char *ssid, const char *password);
 
+// Call from loop(): re-issues the connect (2 s backoff, doubling to 30 s) after
+// a drop or a failed attempt, for as long as wifi_start()/wifi_reconnect() was
+// the last request. wifi_stop() turns it off.
+void wifi_loop(void);
+
 // State queries
 wifi_state_e wifi_get_state(void);
 bool         wifi_is_connected(void);

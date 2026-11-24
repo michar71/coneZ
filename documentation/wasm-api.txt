@@ -166,6 +166,14 @@ GPIO
   int pin_read(int gpio)
       Read a digital GPIO pin (configures as INPUT first). Returns 0 or 1.
 
+  Pin rules are the same as the `gpio` CLI command. Only real ESP32-S3 GPIOs
+  (0-21, 33-48) are accepted, and pins wired to critical board hardware are
+  reserved: USB (19, 20), LoRa SPI + control (8-14), I2C (17, 18), plus on the
+  ConeZ PCB the PSRAM SPI (4-7), GPS UART (43, 44) and GPS PPS (42), and on
+  the Heltec the OLED (21). pin_set/pin_clear on an invalid or reserved pin do
+  nothing. pin_read on a reserved pin returns its current level WITHOUT
+  reconfiguring it; on an invalid pin it returns 0.
+
   int analog_read(int pin)
       Read an analog pin via ADC. Returns 0-4095.
 

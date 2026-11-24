@@ -34,6 +34,12 @@ static httpd_handle_t server = NULL;
 // ESP-IDF httpd processes requests serially in its task,
 // so a single static buffer is safe.
 static char page_buf[4096];
+
+// httpd_req_recv() returns HTTPD_SOCK_ERR_TIMEOUT every recv_wait_timeout (5 s
+// default) while the peer is silent. Retrying forever hangs the single httpd
+// task on a client that vanished without a FIN (WiFi dropped mid-upload) --
+// with the OTA lock still held. Give up after this many in a row (~30 s).
+#define HTTP_RECV_MAX_TIMEOUTS 6
 static int page_pos;
 
 static void page_reset() { page_pos = 0; page_buf[0] = '\0'; }
@@ -279,7 +285,9 @@ static esp_err_t http_nvs(httpd_req_t *req)
     }
 
     page_cat("<pre>");
-    const char *prev_ns = "";
+    // Copied, not pointed at: `info` is rewritten in place every iteration, so a
+    // pointer into it would always compare equal to the current namespace.
+    char prev_ns[NVS_NS_NAME_MAX_SIZE] = "";
     while (it != NULL) {
         nvs_entry_info_t info;
         nvs_entry_info(it, &info);
@@ -287,7 +295,7 @@ static esp_err_t http_nvs(httpd_req_t *req)
         if (strcmp(info.namespace_name, prev_ns) != 0) {
             if (prev_ns[0]) page_cat("\n");
             page_catf("[%s]\n", info.namespace_name);
-            prev_ns = info.namespace_name;
+            strlcpy(prev_ns, info.namespace_name, sizeof(prev_ns));
         }
 
         nvs_handle_t handle;
@@ -421,13 +429,16 @@ static esp_err_t http_config_post(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    int received = 0;
+    int received = 0, timeouts = 0;
     while (received < body_len) {
         int ret = httpd_req_recv(req, page_buf + received, body_len - received);
         if (ret <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < HTTP_RECV_MAX_TIMEOUTS) continue;
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT)
+                httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "Upload stalled");
             return ESP_FAIL;
         }
+        timeouts = 0;
         received += ret;
     }
     page_buf[received] = '\0';
@@ -511,6 +522,7 @@ static esp_err_t http_update_apply(httpd_req_t *req, bool is_firmware)
     bool ota_open = false, md5_open = false;
     const size_t SECTOR = 4096;
     int    remaining = req->content_len;
+    int    timeouts = 0;             // consecutive recv timeouts (see HTTP_RECV_MAX_TIMEOUTS)
     size_t offset = 0, erased = 0;
 
     if (is_firmware) {
@@ -551,10 +563,15 @@ static esp_err_t http_update_apply(httpd_req_t *req, bool is_firmware)
         int toread = remaining < (int)sizeof(s->buf) ? remaining : (int)sizeof(s->buf);
         int recv_len = httpd_req_recv(req, s->buf, toread);
         if (recv_len <= 0) {
-            if (recv_len == HTTPD_SOCK_ERR_TIMEOUT) continue;
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Receive failed");
+            if (recv_len == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < HTTP_RECV_MAX_TIMEOUTS) continue;
+            bool stalled = (recv_len == HTTPD_SOCK_ERR_TIMEOUT);
+            printfnl(SOURCE_SYSTEM, "OTA upload %s with %d of %d bytes still to come",
+                     stalled ? "stalled" : "receive failed", remaining, req->content_len);
+            httpd_resp_send_err(req, stalled ? HTTPD_408_REQ_TIMEOUT : HTTPD_500_INTERNAL_SERVER_ERROR,
+                                stalled ? "Upload stalled" : "Receive failed");
             goto fail;
         }
+        timeouts = 0;
 
         esp_err_t err = ESP_OK;
         if (is_firmware) {

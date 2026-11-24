@@ -171,10 +171,12 @@ Dispatch path (firmware/src/mqtt/conez_mqtt.cpp -> util/shell.cpp):
     stack and preserves any half-typed console line.
   - Queue depth MQTT_CMD_QUEUE_DEPTH (8); overflow drops the command (shown
     as "Cmd RX" dropped in the `mqtt` CLI status). Commands must fit in
-    SHELL_BUFSIZE (88) chars, same as a typed line; a longer command is
-    REJECTED with "Command too long", not truncated -- running the first 87
-    bytes of a clipped `config set` or `rm` could do something the sender
-    never asked for.
+    SHELL_BUFSIZE (88) chars, same as a typed line; a longer command (topic
+    suffix + space + payload > 87 chars) is DROPPED whole by the MQTT handler,
+    not truncated -- running the first 87 bytes of a clipped `config set` or
+    `rm` could do something the sender never asked for. It counts as a dropped
+    command in the `mqtt` status and logs "cmd dropped: N chars, max 87" (with
+    `debug mqtt` on).
 
 Output goes to the console (USB + telnet), NOT back over MQTT. There is
 no command-response topic yet; watch conez/{id}/debug (enable `debug mqtt`)

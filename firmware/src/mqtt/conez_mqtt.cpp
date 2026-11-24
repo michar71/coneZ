@@ -61,7 +61,8 @@ struct mqtt_msg {
 // commands share the interactive shell's task/stack and never execute on the MQTT
 // task. A full queue drops the command rather than blocking the event task.
 #define MQTT_CMD_QUEUE_DEPTH   8
-#define MQTT_CMD_MAX           SHELL_BUFSIZE   // shell truncates past this anyway
+#define MQTT_CMD_MAX           SHELL_BUFSIZE   // longest line the shell will run (+NUL);
+                                               // longer commands are dropped, never clipped
 
 // ---------- State ----------
 static esp_mqtt_client_handle_t s_client = NULL;
@@ -72,7 +73,7 @@ static volatile uint32_t s_rx_count = 0;
 static volatile uint32_t s_drop_count = 0;   // messages dropped because the queue was full
 static uint32_t last_heartbeat_ms = 0;
 
-static volatile uint32_t s_cmd_drop_count = 0;   // cmd messages dropped (queue full)
+static volatile uint32_t s_cmd_drop_count = 0;   // cmd messages dropped (queue full or too long)
 
 static QueueHandle_t s_pub_queue = NULL;     // holds struct mqtt_msg *
 static SemaphoreHandle_t s_client_mtx = NULL; // serializes esp_mqtt_client_publish() vs destroy()
@@ -157,6 +158,30 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
         size_t plen_pfx = strlen(topic_cmd_prefix);
         if (s_cmd_queue && plen_pfx > 0 && strncmp(topic, topic_cmd_prefix, plen_pfx) == 0) {
             const char *suffix = topic + plen_pfx;
+
+            // Length of the command as SENT, from the untruncated sizes: the
+            // topic[]/payload[] copies above are clipped for logging, and a
+            // payload bigger than esp-mqtt's buffer arrives in fragments (this
+            // event is then only the first data_len of total_data_len bytes).
+            // A command that doesn't fit is dropped whole -- running a clipped
+            // `config set` or `rm` does something the sender never asked for,
+            // and clipping it here would also hide it from the shell's own
+            // "Command too long" check.
+            size_t suffix_len = (size_t)ev->topic_len > plen_pfx
+                                ? (size_t)ev->topic_len - plen_pfx : 0;
+            size_t data_total = ev->total_data_len > ev->data_len
+                                ? (size_t)ev->total_data_len
+                                : (ev->data_len > 0 ? (size_t)ev->data_len : 0);
+            size_t need = suffix_len + (data_total ? (suffix_len ? 1 : 0) + data_total : 0);
+            if (need > MQTT_CMD_MAX - 1) {
+                s_cmd_drop_count = s_cmd_drop_count + 1;
+                printfnl(SOURCE_MQTT, "cmd dropped: %u chars, max %u\n",
+                         (unsigned)need, (unsigned)(MQTT_CMD_MAX - 1));
+                break;
+            }
+
+            // Fits, so nothing below can truncate (need <= MQTT_CMD_MAX-1, and
+            // both local copies are larger than that).
             char cmd[MQTT_CMD_MAX];
             size_t off = 0;
             for (const char *p = suffix; *p && off < sizeof(cmd) - 1; ++p)
@@ -187,6 +212,8 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
 
 // ---------- Internal helpers ----------
 
+// Callers go through mqtt_start_once() -- never call this directly: two tasks
+// can want to start the client at the same moment.
 static void mqtt_create_and_start(void)
 {
     if (s_client) {
@@ -230,6 +257,23 @@ static void mqtt_create_and_start(void)
 
     printfnl(SOURCE_MQTT, "Client started — broker %s:%d\n",
              config.mqtt_broker, config.mqtt_port);
+}
+
+// Create + start the client exactly once. Both mqtt_loop() (loopTask, auto-start)
+// and mqtt_force_connect() (ShellTask, `mqtt connect`/`enable`) can see
+// !s_started at the same time -- s_started is only set at the END of
+// mqtt_create_and_start() -- and would otherwise each build a client: one leaks
+// and both connect with the same client id (the broker evicts them in a loop),
+// or the second destroys s_client while the first is still registering on it.
+// So the check-and-start is atomic under s_client_mtx. `wait` is 0 from
+// loopTask, which must not block behind mqtt_stop_client()'s esp_mqtt_client_stop
+// (it just tries again on the next pass).
+static void mqtt_start_once(TickType_t wait)
+{
+    if (!s_client_mtx || xSemaphoreTake(s_client_mtx, wait) != pdTRUE) return;
+    if (!s_started)
+        mqtt_create_and_start();
+    xSemaphoreGive(s_client_mtx);
 }
 
 static void mqtt_stop_client(void)
@@ -324,7 +368,7 @@ void mqtt_loop(void)
     // Auto-start when WiFi connects (and MQTT is enabled + not user-stopped)
     if (!s_started && config.mqtt_enabled && !s_user_stopped
         && wifi_is_connected() && config.mqtt_broker[0] != '\0') {
-        mqtt_create_and_start();
+        mqtt_start_once(0);
     }
 
     // Heartbeat (only when connected)
@@ -375,9 +419,12 @@ void mqtt_force_connect(void)
 {
     s_user_stopped = false;
     if (!s_started && wifi_is_connected()) {
-        mqtt_create_and_start();
-    } else if (s_client) {
-        esp_mqtt_client_reconnect(s_client);
+        mqtt_start_once(portMAX_DELAY);
+    } else {
+        // Under the mutex: mqtt_stop_client() destroys the handle.
+        if (s_client_mtx) xSemaphoreTake(s_client_mtx, portMAX_DELAY);
+        if (s_client && s_started) esp_mqtt_client_reconnect(s_client);
+        if (s_client_mtx) xSemaphoreGive(s_client_mtx);
     }
 }
 

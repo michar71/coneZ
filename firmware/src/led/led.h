@@ -27,6 +27,11 @@ void led_show_now( void );
 // Set `cnt` LEDs on channel `ch` (1-4) to `col`. Does NOT trigger show.
 void led_set_channel( int ch, int cnt, CRGB col );
 
+// Live LED count for channel `ch` (1-4): config.led_countN clamped to the
+// allocated buffer size. Use this -- never config.led_countN -- to bound any
+// access to leds1..4; the config value can exceed the buffer until a reboot.
+int led_live_count( int ch );
+
 // Resize channel `ch` (1-4) to `count` LEDs. Copies existing data,
 // new LEDs are black. Returns 0 on success, -1 on error.
 int led_resize_channel( int ch, int count );

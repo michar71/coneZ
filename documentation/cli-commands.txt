@@ -532,7 +532,12 @@ led
       at startup to that capacity and is never reallocated at runtime,
       so writers in other tasks (ArtNet, scripts) can't race a freed
       buffer. To grow beyond the boot size, "config set led.countN <n>"
-      and reboot. Existing colors are preserved; new LEDs are set to
+      and reboot. Until that reboot the channel keeps running at its
+      current size: everything that drives the LEDs (render, cues,
+      effects, scripts, ArtNet) and the counts shown by "led" and
+      "status" use the live count, which never exceeds the boot
+      allocation, while "config" shows the pending saved value.
+      Existing colors are preserved; new LEDs are set to
       black. Hot-applied immediately; not saved to flash.
       Examples: led count 1 100
                 led count 2 0
@@ -843,6 +848,15 @@ wifi
 
   Use "config set wifi.enabled on|off" to persist the enabled state
   across reboots. WiFi is enabled by default.
+
+  Auto-reconnect: while WiFi is enabled, a dropped link or a failed
+  connection attempt (AP rebooted, AP not up yet at boot, out of range)
+  is retried automatically -- first after 2 s, then backing off to one
+  attempt every 30 s -- until it connects. The console logs "WiFi
+  disconnected -- retrying" once when this starts and "WiFi reconnected
+  after N attempts" when it recovers. "wifi disable" stops the retries.
+  MQTT, NTP, ArtNet, telnet and the web server resume on their own once
+  the link is back.
 
 winamp
   Audio visualizer LED effect. Displays a retro-style equalizer on

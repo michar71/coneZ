@@ -306,46 +306,35 @@ static void scan_describe(const scan_entry_t *e, char *buf, size_t n)
                  (unsigned)e->sync_word, ro);
 }
 
-// Tune the radio to a scanlist entry. We BORROW config.* to feed lora_reinit(),
-// then RESTORE it: the scanner must never persist a transient scanned channel into
-// the user's saved config (a config_save() mid-scan would otherwise pin a random
-// channel and could brick the next boot). The user's configured channel is the
-// default the scan starts from; the live tuned channel is shown via the scan
-// status / beacon, not the saved config.
+// Tune the radio to a scanlist entry. The channel is handed to the radio as an
+// explicit lora_phy_t and never touches config.*: the scanner must not be able
+// to persist a transient scanned channel into the user's saved config (a
+// config_save() mid-hop would otherwise pin a random channel and could brick the
+// next boot). The user's configured channel is the default the scan starts
+// from; the live tuned channel is shown via the scan status / beacon, not the
+// saved config.
 static void scan_apply(const scan_entry_t *e)
 {
-    char  s_mode[sizeof(config.lora_rf_mode)];  strlcpy(s_mode, config.lora_rf_mode, sizeof(s_mode));
-    char  s_fsync[sizeof(config.fsk_syncword)]; strlcpy(s_fsync, config.fsk_syncword, sizeof(s_fsync));
-    float s_freq = config.lora_frequency, s_bw = config.lora_bandwidth;
-    int   s_sf = config.lora_sf, s_cr = config.lora_cr, s_sync = config.lora_sync_word;
-    float s_br = config.fsk_bitrate, s_fd = config.fsk_freqdev, s_rxbw = config.fsk_rxbw;
-    bool  s_white = config.fsk_whitening;
+    lora_phy_t p;
+    lora_phy_from_config(&p);   // the other mode's fields stay at the user's values (unused)
 
-    config.lora_frequency = e->freq_hz / 1e6f;
+    p.freq_mhz = e->freq_hz / 1e6f;
     if (e->mode == LP_MODE_FSK) {
-        strlcpy(config.lora_rf_mode, "fsk", sizeof(config.lora_rf_mode));
-        config.fsk_bitrate = e->bitrate_bps / 1000.0f;
-        config.fsk_freqdev = e->freqdev_hz / 1000.0f;
-        config.fsk_rxbw    = e->rxbw_hz / 1000.0f;
-        strlcpy(config.fsk_syncword, e->fsk_sync, sizeof(config.fsk_syncword));
-        config.fsk_whitening = e->whitening;
+        p.fsk          = true;
+        p.bitrate_kbps = e->bitrate_bps / 1000.0f;
+        p.freqdev_khz  = e->freqdev_hz / 1000.0f;
+        p.rxbw_khz     = e->rxbw_hz / 1000.0f;
+        strlcpy(p.fsk_syncword, e->fsk_sync, sizeof(p.fsk_syncword));
+        p.whitening    = e->whitening;
     } else {
-        strlcpy(config.lora_rf_mode, "lora", sizeof(config.lora_rf_mode));
-        config.lora_bandwidth = e->bw_hz / 1000.0f;
-        config.lora_sf        = e->sf;
-        config.lora_cr        = e->cr;
-        config.lora_sync_word = e->sync_word;
+        p.fsk       = false;
+        p.bw_khz    = e->bw_hz / 1000.0f;
+        p.sf        = e->sf;
+        p.cr        = e->cr;
+        p.sync_word = e->sync_word;
     }
     lora_set_channel_rx_only(e->rx_only);   // gate TX on receive-only channels
-    lora_reinit();
-
-    // restore the user's configured channel
-    config.lora_frequency = s_freq; config.lora_bandwidth = s_bw;
-    config.lora_sf = s_sf; config.lora_cr = s_cr; config.lora_sync_word = s_sync;
-    config.fsk_bitrate = s_br; config.fsk_freqdev = s_fd; config.fsk_rxbw = s_rxbw;
-    config.fsk_whitening = s_white;
-    strlcpy(config.lora_rf_mode, s_mode, sizeof(config.lora_rf_mode));
-    strlcpy(config.fsk_syncword, s_fsync, sizeof(config.fsk_syncword));
+    lora_reinit_phy(&p);
 }
 
 static uint32_t scan_dwell_ms(void)
@@ -555,8 +544,8 @@ void scan_notify_beacon(const scan_entry_t *advertised)
     if (scan_state == SCAN_SCANNING) {
         scan_state = SCAN_LOCKED;
         // Report the channel we actually locked on (cur_entry). NOT
-        // config.lora_frequency -- scan_apply() restores config.* after tuning,
-        // so it holds the default, not the locked entry.
+        // config.lora_frequency -- scan_apply() never writes config.*, so it
+        // holds the user's default, not the locked entry.
         char d[96]; scan_describe(&cur_entry, d, sizeof(d));
         printfnl(SOURCE_LORA, "scan: LOCKED %s (was scanning tier %d/%d)\n",
                  d, active_tier, n_tiers - 1);

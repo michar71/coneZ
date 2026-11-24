@@ -29,6 +29,29 @@ static volatile bool led_dirty = false;
 // so freeing it at runtime would be a use-after-free.
 static int led_cap[4] = { 0, 0, 0, 0 };
 
+// Live LED count for channel `ch` (1-4): config.led_countN clamped to the
+// buffer's boot capacity. config.led_countN is the PERSISTED setting and can be
+// raised at any time ("config set led.countN", the web config form, "config
+// reset") -- that takes effect on the next boot, when led_setup() allocates to
+// match. Until then the buffer is still led_cap long, so every runtime bound
+// must come from here, never from config.led_countN directly.
+int led_live_count( int ch )
+{
+    int n;
+    switch (ch) {
+        case 1: n = config.led_count1; break;
+        case 2: n = config.led_count2; break;
+        case 3: n = config.led_count3; break;
+        case 4: n = config.led_count4; break;
+        default: return 0;
+    }
+    if (n < 0) n = 0;
+#ifdef BOARD_HAS_RGB_LEDS
+    if (n > led_cap[ch - 1]) n = led_cap[ch - 1];
+#endif
+    return n;
+}
+
 #ifdef BOARD_HAS_RGB_LEDS
 
 // Mutex protects buffer pointer/count swaps in led_resize_channel().
@@ -171,8 +194,8 @@ static void led_push_hw(void)
     xSemaphoreTake(led_mutex, portMAX_DELAY);
 
     CRGB *bufs[]  = { leds1, leds2, leds3, leds4 };
-    int counts[]  = { config.led_count1, config.led_count2,
-                      config.led_count3, config.led_count4 };
+    int counts[]  = { led_live_count(1), led_live_count(2),
+                      led_live_count(3), led_live_count(4) };
 
     // Find max LED count to size conversion buffer
     int max_count = 0;
@@ -308,11 +331,12 @@ void led_set_channel( int ch, int cnt, CRGB col )
     switch (ch)
     {
         default:
-        case 1: buf = leds1; max_leds = config.led_count1; break;
-        case 2: buf = leds2; max_leds = config.led_count2; break;
-        case 3: buf = leds3; max_leds = config.led_count3; break;
-        case 4: buf = leds4; max_leds = config.led_count4; break;
+        case 1: buf = leds1; break;
+        case 2: buf = leds2; break;
+        case 3: buf = leds3; break;
+        case 4: buf = leds4; break;
     }
+    max_leds = led_live_count((ch >= 1 && ch <= 4) ? ch : 1);
 
     if (!buf) { xSemaphoreGive(led_mutex); return; }
     if (cnt > max_leds) cnt = max_leds;
@@ -330,8 +354,8 @@ void led_snapshot( CRGB *bufs[4], int counts[4] )
 #ifdef BOARD_HAS_RGB_LEDS
     xSemaphoreTake(led_mutex, portMAX_DELAY);
     bufs[0] = leds1; bufs[1] = leds2; bufs[2] = leds3; bufs[3] = leds4;
-    counts[0] = config.led_count1; counts[1] = config.led_count2;
-    counts[2] = config.led_count3; counts[3] = config.led_count4;
+    counts[0] = led_live_count(1); counts[1] = led_live_count(2);
+    counts[2] = led_live_count(3); counts[3] = led_live_count(4);
     xSemaphoreGive(led_mutex);
 #else
     for (int i = 0; i < 4; i++) { bufs[i] = nullptr; counts[i] = 0; }
@@ -365,7 +389,7 @@ int led_resize_channel( int ch, int count )
     // Only the logical count changes; the pointer is stable, so the unlocked
     // writers in other tasks can't be left holding a freed buffer.
     xSemaphoreTake(led_mutex, portMAX_DELAY);
-    int old_count = *count_ptr;
+    int old_count = led_live_count(ch);   // config may be above cap pending a reboot
     if (buf && count > old_count)                                  // new LEDs black
         memset(buf + old_count, 0, (size_t)(count - old_count) * sizeof(CRGB));
     *count_ptr = count;

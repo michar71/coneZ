@@ -321,18 +321,19 @@ bool nmea_encode(nmea_data_t *d, char c) {
 
     // End of sentence
     if (c == '\r' || c == '\n') {
+        bool committed = false;
         if (d->in_checksum && d->checksum_chars == 2) {
             // Validate checksum
-            if (d->parity == d->checksum_val) {
-                return commit_sentence(d);
-            }
+            if (d->parity == d->checksum_val)
+                committed = commit_sentence(d);
         }
-        // Reset for next sentence
+        // Reset for next sentence -- also after a commit, or the '\n' of the
+        // CRLF would pass the same checksum test and commit the sentence again.
         d->in_sentence = false;
         d->term_pos = 0;
         d->term_num = 0;
         d->sentence_type = NMEA_UNKNOWN;
-        return false;
+        return committed;
     }
 
     // Checksum hex digits after '*'

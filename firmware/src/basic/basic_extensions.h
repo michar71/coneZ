@@ -369,24 +369,24 @@ static ENVResult fetch_env() {
 
 int getNumLeds()
 {
-    return config.led_count1; //Return the number of LEDs in the strip
+    return led_live_count(1); //Return the number of LEDs in the strip
 }
 
 void setLEDr(int pos, int val)
 {
-    if (pos < 0 || pos >= config.led_count1 || !leds1) return;
+    if (pos < 0 || pos >= led_live_count(1) || !leds1) return;
     leds1[pos].r = (uint8_t)val;
 }
 
 void setLEDg(int pos, int val)
 {
-    if (pos < 0 || pos >= config.led_count1 || !leds1) return;
+    if (pos < 0 || pos >= led_live_count(1) || !leds1) return;
     leds1[pos].g = (uint8_t)val;
 }
 
 void setLEDb(int pos, int val)
 {
-    if (pos < 0 || pos >= config.led_count1 || !leds1) return;
+    if (pos < 0 || pos >= led_live_count(1) || !leds1) return;
     leds1[pos].b = (uint8_t)val;
 }
 

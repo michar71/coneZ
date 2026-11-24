@@ -39,6 +39,9 @@ Sections and Keys
   ssid              WiFi network name              (default: RN-ConeZ)
   password          WiFi password                  (default: conezconez)
 
+  While enabled, a dropped or failed connection is retried automatically
+  (2 s, backing off to every 30 s) until it reconnects.
+
 [gps]
   origin_lat        Origin latitude in degrees     (default: 40.762173)
   origin_lon        Origin longitude in degrees    (default: -119.193672)
@@ -134,6 +137,10 @@ Sections and Keys
   color4            Default color for channel 4    (default: 0x000000)
 
   LED buffers are dynamically allocated at boot based on count values.
+  Changing a count with "config set" therefore takes effect at the next
+  reboot; until then the running channel is limited to the size it was
+  allocated with (a larger pending count is not used, so nothing can
+  write past the buffer).
   config set requires reboot; "led count" hot-applies.
 
   Color values are hex RGB (0xRRGGBB). When non-zero, all LEDs on that
