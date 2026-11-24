@@ -83,6 +83,7 @@ void latlon_to_meters(float latitude_deg, float longitude_deg,
                       float *x_offset_meters, float *y_offset_meters);
 
 extern bool littlefs_mounted;
+bool littlefs_remount(void);   // re-mount after an unmount that left the partition untouched (never formats)
 extern i2c_master_bus_handle_t i2c_bus;
 
 #endif

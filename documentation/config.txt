@@ -171,7 +171,12 @@ CLI Commands
 ------------
 
   config
-      Show all current settings and their values.
+      Show the saved settings and their values. A key whose running
+      value differs from the saved one is flagged "(running: ...)" --
+      see "Saved vs. Running Values" below.
+
+  config get section.key
+      Show one key (same format).
 
   config set section.key value
       Set a configuration value and save to flash.
@@ -191,6 +196,28 @@ CLI Commands
   config reset
       Delete /config.ini and revert all settings to compiled defaults.
       Debug settings take effect immediately; reboot for the rest.
+
+
+Saved vs. Running Values
+------------------------
+
+The firmware keeps two copies of the configuration:
+
+  saved    what /config.ini holds. Changed only by "config set",
+           "config unset", "config reset", the web config page, and the
+           few commands that deliberately save one key ("lora on|off",
+           "artnet enable|disable").
+  running  what the firmware is using. Starts as the saved copy at boot.
+
+Commands that hot-apply a setting without saving it -- "wifi ssid",
+"wifi password", "mqtt broker/port/user/pass", "mqtt enable/disable",
+"lora freq/power/bw/sf/cr", "led count", "cpu ...", "artnet universe/
+dmx" -- change only the running copy. Saving writes the SAVED copy, so
+such a temporary value is never carried into /config.ini by a later,
+unrelated save; it lasts until reboot. To keep one, "config set" it.
+
+The web config page shows and edits the saved copy, and applies only
+the fields you actually changed.
 
 
 Boot Sequence

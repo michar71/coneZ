@@ -879,3 +879,48 @@ Items missed by the original #101-114 consolidation, or reconsidered.
     nvs_entry_info() rewrites in place, so the strcmp always compared the buffer
     with itself and every key was listed under the first namespace. prev_ns is
     now a separate copy.
+
+#128 FIXED -- "Not saved to flash" hot-apply values were persisted by the next
+    unrelated save (config.cpp, commands.cpp).
+    config_save() serialized the whole running `config` struct, and the
+    hot-apply commands documented as not saved -- `wifi ssid`/`password`, `mqtt
+    broker/port/user/pass/enable/disable`, `lora freq/power/bw/sf/cr`, `led
+    count`, `cpu`, `artnet universe/dmx` -- write their temporary value straight
+    into that struct. The next `config set` of ANY key, a web Save, `lora
+    on|off` or `artnet enable|disable` wrote them all to config.ini: a test SSID
+    typed with `wifi ssid` became the saved one. config.cpp now keeps a
+    config_saved copy, and config_save() serializes that. It is updated only by
+    config_set_field / config_set_default_field (INI load, `config set`/`unset`,
+    web form), config_reset, and the new config_persist() -- which `lora
+    on|off`, `artnet enable|disable` and the cpu_min clamp in `config set` now
+    call for the one field they mean to save. `config` and `config get` show the
+    saved value and flag a differing running one ("(running: ...)"). The web
+    form renders the saved copy and applies only fields whose posted value
+    differs from it, so an untouched field no longer overwrites a running
+    value. The simulator has its own config handling; nothing to mirror.
+
+#129 FIXED -- `lora` status mixed the live mode with the configured channel's
+    numbers (lora/lora.cpp, commands.cpp).
+    The lora_get_* getters and the `lora`/`status` commands read config.lora_*/
+    fsk_*, but Mode came from the live fsk_mode flag. Locked on a scanlist entry
+    (or a channel the master announced) that differs from the configured one,
+    the status block printed e.g. "Mode: FSK" with the configured LoRa
+    channel's frequency, plus configured bit rate / sync word / whitening / CR
+    and a data rate computed from that mixture; the real channel only appeared
+    in the scan section below. lora.cpp now records the tuned channel in
+    live_phy (set in lora_setup, lora_reinit_phy on success, and lora_set_*),
+    the getters return it, and `lora` prints one lora_get_phy() snapshot.
+    Display only -- no radio behaviour changes.
+
+#130 IMPROVED -- An aborted web filesystem upload left LittleFS unmounted even
+    when nothing had been written (http/http.cpp, main.cpp).
+    http_update_apply() unmounts before streaming and its failure path never
+    remounted, so config saves, cue loading and dist file writes failed until
+    reboot. If the upload died before the first sector erase the old filesystem
+    is intact: it is now remounted (littlefs_remount(), which never formats).
+    If sectors were already erased the old filesystem is gone and the new one
+    incomplete; that cannot be undone, so it stays unmounted and the log now
+    says to re-upload BEFORE rebooting -- init_LittleFS() mounts with
+    format_if_mount_failed, so a reboot at that point formats the partition and
+    loses config.ini (WiFi credentials included). That data-loss window is
+    inherent to overwriting the only filesystem in place and remains.

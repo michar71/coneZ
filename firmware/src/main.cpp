@@ -80,6 +80,25 @@ i2c_master_bus_handle_t i2c_bus = NULL;
 
 bool littlefs_mounted = false;
 
+// Mount the filesystem again after something unmounted it WITHOUT touching the
+// partition (the web filesystem upload unmounts before its first erase). Never
+// formats: if it doesn't mount, the caller is told and the data is left alone.
+bool littlefs_remount(void)
+{
+  if (littlefs_mounted) return true;
+
+  esp_vfs_littlefs_conf_t conf = {};
+  conf.base_path = LFS_PREFIX;
+  conf.partition_label = "spiffs";
+  conf.format_if_mount_failed = false;
+  conf.dont_mount = false;
+
+  if (esp_vfs_littlefs_register(&conf) != ESP_OK) return false;
+  littlefs_mounted = true;
+  return true;
+}
+
+
 void init_LittleFS()
 {
   usb_printf("---- LittleFS ----\n");

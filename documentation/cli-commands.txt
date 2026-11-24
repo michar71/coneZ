@@ -278,8 +278,22 @@ cp {src} {dst}
             cp *.bas /backups/
 
 config
-  Show all current configuration settings. See documentation/config.txt
-  for the full config system reference.
+  Show the SAVED configuration (what /config.ini holds). See
+  documentation/config.txt for the full config system reference.
+
+  Commands that hot-apply a setting without saving it ("wifi ssid",
+  "wifi password", "mqtt broker/port/user/pass", "mqtt enable/disable",
+  "lora freq/power/bw/sf/cr", "led count", "cpu ...", "artnet universe/
+  dmx") change only the RUNNING value. A key whose running value differs
+  from the saved one is flagged:
+      ssid             = HomeNet   (running: TestNet)
+  Such a temporary value is never written to flash by a later, unrelated
+  save ("config set" of another key, the web config page, "lora on") --
+  it lasts until reboot. To keep it, "config set" that key.
+
+  config get section.key
+      Print one key's saved value (flagged the same way if the running
+      value differs).
 
   config set section.key value
       Set a configuration value and save to flash.
@@ -590,6 +604,13 @@ lora (alias: radio)
   word. In FSK mode shows frequency, bit rate, frequency deviation,
   RX bandwidth, preamble, shaping, whitening, sync word, CRC. Both
   modes show TX power, last RSSI and SNR.
+
+  The mode, frequency and the other per-channel values are those of the
+  channel the radio is tuned to RIGHT NOW. While scanning, or locked on
+  a scanlist entry or a channel the master announced, that is not the
+  configured channel -- "config" shows the configured one. (TX power,
+  preamble, FSK shaping and CRC are not per-channel and always come
+  from config.)
 
   lora freq <MHz>
       Set the radio frequency in MHz. Hot-applied immediately.

@@ -2610,6 +2610,7 @@ int cmd_lora(int argc, char **argv)
     {
         bool on = !strcasecmp(argv[1], "on");
         config.lora_enabled = on;
+        config_persist(&config.lora_enabled, sizeof(config.lora_enabled));
         config_save();
         lora_set_active(on);
         printfnl(SOURCE_COMMANDS, "LoRa %s\n", on ? "enabled" : "disabled (radio asleep)");
@@ -2643,7 +2644,8 @@ int cmd_lora(int argc, char **argv)
             if (rc != 0)
                 printfnl(SOURCE_COMMANDS, "Error setting frequency (code %d)\n", rc);
             else {
-                config.lora_frequency = freq;   // persist only what the driver accepted
+                config.lora_frequency = freq;   // running config only, and only what the driver
+                                                // accepted; `config set lora.frequency` saves it
                 printfnl(SOURCE_COMMANDS, "Frequency set to %.3f MHz\n", freq);
             }
             return 0;
@@ -2754,9 +2756,15 @@ int cmd_lora(int argc, char **argv)
         }
     }
 
+    // Everything per-channel below comes from one snapshot of the channel the
+    // radio is actually tuned to -- while scanning or locked on a scanlist entry
+    // that is not the configured channel (`config` shows that one).
+    lora_phy_t phy;
+    lora_get_phy(&phy);
+
     printfnl(SOURCE_COMMANDS, "LoRa Radio:%s\n", lora_is_active() ? "" : "  [OFF]");
-    printfnl(SOURCE_COMMANDS, "  Mode:      %s\n", lora_get_mode());
-    printfnl(SOURCE_COMMANDS, "  Frequency: %.3f MHz\n", lora_get_frequency());
+    printfnl(SOURCE_COMMANDS, "  Mode:      %s\n", phy.fsk ? "FSK" : "LoRa");
+    printfnl(SOURCE_COMMANDS, "  Frequency: %.3f MHz\n", phy.freq_mhz);
     printfnl(SOURCE_COMMANDS, "  TX Power:  %d dBm\n", config.lora_tx_power);
     printfnl(SOURCE_COMMANDS, "  TX:        %s\n",
              lora_tx_allowed()      ? "allowed" :
@@ -2764,19 +2772,19 @@ int cmd_lora(int argc, char **argv)
              config.lora_rx_only    ? "inhibited ([lora] rx_only)" :
                                       "inhibited (RX-only channel)");
 
-    if (lora_is_fsk())
+    if (phy.fsk)
     {
-        printfnl(SOURCE_COMMANDS, "  Bit Rate:  %.1f kbps\n", lora_get_bitrate());
-        printfnl(SOURCE_COMMANDS, "  Freq Dev:  %.1f kHz\n", lora_get_freqdev());
-        printfnl(SOURCE_COMMANDS, "  RX BW:     %.1f kHz\n", lora_get_rxbw());
+        printfnl(SOURCE_COMMANDS, "  Bit Rate:  %.1f kbps\n", phy.bitrate_kbps);
+        printfnl(SOURCE_COMMANDS, "  Freq Dev:  %.1f kHz\n", phy.freqdev_khz);
+        printfnl(SOURCE_COMMANDS, "  RX BW:     %.1f kHz\n", phy.rxbw_khz);
         printfnl(SOURCE_COMMANDS, "  Preamble:  %d\n", config.lora_preamble);
 
         static const char *shaping_names[] = { "None", "BT0.3", "BT0.5", "BT0.7", "BT1.0" };
         int si = config.fsk_shaping;
         if (si < 0 || si > 4) si = 0;
         printfnl(SOURCE_COMMANDS, "  Shaping:   %s\n", shaping_names[si]);
-        printfnl(SOURCE_COMMANDS, "  Whitening: %s\n", config.fsk_whitening ? "on" : "off");
-        printfnl(SOURCE_COMMANDS, "  Sync Word: %s\n", config.fsk_syncword);
+        printfnl(SOURCE_COMMANDS, "  Whitening: %s\n", phy.whitening ? "on" : "off");
+        printfnl(SOURCE_COMMANDS, "  Sync Word: %s\n", phy.fsk_syncword);
 
         const char *crc_names[] = { "off", "1-byte", "2-byte" };
         int ci = config.fsk_crc;
@@ -2785,11 +2793,11 @@ int cmd_lora(int argc, char **argv)
     }
     else
     {
-        printfnl(SOURCE_COMMANDS, "  Bandwidth: %.1f kHz\n", lora_get_bandwidth());
-        printfnl(SOURCE_COMMANDS, "  SF:        %d\n", lora_get_sf());
-        printfnl(SOURCE_COMMANDS, "  CR:        4/%d\n", config.lora_cr);
+        printfnl(SOURCE_COMMANDS, "  Bandwidth: %.1f kHz\n", phy.bw_khz);
+        printfnl(SOURCE_COMMANDS, "  SF:        %d\n", phy.sf);
+        printfnl(SOURCE_COMMANDS, "  CR:        4/%d\n", phy.cr);
         printfnl(SOURCE_COMMANDS, "  Preamble:  %d\n", config.lora_preamble);
-        printfnl(SOURCE_COMMANDS, "  Sync Word: 0x%02X\n", config.lora_sync_word);
+        printfnl(SOURCE_COMMANDS, "  Sync Word: 0x%02X\n", phy.sync_word);
     }
 
     float dr = lora_get_datarate();
@@ -3979,12 +3987,14 @@ static int cmd_artnet(int argc, char **argv)
 
     if (argc == 2 && strcasecmp(argv[1], "enable") == 0) {
         config.artnet_enabled = true;
+        config_persist(&config.artnet_enabled, sizeof(config.artnet_enabled));
         config_save();
         artnet_start();
         return 0;
     }
     if (argc == 2 && strcasecmp(argv[1], "disable") == 0) {
         config.artnet_enabled = false;
+        config_persist(&config.artnet_enabled, sizeof(config.artnet_enabled));
         config_save();
         artnet_stop();
         return 0;

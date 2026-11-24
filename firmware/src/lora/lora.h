@@ -65,5 +65,6 @@ int lora_set_cr(int cr);
 int lora_reinit(void);   // full re-init from config (for mode switch)
 void lora_phy_from_config(lora_phy_t *p);   // snapshot the user's configured channel
 int lora_reinit_phy(const lora_phy_t *p);   // full re-init on an explicit channel (scanner)
+void lora_get_phy(lora_phy_t *out);         // the channel the radio is tuned to right now
 
 #endif

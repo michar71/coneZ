@@ -641,6 +641,24 @@ fail:
     if (ota_open) esp_ota_abort(ota_handle);
     if (md5_open) mbedtls_md5_free(&s->md5);
     free(s);
+    if (!is_firmware && !littlefs_mounted) {
+        if (erased == 0) {
+            // Unmounted, but the upload died before the first sector was erased:
+            // the old filesystem is untouched, so put it back instead of leaving
+            // the cone without config/cue/dist storage until a reboot.
+            if (littlefs_remount())
+                printfnl(SOURCE_SYSTEM, "FS upload aborted before any write -- filesystem remounted");
+            else
+                printfnl(SOURCE_SYSTEM, "FS upload aborted before any write, but remount FAILED");
+        } else {
+            // Part of the partition has been rewritten: the old filesystem is
+            // gone and the new one is incomplete. It stays unmounted; a reboot
+            // now would fail to mount it and FORMAT (losing config.ini).
+            printfnl(SOURCE_SYSTEM, "FS upload aborted after %u bytes erased -- filesystem is "
+                     "incomplete and unmounted; re-upload BEFORE rebooting (a reboot will format it)",
+                     (unsigned)erased);
+        }
+    }
     return ESP_FAIL;
 }
 

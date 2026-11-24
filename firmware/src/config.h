@@ -198,7 +198,11 @@ extern conez_config_t config;
 
 // ---------- Public API ----------
 void config_init(void);
-void config_save(void);
+void config_save(void);     // writes the SAVED copy, not the running `config` (see below)
+// `config` is the running state; CLI hot-apply commands may change it without
+// that being saved. A command that sets config.X itself and wants it saved calls
+// config_persist(&config.X, sizeof(config.X)) before config_save().
+void config_persist(const void *field, size_t size);
 void config_reset(void);
 void config_apply_debug(void);
 int  cmd_config(int argc, char **argv);

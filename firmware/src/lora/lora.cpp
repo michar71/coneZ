@@ -32,6 +32,12 @@ static EspHal loraHal(LORA_PIN_SCK, LORA_PIN_MISO, LORA_PIN_MOSI);
 // Mode flag — set during setup, read-only thereafter
 static bool fsk_mode = false;
 
+// The channel the radio is ACTUALLY tuned to. Not the same as config.lora_*/
+// fsk_* once the scanner has hopped to a scanlist entry or followed the master,
+// so status output must read this, not config. Written under the radio lock
+// (lora_setup, lora_reinit_phy, lora_set_*).
+static lora_phy_t live_phy;
+
 // Packet counters
 static uint32_t rx_count = 0;
 static uint32_t tx_count = 0;
@@ -142,6 +148,7 @@ int lora_setup( void )
   radio.setDio2AsRfSwitch();
 
   fsk_mode = (strcasecmp(config.lora_rf_mode, "fsk") == 0);
+  lora_phy_from_config(&live_phy);   // boot tunes to the configured channel
 
   int status;
 
@@ -547,19 +554,29 @@ bool lora_have_rx(void)
     return rx_metrics_valid;
 }
 
+// These report the channel the radio is tuned to (live_phy), which differs from
+// the configured one while scanning / locked on a scanlist entry.
 float lora_get_frequency(void)
 {
-    return config.lora_frequency;
+    return live_phy.freq_mhz;
 }
 
 float lora_get_bandwidth(void)
 {
-    return config.lora_bandwidth;
+    return live_phy.bw_khz;
 }
 
 int lora_get_sf(void)
 {
-    return config.lora_sf;
+    return live_phy.sf;
+}
+
+// Consistent snapshot of the whole tuned channel (CR, sync words, whitening...).
+void lora_get_phy(lora_phy_t *out)
+{
+    lora_radio_lock();
+    *out = live_phy;
+    lora_radio_unlock();
 }
 
 const char *lora_get_mode(void)
@@ -574,17 +591,17 @@ bool lora_is_fsk(void)
 
 float lora_get_bitrate(void)
 {
-    return config.fsk_bitrate;
+    return live_phy.bitrate_kbps;
 }
 
 float lora_get_freqdev(void)
 {
-    return config.fsk_freqdev;
+    return live_phy.freqdev_khz;
 }
 
 float lora_get_rxbw(void)
 {
-    return config.fsk_rxbw;
+    return live_phy.rxbw_khz;
 }
 
 uint32_t lora_get_rx_count(void)
@@ -599,14 +616,18 @@ uint32_t lora_get_tx_count(void)
 
 float lora_get_datarate(void)
 {
-    if (fsk_mode)
-        return config.fsk_bitrate * 1000.0f;  // kbps -> bps
+    lora_phy_t p;
+    lora_get_phy(&p);       // one snapshot, so mode and numbers agree mid-hop
+
+    if (p.fsk)
+        return p.bitrate_kbps * 1000.0f;  // kbps -> bps
 
     // LoRa bit rate: SF * BW * 4 / (2^SF * CR)
     // BW is in kHz, result in bps
-    float bw = config.lora_bandwidth * 1000.0f;  // kHz -> Hz
-    int sf = config.lora_sf;
-    int cr = config.lora_cr;  // denominator of 4/cr
+    float bw = p.bw_khz * 1000.0f;  // kHz -> Hz
+    int sf = p.sf;
+    int cr = p.cr;  // denominator of 4/cr
+    if (sf < 1 || sf > 30 || cr < 1) return 0.0f;
     float chips_per_symbol = (float)(1 << sf);
     return (sf * 4.0f * bw) / (chips_per_symbol * cr);
 }
@@ -617,8 +638,10 @@ int lora_set_frequency(float freq)
     lora_radio_lock();
     chan_rx_only = false;   // manual tune: no longer on a marked RX-only scanlist channel
     int status = radio.setFrequency(freq);
-    if (status == RADIOLIB_ERR_NONE)
+    if (status == RADIOLIB_ERR_NONE) {
+        live_phy.freq_mhz = freq;
         radio.startReceive();
+    }
     lora_radio_unlock();
     return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
@@ -637,8 +660,10 @@ int lora_set_bandwidth(float bw)
 {
     lora_radio_lock();
     int status = radio.setBandwidth(bw);
-    if (status == RADIOLIB_ERR_NONE)
+    if (status == RADIOLIB_ERR_NONE) {
+        live_phy.bw_khz = bw;
         radio.startReceive();
+    }
     lora_radio_unlock();
     return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
@@ -647,8 +672,10 @@ int lora_set_sf(int sf)
 {
     lora_radio_lock();
     int status = radio.setSpreadingFactor(sf);
-    if (status == RADIOLIB_ERR_NONE)
+    if (status == RADIOLIB_ERR_NONE) {
+        live_phy.sf = sf;
         radio.startReceive();
+    }
     lora_radio_unlock();
     return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
@@ -657,8 +684,10 @@ int lora_set_cr(int cr)
 {
     lora_radio_lock();
     int status = radio.setCodingRate(cr);
-    if (status == RADIOLIB_ERR_NONE)
+    if (status == RADIOLIB_ERR_NONE) {
+        live_phy.cr = cr;
         radio.startReceive();
+    }
     lora_radio_unlock();
     return status == RADIOLIB_ERR_NONE ? 0 : status;
 }
@@ -718,6 +747,8 @@ int lora_reinit_phy(const lora_phy_t *p)
 
     if (status == RADIOLIB_ERR_NONE)
     {
+        live_phy = *p;          // the radio is now on this channel
+
         if (fsk_mode)
         {
             static const uint8_t shaping_map[] = {

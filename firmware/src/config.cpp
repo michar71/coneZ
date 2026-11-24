@@ -19,6 +19,17 @@ static SemaphoreHandle_t config_mutex = NULL;
 // ---------- Global config instance ----------
 conez_config_t config;
 
+// What config.ini holds (or will after the next config_save()). `config` above
+// is the RUNNING state: the hot-apply CLI commands (`wifi ssid`, `mqtt broker`,
+// `led count`, `lora freq`, ...) write their temporary value straight into it
+// and are documented as "not saved to flash". config_save() used to serialize
+// `config`, so every one of those was persisted the next time ANYTHING saved
+// (an unrelated `config set`, the web form, `lora on`). It now serializes this
+// copy, which only changes through: config_set_field / config_set_default_field
+// (INI load, `config set`/`unset`, the web form), config_reset, and
+// config_persist() for a command that deliberately saves one field.
+static conez_config_t config_saved;
+
 // ---------- Descriptor table ----------
 typedef enum { CFG_STR, CFG_FLOAT, CFG_INT, CFG_HEX, CFG_BOOL } cfg_type_t;
 
@@ -328,6 +339,24 @@ static void config_set_field(const cfg_descriptor_t *d, const char *value)
                                         strcasecmp(value, "1") == 0);
         break;
     }
+    // An explicit set is always meant to persist: mirror the parsed (and
+    // clamped) field into the saved copy.
+    memcpy((uint8_t *)&config_saved + d->offset, base + d->offset, d->size);
+    CONFIG_UNLOCK();
+}
+
+
+// Mark one field of the running `config` as persistent: copy its current value
+// into the saved copy. For code that sets config.X itself and then calls
+// config_save() (e.g. `lora on|off`). `field` must point into `config`.
+void config_persist(const void *field, size_t size)
+{
+    const uint8_t *base = (const uint8_t *)&config;
+    const uint8_t *p    = (const uint8_t *)field;
+    if (p < base || size > sizeof(config) || (size_t)(p - base) > sizeof(config) - size)
+        return;
+    CONFIG_LOCK();
+    memcpy((uint8_t *)&config_saved + (p - base), p, size);
     CONFIG_UNLOCK();
 }
 
@@ -341,6 +370,9 @@ static void config_set_default_field(const cfg_descriptor_t *d)
     // must not observe it half-written (config unset runs on ShellTask).
     CONFIG_LOCK();
     memcpy((uint8_t *)&config + d->offset,
+           (uint8_t *)&defaults + d->offset,
+           d->size);
+    memcpy((uint8_t *)&config_saved + d->offset,
            (uint8_t *)&defaults + d->offset,
            d->size);
     CONFIG_UNLOCK();
@@ -429,6 +461,8 @@ void config_init(void)
 
     config_fill_defaults(&config);
 
+    config_saved = config;   // defaults, for keys the file doesn't mention
+
     if (littlefs_mounted && file_exists(CONFIG_PATH))
         config_parse_ini();
     else
@@ -464,7 +498,7 @@ void config_save(void)
     }
 
     const char *prev_section = "";
-    uint8_t *base = (uint8_t *)&config;
+    uint8_t *base = (uint8_t *)&config_saved;   // NOT `config`: see config_saved
 
     for (int i = 0; i < CFG_TABLE_SIZE; i++)
     {
@@ -521,7 +555,10 @@ void config_reset(void)
         unlink(fpath);
     }
 
+    CONFIG_LOCK();
     config_fill_defaults(&config);
+    config_saved = config;
+    CONFIG_UNLOCK();
     printfnl(SOURCE_COMMANDS, "Config reset to compiled defaults.\n");
 }
 
@@ -613,8 +650,10 @@ const char* config_get_html(const char *msg)
 
     cfg_cat("<form method='POST' action='/config'>\n");
 
+    // The form shows and edits the SAVED configuration (what config.ini holds),
+    // not temporary values a CLI hot-apply command put into the running config.
     const char *prev_section = "";
-    uint8_t *base = (uint8_t *)&config;
+    uint8_t *base = (uint8_t *)&config_saved;
     char buf[64];
 
     for (int i = 0; i < CFG_TABLE_SIZE; i++)
@@ -695,6 +734,40 @@ const char* config_get_html(const char *msg)
 }
 
 
+// Render one descriptor's value from `cfg` (value only — no key, no padding).
+// Single source of truth for how each type prints, shared by `config`,
+// `config get` and the web form's changed-field test (the form renders the
+// same formats). Longest CFG_STR is 65 bytes (password / ntp_server / broker).
+#define CFG_VALUE_MAX 80
+
+static void config_format_field(const cfg_descriptor_t *d, const conez_config_t *cfg,
+                                char *buf, size_t bufsz)
+{
+    const uint8_t *base = (const uint8_t *)cfg;
+
+    switch (d->type)
+    {
+    case CFG_STR:
+        snprintf(buf, bufsz, "%s", (const char *)(base + d->offset));
+        break;
+    case CFG_FLOAT:
+        snprintf(buf, bufsz, "%.9g", *(const float *)(base + d->offset));
+        break;
+    case CFG_INT:
+        snprintf(buf, bufsz, "%d", *(const int *)(base + d->offset));
+        break;
+    case CFG_HEX:
+        snprintf(buf, bufsz, "0x%04X", *(const int *)(base + d->offset));
+        break;
+    case CFG_BOOL:
+        snprintf(buf, bufsz, "%s", *(const bool *)(base + d->offset) ? "on" : "off");
+        break;
+    default:
+        snprintf(buf, bufsz, "?");
+        break;
+    }
+}
+
 // URL-decode in place (+ -> space, %XX -> byte)
 static int hex_val(char c)
 {
@@ -728,9 +801,12 @@ static void url_decode(char *str)
 
 void config_set_from_web(const char *body)
 {
-    char buf[64], val[128];
-    uint8_t *base = (uint8_t *)&config;
+    char buf[64], val[128], cur[CFG_VALUE_MAX];
 
+    // The form posts EVERY field, pre-filled with the saved values. Only fields
+    // the user actually changed are applied: writing the unchanged ones back
+    // would overwrite a running value that a CLI hot-apply command set (and, as
+    // config_set_field mirrors into the saved copy, do nothing useful).
     for (int i = 0; i < CFG_TABLE_SIZE; i++)
     {
         const cfg_descriptor_t *d = &cfg_table[i];
@@ -740,15 +816,18 @@ void config_set_from_web(const char *body)
         {
             // Checkbox: absent means off, present means on
             bool checked = (httpd_query_key_value(body, buf, val, sizeof(val)) == ESP_OK);
-            *(bool *)(base + d->offset) = checked;
+            bool saved   = *(const bool *)((const uint8_t *)&config_saved + d->offset);
+            if (checked != saved)
+                config_set_field(d, checked ? "on" : "off");
         }
         else
         {
             if (httpd_query_key_value(body, buf, val, sizeof(val)) == ESP_OK) {
                 url_decode(val);
+                config_format_field(d, &config_saved, cur, sizeof(cur));
                 // Empty is a valid value for a string (clears it); for numeric
                 // types an empty field means leave-unchanged (can't parse "").
-                if (val[0] || d->type == CFG_STR)
+                if ((val[0] || d->type == CFG_STR) && strcmp(val, cur) != 0)
                     config_set_field(d, val);
             }
         }
@@ -758,48 +837,18 @@ void config_set_from_web(const char *body)
     config_apply_debug();
 }
 
-
 // ---------- CLI handler ----------
-
-// Render one descriptor's current value (value only — no key, no padding).
-// Single source of truth for how each type prints, shared by `config` and
-// `config get`. Longest CFG_STR is 65 bytes (password / ntp_server / broker).
-#define CFG_VALUE_MAX 80
-
-static void config_format_field(const cfg_descriptor_t *d, char *buf, size_t bufsz)
-{
-    const uint8_t *base = (const uint8_t *)&config;
-
-    switch (d->type)
-    {
-    case CFG_STR:
-        snprintf(buf, bufsz, "%s", (const char *)(base + d->offset));
-        break;
-    case CFG_FLOAT:
-        snprintf(buf, bufsz, "%.9g", *(const float *)(base + d->offset));
-        break;
-    case CFG_INT:
-        snprintf(buf, bufsz, "%d", *(const int *)(base + d->offset));
-        break;
-    case CFG_HEX:
-        snprintf(buf, bufsz, "0x%04X", *(const int *)(base + d->offset));
-        break;
-    case CFG_BOOL:
-        snprintf(buf, bufsz, "%s", *(const bool *)(base + d->offset) ? "on" : "off");
-        break;
-    default:
-        snprintf(buf, bufsz, "?");
-        break;
-    }
-}
 
 // Display all current config values
 static void config_show(void)
 {
     const char *prev_section = "";
-    char val[CFG_VALUE_MAX];
+    char val[CFG_VALUE_MAX], run[CFG_VALUE_MAX];
 
-    printfnl(SOURCE_COMMANDS, "Current configuration:\n");
+    // Saved values (what config.ini holds). A key whose running value differs --
+    // set temporarily by a hot-apply command such as `wifi ssid` or `led count`
+    // -- is flagged; that running value is not saved.
+    printfnl(SOURCE_COMMANDS, "Saved configuration:\n");
 
     for (int i = 0; i < CFG_TABLE_SIZE; i++)
     {
@@ -811,8 +860,12 @@ static void config_show(void)
             prev_section = d->section;
         }
 
-        config_format_field(d, val, sizeof(val));
-        printfnl(SOURCE_COMMANDS, "  %-16s = %s\n", d->key, val);
+        config_format_field(d, &config_saved, val, sizeof(val));
+        config_format_field(d, &config, run, sizeof(run));
+        if (strcmp(val, run) != 0)
+            printfnl(SOURCE_COMMANDS, "  %-16s = %s   (running: %s)\n", d->key, val, run);
+        else
+            printfnl(SOURCE_COMMANDS, "  %-16s = %s\n", d->key, val);
     }
     printfnl(SOURCE_COMMANDS, "\n");
 }
@@ -859,9 +912,13 @@ int cmd_config(int argc, char **argv)
             return 1;
         }
 
-        char val[CFG_VALUE_MAX];
-        config_format_field(d, val, sizeof(val));
-        printfnl(SOURCE_COMMANDS, "%s.%s = %s\n", section, key, val);
+        char val[CFG_VALUE_MAX], run[CFG_VALUE_MAX];
+        config_format_field(d, &config_saved, val, sizeof(val));
+        config_format_field(d, &config, run, sizeof(run));
+        if (strcmp(val, run) != 0)
+            printfnl(SOURCE_COMMANDS, "%s.%s = %s   (running: %s)\n", section, key, val, run);
+        else
+            printfnl(SOURCE_COMMANDS, "%s.%s = %s\n", section, key, val);
         return 0;
     }
 
@@ -938,6 +995,7 @@ int cmd_config(int argc, char **argv)
                 printfnl(SOURCE_COMMANDS, "Warning: cpu_min (%d) > cpu_max (%d), clamping cpu_min\n",
                          config.cpu_min, config.cpu_max);
                 config.cpu_min = config.cpu_max;
+                config_persist(&config.cpu_min, sizeof(config.cpu_min));
             }
         }
 
