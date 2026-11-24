@@ -42,7 +42,10 @@ static void psram_mutex_init(void) {
 // ---- Fallback allocation tracking (system heap) ----
 // Used when PSRAM is full, unavailable, or not present on the board.
 // Tracks allocations so psram_free() and psram_free_all() can release them.
-// If the table fills up, allocations still succeed but aren't tracked for free_all.
+// EVERY pointer handed out is tracked: if the table is full the allocation
+// fails. (It used to succeed untracked, which forced psram_free() to call
+// free() on any address it didn't recognise -- so a handle freed twice, or
+// freed after psram_free_all(), was a double free of the system heap.)
 
 typedef struct { void *ptr; size_t size; } psram_fb_alloc_t;
 static psram_fb_alloc_t psram_fb[PSRAM_ALLOC_ENTRIES];
@@ -51,13 +54,12 @@ static int psram_fb_num = 0;
 // All psram_fb_* functions assume psram_mutex is held by the caller.
 
 static uint32_t psram_fb_malloc(size_t size) {
+    if (psram_fb_num >= PSRAM_ALLOC_ENTRIES) return 0;   // can't track it -> don't hand it out
     void *p = malloc(size);
     if (!p) return 0;
-    if (psram_fb_num < PSRAM_ALLOC_ENTRIES) {
-        psram_fb[psram_fb_num].ptr = p;
-        psram_fb[psram_fb_num].size = size;
-        psram_fb_num++;
-    }
+    psram_fb[psram_fb_num].ptr = p;
+    psram_fb[psram_fb_num].size = size;
+    psram_fb_num++;
     return (uint32_t)p;
 }
 
@@ -459,6 +461,31 @@ static uint32_t cache_clock = 0;
 static uint32_t cache_hit_count = 0;
 static uint32_t cache_miss_count = 0;
 
+// Next LRU timestamp. cache_clock is 32-bit and advances on every cache access,
+// so a busy script wraps it in hours. Left alone, freshly used pages would then
+// carry the SMALLEST timestamps and be evicted first while stale pages stayed
+// pinned. On wrap, renumber the pages 1..n in their existing LRU order and
+// continue from there (64 pages, once per 2^32 accesses).
+// Caller must hold psram_mutex.
+static uint32_t psram_cache_tick(void) {
+    if (cache_clock == UINT32_MAX) {
+        uint32_t rank[PSRAM_CACHE_PAGES];
+        for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
+            uint32_t r = 1;
+            for (int j = 0; j < PSRAM_CACHE_PAGES; j++) {
+                if (psram_cache[j].last_used < psram_cache[i].last_used ||
+                    (psram_cache[j].last_used == psram_cache[i].last_used && j < i))
+                    r++;
+            }
+            rank[i] = r;
+        }
+        for (int i = 0; i < PSRAM_CACHE_PAGES; i++)
+            psram_cache[i].last_used = rank[i];
+        cache_clock = PSRAM_CACHE_PAGES;
+    }
+    return ++cache_clock;
+}
+
 static void psram_cache_init(void) {
     for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
         psram_cache[i].tag = CACHE_TAG_EMPTY;
@@ -476,7 +503,7 @@ static psram_cache_line_t *psram_cache_get(uint32_t page_addr) {
     // Search for hit
     for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
         if (psram_cache[i].tag == page_addr) {
-            psram_cache[i].last_used = ++cache_clock;
+            psram_cache[i].last_used = psram_cache_tick();
             cache_hit_count++;
             return &psram_cache[i];
         }
@@ -504,7 +531,7 @@ static psram_cache_line_t *psram_cache_get(uint32_t page_addr) {
     // Load new page
     psram_raw_read(page_addr, psram_cache[victim].data, PSRAM_CACHE_PAGE_SIZE);
     psram_cache[victim].tag = page_addr;
-    psram_cache[victim].last_used = ++cache_clock;
+    psram_cache[victim].last_used = psram_cache_tick();
     psram_cache[victim].dirty = false;
     return &psram_cache[victim];
 }
@@ -630,13 +657,18 @@ static void psram_alloc_init(void) {
     psram_block_count = 1;
 }
 
+// Set for the duration of psram_test(). The test overwrites the WHOLE chip with
+// raw SPI writes, so nothing may live in PSRAM while it runs: allocations made
+// meanwhile are served from the system heap instead (or fail if they don't fit).
+static volatile bool psram_test_active = false;
+
 uint32_t psram_malloc(size_t size) {
     if (size == 0)
         return 0;
 
     PSRAM_LOCK();
 
-    if (psram_ok) {
+    if (psram_ok && !psram_test_active) {
         size_t aligned = PSRAM_ALIGN_UP(size);
 
         // First-fit scan
@@ -686,12 +718,11 @@ void psram_free(uint32_t addr) {
     PSRAM_LOCK();
 
     if (IS_ADDRESS_MAPPED(addr)) {
-        // Only free addresses still in the fallback table. An untracked address
-        // here is either never-tracked (the table was full at alloc -- rare,
-        // since PSRAM must also be exhausted) or already freed; calling free()
-        // on it directly would double-free / corrupt the heap (e.g. a handle
-        // freed twice, or freed after psram_free_all() already released it).
-        // A rare leak is the safe trade.
+        // Only free addresses still in the fallback table. Every fallback
+        // allocation is tracked (psram_fb_malloc fails rather than hand out an
+        // untracked pointer), so an address that isn't in the table has already
+        // been freed -- a handle freed twice, or freed after psram_free_all().
+        // Calling free() on it would double-free the heap; ignore it.
         psram_fb_free(addr);
         PSRAM_UNLOCK();
         return;
@@ -855,19 +886,42 @@ int psram_setup(void) {
     return 0;
 }
 
-// ---- Full memory test (diagnostic — no mutex, requires exclusive access) ----
+// ---- Full memory test (diagnostic — raw SPI over the whole chip) ----
+//
+// Needs exclusive use of the chip. The caller frees the long-lived PSRAM users
+// first (log ring, shell history, WASM prealloc -- see cmd_psram); this refuses
+// to start if anything is still allocated, and psram_test_active keeps new
+// allocations out of PSRAM until it finishes.
+
+static int psram_test_run(bool forever);
 
 int psram_test(bool forever) {
     if (!psram_ok) {
         printfnl(SOURCE_COMMANDS, "PSRAM not initialized\n");
         return -1;
     }
-    if (psram_bytes_used() > 0 || psram_fb_num > 0) {
-        printfnl(SOURCE_COMMANDS, "PSRAM test blocked — allocations exist\n");
+
+    // Check-and-claim under the lock, so an allocation can't slip in between
+    // the "nothing allocated" test and the flag going up.
+    PSRAM_LOCK();
+    if (psram_bytes_used() > 0) {
+        size_t used = psram_bytes_used();
+        PSRAM_UNLOCK();
+        printfnl(SOURCE_COMMANDS, "PSRAM test blocked — %u bytes still allocated "
+                 "(stop any running script or editor first)\n", (unsigned)used);
         return -1;
     }
-
+    psram_test_active = true;
     psram_cache_invalidate();  // Test bypasses cache via raw SPI
+    PSRAM_UNLOCK();
+
+    int result = psram_test_run(forever);
+
+    psram_test_active = false;
+    return result;
+}
+
+static int psram_test_run(bool forever) {
 
     uint32_t size = BOARD_PSRAM_SIZE;
     uint32_t pass = 0;
@@ -1021,31 +1075,49 @@ void psram_print_cache_detail(void) {
     printfnl(SOURCE_COMMANDS, "Hits:  %u / %u (%u%%)\n",
              hits, total, total ? (hits * 100 / total) : 0);
 
+    // Snapshot the metadata under the PSRAM lock, then print with it RELEASED.
+    // printfnl() takes print_mutex, and every other task's printfnl() holds
+    // print_mutex while it writes the log ring through psram_write() -- which
+    // takes the PSRAM lock. Printing with the PSRAM lock held is the opposite
+    // order, and deadlocked the console (and every PSRAM user) for good.
+    typedef struct { uint32_t tag; uint32_t last_used; bool dirty; } cache_meta_t;
+    cache_meta_t *snap = (cache_meta_t *)malloc(sizeof(cache_meta_t) * PSRAM_CACHE_PAGES);
+    if (!snap) {
+        printfnl(SOURCE_COMMANDS, "Out of memory\n");
+        return;
+    }
+
     PSRAM_LOCK();
-    int used = 0, dirty = 0;
-    uint32_t max_used = 0;
+    uint32_t clock_now = cache_clock;
     for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
-        if (psram_cache[i].tag != CACHE_TAG_EMPTY) {
+        snap[i].tag       = psram_cache[i].tag;
+        snap[i].last_used = psram_cache[i].last_used;
+        snap[i].dirty     = psram_cache[i].dirty;
+    }
+    PSRAM_UNLOCK();
+
+    int used = 0, dirty = 0;
+    for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
+        if (snap[i].tag != CACHE_TAG_EMPTY) {
             used++;
-            if (psram_cache[i].dirty) dirty++;
-            if (psram_cache[i].last_used > max_used) max_used = psram_cache[i].last_used;
+            if (snap[i].dirty) dirty++;
         }
     }
     printfnl(SOURCE_COMMANDS, "Used:  %d / %d  (dirty: %d)\n", used, PSRAM_CACHE_PAGES, dirty);
-    printfnl(SOURCE_COMMANDS, "Clock: %u\n\n", cache_clock);
+    printfnl(SOURCE_COMMANDS, "Clock: %u\n\n", clock_now);
 
     if (used > 0) {
         printfnl(SOURCE_COMMANDS, "Page  Address     Dirty  Age\n");
         printfnl(SOURCE_COMMANDS, "----  ----------  -----  --------\n");
         for (int i = 0; i < PSRAM_CACHE_PAGES; i++) {
-            if (psram_cache[i].tag == CACHE_TAG_EMPTY) continue;
+            if (snap[i].tag == CACHE_TAG_EMPTY) continue;
             printfnl(SOURCE_COMMANDS, "%3d   0x%08X  %-5s  %u\n",
-                     i, psram_cache[i].tag,
-                     psram_cache[i].dirty ? "yes" : "no",
-                     psram_cache[i].last_used);
+                     i, snap[i].tag,
+                     snap[i].dirty ? "yes" : "no",
+                     snap[i].last_used);
         }
     }
-    PSRAM_UNLOCK();
+    free(snap);
 #else
     printfnl(SOURCE_COMMANDS, "Cache disabled (PSRAM_CACHE_PAGES=0)\n");
 #endif
@@ -1150,9 +1222,9 @@ void psram_free(uint32_t addr) {
         }
     }
 
-    // Not in PSRAM table — try fallback table, then free directly
-    if (!psram_fb_free(addr))
-        free((void *)addr);
+    // Not in the PSRAM table -- try the fallback table. An address in neither
+    // was already freed (every allocation is tracked); never free() it directly.
+    psram_fb_free(addr);
 
     PSRAM_UNLOCK();
 }
@@ -1342,8 +1414,9 @@ uint32_t psram_malloc(size_t size) {
 void psram_free(uint32_t addr) {
     if (addr == 0) return;
     PSRAM_LOCK();
-    if (!psram_fb_free(addr))
-        free((void *)addr);
+    // An address not in the table was already freed (every allocation is
+    // tracked); calling free() on it directly would be a double free.
+    psram_fb_free(addr);
     PSRAM_UNLOCK();
 }
 

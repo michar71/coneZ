@@ -3665,6 +3665,14 @@ int cmd_psram(int argc, char **argv)
 {
     if (argc >= 2 && !strcasecmp(argv[1], "test")) {
         bool forever = (argc >= 3 && !strcasecmp(argv[2], "forever"));
+#ifdef INCLUDE_WASM
+        // The WASM linear-memory prealloc lives in PSRAM from the first script
+        // run until reboot; release it (it is re-created on the next run).
+        if (!wasm_prealloc_release()) {
+            printfnl(SOURCE_COMMANDS, "PSRAM test blocked — a WASM script is running (stop it first)\n");
+            return -1;
+        }
+#endif
         log_free();
         shell.historyFree();
         int result = psram_test(forever);

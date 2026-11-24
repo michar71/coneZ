@@ -430,6 +430,12 @@ Math (host-imported transcendentals)
       Same as larp but with float params. stride is the number of
       subdivisions of the smoothing window.
 
+      Both average at most 4096 samples: a window/stride combination
+      that asks for more is sampled over the same window at a wider
+      spacing. A negative window yields min_val. (They run inside a
+      host call that "stop" cannot interrupt, so the sample loop is
+      bounded whatever arguments are passed.)
+
   Double (f64) versions:
 
   double sin(double x)              Sine
@@ -465,6 +471,21 @@ Printf (host-imported formatting)
   sprintf(), puts(), putchar() — the header routes them through these
   host imports automatically (or through inline code if compiled with
   -DCONEZ_PRINTF_INLINE).
+
+  Host-side conversions: %d %i %u %x %X %o %c %s %f %e %E %g %G %p %%
+  Flags: - 0 space + #    Width: number or *    Precision: .number or .*
+  Length modifiers: "ll" selects a 64-bit argument for d/i/u/x/X/o
+  (long long); l, h, hh, z, j, t are accepted and mean 32 bits.
+
+  Argument layout (what c2wasm emits; the same on firmware and in the
+  simulator): 32-bit arguments occupy 4-byte cells; a double or long
+  long is 8 bytes at an 8-BYTE-ALIGNED offset, so there is a 4-byte gap
+  before it after an odd number of 32-bit arguments.
+
+  %s prints the whole string (it is not cut at 127 characters; the
+  overall line is still limited to the host buffer: 255 characters for
+  printf, 511 for snprintf). A pointer that is out of bounds or not
+  NUL-terminated inside WASM memory prints "(null)".
 
 
 sscanf (host-imported parsing)
@@ -778,7 +799,12 @@ Type Definitions
 
 
 Allocator note: both the low heap and string pool guarantee 4-byte
-alignment.
+alignment. Both are first-fit: a freed block is split when a smaller
+request reuses it, and adjacent free blocks are merged. malloc() and
+calloc() try the low heap first and fall back to the string pool;
+realloc(NULL, n) does the same, and a low-heap block that cannot grow
+in place is moved to the pool. A request larger than the region fails
+(returns 0).
 
 
 Example Binary Sizes (stripped)
@@ -799,7 +825,8 @@ part of the C module API and are not declared in conez_api.h. They
 use a basic_ prefix to distinguish them from general-purpose imports.
 
 All string functions operate on null-terminated strings in WASM linear
-memory. String pointers refer to either static data (compiled string
+memory. A string pointer of 0 means "no string" and is treated as an
+empty string (an unassigned BASIC string variable holds 0). String pointers refer to either static data (compiled string
 literals at low addresses), low-heap allocations (DIM arrays, user
 malloc — below 0x8000), or pool-allocated strings in the 0x8000-0xEFFF
 region.
@@ -837,6 +864,9 @@ String operations (all return new pool-allocated strings):
   int basic_str_concat(int a, int b)        Concatenate two strings.
   int basic_str_mid(int src, int start, int len)
                                             Substring (start is 1-based).
+                                            len is clamped to the rest
+                                            of the string, so a very
+                                            large len means "to the end".
   int basic_str_left(int src, int n)        First n characters.
   int basic_str_right(int src, int n)       Last n characters.
   int basic_str_chr(int code)               Single character from ASCII code.

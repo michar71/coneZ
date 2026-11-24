@@ -30,15 +30,47 @@ void wasm_string_pool_reset()
     bump_ptr = STR_POOL_BASE;
 }
 
+// ---- Shared block-table helpers (mirror firmware wasm_imports_string.cpp) ----
+// A record with size 0 and !in_use is DEAD (merged into a neighbour or returned
+// to the bump pointer). Dead records are reused; they used to be reclaimed only
+// when last in the table, so the table filled with them.
+
+static int alloc_spare_slot(StrAlloc *tbl, int *n, int max)
+{
+    for (int i = 0; i < *n; i++)
+        if (!tbl[i].in_use && tbl[i].size == 0) return i;
+    if (*n < max) return (*n)++;
+    return -1;
+}
+
+// Hand out `size` bytes of free block `idx`, splitting off any remainder as its
+// own free block so a small request can't swallow a large coalesced block.
+static void alloc_take(StrAlloc *tbl, int *n, int max, int idx, uint32_t size)
+{
+    uint32_t rest = tbl[idx].size - size;
+    tbl[idx].in_use = true;
+    if (rest >= 4) {
+        int slot = alloc_spare_slot(tbl, n, max);
+        if (slot >= 0) {
+            tbl[slot].offset = tbl[idx].offset + size;
+            tbl[slot].size   = rest;
+            tbl[slot].in_use = false;
+            tbl[idx].size    = size;
+        }
+    }
+}
+
 uint32_t pool_alloc(IM3Runtime runtime, int size)
 {
     if (size <= 0) size = 1;
+    // Reject before rounding: (size + 3) overflows near INT_MAX.
+    if (size > (int)(STR_POOL_END - STR_POOL_BASE)) return 0;
     size = (size + 3) & ~3; // 4-byte align
 
     // Try freed blocks first (first-fit)
     for (int i = 0; i < alloc_count; i++) {
         if (!allocs[i].in_use && allocs[i].size >= (uint32_t)size) {
-            allocs[i].in_use = true;
+            alloc_take(allocs, &alloc_count, STR_MAX_ALLOCS, i, (uint32_t)size);
             uint32_t ms = 0;
             uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
             if (mem && allocs[i].offset + (uint32_t)size <= ms)
@@ -49,15 +81,15 @@ uint32_t pool_alloc(IM3Runtime runtime, int size)
 
     // Bump allocate
     if (bump_ptr + size > STR_POOL_END) return 0; // OOM
-    if (alloc_count >= STR_MAX_ALLOCS) return 0;
+    int slot = alloc_spare_slot(allocs, &alloc_count, STR_MAX_ALLOCS);
+    if (slot < 0) return 0;
 
     uint32_t ptr = bump_ptr;
     bump_ptr += size;
 
-    allocs[alloc_count].offset = ptr;
-    allocs[alloc_count].size = size;
-    allocs[alloc_count].in_use = true;
-    alloc_count++;
+    allocs[slot].offset = ptr;
+    allocs[slot].size = size;
+    allocs[slot].in_use = true;
 
     uint32_t ms = 0;
     uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
@@ -143,11 +175,12 @@ static uint32_t low_heap_alloc(IM3Runtime runtime, int size)
 {
     if (low_heap_start == 0) return 0;
     if (size <= 0) size = 1;
+    if (size > (int)STR_POOL_BASE) return 0;   // can't fit; keeps (size + 3) from overflowing
     size = (size + 3) & ~3;
 
     for (int i = 0; i < low_nallocs; i++) {
         if (!low_allocs[i].in_use && low_allocs[i].size >= (uint32_t)size) {
-            low_allocs[i].in_use = true;
+            alloc_take(low_allocs, &low_nallocs, LOW_HEAP_MAX_ALLOCS, i, (uint32_t)size);
             uint32_t ms = 0;
             uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
             if (mem && low_allocs[i].offset + (uint32_t)size <= ms)
@@ -157,15 +190,15 @@ static uint32_t low_heap_alloc(IM3Runtime runtime, int size)
     }
 
     if (low_heap_bump + size > STR_POOL_BASE) return 0;
-    if (low_nallocs >= LOW_HEAP_MAX_ALLOCS) return 0;
+    int slot = alloc_spare_slot(low_allocs, &low_nallocs, LOW_HEAP_MAX_ALLOCS);
+    if (slot < 0) return 0;
 
     uint32_t off = low_heap_bump;
     low_heap_bump += size;
 
-    low_allocs[low_nallocs].offset = off;
-    low_allocs[low_nallocs].size = size;
-    low_allocs[low_nallocs].in_use = true;
-    low_nallocs++;
+    low_allocs[slot].offset = off;
+    low_allocs[slot].size = size;
+    low_allocs[slot].in_use = true;
 
     uint32_t ms = 0;
     uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
@@ -299,10 +332,31 @@ m3ApiRawFunction(m3_realloc) {
     m3ApiGetArg(int32_t, ptr);
     m3ApiGetArg(int32_t, size);
     uint32_t result;
-    if ((uint32_t)ptr < STR_POOL_BASE)
+    if (ptr == 0) {
+        // realloc(NULL, n) is malloc(n): low heap first, then the string pool.
+        result = low_heap_alloc(runtime, size);
+        if (result == 0) result = pool_alloc(runtime, size);
+    } else if ((uint32_t)ptr < STR_POOL_BASE) {
         result = low_heap_realloc(runtime, (uint32_t)ptr, size);
-    else
+        if (result == 0 && size > 0) {
+            // Low heap couldn't grow it: move the block to the pool (the same
+            // fallback malloc/calloc use).
+            uint32_t old_size = low_heap_size((uint32_t)ptr);
+            if (old_size > 0) {
+                uint32_t nptr = pool_alloc(runtime, size);
+                uint32_t ms = 0;
+                uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
+                uint32_t copy = old_size < (uint32_t)size ? old_size : (uint32_t)size;
+                if (nptr != 0 && mem && nptr + copy <= ms && (uint32_t)ptr + copy <= ms) {
+                    memmove(mem + nptr, mem + (uint32_t)ptr, copy);
+                    low_heap_free((uint32_t)ptr);
+                    result = nptr;
+                }
+            }
+        }
+    } else {
         result = pool_realloc(runtime, (uint32_t)ptr, size);
+    }
     m3ApiReturn((int32_t)result);
 }
 
@@ -379,7 +433,9 @@ m3ApiRawFunction(m3_str_mid) {
         if (dst) mem[dst] = 0;
         m3ApiReturn((int32_t)dst);
     }
-    if (len < 0 || idx + len > slen) len = slen - idx;
+    // NOT "idx + len > slen": that overflows for a huge count ("rest of
+    // string"), leaving len unclamped for the memcpy below. idx < slen here.
+    if (len < 0 || len > slen - idx) len = slen - idx;
     uint32_t dst = pool_alloc(runtime, len + 1);
     if (!dst) { m3ApiReturn(0); }
     mem = m3_GetMemory(runtime, &ms, 0);

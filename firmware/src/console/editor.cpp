@@ -1,6 +1,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <unistd.h>
+#include <stdarg.h>
 #include "editor.h"
 #include "printManager.h"
 #include "shell.h"
@@ -29,6 +30,7 @@ struct EditorState {
     bool modified;
     bool quit_pending;
     bool load_truncated;            // file didn't fully fit -> saving would destroy the tail
+    bool load_longline;             // ...because a line exceeded ED_LINE_MAX-1 chars (vs. too many lines)
     char filepath[64];
     char clipboard[ED_LINE_MAX];
     bool clipboard_valid;
@@ -177,6 +179,7 @@ static bool editor_load(EditorState *ed, const char *path)
     if (!ed_ensure_capacity(ed, 1)) return false;
 
     ed->load_truncated = false;
+    ed->load_longline = false;
 
     char fpath[128];
     lfs_path(fpath, sizeof(fpath), path);
@@ -185,6 +188,19 @@ static bool editor_load(EditorState *ed, const char *path)
         char buf[ED_LINE_MAX];
         while (ed->num_lines < ED_MAX_LINES && fgets(buf, sizeof(buf), f)) {
             int len = strlen(buf);
+            // A full buffer with no newline means the line is longer than the
+            // editor can hold (unless the file simply ends here). fgets hands
+            // the rest back as further "lines", and saving would write a
+            // newline after each piece -- silently splitting the line. Load it
+            // for viewing, but make the buffer read-only.
+            if (len == (int)sizeof(buf) - 1 && buf[len - 1] != '\n') {
+                int c = fgetc(f);
+                if (c != EOF) {
+                    ungetc(c, f);
+                    ed->load_truncated = true;
+                    ed->load_longline = true;
+                }
+            }
             // Strip trailing newline/CR
             while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
                 buf[--len] = '\0';
@@ -220,7 +236,10 @@ static bool editor_load(EditorState *ed, const char *path)
     ed->modified = false;
     ed->quit_pending = false;
     ed->clipboard_valid = false;
-    if (ed->load_truncated)
+    if (ed->load_longline)
+        snprintf(ed->status_msg, sizeof(ed->status_msg),
+                 "READ-ONLY: a line is over %d chars; save disabled", ED_LINE_MAX - 1);
+    else if (ed->load_truncated)
         snprintf(ed->status_msg, sizeof(ed->status_msg),
                  "READ-ONLY: file over %d lines; save disabled", ED_MAX_LINES);
     else
@@ -235,6 +254,11 @@ static bool editor_save(EditorState *ed)
     // The file was longer than the editor could hold, so the buffer is only a
     // prefix. Refuse to save rather than overwrite the original with the
     // truncated version and silently destroy the tail.
+    if (ed->load_longline) {
+        snprintf(ed->status_msg, sizeof(ed->status_msg),
+                 "Save refused: file has a line over %d chars (would be split)", ED_LINE_MAX - 1);
+        return false;
+    }
     if (ed->load_truncated) {
         snprintf(ed->status_msg, sizeof(ed->status_msg),
                  "Save refused: file was truncated at %d lines on load", ED_MAX_LINES);
@@ -515,6 +539,10 @@ static void editor_cut_line(EditorState *ed)
 {
     if (ed->num_lines <= 0) return;
 
+    // cy can be stale (out of range) when an arrow key and ^K arrive in one
+    // input batch -- see ed_sync_cursor. Unclamped, cy == num_lines cut a slot
+    // past the end and deleted the real last line.
+    ed_sync_cursor(ed);
     ed_invalidate_work(ed);
 
     // Copy to clipboard
@@ -544,6 +572,7 @@ static void editor_paste_line(EditorState *ed)
     if (ed->num_lines >= ED_MAX_LINES) return;
     if (!ed_ensure_capacity(ed, ed->num_lines + 1)) return;
 
+    ed_sync_cursor(ed);     // same stale-cy hazard as editor_cut_line
     ed_invalidate_work(ed);
 
     ed_shift_down(ed, ed->cy);
@@ -633,9 +662,14 @@ static bool editor_find_next(EditorState *ed)
     int start_line = ed->cy;
     int start_col = ed->cx + 1;
 
-    // Search from current line forward
-    for (int i = 0; i < ed->num_lines; i++) {
+    // Search from just after the cursor forward, wrapping around the file. The
+    // start line is visited TWICE: first from the cursor to its end (i == 0),
+    // and last (i == num_lines) for the part at or before the cursor -- without
+    // that final pass a match earlier on the start line was never found, and in
+    // a one-line file nothing at or before the cursor could be.
+    for (int i = 0; i <= ed->num_lines; i++) {
         int line = (start_line + i) % ed->num_lines;
+        bool last_pass = (i == ed->num_lines);
         ed_read_line(ed, line, buf);
         buf[ED_LINE_MAX - 1] = '\0';
 
@@ -644,10 +678,12 @@ static bool editor_find_next(EditorState *ed)
         if (col_start > line_len) continue;
 
         char *found = strstr(buf + col_start, ed->search);
+        if (found && last_pass && (int)(found - buf) >= start_col)
+            found = NULL;   // that stretch was already searched on the first pass
         if (found) {
             ed->cy = line;
             ed->cx = (int)(found - buf);
-            bool wrapped = (line < start_line || (line == start_line && ed->cx < start_col - 1));
+            bool wrapped = (line < start_line || last_pass);
             if (wrapped)
                 snprintf(ed->status_msg, sizeof(ed->status_msg),
                          "Wrapped — found on line %d", line + 1);
@@ -660,6 +696,47 @@ static bool editor_find_next(EditorState *ed)
 
     snprintf(ed->status_msg, sizeof(ed->status_msg), "Not found");
     return false;
+}
+
+// Replace every occurrence of ed->search in the file, top to bottom, in a single
+// pass. Each line is scanned left to right and the scan resumes AFTER the text
+// just inserted, so a replacement that contains the search string is not
+// re-matched and the loop always terminates. A match that would push its line
+// past ED_LINE_MAX-1 is left alone and counted in *skipped. Returns the number
+// of replacements made.
+static int editor_replace_all(EditorState *ed, const char *replacement, int *skipped)
+{
+    int search_len  = (int)strlen(ed->search);
+    int replace_len = (int)strlen(replacement);
+    int count = 0;
+    if (search_len == 0) return 0;
+
+    for (int line = 0; line < ed->num_lines; line++) {
+        ed_load_work(ed, line);
+        ed->work[ED_LINE_MAX - 1] = '\0';
+        int pos = 0;
+        char *found;
+        while ((found = strstr(ed->work + pos, ed->search)) != NULL) {
+            int off = (int)(found - ed->work);
+            int line_len = (int)strlen(ed->work);
+            if (line_len - search_len + replace_len >= ED_LINE_MAX) {
+                (*skipped)++;
+                pos = off + search_len;     // step over it; later matches may still fit
+                continue;
+            }
+            memmove(ed->work + off + replace_len,
+                    ed->work + off + search_len,
+                    line_len - off - search_len + 1);
+            memcpy(ed->work + off, replacement, replace_len);
+            ed->work_dirty = true;
+            ed->modified = true;
+            count++;
+            pos = off + replace_len;
+        }
+    }
+    ed_flush_work(ed);
+    ed_sync_cursor(ed);     // the cursor's line may have changed length
+    return count;
 }
 
 static void editor_find_or_replace(EditorState *ed, ConezStream *out)
@@ -713,45 +790,50 @@ static void editor_find_or_replace(EditorState *ed, ConezStream *out)
     int search_len = (int)strlen(ed->search);
     int replace_len = (int)strlen(replacement);
     int count = 0;
-    bool replace_all = false;
+    int skipped = 0;
 
     if (!editor_find_next(ed)) return;
 
     for (;;) {
-        if (!replace_all) {
-            // Redraw to show cursor at match
-            editor_ensure_visible(ed);
-            getLock();
-            editor_draw(ed, out);
-            out->printf("\033[%d;1H\033[7m Replace? (y/n/a/q) \033[K\033[0m\033[?25h", ED_TOP_ROW);
-            releaseLock();
+        // Redraw to show cursor at match
+        editor_ensure_visible(ed);
+        getLock();
+        editor_draw(ed, out);
+        out->printf("\033[%d;1H\033[7m Replace? (y/n/a/q) \033[K\033[0m\033[?25h", ED_TOP_ROW);
+        releaseLock();
 
-            int choice = 0;
-            for (;;) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-                if (!out->available()) continue;
-                int c = out->read();
-                if (c == 'y' || c == 'Y') { choice = 1; break; }
-                if (c == 'n' || c == 'N') { choice = 2; break; }
-                if (c == 'a' || c == 'A') { choice = 3; break; }
-                if (c == 'q' || c == 'Q' || c == 0x1B) {
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    while (out->available()) out->read();
-                    choice = 4;
-                    break;
-                }
+        int choice = 0;
+        for (;;) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            if (!out->available()) continue;
+            int c = out->read();
+            if (c == 'y' || c == 'Y') { choice = 1; break; }
+            if (c == 'n' || c == 'N') { choice = 2; break; }
+            if (c == 'a' || c == 'A') { choice = 3; break; }
+            if (c == 'q' || c == 'Q' || c == 0x1B) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                while (out->available()) out->read();
+                choice = 4;
+                break;
             }
-
-            if (choice == 4) break;
-            if (choice == 3) replace_all = true;
-            if (choice == 2) {
-                if (!editor_find_next(ed)) break;
-                continue;
-            }
-            // choice == 1 or 3: fall through to replace
         }
 
-        // Perform replacement on current line
+        if (choice == 4) break;
+        if (choice == 3) {
+            // Replace every occurrence in the file in ONE bounded pass. This used
+            // to keep calling editor_find_next(), which wraps around the file, so
+            // it only stopped when no match was left -- never, if the replacement
+            // contains the search text ("cone" -> "cone2") or a match sat on a
+            // line too long to grow. That spun ShellTask forever with no way out.
+            count += editor_replace_all(ed, replacement, &skipped);
+            break;
+        }
+        if (choice == 2) {
+            if (!editor_find_next(ed)) break;
+            continue;
+        }
+
+        // choice == 1: replace the match under the cursor
         ed_load_work(ed, ed->cy);
         int line_len = (int)strlen(ed->work);
         if (line_len - search_len + replace_len >= ED_LINE_MAX) {
@@ -775,13 +857,35 @@ static void editor_find_or_replace(EditorState *ed, ConezStream *out)
         if (!editor_find_next(ed)) break;
     }
 
-    if (count > 0)
+    if (skipped > 0)
+        snprintf(ed->status_msg, sizeof(ed->status_msg),
+                 "Replaced %d, skipped %d (line too long)", count, skipped);
+    else if (count > 0)
         snprintf(ed->status_msg, sizeof(ed->status_msg), "Replaced %d occurrence%s", count, count == 1 ? "" : "s");
 }
 
 // ---------------------------------------------------------------------------
 // Line editor (non-ANSI fallback)
 // ---------------------------------------------------------------------------
+
+// Console output for the line editor. NOT printfnl(): cmd_edit() runs the line
+// editor with interactive mode on (to keep other tasks' output off a console
+// whose reads aren't under print_mutex), and printfnl() returns immediately in
+// interactive mode -- so every listing, prompt reply and error the line editor
+// printed was silently dropped and only "edit> " ever appeared. Interactive
+// apps write to the stream directly, under the print lock.
+__attribute__((format(printf, 1, 2)))
+static void le_printf(const char *fmt, ...)
+{
+    char out[ED_LINE_MAX + 48];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(out, sizeof(out), fmt, ap);
+    va_end(ap);
+    getLock();
+    getStream()->print(out);
+    releaseLock();
+}
 
 static void line_editor_list(EditorState *ed, int from, int to)
 {
@@ -791,7 +895,7 @@ static void line_editor_list(EditorState *ed, int from, int to)
     for (int i = from; i <= to; i++) {
         ed_read_line(ed, i, buf);
         buf[ED_LINE_MAX - 1] = '\0';
-        printfnl(SOURCE_NONE, "%3d: %s\n", i + 1, buf);
+        le_printf("%3d: %s\n", i + 1, buf);
     }
 }
 
@@ -832,7 +936,7 @@ static int line_editor(EditorState *ed)
     bool modified = ed->modified;
     char cmd[ED_LINE_MAX];
 
-    printfnl(SOURCE_NONE, "Editing %s (%d lines)\n", ed->filepath, ed->num_lines);
+    le_printf("Editing %s (%d lines)\n", ed->filepath, ed->num_lines);
     line_editor_list(ed, 0, ed->num_lines - 1);
 
     for (;;) {
@@ -857,7 +961,7 @@ static int line_editor(EditorState *ed)
         if (*p == 'q') {
             if (p[1] == '!') break;
             if (modified) {
-                printfnl(SOURCE_NONE, "Unsaved changes. Use 'q!' to discard, or 'w' to save first.\n");
+                le_printf("Unsaved changes. Use 'q!' to discard, or 'w' to save first.\n");
                 continue;
             }
             break;
@@ -867,9 +971,9 @@ static int line_editor(EditorState *ed)
         if (*p == 'w' && (p[1] == '\0' || p[1] == ' ')) {
             if (editor_save(ed)) {
                 modified = false;
-                printfnl(SOURCE_NONE, "Saved %d lines\n", ed->num_lines);
+                le_printf("Saved %d lines\n", ed->num_lines);
             } else {
-                printfnl(SOURCE_NONE, "%s\n",
+                le_printf("%s\n",
                          ed->status_msg[0] ? ed->status_msg : "Save FAILED");
             }
             continue;
@@ -881,7 +985,7 @@ static int line_editor(EditorState *ed)
             if (sscanf(p + 2, "%d %d", &n1, &n2) == 2 && n1 >= 1 && n2 >= n1) {
                 line_editor_list(ed, n1 - 1, n2 - 1);
             } else {
-                printfnl(SOURCE_NONE, "Usage: p <from> <to>\n");
+                le_printf("Usage: p <from> <to>\n");
             }
             continue;
         }
@@ -890,10 +994,10 @@ static int line_editor(EditorState *ed)
         if (*p == 'i' && p[1] == ' ') {
             int n = atoi(p + 2);
             if (n < 1 || n > ed->num_lines + 1) {
-                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines + 1);
+                le_printf("Line %d out of range (1-%d)\n", n, ed->num_lines + 1);
                 continue;
             }
-            printfnl(SOURCE_NONE, "Insert before line %d (empty line to stop):\n", n);
+            le_printf("Insert before line %d (empty line to stop):\n", n);
             int at = n - 1;
             for (;;) {
                 getLock();
@@ -904,11 +1008,11 @@ static int line_editor(EditorState *ed)
                 if (ll <= 0) break;
 
                 if (ed->num_lines >= ED_MAX_LINES) {
-                    printfnl(SOURCE_NONE, "Max lines reached\n");
+                    le_printf("Max lines reached\n");
                     break;
                 }
                 if (!ed_ensure_capacity(ed, ed->num_lines + 1)) {
-                    printfnl(SOURCE_NONE, "Out of memory\n");
+                    le_printf("Out of memory\n");
                     break;
                 }
                 ed_invalidate_work(ed);
@@ -926,7 +1030,7 @@ static int line_editor(EditorState *ed)
 
         // 'a' — append at end
         if (*p == 'a' && (p[1] == '\0' || p[1] == ' ')) {
-            printfnl(SOURCE_NONE, "Append (empty line to stop):\n");
+            le_printf("Append (empty line to stop):\n");
             for (;;) {
                 getLock();
                 s->print("  > ");
@@ -936,11 +1040,11 @@ static int line_editor(EditorState *ed)
                 if (ll <= 0) break;
 
                 if (ed->num_lines >= ED_MAX_LINES) {
-                    printfnl(SOURCE_NONE, "Max lines reached\n");
+                    le_printf("Max lines reached\n");
                     break;
                 }
                 if (!ed_ensure_capacity(ed, ed->num_lines + 1)) {
-                    printfnl(SOURCE_NONE, "Out of memory\n");
+                    le_printf("Out of memory\n");
                     break;
                 }
                 char buf[ED_LINE_MAX];
@@ -957,7 +1061,7 @@ static int line_editor(EditorState *ed)
         if (*p == 'd' && p[1] == ' ') {
             int n = atoi(p + 2);
             if (n < 1 || n > ed->num_lines) {
-                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines);
+                le_printf("Line %d out of range (1-%d)\n", n, ed->num_lines);
                 continue;
             }
             ed_invalidate_work(ed);
@@ -970,7 +1074,7 @@ static int line_editor(EditorState *ed)
                 ed->num_lines--;
             }
             modified = true;
-            printfnl(SOURCE_NONE, "Deleted line %d\n", n);
+            le_printf("Deleted line %d\n", n);
             continue;
         }
 
@@ -978,10 +1082,10 @@ static int line_editor(EditorState *ed)
         if (*p == 'r' && p[1] == ' ') {
             int n = atoi(p + 2);
             if (n < 1 || n > ed->num_lines) {
-                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines);
+                le_printf("Line %d out of range (1-%d)\n", n, ed->num_lines);
                 continue;
             }
-            printfnl(SOURCE_NONE, "Replace line %d:\n", n);
+            le_printf("Replace line %d:\n", n);
             getLock();
             s->print("  > ");
             releaseLock();
@@ -1010,11 +1114,11 @@ static int line_editor(EditorState *ed)
                 buf[ED_LINE_MAX - 1] = '\0';
                 if (strstr(buf, needle)) {
                     ed->cy = line;
-                    printfnl(SOURCE_NONE, "%3d: %s\n", line + 1, buf);
+                    le_printf("%3d: %s\n", line + 1, buf);
                     goto next_cmd;
                 }
             }
-            printfnl(SOURCE_NONE, "Not found\n");
+            le_printf("Not found\n");
             next_cmd:
             continue;
         }
@@ -1025,7 +1129,7 @@ static int line_editor(EditorState *ed)
             char *old_str = p + 2;
             char *space = strchr(old_str, ' ');
             if (!space || space[1] == '\0') {
-                printfnl(SOURCE_NONE, "Usage: s <old> <new>\n");
+                le_printf("Usage: s <old> <new>\n");
                 continue;
             }
             *space = '\0';
@@ -1033,6 +1137,15 @@ static int line_editor(EditorState *ed)
             int old_len = (int)strlen(old_str);
             int new_len = (int)strlen(new_str);
             int count = 0;
+            int too_long = 0;
+
+            // "s  x" (two spaces) parses as an EMPTY search string, which strstr
+            // matches at every position -- it filled every line with the
+            // replacement. Refuse it.
+            if (old_len == 0) {
+                le_printf("Usage: s <old> <new>\n");
+                continue;
+            }
 
             char buf[ED_LINE_MAX];
             for (int i = 0; i < ed->num_lines; i++) {
@@ -1043,35 +1156,45 @@ static int line_editor(EditorState *ed)
                 char result[ED_LINE_MAX];
                 int rpos = 0;
                 char *src = buf;
-                bool changed = false;
+                int line_count = 0;
+                bool overflow = false;
                 while (*src) {
                     char *found = strstr(src, old_str);
                     if (found) {
                         int prefix = (int)(found - src);
-                        if (rpos + prefix + new_len >= ED_LINE_MAX - 1) break;
+                        if (rpos + prefix + new_len >= ED_LINE_MAX - 1) { overflow = true; break; }
                         memcpy(result + rpos, src, prefix);
                         rpos += prefix;
                         memcpy(result + rpos, new_str, new_len);
                         rpos += new_len;
                         src = found + old_len;
-                        count++;
-                        changed = true;
+                        line_count++;
                     } else {
                         int remain = (int)strlen(src);
-                        if (rpos + remain >= ED_LINE_MAX - 1) remain = ED_LINE_MAX - 1 - rpos;
+                        if (rpos + remain >= ED_LINE_MAX - 1) { overflow = true; break; }
                         memcpy(result + rpos, src, remain);
                         rpos += remain;
                         break;
                     }
                 }
-                if (changed) {
+                // A line that would not fit is left exactly as it was. Writing
+                // back what had been built so far dropped the rest of the line.
+                if (overflow) {
+                    too_long++;
+                    continue;
+                }
+                if (line_count > 0) {
                     result[rpos] = '\0';
                     memset(result + rpos + 1, 0, ED_LINE_MAX - rpos - 1);
                     ed_write_line(ed, i, result);
                     modified = true;
+                    count += line_count;
                 }
             }
-            printfnl(SOURCE_NONE, "Replaced %d occurrence%s\n", count, count == 1 ? "" : "s");
+            if (too_long > 0)
+                le_printf("%d line%s left unchanged (result would exceed %d chars)\n",
+                         too_long, too_long == 1 ? "" : "s", ED_LINE_MAX - 1);
+            le_printf("Replaced %d occurrence%s\n", count, count == 1 ? "" : "s");
             continue;
         }
 
@@ -1081,12 +1204,12 @@ static int line_editor(EditorState *ed)
             if (n >= 1 && n <= ed->num_lines) {
                 line_editor_list(ed, n - 1, n - 1);
             } else {
-                printfnl(SOURCE_NONE, "Line %d out of range (1-%d)\n", n, ed->num_lines);
+                le_printf("Line %d out of range (1-%d)\n", n, ed->num_lines);
             }
             continue;
         }
 
-        printfnl(SOURCE_NONE, "Commands: l | N | i N | a | d N | r N | p N M | f text | s old new | w | q\n");
+        le_printf("Commands: l | N | i N | a | d N | r N | p N M | f text | s old new | w | q\n");
     }
 
     ed->modified = modified;

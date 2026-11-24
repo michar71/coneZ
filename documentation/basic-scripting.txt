@@ -12,6 +12,12 @@ Loading and running a script from the CLI:
 Scripts compile on load, then execute. Output appears on the BASIC debug
 channel, filterable with "debug BASIC on/off".
 
+Note: this file describes the on-device interpreter, which is only built
+when INCLUDE_BASIC is defined in platformio.ini. The default firmware
+builds do NOT define it: they run .bas files by compiling them to WASM
+with the embedded bas2wasm compiler instead (see bas2wasm.txt and
+bas2wasm-vs-quickbasic.txt for that dialect).
+
 
 Language Basics
 ---------------
@@ -111,6 +117,19 @@ BREAK:
 
 RESUME:
   Resume execution from the last saved position.
+
+Errors:
+  A syntax error while loading stops the load: "ERROR <line>: <message>".
+  Block keywords must match an open block -- a stray ELSE, END, NEXT or
+  WEND reports "ELSE WITHOUT IF", "END WITHOUT BLOCK", "NEXT WITHOUT FOR"
+  or "WEND WITHOUT WHILE", and a second plain ELSE in one IF block
+  reports "ELSE AFTER ELSE". ELSE is only valid inside a multi-line IF
+  (not after a one-line "IF ... THEN statement"). A string literal with
+  no closing quote reports "UNTERMINATED STRING".
+
+  A runtime error (division by zero, array bounds, stack overflow, ...)
+  ENDS the script: it prints the error and the run exits with
+  "Error Exit Code: 2". It does not drop to an interactive prompt.
 
 
 Subroutines
@@ -231,6 +250,8 @@ General / Math
   SCALE(val, valmin, valmax, rmin, rmax)
       Map val from [valmin, valmax] to [rmin, rmax].
       Uses integer arithmetic (Arduino map() function).
+      If valmin equals valmax there is no range to map from; the
+      result is rmin (it used to divide by zero and reset the board).
 
   SIN256(val)
       Sine wave. Input 0..255 maps to 0..360 degrees.
@@ -305,7 +326,8 @@ Array Operations
 
   ROTATEARRAY(arr, amount)
       Circular rotate. Positive amount rotates right, negative left.
-      No data is lost — elements wrap around.
+      No data is lost — elements wrap around. An array of 0 or 1
+      elements is left unchanged.
 
   COPYARRAY(arrSrc, arrDst)
       Copy contents of arrSrc into arrDst. If arrDst is smaller,

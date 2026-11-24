@@ -408,19 +408,31 @@ edit {filename}
   (Ctrl-G), cut/paste (Ctrl-K/U), save (Ctrl-W), and quit (Ctrl-X).
 
   Ctrl-F prompts for search text, then asks (F)ind or (R)eplace.
-  Find jumps to the next match (wraps around). Replace walks matches
-  with y/n/a/q confirmation (yes, no, all, quit). Pressing Ctrl-F
-  again with empty input repeats the last search (find-next).
+  Find jumps to the next match and wraps around the file, including
+  back to a match at or before the cursor on the starting line.
+  Replace walks matches with y/n/a/q confirmation (yes, no, all,
+  quit). "a" replaces every occurrence in the whole file in a single
+  pass; text it has just inserted is not searched again, so a
+  replacement that contains the search text ("cone" -> "cone2") is
+  safe. A match whose line would grow past 255 characters is left
+  alone and counted ("Replaced N, skipped M (line too long)").
+  Pressing Ctrl-F again with empty input repeats the last search
+  (find-next).
 
   When ANSI is off (color off), falls back to a line editor with
   numbered lines and commands: l(ist), N (show line), i(nsert) N,
   a(ppend), d(elete) N, r(eplace) N, p(rint) N M, f(ind) text,
   s(ubstitute) old new, w(rite), q(uit).
+  "s old new" replaces every occurrence in every line. A line whose
+  result would exceed 255 characters is left unchanged and reported;
+  an empty search string ("s  x") is refused.
   Example: edit /startup.bas
 
-  Note: the editor holds up to 512 lines. A file longer than that opens
-  READ-ONLY and saving is disabled, so the tail can't be lost by
-  overwriting the original with the truncated buffer.
+  Note: the editor holds up to 512 lines of up to 255 characters. A
+  file with more lines, or with any longer line, opens READ-ONLY and
+  saving is disabled -- so the tail can't be lost by overwriting the
+  original with a truncated buffer, and an over-long line can't be
+  written back split in two.
 
 gpio
   With no arguments, shows all GPIO pin states (direction and level).
@@ -731,8 +743,12 @@ psram
 
   psram test
       Run a full PSRAM memory test with read/write verification and
-      throughput benchmark. Temporarily frees the shell history ring
-      buffer to get exclusive PSRAM access, then re-allocates it after.
+      throughput benchmark. It needs the whole chip, so it temporarily
+      frees the debug log ring, the shell history and the WASM memory
+      preallocation (all re-created afterwards), and refuses to start
+      if a WASM script is running or anything else is still allocated.
+      While it runs, new allocations are served from the system heap
+      instead of PSRAM.
 
   psram test forever
       Run the memory test in a loop until an error occurs or a key is

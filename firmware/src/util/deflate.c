@@ -199,10 +199,18 @@ typedef struct {
 
 static void flush_output(conez_deflate_t *c)
 {
-    if (c->error || c->out_pos == 0) return;
-    if (c->write_fn(c->out_buf, c->out_pos, c->write_ctx) != 0)
-        c->error = 1;
-    c->total_out += c->out_pos;
+    if (c->out_pos == 0) return;
+    /* ALWAYS empty the staging buffer, even once the sink has failed: emit_byte
+     * relies on this call to make room. Returning early on c->error left
+     * out_pos at OUT_BUF_SIZE, and every later byte was stored past out_buf --
+     * over the rest of this struct and into the heap. After an error the bytes
+     * are simply discarded (the caller reports failure from c->error). */
+    if (!c->error) {
+        if (c->write_fn(c->out_buf, c->out_pos, c->write_ctx) != 0)
+            c->error = 1;
+        else
+            c->total_out += c->out_pos;
+    }
     c->out_pos = 0;
 }
 
@@ -274,8 +282,10 @@ typedef struct {
     int      q2_buf[MAX_LIT_SYMS];
 } build_tree_ws;
 
-static void build_tree(const uint16_t *freqs, uint8_t *lens, uint16_t *codes,
-                       int n, int max_bits)
+/* Returns 0 on success, -1 if the workspace could not be allocated (lens/codes
+ * are then unusable and the caller must not emit a dynamic block from them). */
+static int build_tree(const uint16_t *freqs, uint8_t *lens, uint16_t *codes,
+                      int n, int max_bits)
 {
     memset(lens, 0, n);
 
@@ -284,14 +294,16 @@ static void build_tree(const uint16_t *freqs, uint8_t *lens, uint16_t *codes,
     for (int i = 0; i < n; i++)
         if (freqs[i] > 0) m++;
 
-    if (m == 0) { memset(codes, 0, n * sizeof(uint16_t)); return; }
+    if (m == 0) { memset(codes, 0, n * sizeof(uint16_t)); return 0; }
 
     build_tree_ws *ws = (build_tree_ws *)malloc(sizeof(build_tree_ws));
     if (!ws) {
-        /* Fallback: assign uniform 8-bit codes (valid but suboptimal) */
-        for (int i = 0; i < n; i++) lens[i] = freqs[i] ? 8 : 0;
-        gen_codes(lens, codes, n);
-        return;
+        /* No workspace. There is no safe in-place fallback: giving every used
+         * symbol 8 bits is an incomplete or over-subscribed code unless exactly
+         * 256 symbols are in use (and 8 doesn't even fit the 3-bit field of the
+         * code-length tree), so inflate rejects the stream. Report it; the
+         * caller emits a fixed-Huffman block instead. */
+        return -1;
     }
 
     m = 0;
@@ -303,7 +315,7 @@ static void build_tree(const uint16_t *freqs, uint8_t *lens, uint16_t *codes,
         memset(codes, 0, n * sizeof(uint16_t));
         codes[ws->sorted[0].sym] = 0;
         free(ws);
-        return;
+        return 0;
     }
 
     /* Insertion sort by frequency */
@@ -386,6 +398,7 @@ static void build_tree(const uint16_t *freqs, uint8_t *lens, uint16_t *codes,
 
     free(ws);
     gen_codes(lens, codes, n);
+    return 0;
 }
 
 /* ---- Fixed Huffman tables ---- */
@@ -460,6 +473,8 @@ static const uint8_t s_cl_order[19] = {
     16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15
 };
 
+static void emit_fixed_block(conez_deflate_t *c, int is_final);
+
 static void emit_dynamic_block(conez_deflate_t *c, int is_final)
 {
     count_frequencies(c);
@@ -472,8 +487,14 @@ static void emit_dynamic_block(conez_deflate_t *c, int is_final)
         if (!has_dist) c->dist_freq[0] = 1;
     }
 
-    build_tree(c->lit_freq, c->lit_len, c->lit_code, MAX_LIT_SYMS, 15);
-    build_tree(c->dist_freq, c->dist_len, c->dist_code, MAX_DIST_SYMS, 15);
+    /* Nothing of this block has been written yet (all three trees are built
+     * before the header), so if a tree can't be built the same LZ symbols can
+     * still go out as a fixed-Huffman block: larger, but a valid stream. */
+    if (build_tree(c->lit_freq, c->lit_len, c->lit_code, MAX_LIT_SYMS, 15) != 0 ||
+        build_tree(c->dist_freq, c->dist_len, c->dist_code, MAX_DIST_SYMS, 15) != 0) {
+        emit_fixed_block(c, is_final);
+        return;
+    }
 
     /* Determine HLIT and HDIST (trim trailing zeros) */
     int hlit = MAX_LIT_SYMS;
@@ -530,7 +551,10 @@ static void emit_dynamic_block(conez_deflate_t *c, int is_final)
     }
 
     /* Build code-length Huffman tree */
-    build_tree(cl_freq, c->cl_len, c->cl_code, MAX_CL_SYMS, 7);
+    if (build_tree(cl_freq, c->cl_len, c->cl_code, MAX_CL_SYMS, 7) != 0) {
+        emit_fixed_block(c, is_final);
+        return;
+    }
 
     int hclen = MAX_CL_SYMS;
     while (hclen > 4 && c->cl_len[s_cl_order[hclen - 1]] == 0) hclen--;
@@ -556,7 +580,7 @@ static void emit_dynamic_block(conez_deflate_t *c, int is_final)
     emit_block_symbols(c, c->lit_code, c->lit_len, c->dist_code, c->dist_len);
 }
 
-static void __attribute__((unused)) emit_fixed_block(conez_deflate_t *c, int is_final)
+static void emit_fixed_block(conez_deflate_t *c, int is_final)
 {
     init_fixed_huffman();
     put_bits(c, is_final ? 1 : 0, 1);
@@ -575,7 +599,7 @@ static void emit_stored_block(conez_deflate_t *c, const uint8_t *data,
     uint16_t nlen = ~blen;
     emit_byte(c, blen & 0xFF); emit_byte(c, blen >> 8);
     emit_byte(c, nlen & 0xFF); emit_byte(c, nlen >> 8);
-    for (size_t i = 0; i < len; i++) emit_byte(c, data[i]);
+    for (size_t i = 0; i < len && !c->error; i++) emit_byte(c, data[i]);
 }
 
 static void flush_block(conez_deflate_t *c, int is_final, int level,
@@ -583,7 +607,7 @@ static void flush_block(conez_deflate_t *c, int is_final, int level,
 {
     if (level == 0 || c->lz_count == 0) {
         size_t off = 0;
-        while (off < raw_len) {
+        while (off < raw_len && !c->error) {
             size_t chunk = raw_len - off;
             if (chunk > 65535) chunk = 65535;
             emit_stored_block(c, raw_data + off, chunk,
@@ -602,7 +626,13 @@ static void flush_block(conez_deflate_t *c, int is_final, int level,
 
 static uint32_t hash3(conez_deflate_t *c, uint8_t b0, uint8_t b1, uint8_t b2)
 {
-    return ((uint32_t)b0 | ((uint32_t)b1 << 8) | ((uint32_t)b2 << 16)) & c->hash_mask;
+    /* Multiplicative hash of the 24-bit trigram, taking the TOP bits. The old
+     * (b0 | b1<<8 | b2<<16) & hash_mask kept at most 15 low bits, i.e. it
+     * ignored b2 entirely (and b1's top bit), so every trigram sharing its
+     * first two bytes shared one chain and the few probes of the low levels
+     * were spent on candidates whose third byte didn't match. */
+    uint32_t v = (uint32_t)b0 | ((uint32_t)b1 << 8) | ((uint32_t)b2 << 16);
+    return ((v * 2654435761u) >> 12) & c->hash_mask;
 }
 
 static void hash_insert(conez_deflate_t *c, uint32_t pos,
@@ -832,6 +862,13 @@ int gzip_stream(const uint8_t *in, size_t in_len,
     if (!in && in_len > 0) return -1;
 
     init_tables();
+
+    /* Clamp here, not only inside deflate_alloc(): compress_data() takes the
+     * level too, and a negative one would skip the dictionary/hash allocation
+     * (level <= 0) yet still take the LZ path, which then reads and writes
+     * through those unallocated (address 0) tables. */
+    if (level < 0)  level = 0;
+    if (level > 10) level = 10;
 
     conez_deflate_t *c = deflate_alloc(window_bits, mem_level, level, write_fn, ctx);
     if (!c) return -1;

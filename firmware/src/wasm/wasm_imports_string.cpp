@@ -34,15 +34,56 @@ int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr)
     return len;
 }
 
+// ---- Shared block-table helpers (string pool and low heap use the same
+// record layout and the same first-fit / coalesce scheme) ----
+//
+// A record with size 0 and !in_use is DEAD: its space was merged into a
+// neighbour or returned to the bump pointer. Dead records are skipped by every
+// lookup, and are reused here -- they used to be reclaimed only when they
+// happened to be last in the table, so a long-running program filled the table
+// with them and allocation failed with most of the region free.
+
+// Index of a record that can hold a new block: a dead one, else a fresh one at
+// the end of the table. -1 if the table is full of live records.
+static int alloc_spare_slot(StrAlloc *tbl, int *n, int max)
+{
+    for (int i = 0; i < *n; i++)
+        if (!tbl[i].in_use && tbl[i].size == 0) return i;
+    if (*n < max) return (*n)++;
+    return -1;
+}
+
+// Hand out `size` bytes of free block `idx`. Any remainder is split off as its
+// own free block, so a 4-byte request can no longer swallow a multi-KB block
+// that coalescing produced. If no record is available for the remainder the
+// whole block is handed out, as before.
+static void alloc_take(StrAlloc *tbl, int *n, int max, int idx, uint32_t size)
+{
+    uint32_t rest = tbl[idx].size - size;
+    tbl[idx].in_use = true;         // before alloc_spare_slot: idx is not "dead"
+    if (rest >= 4) {
+        int slot = alloc_spare_slot(tbl, n, max);
+        if (slot >= 0) {
+            tbl[slot].offset = tbl[idx].offset + size;
+            tbl[slot].size   = rest;
+            tbl[slot].in_use = false;
+            tbl[idx].size    = size;
+        }
+    }
+}
+
 uint32_t pool_alloc(IM3Runtime runtime, int size)
 {
     if (size <= 0) size = 1;
+    // Reject before rounding: (size + 3) overflows near INT_MAX and wrapped to
+    // a tiny block (MID$ with a huge count got 4 bytes for a 2 GB request).
+    if (size > (int)(STR_POOL_END - STR_POOL_START)) return 0;
     size = (size + 3) & ~3;  // 4-byte align
 
     // First-fit scan of freed blocks
     for (int i = 0; i < str_nallocs; i++) {
         if (!str_allocs[i].in_use && str_allocs[i].size >= (uint32_t)size) {
-            str_allocs[i].in_use = true;
+            alloc_take(str_allocs, &str_nallocs, STR_MAX_ALLOCS, i, (uint32_t)size);
             wasm_mem_set(runtime, str_allocs[i].offset, 0, size);
             return str_allocs[i].offset;
         }
@@ -50,15 +91,15 @@ uint32_t pool_alloc(IM3Runtime runtime, int size)
 
     // Bump allocate
     if (str_bump + size > STR_POOL_END) return 0;  // out of pool
-    if (str_nallocs >= STR_MAX_ALLOCS) return 0;    // too many allocs
+    int slot = alloc_spare_slot(str_allocs, &str_nallocs, STR_MAX_ALLOCS);
+    if (slot < 0) return 0;                         // too many allocs
 
     uint32_t off = str_bump;
     str_bump += size;
 
-    str_allocs[str_nallocs].offset = off;
-    str_allocs[str_nallocs].size = size;
-    str_allocs[str_nallocs].in_use = true;
-    str_nallocs++;
+    str_allocs[slot].offset = off;
+    str_allocs[slot].size = size;
+    str_allocs[slot].in_use = true;
 
     wasm_mem_set(runtime, off, 0, size);
     return off;
@@ -175,12 +216,13 @@ static uint32_t low_heap_alloc(IM3Runtime runtime, int size)
 {
     if (low_heap_start == 0) return 0;  // disabled (old binary, no _heap_ptr export)
     if (size <= 0) size = 1;
+    if (size > (int)STR_POOL_START) return 0;   // can't fit; also keeps (size + 3) from overflowing
     size = (size + 3) & ~3;  // 4-byte align
 
     // First-fit scan of freed blocks
     for (int i = 0; i < low_nallocs; i++) {
         if (!low_allocs[i].in_use && low_allocs[i].size >= (uint32_t)size) {
-            low_allocs[i].in_use = true;
+            alloc_take(low_allocs, &low_nallocs, LOW_HEAP_MAX_ALLOCS, i, (uint32_t)size);
             wasm_mem_set(runtime, low_allocs[i].offset, 0, size);
             return low_allocs[i].offset;
         }
@@ -188,15 +230,15 @@ static uint32_t low_heap_alloc(IM3Runtime runtime, int size)
 
     // Bump allocate — stop before string pool
     if (low_heap_bump + size > STR_POOL_START) return 0;
-    if (low_nallocs >= LOW_HEAP_MAX_ALLOCS) return 0;
+    int slot = alloc_spare_slot(low_allocs, &low_nallocs, LOW_HEAP_MAX_ALLOCS);
+    if (slot < 0) return 0;
 
     uint32_t off = low_heap_bump;
     low_heap_bump += size;
 
-    low_allocs[low_nallocs].offset = off;
-    low_allocs[low_nallocs].size = size;
-    low_allocs[low_nallocs].in_use = true;
-    low_nallocs++;
+    low_allocs[slot].offset = off;
+    low_allocs[slot].size = size;
+    low_allocs[slot].in_use = true;
 
     wasm_mem_set(runtime, off, 0, size);
     return off;
@@ -274,6 +316,18 @@ static uint32_t low_heap_realloc(IM3Runtime runtime, uint32_t ptr, int size)
 
 // ---- Host imports ----
 
+// Length of a guest string, with pointer 0 meaning "no string" (empty) -- which
+// is what an unassigned BASIC string variable holds. wasm_mem_strlen(0) instead
+// scans real memory at offset 0, where the module's data segment begins, so an
+// unassigned string read as whatever literal happened to be first. The
+// simulator's wasm_strlen() already returns 0 for pointer 0.
+static int str_len0(IM3Runtime runtime, uint32_t ptr)
+{
+    if (ptr == 0) return 0;
+    int len = wasm_mem_strlen(runtime, ptr);
+    return len < 0 ? 0 : len;
+}
+
 // i32 str_alloc(i32 size) -> pool pointer or 0
 m3ApiRawFunction(m3_str_alloc)
 {
@@ -332,10 +386,31 @@ m3ApiRawFunction(m3_realloc)
     m3ApiGetArg(int32_t, ptr);
     m3ApiGetArg(int32_t, size);
     uint32_t result;
-    if ((uint32_t)ptr < STR_POOL_START)
+    if (ptr == 0) {
+        // realloc(NULL, n) is malloc(n): low heap first, then the string pool.
+        // It used to go to the low heap only, so it failed whenever the low
+        // heap was disabled, full or out of records -- where malloc succeeds.
+        result = low_heap_alloc(runtime, size);
+        if (result == 0) result = pool_alloc(runtime, size);
+    } else if ((uint32_t)ptr < STR_POOL_START) {
         result = low_heap_realloc(runtime, (uint32_t)ptr, size);
-    else
+        if (result == 0 && size > 0) {
+            // The low heap couldn't grow the block. Move it to the pool, the
+            // same fallback malloc/calloc use; the caller's data moves with it.
+            uint32_t old_size = low_heap_size((uint32_t)ptr);
+            if (old_size > 0) {
+                uint32_t nptr = pool_alloc(runtime, size);
+                if (nptr != 0) {
+                    uint32_t copy = old_size < (uint32_t)size ? old_size : (uint32_t)size;
+                    wasm_mem_copy(runtime, nptr, (uint32_t)ptr, copy);
+                    low_heap_free((uint32_t)ptr);
+                    result = nptr;
+                }
+            }
+        }
+    } else {
         result = pool_realloc(runtime, (uint32_t)ptr, size);
+    }
     m3ApiReturn((int32_t)result);
 }
 
@@ -344,8 +419,7 @@ m3ApiRawFunction(m3_str_len)
 {
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, ptr);
-    int len = wasm_mem_strlen(runtime, (uint32_t)ptr);
-    m3ApiReturn(len < 0 ? 0 : len);
+    m3ApiReturn(str_len0(runtime, (uint32_t)ptr));
 }
 
 // i32 str_copy(i32 src) -> new pool string
@@ -369,10 +443,8 @@ m3ApiRawFunction(m3_str_concat)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, a);
     m3ApiGetArg(int32_t, b);
-    int la = wasm_mem_strlen(runtime, (uint32_t)a);
-    int lb = wasm_mem_strlen(runtime, (uint32_t)b);
-    if (la < 0) la = 0;
-    if (lb < 0) lb = 0;
+    int la = str_len0(runtime, (uint32_t)a);
+    int lb = str_len0(runtime, (uint32_t)b);
     uint32_t dst = pool_alloc(runtime, la + lb + 1);
     if (dst == 0) m3ApiReturn(0);
     wasm_mem_copy(runtime, dst, (uint32_t)a, la);
@@ -412,7 +484,10 @@ m3ApiRawFunction(m3_str_mid)
     }
     int n = count;
     if (n < 0) n = 0;
-    if (s + n > slen) n = slen - s;
+    // NOT "s + n > slen": that overflows for a huge count (MID$(A$, 3,
+    // 2147483647) = "rest of string"), so n went unclamped -- an empty result
+    // with PSRAM, a wild host write without it. s < slen here.
+    if (n > slen - s) n = slen - s;
     uint32_t dst = pool_alloc(runtime, n + 1);
     if (dst == 0) m3ApiReturn(0);
     wasm_mem_copy(runtime, dst, (uint32_t)src + s, n);
@@ -738,9 +813,8 @@ m3ApiRawFunction(m3_str_mid_assign)
     m3ApiGetArg(int32_t, src);
     if (dst == 0) m3ApiReturn(0);
     int dlen = wasm_mem_strlen(runtime, (uint32_t)dst);
-    int slen = wasm_mem_strlen(runtime, (uint32_t)src);
+    int slen = str_len0(runtime, (uint32_t)src);
     if (dlen < 0) dlen = 0;
-    if (slen < 0) slen = 0;
     int s = start - 1;  // convert to 0-based
     if (s < 0) s = 0;
     if (s >= dlen) {

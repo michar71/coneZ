@@ -60,6 +60,8 @@ MATH_D2(fmod, fmod)
 
 // ---- Curve functions ----
 
+#define SIM_LARP_MAX_SAMPLES 4096   // same cap as firmware LARP_MAX_SAMPLES
+
 static float sim_lerp(float a, float b, float t) {
     return a + t * (b - a);
 }
@@ -95,7 +97,14 @@ m3ApiRawFunction(m3_larp) {
     int window_int = offset_int * window / 100;
     if (stride < 1) stride = 1;
     float sum = 0; int count = 0;
-    for (int i = x_pos - (window_int / 2); i <= x_pos + (window_int / 2); i += stride) {
+    // Bounded, overflow-free loop (mirrors firmware util/curve.cpp larp()).
+    int64_t half = window_int / 2;
+    int64_t lo = (int64_t)x_pos - half;
+    int64_t hi = (int64_t)x_pos + half;
+    int64_t istride = stride;
+    if (hi >= lo && (hi - lo) / istride >= SIM_LARP_MAX_SAMPLES)
+        istride = (hi - lo) / (SIM_LARP_MAX_SAMPLES - 1) + 1;
+    for (int64_t i = lo; i <= hi; i += istride) {
         if (i < x_min) { sum += min_val; }
         else if (i > x_max) { sum += max_val; }
         else {
@@ -129,7 +138,21 @@ m3ApiRawFunction(m3_larpf) {
     float step = window_f / stride;
     if (step < 0.001f) step = 1.0f;
     float sum = 0; int count = 0;
-    for (float s = x_pos - (window_f / 2.0f); s <= x_pos + (window_f / 2.0f); s += step) {
+    // Integer-indexed, capped sample loop (mirrors firmware util/curve.cpp
+    // larpf()): a float loop variable stops advancing for large x_pos.
+    int n = 0;
+    if (window_f >= 0.0f) {
+        float q = window_f / step;
+        if (q >= (float)(SIM_LARP_MAX_SAMPLES - 1)) {
+            n = SIM_LARP_MAX_SAMPLES;
+            step = window_f / (float)(SIM_LARP_MAX_SAMPLES - 1);
+        } else {
+            n = (int)q + 1;
+        }
+    }
+    float start = x_pos - (window_f / 2.0f);
+    for (int k = 0; k < n; k++) {
+        float s = start + (float)k * step;
         if (s < x_min) { sum += min_val; }
         else if (s > x_max) { sum += max_val; }
         else {

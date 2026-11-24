@@ -149,10 +149,18 @@ static int wasm_vformat(char *out, int out_size,
             }
             break;
         }
-        case 'x': case 'X': {
-            uint32_t v = (uint32_t)read_i32();
-            spec_buf[si++] = conv; spec_buf[si] = 0;
-            n = snprintf(tmp, sizeof(tmp), spec_buf, v);
+        case 'x': case 'X': case 'o': {
+            if (is_long >= 2) {
+                // Same as %lld/%llu: an 8-byte, 8-aligned argument. Reading
+                // 4 bytes left the high word to be taken as the next argument.
+                uint64_t v = (uint64_t)read_i64();
+                spec_buf[si++] = 'l'; spec_buf[si++] = 'l'; spec_buf[si++] = conv; spec_buf[si] = 0;
+                n = snprintf(tmp, sizeof(tmp), spec_buf, (unsigned long long)v);
+            } else {
+                uint32_t v = (uint32_t)read_i32();
+                spec_buf[si++] = conv; spec_buf[si] = 0;
+                n = snprintf(tmp, sizeof(tmp), spec_buf, v);
+            }
             break;
         }
         case 'c': {
@@ -163,10 +171,21 @@ static int wasm_vformat(char *out, int out_size,
         }
         case 's': {
             uint32_t sp = (uint32_t)read_i32();
-            const char *s = (sp < mem_size) ? (const char *)mem + sp : "(null)";
+            // Must be NUL-terminated inside guest memory, or it prints "(null)"
+            // (matches firmware; also keeps snprintf from running off the end).
+            const char *s = "(null)";
+            if (sp < mem_size && memchr(mem + sp, 0, mem_size - sp))
+                s = (const char *)mem + sp;
             spec_buf[si++] = 's'; spec_buf[si] = 0;
-            n = snprintf(tmp, sizeof(tmp), spec_buf, s);
-            break;
+            // Formatted into a buffer sized for the result, not the 128-byte
+            // tmp: that cut every string at 127 characters.
+            int need = snprintf(nullptr, 0, spec_buf, s);
+            if (need > 0) {
+                std::string big((size_t)need + 1, '\0');
+                snprintf(&big[0], big.size(), spec_buf, s);
+                for (int k = 0; k < need; k++) EMIT(big[k]);
+            }
+            continue;
         }
         case 'f': case 'e': case 'g': case 'E': case 'G': {
             double v = read_f64();

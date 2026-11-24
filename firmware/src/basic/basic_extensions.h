@@ -865,7 +865,10 @@ int SCALE_()
     int valmax = (int)*sp++;
     int valmin = (int)*sp++;    
     int val = *sp;  //Pull value from Stack
-    int res = map(val,valmin, valmax,rmin,rmax);
+    // map() divides by (valmax - valmin): equal input bounds were an integer
+    // divide-by-zero, which panics and reboots the board. The input range is a
+    // single point, so there is nothing to interpolate -- return the low end.
+    int res = (valmin == valmax) ? rmin : map(val,valmin, valmax,rmin,rmax);
     *sp=res; //Push back to the stack
     STEP;
 }
@@ -958,7 +961,12 @@ int ROTATEARRAY_()
 
     //Rotating by a multiple of size is a no-op; reduce first so a huge
     //amount can't spin BasicTask for hours (abs(INT_MIN) is also UB -> reduce).
-    if (size > 0) amount %= size;
+    //A 0- or 1-element array has nothing to rotate. DIM A(0) is legal and
+    //allocates only the size header: with size 0 the loop below wrote arr[1]
+    //(past the block), or for a negative amount copied arr[1] over arr[0] --
+    //the size header -- so later bounds checks passed for any index.
+    if (size <= 1) amount = 0;
+    else amount %= size;
 
     //We do this in an annoyingly slow way by just repeating it n times
     //There are faster ways to do this but that requires more buffer memeory
@@ -1590,6 +1598,15 @@ int funhook_exec_(char *msg, int n)
                 bad((char*)bad_msg);
                 return 0;
             }
+            // Every function leaves exactly ONE result on the stack: it pops its
+            // arguments and overwrites the last one with the result (*sp = ...).
+            // A zero-argument function has nothing to overwrite -- it wrote over
+            // whatever was on top (the saved return address inside a SUB, or
+            // stk[STKSZ], one past the array, at top level) and the stack was
+            // then one short. Push a placeholder slot for it to overwrite;
+            // NUMBER_ also does the overflow check.
+            if (function_hook_data[ii].param_count == 0)
+                inst(NUMBER_, 0);
             emit(function_hook_data[ii].command_link_opcode);STEP;
             return 0;
         }

@@ -359,7 +359,7 @@ hardware are noted below.
   Math (27 functions)
     Direct libm calls for both float and double transcendentals.
     Curve functions (lerp, larp, larpf) use standalone implementations
-    matching the firmware's util/curve.cpp.
+    matching the firmware's util/curve.cpp, including its 4096-sample cap.
 
   Strings (26 functions)
     Free-list pool allocator on WASM linear memory (0x8000-0xF000),

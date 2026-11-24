@@ -7,6 +7,7 @@
 void setup_wasm();
 bool set_wasm_program(const char *path);
 bool wasm_is_running(void);
+bool wasm_prealloc_release(void);   // free the PSRAM prealloc for `psram test`; false if a script is running
 void wasm_request_stop(void);
 const char *wasm_get_current_path(void);
 

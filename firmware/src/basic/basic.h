@@ -85,7 +85,14 @@ void DRIVER()
 
 
 
-#define CSP_CHECK() do { if (csp <= cstk) { bad((char*)"NESTING TOO DEEP"); return; } } while(0)
+/* COMPILER STACK GUARDS. cstk grows DOWN from cstk+STKSZ (empty).
+   CSP_CHECK(N): room to push N more entries (a block pushes up to 4; checking
+   for a single free slot let a deeply nested SUB/FOR write below cstk).
+   CSP_OPEN(): at least one entry is on the stack -- a block closer (END, ELSE,
+   NEXT, WEND) with nothing open must report an error, not read and write past
+   the end of the array. */
+#define CSP_CHECK(N) do { if (csp - (N) < cstk) { bad((char*)"NESTING TOO DEEP"); return; } } while(0)
+#define CSP_OPEN()   (csp < cstk + (int)STKSZ)
 #define LOC(N) value[sub[v][N+2]]				/* SUBROUTINE LOCAL */
 
 
@@ -109,6 +116,14 @@ void initbasic(int comp)
 	stabp=stab;
 	compile=comp;
 	cpc = 0;
+	/* Compiler/lexer state that used to leak from one run into the next:
+	   lnum kept counting, so the second run's errors named lines offset by
+	   every line ever loaded; temp (open FOR depth) left at 1 by a load that
+	   aborted inside a FOR made the next program's RETURN emit a spurious
+	   DROP_ -- popping the return address and jumping to a wild pc. */
+	lnum=0; temp=0; ipc=0; opc=0; ungot=0; ret=0;
+	tok=0; tokv=0;
+	globalerror=0;
 	registerhook();
 
 }
@@ -193,9 +208,10 @@ int FORMAT_()
 		}
 		strncat(buf, local, sizeof(buf) - strlen(buf) - 1);
 	}
-	getLock();
-	getStream()->println(buf);
-	releaseLock();
+	/* Through printfnl like PRINTS_, not the raw stream: that skipped the
+	   debug-source gate, the log ring / file / MQTT sinks, and the
+	   interactive-mode mute (so FORMAT drew over the editor or `top`). */
+	printfnl(SOURCE_BASIC,"%s\n",buf);
 	STEP;
 }
 
@@ -215,7 +231,7 @@ int AND_() { A&=B; sp++; STEP; };
 int OR_() { A|=B; sp++; STEP; };
 int JMP_() { pc=prg+(int)*pc; STEP; }
 int FALSE_() { if (*sp++) pc++; else pc=prg+(int)*pc; STEP; }
-int FOR_() { if (value[PCV] >= *sp) pc=prg+(int)*pc, sp++; else PCV; STEP; }
+int FOR_() { if (value[PCV] >= *sp) pc=prg+(int)*pc, sp++; else (void)PCV; STEP; }	/* (void): skip the operand; a bare "PCV;" is -Werror=unused-value */
 int NEXT_() { value[PCV]++; STEP; }
 int CALL_()
 {
@@ -287,6 +303,10 @@ int read()
 			if (stabp >= stab + STRSZ - 1) { bad((char*)"STRING TABLE FULL"); return -1; }
 			*stabp++=*lp++;
 		}
+		/* Stopped on the end of the line, not a closing quote: report it, and
+		   do NOT step over the NUL -- that moved the lexer past the end of the
+		   line into stale bytes of an earlier, longer line (or off lbuf). */
+		if (*lp != '"') { *stabp++=0; bad((char*)"UNTERMINATED STRING"); return -1; }
 		return *stabp++=0, lp++, tokv=p-stab, tok=STRING;
 	} else	{
 		bad((char*)"BAD TOKEN");
@@ -372,7 +392,7 @@ void stmt()
 		compile++;										/* MUST BALANCE WITH END */
 		need(NAME), mode[cursub=var=tokv]=2; 			/* SUB NAME */
 		n=0; LIST(need(NAME); if (n<LOCS) { sub[var][n+2]=tokv; n++; } else bad((char*)"TOO MANY PARAMS")); 	/* PARAMS */
-		CSP_CHECK();
+		CSP_CHECK(3);
 		*--csp=cpc+1;									/* JUMP OVER CODE */
 		 inst(JMP_,0);
 		sub[var][0]=sub[var][1]=n;						/* LOCAL=PARAM COUNT */
@@ -389,7 +409,7 @@ void stmt()
 		break;
 	case WHILE:											/* CSTK: {WHILE,TEST-FALSE,TOP} */
 		compile++;										/* BODY IS COMPILED */
-		CSP_CHECK();
+		CSP_CHECK(3);
 		*--csp=cpc, expr();
 		*--csp=cpc+1, *--csp=WHILE, inst(FALSE_, 0);
 		break;
@@ -398,18 +418,38 @@ void stmt()
 		need(NAME), var=tokv, temp++;
 		need(EQ), expr(), inst(STORE_,var);
 		need(TO), expr();
-		CSP_CHECK();
+		CSP_CHECK(4);
 		*--csp=cpc, inst(FOR_,var), emit(0);
 		*--csp=var, *--csp=cpc-1, *--csp=FOR;
 		break;
 	case IF:											/* CSTK: {IF,N,ENDS...,TEST-FALSE} */
-		CSP_CHECK();
+		CSP_CHECK(3);
 		expr(), inst(FALSE_,0), *--csp=cpc-1;
 		if (want(THEN)) { stmt(); prg[*csp++]=(Code)cpc; }
 		else	compile++, *--csp=0, *--csp=IF;
 		break;
 	case ELSE:
-		CSP_CHECK();
+		/* Only valid directly inside a multi-line IF block, whose record is
+		   {IF, N, N end-fixups, TEST-FALSE}. A stray ELSE (e.g. after a
+		   one-line IF ... THEN, which leaves nothing open) used to read N from
+		   beyond cstk, overwrite two words there, and patch prg[<garbage>]. */
+		if (!CSP_OPEN() || csp[0] != IF || csp + 1 >= cstk + (int)STKSZ ||
+		    csp[1] < 0 || csp[1] > (int)STKSZ ||
+		    csp + 2 + csp[1] >= cstk + (int)STKSZ ||
+		    csp[2 + csp[1]] < 0 || csp[2 + csp[1]] >= PRGSZ)
+		{
+			bad((char*)"ELSE WITHOUT IF");
+			return;
+		}
+		/* The TEST-FALSE slot is zeroed by a plain ELSE (nothing left to
+		   patch). A second ELSE would "patch" prg[0], clobbering the first
+		   instruction of the program. */
+		if (csp[2 + csp[1]] == 0)
+		{
+			bad((char*)"ELSE AFTER ELSE");
+			return;
+		}
+		CSP_CHECK(1);
 		n=csp[1]+1;
 		inst(JMP_,0);									/* JUMP OVER "ELSE" */
 		*--csp=IF, csp[1]=n, csp[2]=cpc-1; 				/* ADD A FIXUP */
@@ -418,6 +458,7 @@ void stmt()
 			(expr(), inst(FALSE_,0), cpc-1);
 		break;
 	case END:
+		if (!CSP_OPEN()) { bad((char*)"END WITHOUT BLOCK"); return; }
 		need(*csp++), compile--;						/* MATCH BLOCK */
 		if (csp[-1]==SUB || csp[-1]==FUNCTION)
 		{
@@ -455,6 +496,7 @@ void stmt()
 		break;
 	case NEXTKW:										/* NEXT = END FOR */
 		compile--;
+		if (!CSP_OPEN()) { bad((char*)"NEXT WITHOUT FOR"); return; }
 		if (*csp++ != FOR) bad((char*)"NEXT WITHOUT FOR");
 		else {
 			prg[*csp++]=(Code)(cpc+4);
@@ -465,6 +507,7 @@ void stmt()
 		break;
 	case WENDKW:										/* WEND = END WHILE */
 		compile--;
+		if (!CSP_OPEN()) { bad((char*)"WEND WITHOUT WHILE"); return; }
 		if (*csp++ != WHILE) bad((char*)"WEND WITHOUT WHILE");
 		else {
 			prg[*csp++]=(Code)(cpc+2);
@@ -505,6 +548,14 @@ int interp(char* filen)
 	FILE *file = NULL;
 	int len;
 	int error = 0;
+	/* A program run from a file is a script: a fault must END it. check_error()
+	   only reports a fault as fatal while `filen` is set, but filen is cleared
+	   before the program runs -- so a runtime error (divide by zero, bounds...)
+	   returned -1 and the loop below fell into the interactive prompt: BasicTask
+	   then sat in readBytesUntil() stealing console input from the shell, the
+	   next `run` was never picked up, and the caller's pm_cpu_unlock() was never
+	   reached. */
+	const bool from_file = (filen != NULL);
 	//Open file
 	if (filen != NULL)
 	{
@@ -562,14 +613,22 @@ int interp(char* filen)
 			DRIVER();  									/* MOVE PROGRAM FORWARD */	
 
 			//Handle Errors
-			if ((error=check_error(filen)) > -1) { if (file) { fclose(file); file = NULL; } return error; }
+			{
+				int fault = globalerror;
+				if ((error=check_error(filen)) > -1) { if (file) { fclose(file); file = NULL; } return error; }
+				if (from_file && (fault==1 || fault==2)) { if (file) { fclose(file); file = NULL; } return 2; }
+			}
 		}
 		printfnl(SOURCE_BASIC,"Compiled Size: %d Bytes\n", cpc * 4);
 		ipc=cpc+1, compile=0, filen=NULL; if (file) { fclose(file); file = NULL; } /* DONE COMPILING */
 		emit((int (*)())BYE_);							/* RUN PROGRAM */
 		DRIVER();  										/* MOVE PROGRAM FORWARD */			
 		//Handle Errors
-		if ((error=check_error(filen)) > -1) return error; 
+		{
+			int fault = globalerror;
+			if ((error=check_error(filen)) > -1) return error;
+			if (from_file && (fault==1 || fault==2)) return 2;	/* SCRIPT FAULT: STOP, NO PROMPT */
+		}
 	}
 	return 0;											/* NEVER REACHED */
 }

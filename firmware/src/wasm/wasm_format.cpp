@@ -7,8 +7,11 @@
 
 // --- Host-side printf/snprintf ---
 // Parses a format string from WASM memory, reads va_list args from WASM memory,
-// formats using the platform's snprintf.  Assumes wasm32 clang va_list layout:
-// all args at 4-byte-aligned offsets, doubles are 8 bytes at 4-byte alignment.
+// formats using the platform's snprintf.  Assumes the wasm32 clang va_list
+// layout that c2wasm emits (tools/c2wasm/expr.c) and the simulator reads:
+// 32-bit args in 4-byte cells; double and long long are 8 bytes at an
+// 8-BYTE-ALIGNED offset. So every 8-byte read rounds the cursor up first.
+#define WASM_VA_ALIGN8(off)  (((off) + 7u) & ~7u)
 
 static int wasm_vformat(IM3Runtime runtime,
                         uint32_t fmt_off, uint32_t args_off,
@@ -45,9 +48,16 @@ static int wasm_vformat(IM3Runtime runtime,
         int sp = 0;
         spec[sp++] = '%';
 
+        // Also tracked numerically: %s is emitted straight from guest memory
+        // (not through snprintf), so it applies these itself.
+        bool left = false;
+        int  width = 0;
+        int  prec = -1;
+
         // Flags
         while (i < fmt_len && (fmt[i] == '-' || fmt[i] == '0' ||
                fmt[i] == ' ' || fmt[i] == '+' || fmt[i] == '#')) {
+            if (fmt[i] == '-') left = true;
             if (sp < 28) spec[sp++] = fmt[i];
             i++;
         }
@@ -58,6 +68,7 @@ static int wasm_vformat(IM3Runtime runtime,
             int32_t w; wasm_mem_read(runtime, aoff, &w, 4); aoff += 4;
             if (w < -999) w = -999;
             if (w > 999) w = 999;
+            if (w < 0) { left = true; width = -w; } else width = w;
             if (sp < (int)sizeof(spec) - 1) {
                 int wn = snprintf(spec + sp, sizeof(spec) - sp, "%d", (int)w);
                 if (wn > 0) sp += wn;
@@ -66,8 +77,10 @@ static int wasm_vformat(IM3Runtime runtime,
         } else {
             while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
                 if (sp < 28) spec[sp++] = fmt[i];
+                if (width < 999) width = width * 10 + (fmt[i] - '0');
                 i++;
             }
+            if (width > 999) width = 999;
         }
 
         // Precision
@@ -79,45 +92,73 @@ static int wasm_vformat(IM3Runtime runtime,
                 int32_t p; wasm_mem_read(runtime, aoff, &p, 4); aoff += 4;
                 if (p < 0) p = 0;
                 if (p > 999) p = 999;
+                prec = p;
                 if (sp < (int)sizeof(spec) - 1) {
                     int pn = snprintf(spec + sp, sizeof(spec) - sp, "%d", (int)p);
                     if (pn > 0) sp += pn;
                 }
                 i++;
             } else {
+                prec = 0;       // "%.s" == "%.0s"
                 while (i < fmt_len && fmt[i] >= '0' && fmt[i] <= '9') {
                     if (sp < 28) spec[sp++] = fmt[i];
+                    if (prec < 999) prec = prec * 10 + (fmt[i] - '0');
                     i++;
                 }
+                if (prec > 999) prec = 999;
             }
         }
 
-        // Length modifiers — skip
+        // Length modifiers. Only "ll" changes the argument size (an 8-byte,
+        // 8-aligned i64); l/h/z/j/t are all 32-bit on wasm32.
+        int lcount = 0;
         while (i < fmt_len && (fmt[i] == 'l' || fmt[i] == 'h' ||
-               fmt[i] == 'z' || fmt[i] == 'j' || fmt[i] == 't'))
+               fmt[i] == 'z' || fmt[i] == 'j' || fmt[i] == 't')) {
+            if (fmt[i] == 'l') lcount++;
             i++;
+        }
+        bool is_ll = (lcount >= 2);
 
         if (i >= fmt_len) break;
         char conv = fmt[i];
 
         // A hostile format ("%*.*", long flag runs) can drive sp past the
-        // buffer; keep every following spec[sp] write in bounds.
-        if (sp > (int)sizeof(spec) - 1) sp = (int)sizeof(spec) - 1;
+        // buffer; keep every following spec[sp] write (up to "ll" + conv + NUL)
+        // in bounds.
+        if (sp > (int)sizeof(spec) - 4) sp = (int)sizeof(spec) - 4;
 
         char tmp[192];
         int n = 0;
 
         switch (conv) {
         case 'd': case 'i':
-            if (sp < 30) spec[sp++] = conv;
+            if (is_ll) {
+                // long long: reading only 4 bytes printed the low word and left
+                // the high word to be consumed as the NEXT argument.
+                spec[sp++] = 'l'; spec[sp++] = 'l'; spec[sp++] = conv; spec[sp] = '\0';
+                aoff = WASM_VA_ALIGN8(aoff);
+                if (!wasm_mem_check(runtime, aoff, 8)) { err = 1; break; }
+                int64_t v; wasm_mem_read(runtime, aoff, &v, 8); aoff += 8;
+                n = snprintf(tmp, sizeof(tmp), spec, (long long)v);
+                break;
+            }
+            spec[sp++] = conv;
             spec[sp] = '\0';
             if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
             { int32_t v; wasm_mem_read(runtime, aoff, &v, 4); aoff += 4;
               n = snprintf(tmp, sizeof(tmp), spec, (int)v); }
             break;
 
-        case 'u': case 'x': case 'X':
-            if (sp < 30) spec[sp++] = conv;
+        case 'u': case 'x': case 'X': case 'o':
+            if (is_ll) {
+                spec[sp++] = 'l'; spec[sp++] = 'l'; spec[sp++] = conv; spec[sp] = '\0';
+                aoff = WASM_VA_ALIGN8(aoff);
+                if (!wasm_mem_check(runtime, aoff, 8)) { err = 1; break; }
+                uint64_t v; wasm_mem_read(runtime, aoff, &v, 8); aoff += 8;
+                n = snprintf(tmp, sizeof(tmp), spec, (unsigned long long)v);
+                break;
+            }
+            spec[sp++] = conv;
             spec[sp] = '\0';
             if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
             { uint32_t v; wasm_mem_read(runtime, aoff, &v, 4); aoff += 4;
@@ -132,32 +173,44 @@ static int wasm_vformat(IM3Runtime runtime,
               n = snprintf(tmp, sizeof(tmp), spec, (char)v); }
             break;
 
-        case 'f':
-            if (sp < 30) spec[sp++] = 'f';
+        case 'f': case 'e': case 'g': case 'E': case 'G':
+            // A double sits at an 8-byte-ALIGNED offset: after an odd number of
+            // 32-bit args there is a 4-byte gap before it. Reading at the
+            // unaligned cursor printed garbage and shifted every later arg.
+            spec[sp++] = conv;
             spec[sp] = '\0';
-            if (!wasm_mem_check(runtime, aoff, 8)) { err = 1; break; }
-            { double v; wasm_mem_read(runtime, aoff, &v, 8); aoff += 8;
-              n = snprintf(tmp, sizeof(tmp), spec, v); }
-            break;
-
-        case 'e': case 'g':
-            if (sp < 30) spec[sp++] = conv;
-            spec[sp] = '\0';
+            aoff = WASM_VA_ALIGN8(aoff);
             if (!wasm_mem_check(runtime, aoff, 8)) { err = 1; break; }
             { double v; wasm_mem_read(runtime, aoff, &v, 8); aoff += 8;
               n = snprintf(tmp, sizeof(tmp), spec, v); }
             break;
 
         case 's':
-            if (sp < 30) spec[sp++] = 's';
-            spec[sp] = '\0';
             if (!wasm_mem_check(runtime, aoff, 4)) { err = 1; break; }
             { uint32_t sptr; wasm_mem_read(runtime, aoff, &sptr, 4); aoff += 4;
-              // Copy string from WASM memory with bounds check
-              char sbuf[128];
-              int slen = wasm_mem_read_str(runtime, sptr, sbuf, sizeof(sbuf));
-              if (slen < 0) strcpy(sbuf, "(null)");
-              n = snprintf(tmp, sizeof(tmp), spec, sbuf);
+              // Emitted straight from guest memory, with width/precision
+              // applied here: going through a 128-byte copy and snprintf cut
+              // every string at 127 chars. An out-of-bounds or unterminated
+              // pointer prints "(null)".
+              const char *lit = NULL;
+              int slen = wasm_mem_strlen(runtime, sptr);
+              if (slen < 0) { lit = "(null)"; slen = 6; }
+              if (prec >= 0 && slen > prec) slen = prec;
+              int pad = (width > slen) ? width - slen : 0;
+              if (!left)
+                  for (int k = 0; k < pad; k++) { if (pos < out_size - 1) out[pos] = ' '; pos++; }
+              for (int k = 0; k < slen; ) {
+                  char chunk[64];
+                  int take = slen - k;
+                  if (take > (int)sizeof(chunk)) take = (int)sizeof(chunk);
+                  if (lit) memcpy(chunk, lit + k, take);
+                  else     wasm_mem_read(runtime, sptr + (uint32_t)k, chunk, take);
+                  for (int j = 0; j < take; j++) { if (pos < out_size - 1) out[pos] = chunk[j]; pos++; }
+                  k += take;
+              }
+              if (left)
+                  for (int k = 0; k < pad; k++) { if (pos < out_size - 1) out[pos] = ' '; pos++; }
+              n = 0;
             }
             break;
 

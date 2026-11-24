@@ -924,3 +924,211 @@ Items missed by the original #101-114 consolidation, or reconsidered.
     format_if_mount_failed, so a reboot at that point formats the partition and
     loses config.ini (WiFi credentials included). That data-loss window is
     inherent to overwriting the only filesystem in place and remains.
+
+======================================================================
+Second review pass (files the first pass skipped): psram.cpp, editor.cpp,
+deflate.c, the WASM printf/string/math imports and the BASIC interpreter.
+#131-#145. The compressor fixes were exercised on a host build under
+ASan/UBSan (round-trip vs zlib at levels 0-10, forced sink failure, forced
+workspace-allocation failure); everything else is build-verified only.
+======================================================================
+
+#131 FIXED -- Heap overflow after a failed write during compression
+    (util/deflate.c).
+    flush_output() returned early once c->error was set, without resetting
+    out_pos. emit_byte() relies on that call to make room, so every later byte
+    was stored at out_buf[4096] and beyond -- over the rest of conez_deflate_t
+    and into the heap. `deflate big.bin out.gz` on a nearly full filesystem, or
+    deflate_mem into a too-small buffer, triggered it; the host test reproduced
+    it as "free(): invalid next size". flush_output() now always empties the
+    staging buffer (discarding after an error), and the stored-block loops stop
+    on error.
+
+#132 FIXED -- Corrupt .gz reported as success when the Huffman workspace could
+    not be allocated (util/deflate.c).
+    build_tree()'s malloc(~7 KB) fallback gave every used symbol an 8-bit code:
+    incomplete or over-subscribed unless exactly 256 symbols are in use, and 8
+    doesn't fit the 3-bit field of the code-length tree. gzip_stream() returned
+    a size and inflate later rejected the file (host test: INVALID at every
+    level). build_tree() now reports the failure and emit_dynamic_block() falls
+    back to a fixed-Huffman block -- all three trees are built before any of
+    the block is written, so the same LZ symbols go out as a valid, slightly
+    larger stream.
+
+#133 FIXED -- `psram cache` could deadlock the console (psram/psram.cpp).
+    psram_print_cache_detail() held the PSRAM mutex across ~66 printfnl() calls
+    (which take print_mutex), while every other task's printfnl() holds
+    print_mutex and then writes the log ring through psram_write() (which takes
+    the PSRAM mutex). Opposite lock orders: one debug line from loopTask at the
+    wrong moment hung all console output, the shell and every PSRAM user until
+    reboot. The cache metadata is now snapshotted under the lock and printed
+    after it is released.
+
+#134 FIXED -- psram_free() could double-free the system heap on boards without
+    the improvised PSRAM (psram/psram.cpp: stub build = Heltec, and the native
+    build).
+    Those two branches called free() on any address missing from the tracking
+    table -- so a handle freed twice, or freed after psram_free_all(), hit
+    free() on memory already released. (#111 fixed this for the improvised
+    path only.) The reason for the direct free() was that the fallback table
+    could be full and hand out untracked pointers; psram_fb_malloc() now fails
+    in that case instead, so every pointer handed out is tracked and an
+    untracked address can simply be ignored in all three builds.
+
+#135 FIXED -- The line editor printed nothing but its prompt with `color off`
+    (console/editor.cpp).
+    cmd_edit() runs line_editor() with interactive mode on, and printfnl()
+    returns immediately in interactive mode -- but the line editor printed its
+    banner, listings, usage, "Saved N lines" and every error through
+    printfnl(). Only "edit> " and typed echo appeared. It now writes to the
+    console stream directly under the print lock (le_printf), as AGENTS.md
+    requires of interactive apps.
+
+#136 FIXED -- Replace-all in the full-screen editor could spin forever
+    (console/editor.cpp).
+    After "a" the loop kept calling editor_find_next(), which wraps around the
+    file, so it ended only when no match remained -- never, if the replacement
+    contains the search text ("cone" -> "cone2") or a match sat on a line too
+    long to grow. No delay, key check or pass limit: ShellTask at 100%, console
+    dead, unsaved edits lost. "a" now runs editor_replace_all(): one pass over
+    the file, resuming after the inserted text, counting matches it has to skip.
+
+#137 FIXED -- Find missed a match at or before the cursor on the starting line
+    (console/editor.cpp). The search started at cx+1 and visited each line
+    once, so the first part of the starting line was never searched after the
+    wrap ("Not found" for a sole match at column 0; nothing findable at or
+    before the cursor in a one-line file). The start line is now visited again
+    as a final pass, up to the cursor.
+
+#138 FIXED -- Line editor `s old new` could truncate or wipe lines
+    (console/editor.cpp). When a replacement would overflow the line, the loop
+    broke without copying the rest and wrote back only the prefix; and `s  x`
+    (two spaces) parsed as an empty search, which matches at every position and
+    filled every line with the replacement. An over-long result now leaves the
+    line unchanged and is reported; an empty search is refused.
+
+#139 FIXED -- Editing a file with a line over 255 characters split that line on
+    save (console/editor.cpp). editor_load() reads with fgets() into a 256-byte
+    buffer, so a longer line arrived as several chunks stored as separate lines
+    and editor_save() wrote a newline after each. Such a file now opens
+    read-only (load_longline), like one with too many lines.
+
+#140 FIXED -- Cut/paste acted on the wrong line when an arrow key and ^K/^U
+    arrived in one input batch (console/editor.cpp). #115 added the cursor
+    clamp (ed_sync_cursor) to insert/backspace/delete/enter but not to
+    editor_cut_line()/editor_paste_line(): with cy == num_lines, ^K copied a
+    stale slot past the end and deleted the real last line. Both now clamp
+    first.
+
+#141 FIXED -- WASM printf argument handling (wasm/wasm_format.cpp; simulator
+    sim_wasm_imports_format.cpp for the parts it shared).
+      - Doubles were read at the unaligned cursor. c2wasm stores a double (and
+        long long) at an 8-byte-aligned offset, so printf("%d: %f", i, x)
+        printed garbage and shifted every later argument -- on firmware only;
+        the simulator already aligned.
+      - "ll" was ignored: %lld/%llu read 4 bytes, printing the low word and
+        leaving the high word to be taken as the next argument. Now an 8-byte
+        aligned read for d/i/u/x/X/o. (The simulator had the same hole for
+        %llx/%llX.)
+      - %s went through a 128-byte copy, cutting strings at 127 characters,
+        and its "(null)" branch could never run. It is now emitted straight
+        from guest memory with width/precision applied; an out-of-bounds or
+        unterminated pointer prints "(null)". The simulator truncated the same
+        way (128-byte tmp) and is fixed too.
+      - %E, %G and %o fell into the default case, which printed the specifier
+        literally without consuming its argument. Now handled.
+
+#142 FIXED -- WASM string/heap imports (wasm/wasm_imports_string.cpp;
+    simulator sim_wasm_imports_string.cpp mirrored).
+      - MID$ with a huge count ("rest of string", e.g. 2147483647): `s + n >
+        slen` overflowed, so the count was never clamped and pool_alloc(n + 1)
+        wrapped to a 4-byte block -- an empty result with PSRAM, a wild host
+        write without it (and an unclamped memcpy in the simulator). Clamp is
+        now `n > slen - s`, and pool_alloc/low_heap_alloc reject sizes that
+        can't fit before rounding.
+      - str_len / str_concat / the source of MID$ assignment called
+        wasm_mem_strlen() on pointer 0, scanning real memory at offset 0 (the
+        start of the data segment), so an unassigned BASIC string read as
+        whatever literal was there. Pointer 0 is now an empty string, as in the
+        simulator.
+      - realloc() sent any pointer below 0x8000, including NULL, to the low
+        heap with no fallback, so it failed where malloc() succeeds (low heap
+        disabled, full, or out of its 32 records). realloc(NULL, n) now behaves
+        as malloc, and a low-heap block that can't grow moves to the pool.
+      - Both allocators handed out a whole free block without splitting it and
+        reclaimed dead (size 0) records only when they were last in the table,
+        so a long-running program could report out-of-memory with most of the
+        28 KB pool free. Free blocks are now split and dead records reused.
+
+#143 FIXED -- larpf()/larp() could hang the WASM task for good (util/curve.cpp;
+    simulator sim_wasm_imports_math.cpp mirrored).
+    larpf's `for (float s = ...; s <= ...; s += step)` stops advancing once
+    step is below half a float ULP of s -- x_pos = millis() after ~28 h is
+    enough -- and it runs inside a host import that `stop` cannot interrupt.
+    larp() had the integer equivalents (overflow of `i += stride`, billions of
+    iterations for a huge window). Both now compute a sample count up front,
+    loop on an integer index, and cap it at LARP_MAX_SAMPLES (4096), widening
+    the spacing past that.
+
+#144 FIXED -- BASIC interpreter (basic/basic.h, basic_extensions.h). NOT BUILT
+    in either default target (no INCLUDE_BASIC); checked with a syntax-only
+    compile of basic_wrapper.cpp with the flag on, not a full build or a run.
+    The interpreter did not compile at all before this (`else PCV;` in FOR_ is
+    -Werror=unused-value) -- fixed with a (void) cast.
+      - Zero-argument functions (VERSION, GETMAXLED, HASGPS, HOUR, UPTIME,
+        SUNAZ, ... ~40 of them) do `*sp = value` with no argument pushed, so
+        they overwrote the top of the stack -- the saved return address inside
+        a SUB, or stk[STKSZ] at top level. funhook_exec_() now pushes a
+        placeholder slot before a zero-argument function.
+      - After a runtime error interp() never returned: check_error() only
+        treats a fault as fatal while `filen` is set, and it is cleared before
+        the program runs. BasicTask fell into the interactive prompt, stole
+        console input from the shell, never picked up the next `run`, and never
+        released the CPU PM lock. A fault in a program run from a file now
+        returns 2.
+      - A stray ELSE, END, NEXT or WEND read and wrote past the compile stack
+        instead of reporting an error (ELSE also patched prg[<garbage>]; a
+        second ELSE patched prg[0]). They are validated first ("ELSE WITHOUT
+        IF", "ELSE AFTER ELSE", "END WITHOUT BLOCK", ...). CSP_CHECK now takes
+        the number of entries about to be pushed (it reserved one slot while
+        SUB/WHILE/IF push three and FOR four).
+      - SCALE() with equal input bounds divided by zero in map(), which panics
+        the board. It now returns the low output bound.
+      - initbasic() did not reset lnum, temp, ipc, opc, ungot or ret, so line
+        numbers in errors kept counting across runs and a load aborted inside a
+        FOR made the next program's RETURN emit a spurious DROP_.
+      - ROTATEARRAY on a zero-length array wrote outside its allocation (or
+        over its own size header). Arrays of 0 or 1 elements are a no-op.
+      - An unterminated string literal stepped the lexer past the end of the
+        line into stale bytes. Now "UNTERMINATED STRING".
+      - FORMAT wrote to the raw stream instead of printfnl(), skipping the
+        debug-source gate, the log/MQTT sinks and the interactive-mode mute.
+
+#145 FIXED -- Minor.
+      - `psram test` refused to run once any WASM script had run (the
+        preallocated linear memory lives in PSRAM until reboot) and nothing
+        kept other tasks out of PSRAM while it overwrote the chip. cmd_psram
+        now releases the prealloc (wasm_prealloc_release(), refused while a
+        script runs; re-created on the next run), and psram_test() claims the
+        chip under the lock and routes new allocations to the system heap until
+        it finishes.
+      - The PSRAM page cache's 32-bit LRU clock had no wrap handling: after
+        2^32 accesses fresh pages got the smallest timestamps and were evicted
+        first. On wrap the pages are renumbered in LRU order.
+      - deflate's 3-byte match hash masked (b0 | b1<<8 | b2<<16) to at most 15
+        bits, discarding b2 entirely. Replaced with a multiplicative hash; on
+        the host test a 1.2 MB text input at level 1 went from 374 KB to
+        347 KB (levels 6/9 within 1%).
+      - gzip_stream() clamped `level` only inside deflate_alloc(); a negative
+        level would have skipped the table allocation but taken the LZ path.
+        Clamped up front (no current caller passes one).
+
+OPEN -- found while fixing #141, not fixed: bas2wasm FORMAT "&" (floats).
+    compile_format() (tools/bas2wasm/stmt.c) stores an f32 in a 4-byte cell and
+    patches the conversion to %f, but host_printf on both firmware and
+    simulator reads %f as an 8-byte double. The Node runtime harness
+    (test/run_runtime.js) reads a Float32 for %f, so `make test-runtime` passes
+    while real hosts would print a wrong value and shift later arguments.
+    Established by reading the three code paths, not by running a program. The
+    fix belongs in bas2wasm (promote to f64, store at an 8-aligned offset as
+    c2wasm does) plus the harness, and needs the simulator rebuilt.

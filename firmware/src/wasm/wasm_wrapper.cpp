@@ -197,11 +197,14 @@ static void wasm_run(const char *path)
     if (module->memoryInfo.initPages == PREALLOC_PAGES) {
         // Lazy-allocate on first run, reuse thereafter
         size_t psram_bytes = PREALLOC_PAGES * d_m3MemPageSize - d_m3PsramDramWindow;
-        if (!s_prealloc_hdr) {
+        // Each piece separately: wasm_prealloc_release() drops only the PSRAM
+        // block (for `psram test`), and it must come back on the next run.
+        if (!s_prealloc_hdr)
             s_prealloc_hdr = (M3MemoryHeader *)calloc(1, sizeof(M3MemoryHeader));
+        if (!s_prealloc_dram)
             s_prealloc_dram = (uint8_t *)malloc(d_m3PsramDramWindow);
+        if (!s_prealloc_psram)
             s_prealloc_psram = psram_malloc(psram_bytes);
-        }
         if (s_prealloc_hdr && s_prealloc_dram && s_prealloc_psram) {
             memset(s_prealloc_dram, 0, d_m3PsramDramWindow);
             psram_memset(s_prealloc_psram, 0, psram_bytes);
@@ -443,6 +446,22 @@ bool set_wasm_program(const char *path)
         return true;
     }
     return false;
+}
+
+// Give back the PSRAM half of the preallocated linear memory so `psram test`
+// can have the whole chip (the test refuses to run while anything is allocated,
+// and this block otherwise lives until reboot once any script has run). Refused
+// while a module is running. Re-created lazily by the next run.
+bool wasm_prealloc_release(void)
+{
+    if (wasm_running) return false;
+#if d_m3UsePsramMemory
+    if (s_prealloc_psram) {
+        psram_free(s_prealloc_psram);
+        s_prealloc_psram = 0;
+    }
+#endif
+    return true;
 }
 
 bool wasm_is_running(void)

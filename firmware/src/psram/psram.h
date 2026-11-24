@@ -45,7 +45,9 @@ extern "C" {
 // Each entry is 12 bytes. This sets the maximum number of simultaneous
 // allocations. If the table is full, psram_malloc() falls back to the
 // system heap. A separate fallback tracking table (same size) tracks those
-// heap allocations so psram_free_all() can release them.
+// heap allocations so psram_free() / psram_free_all() can release them. If
+// THAT table is also full the allocation fails (returns 0): every address
+// handed out is tracked, never an untracked heap pointer.
 #ifndef PSRAM_ALLOC_ENTRIES
 #define PSRAM_ALLOC_ENTRIES  128
 #endif
@@ -145,8 +147,10 @@ void     psram_write(uint32_t addr, const uint8_t *buf, size_t len);
 // transparently. These fallback allocations are tracked in a separate table
 // so psram_free() and psram_free_all() can release them.
 //
-// psram_free(0) is a safe no-op. psram_free() on a mapped address checks
-// the fallback table first, then calls free() directly as a last resort.
+// psram_free(0) is a safe no-op. psram_free() of an address that is in
+// neither table is ALSO a no-op: every allocation is tracked, so such an
+// address was already freed (freed twice, or after psram_free_all()). It is
+// never passed to free() directly -- that was a double free of the heap.
 //
 // psram_free_all() releases everything — PSRAM allocations, cache contents,
 // and fallback heap allocations. Intended for cleanup between script runs.
