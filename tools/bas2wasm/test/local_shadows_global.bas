@@ -1,4 +1,5 @@
 ' EXPECTED:
+' inner: 7
 ' outer: 100
 
 ' LOCAL inside SUB shadows the same-named global

@@ -99,18 +99,56 @@ uint32_t pool_alloc(IM3Runtime runtime, int size)
     return ptr;
 }
 
+// Same as the firmware's pool_free(): coalesce with free neighbours, give the
+// top block back to the bump pointer, mark emptied records dead (size 0) and
+// prune them from the end. The old version here did `alloc_count--` when the
+// top block was freed, assuming it was the LAST record -- not true once
+// alloc_take() splits blocks into spare slots -- so it dropped an unrelated
+// record and left a stale free one overlapping the bump area: two live strings
+// could then share memory ("item1" turning into "itemi").
 static void pool_free(uint32_t ptr)
 {
+    if (ptr < STR_POOL_BASE || ptr >= STR_POOL_END) return;  // outside pool (constant or null)
+
+    int idx = -1;
     for (int i = 0; i < alloc_count; i++) {
-        if (allocs[i].offset == ptr && allocs[i].in_use) {
-            allocs[i].in_use = false;
-            if (ptr + allocs[i].size == bump_ptr) {
-                bump_ptr = ptr;
-                alloc_count--;
-            }
-            return;
+        if (allocs[i].offset == ptr && allocs[i].in_use) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    allocs[idx].in_use = false;
+
+    // Coalesce adjacent free blocks so long-lived modules don't fragment.
+    // Dead slots are marked size=0 — first-fit skips them (min alloc is 4).
+
+    // Forward: merge a free successor into us
+    for (int i = 0; i < alloc_count; i++) {
+        if (i != idx && !allocs[i].in_use && allocs[i].size > 0
+            && allocs[idx].offset + allocs[idx].size == allocs[i].offset) {
+            allocs[idx].size += allocs[i].size;
+            allocs[i].size = 0;
+            break;
         }
     }
+    // Backward: absorb us into a free predecessor
+    for (int i = 0; i < alloc_count; i++) {
+        if (i != idx && !allocs[i].in_use && allocs[i].size > 0
+            && allocs[i].offset + allocs[i].size == allocs[idx].offset) {
+            allocs[i].size += allocs[idx].size;
+            allocs[idx].size = 0;
+            idx = i;
+            break;
+        }
+    }
+
+    // Shrink bump if the coalesced block is at the top
+    if (allocs[idx].offset + allocs[idx].size == bump_ptr) {
+        bump_ptr = allocs[idx].offset;
+        allocs[idx].size = 0;
+    }
+
+    // Prune trailing dead records
+    while (alloc_count > 0 && allocs[alloc_count - 1].size == 0)
+        alloc_count--;
 }
 
 static uint32_t pool_size(uint32_t ptr)
@@ -208,18 +246,43 @@ static uint32_t low_heap_alloc(IM3Runtime runtime, int size)
     return off;
 }
 
+// Same as the firmware's low_heap_free() (see pool_free above).
 static void low_heap_free(uint32_t ptr)
 {
+    int idx = -1;
     for (int i = 0; i < low_nallocs; i++) {
-        if (low_allocs[i].offset == ptr && low_allocs[i].in_use) {
-            low_allocs[i].in_use = false;
-            if (ptr + low_allocs[i].size == low_heap_bump) {
-                low_heap_bump = ptr;
-                low_nallocs--;
-            }
-            return;
+        if (low_allocs[i].offset == ptr && low_allocs[i].in_use) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    low_allocs[idx].in_use = false;
+
+    // Coalesce forward
+    for (int i = 0; i < low_nallocs; i++) {
+        if (i != idx && !low_allocs[i].in_use && low_allocs[i].size > 0
+            && low_allocs[idx].offset + low_allocs[idx].size == low_allocs[i].offset) {
+            low_allocs[idx].size += low_allocs[i].size;
+            low_allocs[i].size = 0;
+            break;
         }
     }
+    // Coalesce backward
+    for (int i = 0; i < low_nallocs; i++) {
+        if (i != idx && !low_allocs[i].in_use && low_allocs[i].size > 0
+            && low_allocs[i].offset + low_allocs[i].size == low_allocs[idx].offset) {
+            low_allocs[i].size += low_allocs[idx].size;
+            low_allocs[idx].size = 0;
+            idx = i;
+            break;
+        }
+    }
+
+    if (low_allocs[idx].offset + low_allocs[idx].size == low_heap_bump) {
+        low_heap_bump = low_allocs[idx].offset;
+        low_allocs[idx].size = 0;
+    }
+
+    while (low_nallocs > 0 && low_allocs[low_nallocs - 1].size == 0)
+        low_nallocs--;
 }
 
 static uint32_t low_heap_size(uint32_t ptr)
@@ -260,7 +323,11 @@ static uint32_t low_heap_realloc(IM3Runtime runtime, uint32_t ptr, int size)
 
 int wasm_strlen(const uint8_t *mem, uint32_t mem_size, uint32_t ptr)
 {
-    if (ptr >= mem_size) return 0;
+    // Pointer 0 is "no string" (an unassigned BASIC string variable) and reads
+    // as empty, as in the firmware's str_len0(). Modules from a current
+    // bas2wasm keep a NUL at address 0 so this is what following the pointer
+    // gives anyway; the check makes older modules behave the same on both hosts.
+    if (ptr == 0 || ptr >= mem_size) return 0;
     int len = 0;
     uint32_t max = mem_size - ptr;
     if (max > 4096) max = 4096;
@@ -509,23 +576,30 @@ m3ApiRawFunction(m3_str_asc) {
 // i32 basic_str_instr(i32 start, i32 haystack, i32 needle) — 1-based
 m3ApiRawFunction(m3_str_instr) {
     m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, start);
+    // Argument order is (haystack, needle, start) -- what bas2wasm emits and the
+    // firmware reads. This used to read start first, so INSTR("ConeZ", "one")
+    // searched from a string pointer inside the wrong string.
     m3ApiGetArg(int32_t, haystack);
     m3ApiGetArg(int32_t, needle);
+    m3ApiGetArg(int32_t, start);
+    if (haystack == 0 || needle == 0) { m3ApiReturn(0); }
     uint32_t ms = 0;
     uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
     if (!mem) { m3ApiReturn(0); }
-    const char *h = (const char *)mem + haystack;
-    const char *n = (const char *)mem + needle;
-    int hlen = wasm_strlen(mem, ms, haystack);
-    int nlen = wasm_strlen(mem, ms, needle);
-    int idx = start - 1;
-    if (idx < 0) idx = 0;
-    if (nlen == 0) { m3ApiReturn(idx + 1); }
-    for (int i = idx; i <= hlen - nlen; i++) {
-        if (memcmp(h + i, n, nlen) == 0) { m3ApiReturn(i + 1); }
-    }
-    m3ApiReturn(0);
+    // Bounded copies, like the firmware (255 / 127 characters).
+    char h[256], n[128];
+    int hl = wasm_strlen(mem, ms, haystack);
+    int nl = wasm_strlen(mem, ms, needle);
+    if (hl > (int)sizeof(h) - 1) hl = sizeof(h) - 1;
+    if (nl > (int)sizeof(n) - 1) nl = sizeof(n) - 1;
+    memcpy(h, mem + haystack, hl); h[hl] = 0;
+    memcpy(n, mem + needle, nl);   n[nl] = 0;
+    int s = start - 1;      // 0-based
+    if (s < 0) s = 0;
+    if (s >= hl) { m3ApiReturn(0); }
+    const char *found = strstr(h + s, n);
+    if (!found) { m3ApiReturn(0); }
+    m3ApiReturn((int32_t)(found - h) + 1);
 }
 
 // i32 basic_str_mid_assign(i32 dst, i32 start, i32 len, i32 src)
@@ -746,20 +820,20 @@ m3ApiRawFunction(m3_str_rtrim) {
 // i32 basic_str_repeat(i32 src, i32 count)
 m3ApiRawFunction(m3_str_repeat) {
     m3ApiReturnType(int32_t);
-    m3ApiGetArg(int32_t, src);
-    m3ApiGetArg(int32_t, count);
+    // STRING$(n, code): n copies of one character, as on the firmware. This
+    // used to treat the arguments as (string pointer, count), so STRING$(4, 88)
+    // repeated whatever bytes sat at address 4 eighty-eight times.
+    m3ApiGetArg(int32_t, n);
+    m3ApiGetArg(int32_t, char_code);
+    if (n < 0) n = 0;
+    if (n > 4096) n = 4096;
+    uint32_t dst = pool_alloc(runtime, n + 1);
+    if (!dst) { m3ApiReturn(0); }
     uint32_t ms = 0;
     uint8_t *mem = m3_GetMemory(runtime, &ms, 0);
-    if (!mem || count <= 0) { m3ApiReturn(0); }
-    int slen = wasm_strlen(mem, ms, src);
-    int total = slen * count;
-    if (total > 4096) total = 4096;
-    uint32_t dst = pool_alloc(runtime, total + 1);
-    if (!dst) { m3ApiReturn(0); }
-    mem = m3_GetMemory(runtime, &ms, 0);
-    for (int i = 0; i < count && i * slen < total; i++)
-        memcpy(mem + dst + i * slen, mem + src, slen);
-    mem[dst + total] = 0;
+    if (!mem || dst + (uint32_t)n + 1 > ms) { m3ApiReturn(0); }
+    memset(mem + dst, char_code & 0xFF, n);
+    mem[dst + n] = 0;
     m3ApiReturn((int32_t)dst);
 }
 

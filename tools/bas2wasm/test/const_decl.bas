@@ -1,7 +1,7 @@
 ' CONST declarations
 
 ' EXPECTED:
-' 6.28318 25 Hello
+' 6.283180 25 Hello
 CONST PI = 3.14159
 CONST MAX_LEDS = 100
 CONST GREETING$ = "Hello"

@@ -19,7 +19,8 @@ m3ApiRawFunction(m3_print_i32)
 m3ApiRawFunction(m3_print_f32)
 {
     m3ApiGetArg(float, val);
-    printfnl(SOURCE_WASM, "%f\n", val);
+    // %g, like print_f64 and the simulator: 1.5 prints as "1.5", not "1.500000"
+    printfnl(SOURCE_WASM, "%g\n", (double)val);
     m3ApiSuccess();
 }
 

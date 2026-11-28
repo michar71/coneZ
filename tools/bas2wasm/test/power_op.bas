@@ -1,5 +1,5 @@
 ' EXPECTED:
-' 256 1.732051 0.01 512
+' 256.000000 1.732051 0.010000 512.000000
 
 ' Power operator ^ — both operands promoted to f32, result is f32
 A# = 2.0 ^ 8.0

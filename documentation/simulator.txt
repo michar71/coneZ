@@ -31,7 +31,16 @@ macOS (Homebrew):
   cmake --build .
 
 On systems where Qt6 is in CMake's default search path, CMAKE_PREFIX_PATH can
-be omitted. The build produces a single binary: conez-simulator.
+be omitted. The build produces conez-simulator, and conez-wasm-run: the same
+WASM runtime and host imports without the GUI.
+
+  ./conez-wasm-run <sandbox-dir> /prog.wasm
+
+runs <sandbox-dir>/prog.wasm with <sandbox-dir> as the script's filesystem
+and prints its output between "wasm: running ..." and "wasm: DONE". It
+exists so the compilers' runtime tests can run on the simulator's real host
+code (`make test-sim` in tools/bas2wasm); the mock sensors keep their
+defaults.
 
 
 Running

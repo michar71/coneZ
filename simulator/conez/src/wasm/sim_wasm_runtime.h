@@ -29,6 +29,10 @@ public:
     void emitOutput(const std::string &text);
     void flushOutput();
 
+    // The GUI batches console output (and keeps only the tail of a flood).
+    // Turn that off to get every line as it is printed (conez-wasm-run).
+    void setOutputBatching(bool on) { m_batchOutput = on; }
+
     bool isStopRequested() const { return m_stopRequested; }
 
     // Params (inter-task communication)
@@ -39,6 +43,7 @@ private:
     OutputCallback m_outputCb;
     volatile bool m_stopRequested = false;
     int m_params[16] = {};
+    bool m_batchOutput = true;
 
     // Output batching
     std::mutex m_outputMutex;

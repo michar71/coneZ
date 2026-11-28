@@ -5,20 +5,32 @@
 
 void buf_init(Buf *b) { b->data = NULL; b->len = b->cap = 0; }
 
-void buf_grow(Buf *b, int need) {
-    if (b->len + need <= b->cap) return;
+/* Make room for `need` more bytes. Returns 0 if memory ran out: the buffer is
+ * left as it was, the compile is failed, and the caller must not write. (The
+ * realloc result used to be stored unchecked -- the old buffer leaked, cap was
+ * raised anyway, and the next byte went through a null pointer.) */
+int buf_grow(Buf *b, int need) {
+    if (b->len + need <= b->cap) return 1;
     int nc = b->cap ? b->cap * 2 : 256;
     while (nc < b->len + need) nc *= 2;
-    b->data = bw_realloc(b->data, nc);
+    uint8_t *nd = (uint8_t *)bw_realloc(b->data, nc);
+    if (!nd) {
+        if (!had_error) { bw_error("bas2wasm: out of memory\n"); had_error = 1; }
+        return 0;
+    }
+    b->data = nd;
     b->cap = nc;
+    return 1;
 }
 
 void buf_byte(Buf *b, uint8_t v) {
-    buf_grow(b, 1); b->data[b->len++] = v;
+    if (!buf_grow(b, 1)) return;
+    b->data[b->len++] = v;
 }
 
 void buf_bytes(Buf *b, const void *p, int n) {
-    buf_grow(b, n); memcpy(b->data + b->len, p, n); b->len += n;
+    if (n <= 0 || !buf_grow(b, n)) return;
+    memcpy(b->data + b->len, p, n); b->len += n;
 }
 
 void buf_free(Buf *b) { bw_free(b->data); buf_init(b); }

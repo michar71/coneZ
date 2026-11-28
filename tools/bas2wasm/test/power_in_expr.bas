@@ -1,9 +1,9 @@
 ' EXPECTED:
-' 18
-' 12
-' 10
-' 24
-' 15
+' 18.000000
+' 12.000000
+' 10.000000
+' 24.000000
+' 15.000000
 
 ' Regression test: ^ inside a larger expression used to leak vstack entries
 ' and skip i32→f32 coercion on the outer operand.

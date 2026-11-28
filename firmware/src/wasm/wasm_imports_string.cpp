@@ -319,8 +319,11 @@ static uint32_t low_heap_realloc(IM3Runtime runtime, uint32_t ptr, int size)
 // Length of a guest string, with pointer 0 meaning "no string" (empty) -- which
 // is what an unassigned BASIC string variable holds. wasm_mem_strlen(0) instead
 // scans real memory at offset 0, where the module's data segment begins, so an
-// unassigned string read as whatever literal happened to be first. The
-// simulator's wasm_strlen() already returns 0 for pointer 0.
+// unassigned string read as whatever literal happened to be first. bas2wasm
+// reserves address 0 (DATA_NULL_PAD) so no literal can live there; a module
+// from an older compiler may have its first literal at 0, and that literal
+// reads as empty here (as it already did in str_copy/mid/left/...). The
+// simulator's wasm_strlen() has the same pointer-0 rule.
 static int str_len0(IM3Runtime runtime, uint32_t ptr)
 {
     if (ptr == 0) return 0;

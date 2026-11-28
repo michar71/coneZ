@@ -18,9 +18,9 @@ static int find_or_add_ftype(int np, const uint8_t *p, int nr, const uint8_t *r)
     }
     if (nftypes >= 128) { bw_fatal("too many function types\n"); }
     ftypes[nftypes].np = np;
-    memcpy(ftypes[nftypes].p, p, np);
+    if (np > 0) memcpy(ftypes[nftypes].p, p, np);   /* p / r may be NULL when the count is 0 */
     ftypes[nftypes].nr = nr;
-    memcpy(ftypes[nftypes].r, r, nr);
+    if (nr > 0) memcpy(ftypes[nftypes].r, r, nr);
     return nftypes++;
 }
 
@@ -149,8 +149,9 @@ Buf assemble_to_buf(void) {
     {
         int data_table_start = (data_len + 3) & ~3;
         int total_data = data_table_start;
-        if (ndata_items > 0)
-            total_data += 4 + ndata_items * 8;
+        /* The DATA table's count word is ALWAYS present (0 when there are no
+         * DATA statements), so READ can check its index against it. */
+        total_data += 4 + ndata_items * 8;
         int heap_start = (total_data + 3) & ~3;
 
         Buf sec; buf_init(&sec);
@@ -226,21 +227,24 @@ Buf assemble_to_buf(void) {
             if (f->nlocals == 0) {
                 buf_uleb(&body, 0);
             } else {
+                /* Locals are declared as runs of (count, type). Two passes over
+                 * local_types -- count the runs, then emit them -- so there is
+                 * no fixed-size table to overflow (this used to collect them in
+                 * counts[128]/types[128], which more than 128 alternating runs
+                 * overran). */
                 int ngroups = 0;
-                int counts[128]; uint8_t types[128];
-                int j = 0;
-                while (j < f->nlocals) {
+                for (int j = 0; j < f->nlocals; ) {
                     uint8_t t = f->local_types[j];
-                    int c = 0;
-                    while (j < f->nlocals && f->local_types[j] == t) { c++; j++; }
-                    counts[ngroups] = c;
-                    types[ngroups] = t;
+                    while (j < f->nlocals && f->local_types[j] == t) j++;
                     ngroups++;
                 }
                 buf_uleb(&body, ngroups);
-                for (int g = 0; g < ngroups; g++) {
-                    buf_uleb(&body, counts[g]);
-                    buf_byte(&body, types[g]);
+                for (int j = 0; j < f->nlocals; ) {
+                    uint8_t t = f->local_types[j];
+                    int c = 0;
+                    while (j < f->nlocals && f->local_types[j] == t) { c++; j++; }
+                    buf_uleb(&body, c);
+                    buf_byte(&body, t);
                 }
             }
 
@@ -262,17 +266,26 @@ Buf assemble_to_buf(void) {
     {
         int data_table_start = (data_len + 3) & ~3;
         int total_data = data_table_start;
-        if (ndata_items > 0)
-            total_data += 4 + ndata_items * 8;
+        /* The DATA table's count word is ALWAYS present (0 when there are no
+         * DATA statements), so READ can check its index against it. */
+        total_data += 4 + ndata_items * 8;
 
         if (total_data > 0) {
             uint8_t *full_data = bw_calloc(total_data, 1);
+            if (!full_data) {
+                if (!had_error) { bw_error("bas2wasm: out of memory\n"); had_error = 1; }
+                buf_free(&out);
+                return out;
+            }
 #ifdef BAS2WASM_USE_PSRAM
             bw_psram_read(data_buf, full_data, data_len);
 #else
             memcpy(full_data, data_buf, data_len);
 #endif
-            if (ndata_items > 0) {
+            /* The reserved prefix is never written by the compiler; make sure
+             * it is zero whatever an earlier compile left in data_buf. */
+            memset(full_data, 0, DATA_NULL_PAD);
+            {
                 uint8_t *p = full_data + data_table_start;
                 int32_t count = ndata_items;
                 memcpy(p, &count, 4); p += 4;

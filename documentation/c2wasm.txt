@@ -722,7 +722,11 @@ each test file that opens with an `// EXPECTED:` comment block,
 instantiating the WASM with stub imports and diffing the captured
 output against the expected lines. Catches semantic regressions
 (e.g. a fold pass producing a valid but wrong-valued constant) that
-the structural runner can't see. Test format:
+the structural runner can't see. The imports are the harness's own
+JavaScript, not the firmware's code: unlike tools/bas2wasm, there is no
+real-host mode here yet (bas2wasm's `make test-host` / `make test-sim`
+run its tests on the firmware's and the simulator's own imports, see
+tools/fwhost/README.txt). Test format:
 
     // EXPECTED:
     // 14

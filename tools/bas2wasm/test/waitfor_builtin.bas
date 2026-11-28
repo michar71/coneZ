@@ -1,5 +1,6 @@
+' HOSTS: node fwhost   (the simulator really waits (this test asks for an hour))
 ' EXPECTED:
-' 1 1 1 0 0 0
+' 1 1 1 -1 1 0
 ' x=7
 
 ' WAITFOR(event, source, condition, trigger, timeout) — 5-arg builtin

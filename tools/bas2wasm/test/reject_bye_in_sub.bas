@@ -1,0 +1,3 @@
+SUB FOO
+  BYE
+END SUB

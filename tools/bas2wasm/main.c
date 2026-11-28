@@ -45,10 +45,15 @@ int tok, tokv, ungot;
 int64_t tokq;
 int tok_num_is_i64;
 float tokf;
-char tokn[16];
+char tokn[BW_NAME_MAX + 2];
 
 VType vstack[64];
 int vsp;
+uint8_t vown[64];
+
+int     bw_ntmp;
+uint8_t bw_tmp_func[BW_TMP_MAX];
+uint8_t bw_tmp_slot[BW_TMP_MAX];
 
 int had_error;
 int option_base;
@@ -66,8 +71,9 @@ void bw_compile(void) {
     block_depth = 0;
     ctrl_sp = 0;
     vsp = 0;
+    bw_ntmp = 0;
     nvar = 0;
-    data_len = 0;
+    data_len = DATA_NULL_PAD;   /* address 0 is reserved -- see DATA_NULL_PAD */
     ndata_items = 0;
     had_error = 0;
     option_base = 1;
@@ -166,8 +172,13 @@ void bas2wasm_reset(void) {
     if (func_bufs)
 #endif
     {
-        for (int i = 0; i < nfuncs; i++)
+        for (int i = 0; i < nfuncs; i++) {
             buf_free(&func_bufs[i].code);
+            bw_free(func_bufs[i].call_fixups);
+            func_bufs[i].call_fixups = NULL;
+            func_bufs[i].cap_fixups = 0;
+            func_bufs[i].ncall_fixups = 0;
+        }
     }
 #ifdef BAS2WASM_EMBEDDED
     bw_free(vars);       vars = NULL;
@@ -186,11 +197,12 @@ void bas2wasm_reset(void) {
     cur_func = 0;
     ctrl_sp = 0;
     block_depth = 0;
-    data_len = 0;
+    data_len = DATA_NULL_PAD;   /* address 0 is reserved -- see DATA_NULL_PAD */
     ndata_items = 0;
     had_error = 0;
     option_base = 1;
     vsp = 0;
+    bw_ntmp = 0;
     fold_p.valid = 0;
     fold_a.valid = 0;
     fold_b.valid = 0;

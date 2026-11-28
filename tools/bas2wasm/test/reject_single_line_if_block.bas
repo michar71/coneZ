@@ -1,0 +1,4 @@
+X = 1
+IF X = 1 THEN FOR I = 1 TO 3
+> I
+NEXT

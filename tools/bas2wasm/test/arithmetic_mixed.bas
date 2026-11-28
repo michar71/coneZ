@@ -1,5 +1,5 @@
 ' EXPECTED:
-' 7 10 2.5
+' 7.000000 10.000000 2.500000
 
 ' Mixed int/float — float wins via promotion
 A = 5

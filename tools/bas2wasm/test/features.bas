@@ -7,7 +7,7 @@
 ' J=2
 ' J=1
 ' DOUBLE(5)=10
-' PI=3.14159
+' PI=3.141590
 ' hello  
 '   hello
 ' HELLO

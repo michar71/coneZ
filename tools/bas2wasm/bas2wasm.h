@@ -28,7 +28,7 @@
 typedef struct { uint8_t *data; int len, cap; } Buf;
 
 void buf_init(Buf *b);
-void buf_grow(Buf *b, int need);
+int  buf_grow(Buf *b, int need);
 void buf_byte(Buf *b, uint8_t v);
 void buf_bytes(Buf *b, const void *p, int n);
 void buf_free(Buf *b);
@@ -47,6 +47,17 @@ void buf_section(Buf *out, int id, Buf *content);
 #define GLOBAL_LINE      0   /* __line: current BASIC source line (mut i32) */
 #define GLOBAL_HEAP      1   /* _heap_ptr: bump allocator pointer (mut i32) */
 #define GLOBAL_DATA_BASE 2   /* address of DATA table in linear memory */
+
+/* The first DATA_NULL_PAD bytes of linear memory are reserved and zero, so no
+ * string literal (or anything else) ever has address 0. Pointer 0 is what an
+ * unassigned string variable holds, and the host string imports treat it as
+ * "no string"; a literal that happened to sit at address 0 was therefore read
+ * as empty by them (`A$ = "hello"` as the first literal: LEN(A$) = 0), and an
+ * unassigned string was read as that first literal by hosts that just follow
+ * the pointer. With a NUL at address 0 both views agree: pointer 0 is "".
+ * It also keeps the exported _heap_ptr non-zero for a program with no
+ * literals (the host treats a zero heap start as "no low heap"). */
+#define DATA_NULL_PAD 4
 #define GLOBAL_DATA_IDX  3   /* current READ index (0-based) */
 
 #define OP_UNREACHABLE   0x00
@@ -72,6 +83,7 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_I32_STORE     0x36
 #define OP_I64_STORE     0x37
 #define OP_F32_STORE     0x38
+#define OP_F64_STORE     0x39
 #define OP_I32_CONST     0x41
 #define OP_I64_CONST     0x42
 #define OP_F32_CONST     0x43
@@ -82,6 +94,7 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_I32_GT_S      0x4A
 #define OP_I32_LE_S      0x4C
 #define OP_I32_GE_S      0x4E
+#define OP_I32_GE_U      0x4F
 #define OP_F32_EQ        0x5B
 #define OP_F32_NE        0x5C
 #define OP_F32_LT        0x5D
@@ -124,10 +137,13 @@ void buf_section(Buf *out, int id, Buf *content);
 #define OP_F32_FLOOR         0x8E
 #define OP_F32_CONVERT_I32_S 0xB2
 #define OP_F32_CONVERT_I64_S 0xB4
+#define OP_F64_CONVERT_I32_S 0xB7
+#define OP_F64_PROMOTE_F32   0xBB
 
 #define WASM_I32  0x7F
 #define WASM_I64  0x7E
 #define WASM_F32  0x7D
+#define WASM_F64  0x7C
 #define WASM_VOID 0x40
 
 /* ================================================================
@@ -193,13 +209,16 @@ extern uint8_t imp_used[IMP_COUNT];
  * ================================================================ */
 
 #ifdef BAS2WASM_EMBEDDED
-  #define MAX_VARS         64
-  #define MAX_FUNCS        16
+  /* Device limits. Var is ~92 bytes and FuncCtx ~170 (call sites are a
+   * separately grown array), so these tables cost about 12 KB + 5.5 KB of
+   * heap for the duration of a compile -- slightly less than the old 64 names
+   * / 16 SUBs did with their fixed 512-byte fixup tables. */
+  #define MAX_VARS        128
+  #define MAX_FUNCS        32
   #define MAX_CTRL         32
   #define MAX_STRINGS    4096
   #define MAX_DATA_ITEMS  256
   #define BW_MAX_LOCALS    64
-  #define BW_MAX_FIXUPS   128
 #else
   #define MAX_VARS        256
   #define MAX_FUNCS        64
@@ -207,7 +226,6 @@ extern uint8_t imp_used[IMP_COUNT];
   #define MAX_STRINGS    8192
   #define MAX_DATA_ITEMS 1024
   #define BW_MAX_LOCALS   256
-  #define BW_MAX_FIXUPS   512
 #endif
 #define FMT_BUF_SIZE 256
 #define FILE_TABLE_BASE 0xF100  /* 4 i32 handles at 0xF100..0xF10F */
@@ -218,21 +236,26 @@ typedef enum { T_I32 = 0, T_F32 = 1, T_STR = 2, T_I64 = 3 } VType;
 #define VAR_DIM    1
 #define VAR_SUB    2
 
+/* One entry per identifier (variables, arrays, SUB/FUNCTION names, and every
+ * builtin name a program mentions). Kept compact -- the firmware allocates
+ * MAX_VARS of these on the heap for each compile. */
+#define BW_NAME_MAX 30          /* identifier length, not counting a $ # & suffix */
 typedef struct {
-    char name[16];
-    VType type;
-    int type_set;
-    int mode;           /* VAR_NORMAL, VAR_DIM, VAR_SUB */
-    int global_idx;     /* WASM global index (0=_heap_ptr, 1+=vars) */
+    char    name[BW_NAME_MAX + 2];
+    uint8_t type;           /* VType */
+    uint8_t type_set;
+    uint8_t mode;           /* VAR_NORMAL, VAR_DIM, VAR_SUB */
+    uint8_t is_const;       /* 1 if declared with CONST */
+    uint8_t is_declared;    /* 1 = forward-declared via DECLARE, 0 = defined */
+    uint8_t dim_count;      /* number of DIM dimensions (0 if not an array) */
     /* SUB info */
-    int param_count;
-    int local_count;
-    int param_vars[8];
-    int local_vars[8];
-    int func_local_idx; /* index into func_bufs (0=setup, 1+=SUBs) */
-    int is_const;       /* 1 if declared with CONST */
-    int dim_count;      /* number of DIM dimensions (0 if not an array) */
-    int is_declared;    /* 1 = forward-declared via DECLARE, 0 = defined */
+    uint8_t param_count;
+    uint8_t local_count;
+    int16_t global_idx;     /* WASM global index (0=_heap_ptr, 1+=vars) */
+    int16_t func_local_idx; /* index into func_bufs (0=setup, 1+=SUBs) */
+    int16_t param_vars[8];
+    int16_t local_vars[8];
+    int16_t local_save_idx[8];  /* WASM local holding each LOCAL's saved outer value */
 } Var;
 
 typedef struct {
@@ -241,9 +264,11 @@ typedef struct {
     uint8_t param_types[8]; /* WASM_I32 or WASM_F32 per param */
     int nlocals;
     uint8_t local_types[BW_MAX_LOCALS];
+    uint8_t local_busy[BW_MAX_LOCALS];  /* 1 = in use (see alloc_local) */
     int sub_var;            /* variable index of SUB, -1 for setup */
-    int call_fixups[BW_MAX_FIXUPS];   /* code offsets of call target LEB128s */
+    int *call_fixups;       /* code offsets of call target LEB128s (grown as needed) */
     int ncall_fixups;
+    int cap_fixups;
 } FuncCtx;
 
 enum { CTRL_WHILE, CTRL_FOR, CTRL_IF, CTRL_SELECT, CTRL_DO };
@@ -319,10 +344,22 @@ extern int tok, tokv, ungot;
 extern int64_t tokq;
 extern int tok_num_is_i64;
 extern float tokf;
-extern char tokn[16];
+extern char tokn[BW_NAME_MAX + 2];
 
 extern VType vstack[64];
 extern int vsp;
+
+/* Ownership of a STRING value on the compile-time stack (parallel to vstack):
+ *   STR_STATIC  a literal in the data segment, or a non-string -- nothing to free
+ *   STR_TEMP    a pool string this expression created (concat, MID$, STR$, a
+ *               FUNCTION result...). Whoever CONSUMES the value must free it.
+ *   STR_VAR     a pointer borrowed from a variable or array element, which
+ *               still owns it. Storing it somewhere else needs a str_copy.
+ * Before this was tracked, intermediate strings were never freed (the
+ * firmware pool has 128 blocks) and `B$ = A$` made two variables own one
+ * block. */
+enum { STR_STATIC = 0, STR_TEMP = 1, STR_VAR = 2 };
+extern uint8_t vown[64];
 
 extern int had_error;
 extern int option_base;
@@ -397,29 +434,64 @@ static inline int add_var(const char *name) {
     return nvar++;
 }
 
-static inline int alloc_local(void) {
+/* ---- WASM locals ----
+ *
+ * Scratch locals are RECYCLED. Every array access, string operation, unary
+ * minus, mixed-type operator etc. needs a few, and they used to be allocated
+ * fresh each time and never reused -- so a function ran out after a few dozen
+ * statements (64 locals in the firmware build: about 12 array assignments).
+ *
+ *   alloc_local*()        a temporary: valid until the END OF THE CURRENT
+ *                         STATEMENT, then returned to the pool (stmt() releases
+ *                         everything allocated since it was entered).
+ *   alloc_local_keep()    lives across statements (FOR limit/step, SELECT test
+ *                         value, saved SUB params / LOCALs). Stays allocated
+ *                         until free_local(), or for the rest of the function.
+ *
+ * A recycled local is NOT zero: code must write a local before reading it. */
+#define BW_TMP_MAX 96
+extern int     bw_ntmp;
+extern uint8_t bw_tmp_func[BW_TMP_MAX];
+extern uint8_t bw_tmp_slot[BW_TMP_MAX];
+
+static inline int bw_alloc_local(uint8_t wt, int keep) {
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= BW_MAX_LOCALS) { error_at("too many locals in function"); return 0; }
-    int idx = f->nparams + f->nlocals;
-    f->local_types[f->nlocals++] = WASM_I32;
-    return idx;
+    int slot = -1;
+    for (int i = 0; i < f->nlocals; i++)
+        if (!f->local_busy[i] && f->local_types[i] == wt) { slot = i; break; }
+    if (slot < 0) {
+        if (f->nlocals >= BW_MAX_LOCALS) { error_at("too many locals in function"); return 0; }
+        slot = f->nlocals++;
+        f->local_types[slot] = wt;
+    }
+    f->local_busy[slot] = 1;
+    /* If the per-statement list is full the local simply stays allocated. */
+    if (!keep && bw_ntmp < BW_TMP_MAX) {
+        bw_tmp_func[bw_ntmp] = (uint8_t)cur_func;
+        bw_tmp_slot[bw_ntmp] = (uint8_t)slot;
+        bw_ntmp++;
+    }
+    return f->nparams + slot;
 }
 
-static inline int alloc_local_f32(void) {
-    FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= BW_MAX_LOCALS) { error_at("too many locals in function"); return 0; }
-    int idx = f->nparams + f->nlocals;
-    f->local_types[f->nlocals++] = WASM_F32;
-    return idx;
+/* Return every temporary allocated since `mark` (a saved bw_ntmp) to the pool. */
+static inline void bw_tmp_release(int mark) {
+    while (bw_ntmp > mark) {
+        bw_ntmp--;
+        func_bufs[bw_tmp_func[bw_ntmp]].local_busy[bw_tmp_slot[bw_ntmp]] = 0;
+    }
 }
 
-static inline int alloc_local_i64(void) {
+/* Release a local obtained with alloc_local_keep() (index as returned). */
+static inline void free_local(int idx) {
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->nlocals >= BW_MAX_LOCALS) { error_at("too many locals in function"); return 0; }
-    int idx = f->nparams + f->nlocals;
-    f->local_types[f->nlocals++] = WASM_I64;
-    return idx;
+    int slot = idx - f->nparams;
+    if (slot >= 0 && slot < f->nlocals) f->local_busy[slot] = 0;
 }
+
+static inline int alloc_local(void)     { return bw_alloc_local(WASM_I32, 0); }
+static inline int alloc_local_f32(void) { return bw_alloc_local(WASM_F32, 0); }
+static inline int alloc_local_i64(void) { return bw_alloc_local(WASM_I64, 0); }
 
 static inline uint8_t wasm_type_for_vtype(VType t) {
     if (t == T_F32) return WASM_F32;
@@ -428,9 +500,10 @@ static inline uint8_t wasm_type_for_vtype(VType t) {
 }
 
 static inline int alloc_local_for_vtype(VType t) {
-    if (t == T_F32) return alloc_local_f32();
-    if (t == T_I64) return alloc_local_i64();
-    return alloc_local();
+    return bw_alloc_local(wasm_type_for_vtype(t), 0);
+}
+static inline int alloc_local_keep(VType t) {
+    return bw_alloc_local(wasm_type_for_vtype(t), 1);
 }
 
 /* Patch a single byte already written into the data section (PSRAM-aware).
@@ -461,7 +534,13 @@ static inline int add_string(const char *s, int len) {
 
 static inline void vpush(VType t) {
     if (vsp >= 64) { error_at("expression too complex"); return; }
+    vown[vsp] = STR_STATIC;
     vstack[vsp++] = t;
+}
+/* Push a string result that the expression owns. */
+static inline void vpush_temp_str(void) {
+    vpush(T_STR);
+    if (vsp > 0) vown[vsp-1] = STR_TEMP;
 }
 static inline VType vpop(void) {
     if (vsp <= 0) { error_at("internal: value stack underflow"); return T_I32; }
@@ -499,8 +578,17 @@ static inline void emit_i64_const(int64_t v) {
 static inline void emit_call(int func_idx) {
     buf_byte(CODE, OP_CALL);
     FuncCtx *f = &func_bufs[cur_func];
-    if (f->ncall_fixups >= BW_MAX_FIXUPS) { error_at("too many call sites in function"); }
-    else f->call_fixups[f->ncall_fixups++] = f->code.len;
+    /* Call sites are recorded in a list that grows on demand (it was a fixed
+     * table: 128 per function on the device, so ~130 print statements in the
+     * main program failed with "too many call sites"). */
+    if (f->ncall_fixups >= f->cap_fixups) {
+        int nc = f->cap_fixups ? f->cap_fixups * 2 : 32;
+        int *nf = (int *)bw_realloc(f->call_fixups, (size_t)nc * sizeof(int));
+        if (!nf) { if (!had_error) error_at("out of memory"); }
+        else { f->call_fixups = nf; f->cap_fixups = nc; }
+    }
+    if (f->ncall_fixups < f->cap_fixups)
+        f->call_fixups[f->ncall_fixups++] = f->code.len;
     buf_uleb(CODE, func_idx);
     if (func_idx < IMP_COUNT) imp_used[func_idx] = 1;
 }
@@ -607,6 +695,21 @@ void need(int t);
 void expr(void);
 void base_expr(void);
 int compile_builtin_expr(const char *name);
+/* String-temporary management (see STR_TEMP). bw_str_hold(): if the string on
+ * top of the stack is an owned temporary, tee it into a scratch local and
+ * return that local (else -1) -- call it right after compiling an operand that
+ * a host call is about to consume. bw_str_release(): free it after the call.
+ * bw_str_own(): make the string on top something a variable can keep (copies
+ * it if it is borrowed from another variable). */
+/* Run-time array access checks (trap instead of touching other memory). */
+void bw_emit_array_null_check(int var);
+void bw_emit_index_check(int idx_local, int extent_local);
+int  bw_str_hold(void);
+void bw_str_release(int local);
+void bw_str_own(void);
+/* A variable that is READ before anything has given it a type is an integer
+ * from then on. */
+void bw_var_lock_type(int var);
 
 /* stmt.c */
 void stmt(void);

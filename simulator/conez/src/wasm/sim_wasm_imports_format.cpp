@@ -24,7 +24,11 @@ static int wasm_vformat(char *out, int out_size,
     int pos = 0;
     uint32_t ap = args_ptr;
 
-    #define EMIT(c) do { if (pos < out_size - 1) out[pos] = (c); pos++; } while(0)
+    // The argument is evaluated exactly once, whether or not it fits. It used to
+    // sit inside the `if`, so once the buffer was full EMIT(*fmt++) stopped
+    // advancing fmt: the loop spun until pos overflowed and then wrote before
+    // the buffer -- any line longer than the buffer hung, then crashed.
+    #define EMIT(c) do { char c_ = (c); if (pos < out_size - 1) out[pos] = c_; pos++; } while(0)
 
     auto read_i32 = [&]() -> int32_t {
         if (ap + 4 > mem_size) return 0;
@@ -370,11 +374,13 @@ m3ApiRawFunction(m3_host_printf) {
     uint8_t *mem = m3_GetMemory(runtime, &mem_size, 0);
     if (!mem) { m3ApiReturn(0); }
 
-    char buf[512];
+    // 256 bytes, as on the device: a printf / FORMAT line is cut off after 255
+    // characters there, so it is here too (this buffer used to be 512).
+    char buf[256];
     int n = wasm_vformat(buf, sizeof(buf), mem, mem_size, fmt_ptr, args_ptr);
 
     auto *rt = currentRuntime();
-    if (rt && n > 0) rt->emitOutput(std::string(buf, n > 511 ? 511 : n));
+    if (rt && n > 0) rt->emitOutput(std::string(buf, n > 255 ? 255 : n));
 
     m3ApiReturn(n);
 }

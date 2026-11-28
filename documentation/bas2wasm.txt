@@ -114,7 +114,17 @@ Integer Literals:
     X = 42            ' X is i32
     X = 3.14          ' 3.14 is truncated to 3
 
-  String variables cannot be assigned numeric values or vice versa.
+  A variable with no type suffix takes its type from the first thing that
+  uses it. If that is an assignment, it gets the value's type (B = 2.5
+  makes B a float). If the variable is READ first -- in an expression, as
+  a FOR loop variable, a SUB parameter, a LOCAL or in SWAP -- it is an
+  integer from then on, and later float assignments are truncated:
+
+    SUM = SUM + 1.5   ' SUM is read before it has a type -> integer; ends up 1
+    SUM# = SUM# + 1.5 ' use a suffix when you want a float accumulator
+
+  String variables cannot be assigned numeric values or vice versa; both
+  are compile errors.
 
 
 Float Literals:
@@ -174,6 +184,25 @@ Exponentiation:
 
   The ^ operator has higher precedence than * / \ MOD.
   The POW(x, y) function is equivalent.
+
+  Operator precedence, highest first:
+
+    ^
+    unary - and +
+    * / \ MOD
+    + -
+    = <> < > <= >=
+    NOT
+    AND
+    OR
+    XOR
+
+  So "IF NOT X = 5" means NOT (X = 5), "A OR B AND C" means
+  A OR (B AND C), and -2 ^ 2 is -(2 ^ 2) = -4, as in QuickBASIC. An
+  exponent may carry its own sign (2 ^ -1).
+
+  Expressions may nest (parentheses, call arguments, array indices) up
+  to 100 levels in the host tool and simulator, 12 on the device.
 
 
 Integer Division and Modulo:
@@ -316,18 +345,46 @@ Output with Floats:
       Automatically calls print_f32 if the expression is f32,
       print_str if str, or print_i32 if i32.
 
+      A float prints in C "%g" form, the same as STR$: six significant
+      digits, no trailing zeros, and exponent form for very large or
+      very small values. So 1.5 prints "1.5", 40.762173 prints
+      "40.7622" and 1234567 prints "1.23457e+06". Use FORMAT "&" when
+      the decimals matter (a GPS coordinate, for example).
+
   FORMAT "...", args
       Use & as a float placeholder (in addition to % for int, $ for string):
+      There must be exactly one argument per placeholder (a mismatch is a
+      compile error). All arguments are evaluated before anything is
+      printed, so an argument may call a function that prints.
+        %  integer. A float is truncated; out-of-range values clamp to the
+           integer range and NaN prints 0.
+        &  float. An integer is converted exactly.
+        $  string. A number is also accepted: an integer prints as with %,
+           a float as with &.
 
       LAT = GPSLAT#()
       FORMAT "Latitude: &", LAT
+
+      A float prints with six decimals (C "%f"), e.g. "Latitude:
+      40.762173" or "1.500000". (`>` and STR$ use "%g" instead; see
+      above.)
+
+      One FORMAT or `>` statement prints at most 255 characters: the
+      host formats into a 256-byte buffer and cuts the rest off,
+      including the line's newline. Print a long string in pieces
+      (MID$).
+
+      Argument passing follows the host printf's C layout: an integer
+      or string is a 4-byte cell; a float is passed as a double, 8
+      bytes at an 8-byte-aligned offset. The 256-byte format buffer
+      therefore holds up to 64 integer/string arguments or 32 floats.
 
       The conversion is chosen by the argument's actual type, not just
       the placeholder character, so type/placeholder mismatches print
       sensibly instead of garbage:
         - An i64 argument under ANY placeholder prints its full exact
-          value as text (routed through STR$ → %s). The 4-byte format
-          cell can't hold a 64-bit value, so `FORMAT "%", BIG&` or
+          value as text (routed through STR$ → %s). A raw 64-bit
+          value is not what %d expects, so `FORMAT "%", BIG&` or
           `FORMAT "&", BIG&` formerly printed truncated/garbage; both
           now print the correct integer.
         - An i32 under `&` is converted to float; an f32 under `%` is
@@ -663,8 +720,11 @@ DATA/READ/RESTORE (compiler-only)
   mixed types:
 
     DATA 42, 3.14, "hello"
-    READ I, F, S$
-    FORMAT "%, &, $", I, F, S$   ' 42, 3.14, hello
+    READ I, F#, S$
+    FORMAT "%, &, $", I, F#, S$   ' 42, 3.14, hello
+
+  (READ into a variable with no type suffix makes it an integer, like
+  any other first use that is not an assignment -- hence F# here.)
 
   Type conversion happens automatically on READ:
     - Reading a float into an i32 variable truncates it
@@ -861,6 +921,27 @@ String LOCAL handling:
   - On exit, the local string is freed via str_free, then the global
     is restored
 
+Calling a SUB or FUNCTION as a statement -- three equivalent forms:
+
+    SHOUT              ' bare name (no arguments)
+    SHOW 3, "x"        ' arguments without parentheses
+    SHOW(3, "x")       ' arguments in parentheses
+
+The name must already be defined, or DECLAREd, at that point; a call to
+an unknown name is a compile error ("unknown statement or undefined
+SUB"), as is any unrecognised word on a line by itself. The return value
+is discarded.
+
+String ownership. Every string variable (and string array element) owns
+its own copy of its text:
+  - "B$ = A$" copies; changing or reassigning one does not affect the
+    other.
+  - RETURN of a string variable returns a copy, so a FUNCTION can return
+    one of its LOCALs or parameters.
+  - Intermediate strings (the result of +, MID$, STR$, a FUNCTION call,
+    ...) are freed as soon as the statement that used them is done.
+The string pool is 28 KB with at most 128 live strings on the device.
+
 
 DECLARE (forward declaration)
 -----------------------------
@@ -904,10 +985,11 @@ FOR Loop Semantics
   FOR I = 10 TO 0 STEP -1
 
 The loop variable increments by 1 each iteration (or by the STEP value
-if specified). The loop exits when the variable reaches the TO value
-(exclusive upper bound — matching the interpreter's behavior).
+if specified). The TO value is INCLUSIVE, as in QuickBASIC: the loop
+runs while the variable has not passed it.
 
-Without STEP, FOR I = 0 TO 10 runs for I = 0, 1, ..., 9.
+Without STEP, FOR I = 0 TO 10 runs for I = 0, 1, ..., 10. NEXT may name
+the loop variable (NEXT I); it must match the FOR.
 
 With a positive STEP, the loop exits when I >= limit.
 With a negative STEP, the loop exits when I <= limit. The direction
@@ -1011,7 +1093,7 @@ the compiler correctly reports errors. The .bas examples in
 firmware/data/ are also compiled, which doubles as a regression check
 that production scripts still build.
 
-Currently 97 tests covering:
+Currently 172 tests covering:
 
   Arithmetic & operators: integer/float/mixed arithmetic, power (^),
     comparisons (int/float/string), logical AND/OR/NOT/XOR bitwise
@@ -1028,7 +1110,7 @@ Currently 97 tests covering:
     VAL#, TRIM$/LTRIM$/RTRIM$, SPACE$, STRING$, HEX$, OCT$), concat
     edge cases (empty strings, long chains, function results, self-
     concat), MID$ in-place assignment, SUB with no/multi-typed params,
-    recursive functions, deep (500-level) recursion, SWAP, CONST,
+    recursive functions, deep (100-level) recursion, SWAP, CONST,
     LOCAL of every scalar type (i32/f32/i64/string), LOCAL shadowing
     a global
 
@@ -1076,8 +1158,48 @@ interpretation + basic_str_* string pool), captures printed output,
 and diffs it against the expected lines. Catches semantic regressions
 that wasm-validate's structural pass can't see — e.g. the multi-dim
 REDIM PRESERVE remap bug compiled to valid WASM that returned wrong
-values; only runtime execution caught it. Currently 67 runtime tests
-(files without an EXPECTED block are skipped). Most blocks were
+values; only runtime execution caught it. Currently 107 runtime tests
+(files without an EXPECTED block are skipped).
+
+`make test-host` runs the same tests on REAL host code instead of the
+harness's JavaScript imports. tools/fwhost builds the firmware's own
+wasm3 fork, run sequence (wasm_wrapper.cpp), memory glue and string /
+FORMAT / print / file / math / system imports for this machine, unchanged,
+with AddressSanitizer and UBSan, in both memory configurations: fwhost-dram
+(plain RAM, the Heltec board) and fwhost-psram (first 4 KB in RAM, the rest
+through the PSRAM calls, the ConeZ board). Only the hardware is stubbed --
+see tools/fwhost/README.txt. A bug in the firmware's imports fails here; it
+cannot fail test-runtime. `make test-sim` does the same with the simulator's
+host code, through its headless runner conez-wasm-run (built with the
+simulator). Run all three after changing the compiler, the harness or
+either host's imports.
+
+  make test-runtime     Node harness             107 tests
+  make test-host        firmware code, 2 builds  108 tests each
+  make test-sim         simulator code           102 tests
+
+A test can be limited to some hosts with a comment line
+"' HOSTS: node fwhost" (kinds: node, fwhost, sim; "real" = fwhost and sim).
+That is for answers that depend on the host: a limit only real hosts have
+(recursion_limit.bas: the wasm3 stack), or the simulator's mock hardware
+(it has a GPS fix, a real clock and real delays, where node and fwhost
+return fixed values). `node test/run_runtime.js [--host BIN] --update a,b`
+rewrites the EXPECTED blocks of the named tests from what the run printed.
+
+The harness's allocators model the firmware's (the string pool's 128
+block records and the low heap's 32, first-fit with splitting and
+coalescing; pointer 0 is an empty string). Frees are real and freed
+memory is poisoned with '#', so a compiled program that uses a string
+after freeing it, frees one twice, or leaks until the pool is exhausted
+fails its test ("host: ..."). A WASM trap is recorded as a final
+"TRAP: <reason>" output line so a test can expect one. The harness also
+has an in-memory filesystem (OPEN, PRINT #, INPUT #, EOF, KILL, NAME,
+MKDIR, RMDIR) and a deterministic RANDOM. It is still a model -- its host
+imports are separate code from the firmware's and simulator's -- which is
+what test-host and test-sim are for: the first run on the real code found
+six places where the model was wrong (FORMAT "&" zeros, the 255-character
+line limit, LUTSIZE, WAITFOR, INSTR's limits, print_str's newline) and
+five bugs in the simulator. Most blocks were
 snapshotted from known-good output via
 `node test/run_runtime.js --generate`, then triaged: tests whose
 output is FORMAT-spec-misuse garbage (`&`/%f on i64, string-pool
@@ -1205,10 +1327,83 @@ Simulator usage:
 Limitations
 -----------
 
-  - 256 max variables/arrays/subroutines
-  - 64 max local functions (SUBs)
-  - 8KB string constant table
+  - Host tool / simulator: 256 names (variables, arrays, SUBs, and each
+    builtin a program mentions), 64 SUBs, 8 KB of string constants
+  - On the device (firmware build): 128 names, 32 SUBs, 4 KB of string
+    constants
+  - Identifiers: up to 30 characters (plus a $ # & suffix). Longer names
+    are a compile error.
+  - Source lines: up to 511 characters. A longer line is a compile error.
+  - Running out of any of these, or of memory while compiling, is
+    reported as an error; nothing is truncated silently.
+  - 8 parameters and 8 LOCALs per SUB; 8 array dimensions
+  - WASM locals (compiler scratch space) are recycled statement by
+    statement, so the per-function limit (64 on the device) is only hit
+    by a single enormous statement or very deep FOR / SELECT nesting.
   - 64KB linear memory (1 WASM page)
+  - Recursion depth: each nested call uses the wasm3 interpreter's 8 KB
+    value stack. A small function gets about 125 levels (fewer with more
+    parameters and variables); beyond that the script stops with
+    "[trap] stack overflow" and the BASIC line number.
+  - One FORMAT or `>` statement prints at most 255 characters.
+  - INSTR searches only the first 255 characters of the string, for a
+    search string of at most 127 characters.
+  - DIM / REDIM that cannot get memory stops the script with a trap
+    ("unreachable") rather than continuing with a null array.
+
+Run-time checks (a failed check stops the script with a trap; the device
+reports "unreachable executed (BASIC line N)"):
+  - Array access: every index must be within its dimension's bounds
+    (option_base .. upper bound), and the array must currently be DIMmed
+    (not ERASEd). With the default OPTION BASE 1, index 0 is out of range.
+  - READ: there must be a DATA item left, and its kind must match the
+    variable (a string variable needs a string item, a numeric variable a
+    numeric one).
+
+Compile-time checks: string functions (LEN, MID$, INSTR, ...) and string
+SUB parameters need string arguments; ABS, SGN, STR$, INT, FLOAT and
+unary minus need numbers; UBOUND needs a DIM array.
+
+Other rules the compiler enforces:
+  - IF: "IF cond" and "IF cond THEN" both start a block when nothing
+    follows on the line. "IF cond THEN statement [ELSE statement]" is the
+    single-line form; its statements may not open or close a block.
+    "ELSE IF cond [THEN]" and "ELSEIF cond [THEN]" are equivalent. Only
+    one plain ELSE per IF, and it comes last.
+  - SELECT CASE: CASE ELSE must be the last branch.
+  - DIM / REDIM accept a list: DIM A(3), B(5, 5).
+  - LOCAL must be at the top level of a SUB, not inside an IF or loop.
+  - BYE and BREAK end the program and are only allowed in the main
+    program; use RETURN inside a SUB or FUNCTION.
+  - SWAP works on two scalars of the same type, or on two arrays of the
+    same element type and number of dimensions (the arrays trade places).
+  - A SUB/FUNCTION definition may name its parameters differently from
+    its DECLARE, but their number and types must match.
+
+Predicates. HASGPS, HASORIGIN, HASDATE, HASTIME, HASGYRO, HASACC, HASMAG,
+GPSPRESENT, IMUPRESENT and ISLEAPYEAR return BASIC truth values: -1 for
+true, 0 for false (like comparisons and EOF), so NOT works on them. Test
+them as conditions (IF HASGPS() THEN ...) rather than comparing with 1.
+
+GPIO. PIN_HIGH(pin) and PIN_LOW(pin) are predicates too: -1 when the pin
+reads high (or low), 0 otherwise.
+
+  IF PIN_HIGH(5) THEN ...
+  IF NOT PIN_HIGH(5) THEN ...        ' same as IF PIN_LOW(5)
+
+PIN_READ(pin) returns the pin LEVEL, 1 or 0, for comparisons and
+arithmetic (IF PIN_READ(5) = 1, PIN_READ(5) * 255). It is not a truth
+value: NOT is bitwise and NOT 1 is -2, so `NOT PIN_READ(5)` would always
+be true. The compiler rejects that form and points at PIN_LOW. It cannot
+see the mistake through a variable (X = PIN_READ(5) : IF NOT X ...), so
+store PIN_HIGH() rather than PIN_READ() when the value is used as a
+condition. A pin number that is not a valid GPIO reads as low (so
+PIN_LOW is true for it).
+
+INT(x) truncates a float toward zero, clamping to the integer range
+(NaN gives 0); an integer is returned unchanged. FLOAT(x) converts to
+float and leaves a float unchanged. SCALE with equal input bounds
+returns rmin.
   - No nested SUB definitions
   - RESUME is not supported (compile-time error)
   - Array operations SHIFTARRAY, ROTATEARRAY, COPYARRAY, SCALELIMITARRAY,

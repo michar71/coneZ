@@ -1,0 +1,5 @@
+SUB FOO
+  IF 1 = 2
+    LOCAL G
+  END IF
+END SUB

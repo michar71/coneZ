@@ -1049,8 +1049,10 @@ workspace-allocation failure); everything else is build-verified only.
       - str_len / str_concat / the source of MID$ assignment called
         wasm_mem_strlen() on pointer 0, scanning real memory at offset 0 (the
         start of the data segment), so an unassigned BASIC string read as
-        whatever literal was there. Pointer 0 is now an empty string, as in the
-        simulator.
+        whatever literal was there. Pointer 0 is now an empty string.
+        (CORRECTION: this entry originally said "as in the simulator" -- the
+        simulator did not check for 0 -- and the change had a side effect on
+        firmware; see #147.)
       - realloc() sent any pointer below 0x8000, including NULL, to the low
         heap with no fallback, so it failed where malloc() succeeds (low heap
         disabled, full, or out of its 32 records). realloc(NULL, n) now behaves
@@ -1123,12 +1125,436 @@ workspace-allocation failure); everything else is build-verified only.
         level would have skipped the table allocation but taken the LZ path.
         Clamped up front (no current caller passes one).
 
-OPEN -- found while fixing #141, not fixed: bas2wasm FORMAT "&" (floats).
-    compile_format() (tools/bas2wasm/stmt.c) stores an f32 in a 4-byte cell and
-    patches the conversion to %f, but host_printf on both firmware and
-    simulator reads %f as an 8-byte double. The Node runtime harness
-    (test/run_runtime.js) reads a Float32 for %f, so `make test-runtime` passes
-    while real hosts would print a wrong value and shift later arguments.
-    Established by reading the three code paths, not by running a program. The
-    fix belongs in bas2wasm (promote to f64, store at an 8-aligned offset as
-    c2wasm does) plus the harness, and needs the simulator rebuilt.
+#146 FIXED -- bas2wasm FORMAT "&" (floats) printed garbage on real hosts
+    (tools/bas2wasm/stmt.c, bas2wasm.h, test/run_runtime.js). Found while
+    fixing #141.
+    compile_format() stored the raw f32 in a 4-byte cell and patched the
+    conversion to %f, but host_printf -- firmware and simulator alike -- reads
+    %f as a C double: 8 bytes. So the float was read as half of a double, and
+    every later argument was shifted. `make test-runtime` passed anyway because
+    the Node harness had its own host_printf that read a Float32 from a 4-byte
+    cell: it agreed with the compiler's mistake, not with any real host.
+    Reproduced by running a module from the old compiler through the
+    simulator's actual wasm_vformat():
+        FORMAT "% & $ & %", 7, 1.5, "s", 2.25, 9   ->   "7 4.000000 %f %d"
+        FORMAT "& %", 1.5, 7                        ->   "0.000000 0"
+    The compiler now promotes the value to f64 and stores it at an
+    8-byte-aligned offset (the wasm32 C varargs layout c2wasm already emits),
+    tracking a byte offset instead of a cell index; the same run then gives
+    "7 1.500000 s 2.250000 9" and "1.500000 7". The harness reads a Float64 at
+    an aligned offset, so it now checks the layout the hosts use. New test
+    format_float_layout.bas covers a float after one and two 4-byte arguments,
+    float first, consecutive floats and an int after a float; 24 baselines
+    regenerated (every test that formats a float). Existing compiled .wasm
+    files that use FORMAT "&" must be recompiled.
+    Remaining difference, not a bug in the layout: the harness renders floats
+    in short form ("1.5") while firmware and simulator print C "%f"
+    ("1.500000"). Separately, `>` of a float prints "%f" on firmware
+    (wasm_imports_io.cpp) but "%g" in the simulator (sim_wasm_imports_io.cpp)
+    -- a firmware/simulator difference left as is.
+    (Both since changed: #176 for `>`, #179 for the harness.)
+
+#147 FIXED -- The first string literal of a BASIC program had address 0, which
+    the hosts treat as "no string" (tools/bas2wasm main.c, assemble.c,
+    bas2wasm.h; simulator sim_wasm_imports_string.cpp). Includes a regression
+    introduced by #142.
+    bas2wasm started the data segment at offset 0, so the first literal's
+    pointer was 0 -- the same value an unassigned string variable holds. Most
+    firmware string imports (str_copy, mid, left, right, ...) already returned
+    "empty" for pointer 0, so that literal was mishandled by them; #142 then
+    extended the rule to str_len and str_concat, which fixed unassigned strings
+    but made LEN and concatenation of the first literal come out empty too:
+        A$ = "hello" : B$ = A$ + " world"     ->  " world", LEN(A$) = 0
+    (#142 was committed and pushed in that state.) The simulator had the
+    opposite fault: its wasm_strlen() had no zero check, so an unassigned
+    string read as the first literal. And a program with no literals exported
+    _heap_ptr = 0, which the hosts read as "no low heap", sending every DIM
+    array to the string pool.
+    The compiler now reserves the first DATA_NULL_PAD (4) bytes of memory as
+    zeros: no literal can have address 0, pointer 0 reads as "" by simply
+    following it, and _heap_ptr is never 0. The simulator's wasm_strlen() gets
+    the pointer-0 check so both hosts agree on older modules as well. Every
+    baseline was regenerated (all data offsets moved by 4). Modules compiled
+    with an older bas2wasm keep the old layout until recompiled -- on a device
+    a .bas file is recompiled each time it is run.
+
+======================================================================
+bas2wasm compiler review (tools/bas2wasm), "important" findings. #148-#160.
+All reproduced before fixing and covered by new tests; the string/array
+memory ones were checked against a JavaScript model of the firmware's
+allocators (now built into test/run_runtime.js), not on a device. The
+"minor" findings from the same review are listed at the end, still open.
+======================================================================
+
+#148 FIXED -- Scalar assignment never coerced the value (stmt.c).
+    `expr(); vpop(); ... coerce_to(type)` popped the type first, and the
+    coerce_* helpers do nothing on an empty type stack. So the documented
+    `X = 42 : X = 3.14` stored an f32 into an i32 global: the compiler exited
+    0 and the module failed validation. Same for `Y# = 1`, assigning an i64
+    result to an integer, etc. (also CONST). The coercion now happens while
+    the type is still on the stack. Assigning a number to a string variable
+    (`A$ = 5`) or a string to a numeric one is now a compile error; it used to
+    store the number as a pointer.
+
+#149 FIXED -- A variable's type was fixed at its first ASSIGNMENT, after code
+    had already used it as an integer (expr.c, stmt.c).
+    Every read, FOR, SUB parameter, LOCAL and SWAP of an untyped name assumed
+    i32; a later float or i64 assignment then made the global f32/i64, leaving
+    the earlier code wrong. `X# = 1.5 : SUM = SUM + X#` gave an invalid module
+    with exit 0. An untyped variable that is read (or used as a loop variable,
+    parameter, LOCAL or SWAP operand) before anything typed it is now an
+    integer from that point (bw_var_lock_type), and later assignments are
+    coerced. Use a suffix (SUM#) for a float accumulator.
+
+#150 FIXED -- Calls left their argument types on the compiler's type stack
+    (expr.c). User SUB/FUNCTION calls and RANDOM, LIMIT, LIMIT256, SCALE,
+    SIN256, DIST, ANGLE, INSTR pushed a result without popping the arguments,
+    so the next operator took an argument's type for its left operand:
+    `X# = 1.5 * F(2)` produced an invalid module and `N = 1 + CNT("abc","a")`
+    was rejected ("cannot mix strings and numbers"). User calls now pop their
+    arguments, and compile_builtin_expr() enforces "exactly one result" for
+    every builtin in one place.
+
+#151 FIXED -- LIMIT and LIMIT256 returned the minimum instead of clamping
+    (expr.c). The first select had its operands the wrong way round, computing
+    min(val, lo): LIMIT(5,0,10) = 0, LIMIT256(100) = 0. No test used them.
+
+#152 FIXED -- SETLEDRGB and SETARRAY ignored the array header (expr.c).
+    A 1-D array is [ndims][upper bound][data...]. SETLEDRGB read from
+    +4 + i*4, so pixel 0 got the array's upper bound as its colour and every
+    LED was one element late; SETARRAY wrote to arr + i*4, missing the last
+    element and overwriting the stored bound (index 0 overwrote ndims). Both
+    now address the data at +8; SETLEDRGB stops at the shortest array and
+    SETARRAY clamps its range to the array's bounds. A bare array name in an
+    expression is now typed as the i32 pointer it is.
+
+#153 FIXED -- NOT and AND/OR/XOR precedence (expr.c).
+    NOT took a single base expression, so `IF NOT X = 5` meant `(NOT X) = 5`
+    and `NOT A$ = B$` was rejected; AND, OR and XOR shared one left-to-right
+    level, so `A OR B AND C` was `(A OR B) AND C`. Now: comparison > NOT > AND
+    > OR > XOR, as in QuickBASIC and as test/precedence.bas's header always
+    said.
+
+#154 FIXED -- Strings: aliasing and leaked temporaries (expr.c, stmt.c).
+    (a) A string variable in an expression is a bare pointer, and assignment
+    stored it without copying: after `B$ = A$` both variables owned one pool
+    block, and the next assignment to either freed it under the other
+    (`A$ = A$` freed its own value). `RETURN T$` of a LOCAL or parameter
+    returned a pointer the epilogue then freed. (b) No intermediate string was
+    ever freed -- the result of +, a comparison operand, a string builtin's
+    argument, a string array element read (each was a str_copy), the text
+    printed by `>`/PRINTS/FORMAT/PRINT #, a SELECT CASE selector, the line read
+    by INPUT # into a number. The firmware pool has 128 block records, so a
+    loop doing any of these returned empty strings after ~128 iterations.
+    The compiler now tracks, per value on its type stack, whether a string is
+    a literal, a temporary the expression owns, or borrowed from a variable
+    (vown[]: STR_STATIC / STR_TEMP / STR_VAR). Storing a borrowed string
+    copies it (bw_str_own); every consumer frees the temporaries it used
+    (bw_str_hold / bw_str_release); array element reads borrow instead of
+    copying. The callee still copies its string parameters, so callers free
+    temporary arguments after the call.
+
+#155 FIXED -- DIM/REDIM leaked when run more than once, never checked for
+    out-of-memory, and crashed after ERASE (stmt.c).
+    Whether to free the previous array was decided at COMPILE time ("was this
+    name DIMmed earlier in the source"), so a DIM inside a SUB or a loop leaked
+    every time it ran (the low heap has 32 records; then the pool). The calloc
+    result was never checked, so after exhaustion the header and elements were
+    written through address 0, over the string constants. And re-DIM of a
+    string array after ERASE read the element count through the null pointer
+    ERASE left. The old array is now freed at run time if the pointer is
+    non-null, and a failed allocation traps (`unreachable`).
+
+#156 FIXED -- Scratch WASM locals were never reused (bas2wasm.h and all users).
+    Each array element assignment took 5 locals, each read 3, and nothing gave
+    them back; the firmware build allows 64 per function, so about a dozen
+    array statements failed with "too many locals in function" on the device
+    (six of the project's own tests did not compile with the firmware's
+    limits), and the host tool hit its 256 after ~50. alloc_local*() now hands
+    out temporaries that stmt() returns to a per-function pool at the end of
+    each statement; alloc_local_keep()/free_local() are for the few that live
+    across statements (FOR limit/step, SELECT selector, saved SUB parameters
+    and LOCALs). With the firmware's limits every test now compiles and passes.
+
+#157 FIXED -- LOCAL restored from the wrong slot (stmt.c). LOCAL saved the outer
+    value in whatever local it was given, but the epilogue restored from the
+    fixed index np + np + i -- right only if every LOCAL came before anything
+    else in the SUB that allocated a local. `FOR ... NEXT` then `LOCAL G`
+    "restored" G from the FOR's limit. The actual slot is now recorded
+    (Var.local_save_idx).
+
+#158 FIXED -- Call statements (stmt.c).
+    A zero-argument SUB called without parentheses (`SHOUT`) emitted no call
+    at all -- the call sat inside "if there are arguments" -- and any unknown
+    word on a line by itself compiled silently to nothing, so a typo vanished.
+    The parenthesised form `NAME(args)` never checked that NAME was a
+    function: for anything else it called function 0, the program itself,
+    which recursed until the stack overflowed. Both forms now go through
+    compile_call_stmt(): the name must be a defined or DECLAREd SUB/FUNCTION,
+    else "unknown statement or undefined SUB 'NAME'". test/declare_sub.bas and
+    test/local_shadows_global.bas had the missing output baked into their
+    EXPECTED blocks; corrected.
+
+#159 FIXED -- Block closers popped the control stack before checking it
+    (stmt.c). A stray WEND/NEXT/END read ctrl_stk[-1] (on the host that slot
+    looked like a WHILE, so a stray WEND gave an invalid module and no error),
+    and END SUB never checked that the top entry was the SUB: with a NEXT
+    missing it read the FOR entry as the SUB frame and set cur_func from the
+    FOR's limit local, after which code was emitted through
+    func_bufs[<garbage>] -- heap corruption in the firmware build from a common
+    typo. All closers now check first ("WEND without WHILE", "unterminated
+    block before END SUB/FUNCTION", ...).
+
+#160 CHANGED -- test/run_runtime.js models the firmware's allocators.
+    The harness bump-allocated strings and arrays and ignored every free, so
+    none of #154/#155 could fail a test (and its array heap started at a fixed
+    0x100, ignoring _heap_ptr). It now has the firmware's block tables (128
+    pool records, 32 low-heap records, first-fit/split/coalesce), real frees
+    with poisoning, pointer 0 as the empty string, and it fails a test on
+    pool/heap exhaustion or an invalid free. 11 runtime tests and 6 reject
+    tests were added for the fixes above.
+
+(The "minor" findings from the same review that were listed here as OPEN
+are fixed in #161-#175 below.)
+
+#161 FIXED -- Run-time memory safety of compiled programs (expr.c, stmt.c,
+    assemble.c).
+    - Array access had no bounds check. `A(4)` on `DIM A(3)` wrote the next
+      allocation's header; index 0 under the default OPTION BASE 1 landed on
+      the array's own stored upper bound; an array that was ERASEd (or whose
+      DIM had not run) was accessed through address 0. Every element read and
+      write now checks the pointer for null and each index against its
+      dimension (one unsigned compare per dimension) and traps on failure.
+    - READ past the last DATA item read whatever followed the table, and a
+      string variable READing a numeric item treated the number as a pointer
+      (and vice versa). READ now checks its index against the item count --
+      the count word is always emitted, so READ with no DATA at all is caught
+      too -- and the item's type tag, and traps on a mismatch.
+    A trap ends the script; the firmware reports it with the BASIC line number
+    ("unreachable executed (BASIC line N)"). None of the shipped .bas scripts
+    use arrays or DATA. Cost: a 4-line array loop grew from 401 to 486 bytes.
+
+#162 FIXED -- Arguments were not type-checked (expr.c, stmt.c).
+    String builtins (LEN, ASC, VAL, MID$, LEFT$, UPPER$, ...), INSTR and string
+    parameters of user SUBs accepted a number and passed it to the host as a
+    pointer: `LEN(123)` read memory at address 123, `LEN(1.5)` produced an
+    invalid module. ABS, SGN, STR$ and unary minus accepted a string and used
+    the pointer as a number. UBOUND of a scalar read "the bound" through the
+    scalar's value. All are compile errors now.
+
+#163 FIXED -- A failed need() left the previous token's value in use (lexer.c).
+    After `need(TOK_NAME)` reported a syntax error, callers went on to use tokv
+    as a variable index or data offset: `FOR 100000 = 1 TO 2`, `CONST 70 = 1`,
+    `READ 70`, `UBOUND(2000000000)`, `SUB FOO 2147483647` indexed vars[] with
+    the literal (a crash on the host, a wild read or write in the firmware
+    build, where the table has 64 entries), and `FORMAT &HFFFFFFFF` used -1 as
+    a data offset. need() now zeroes the token values on a mismatch, which is a
+    valid index into every table. Also removed the assembler's fixed
+    counts[128]/types[128] table for local declarations (more than 128
+    alternating runs overran it; host only).
+    Checked with ASan/UBSan builds in both the host and the firmware (PSRAM
+    stub) configurations: all 133 test programs, the ~70 programs from the
+    review, and 1500 randomly mutated programs -- no reports, no hangs.
+    test/run_runtime.js now records a WASM trap as a final "TRAP: ..." output
+    line so tests can expect one; 8 runtime tests and 12 reject tests added.
+
+#164 FIXED -- FORMAT (stmt.c).
+    - Each argument was stored into the shared 0xF000 buffer as it was
+      evaluated, so a later argument whose code prints (a FUNCTION containing
+      FORMAT, `>` or PRINTS) overwrote the earlier cells: `FORMAT "% $", 42,
+      SHOUT$(1)` printed 0 for the 42. Arguments are now evaluated onto the
+      operand stack and moved into the buffer afterwards.
+    - A placeholder/argument count mismatch compiled: extra placeholders
+      printed stale cells from an earlier FORMAT, extra arguments were dropped.
+      Now a compile error. (A literal % & $ in the text counts as a
+      placeholder, as before.)
+    - A float under % used the trapping truncation, so NaN, infinity or an
+      out-of-range value aborted the script; it now saturates (NaN -> 0).
+    - An integer under & went i32 -> f32 -> f64 and lost precision above 2^24;
+      it is converted straight to f64.
+    - A float under $ was truncated to an integer; it now prints as a float.
+
+#165 FIXED -- Unary minus bound tighter than ^ (expr.c). `-2 ^ 2` gave 4;
+    it is now -(2 ^ 2) = -4 as in QuickBASIC, the exponent may carry its own
+    sign (`2 ^ -1`), and `- -5` and a leading `+` are accepted.
+    test/precedence.bas pinned 4.0 for this while its header stated the correct
+    order; its expectation is updated.
+
+#166 CHANGED -- Predicate builtins return BASIC truth (expr.c). HASGPS,
+    HASORIGIN, HASDATE, HASTIME, HASGYRO, HASACC, HASMAG, GPSPRESENT,
+    IMUPRESENT and ISLEAPYEAR passed the host's 1/0 through. NOT is bitwise, so
+    `IF NOT HASGPS()` was always taken (NOT 1 = -2). They now return -1/0 like
+    comparisons and EOF(). A script that compares one with 1 must be changed
+    to test it as a condition. PIN_READ still returns the pin level (1/0).
+
+#167 FIXED -- INT, FLOAT, SCALE (expr.c). INT sent integers through f32
+    (INT(16777217) = 16777216; INT(2147483647) trapped): an integer is now
+    passed through and a float saturates. FLOAT truncated a float argument to
+    an integer first (FLOAT(2.7) = 2). SCALE with equal input bounds divided
+    by zero and trapped; it returns rmin.
+
+#168 FIXED -- Constructs that compiled to an invalid module with no error
+    (stmt.c): a block opened or closed by a single-line IF; a second ELSE in
+    one IF (and ELSEIF after ELSE); BREAK/BYE inside a SUB; SWAP of two float
+    arrays (now swaps the array pointers); a definition whose parameter types
+    differ from its DECLARE (a differing NAME is now handled -- the
+    definition's names are the ones saved and restored). Each is a compile
+    error now, except the two that were made to work.
+
+#169 FIXED -- CASE after CASE ELSE fell through, running both bodies; LOCAL
+    inside a block that was not entered zeroed the global on exit (stmt.c).
+    Both are compile errors: CASE ELSE must be last, LOCAL must be at the top
+    level of its SUB.
+
+#170 FIXED -- QuickBASIC forms that were rejected (stmt.c): `NEXT I`; a block
+    `IF cond THEN` with nothing after THEN (it compiled an empty single-line IF
+    and then reported "END IF without IF"); `ELSE IF cond THEN`; single-line
+    `IF cond THEN a ELSE b`; `DIM A(3), B(3)` (and REDIM with a list).
+
+#171 FIXED -- Compiler crash while constant folding (expr.c).
+    `(-2147483647 - 1) / -1` (also \ and MOD) was evaluated on the host and
+    raised SIGFPE, killing the CLI and the simulator. A division that would
+    trap is no longer folded; folding of + - * uses wrapping arithmetic.
+
+#172 FIXED -- Silent truncation in the lexer (lexer.c). Identifiers were cut
+    at 14 characters, so brightness_level_a and brightness_level_b were one
+    variable: names may now be 30 characters and a longer one is an error.
+    String literal text beyond the table (4 KB on the device) was dropped and
+    later literals read as empty: now "string table full". A source line over
+    511 characters was split and the remainder compiled as a new line (the
+    tail of a long comment ran as code): now "line too long".
+
+#173 FIXED -- Out of memory and deep recursion in the compiler (buf.c,
+    assemble.c, expr.c). buf_grow() stored realloc's result unchecked (leak,
+    then writes through NULL); the assembler's data buffer allocation was
+    unchecked. Both now fail the compile with "out of memory" (verified by
+    injecting allocation failures: 320 runs, no sanitizer reports). Expression
+    nesting had no limit and each level costs ~300 bytes of an 8 KB task stack
+    on the device; it is limited to 12 levels there (100 on the host).
+
+#174 CHANGED -- Device table limits (bas2wasm.h). Was 64 names / 16 SUBs / 128
+    call sites per function; now 128 names / 32 SUBs, and call sites are a
+    list that grows on demand. Var was repacked (about 92 bytes) and the fixed
+    512-byte fixup table per function removed, so the tables use slightly LESS
+    heap than before (~17.5 KB during a compile). 103 of the 104 test programs
+    compile with the firmware's limits (the other needs an include directory
+    the test driver does not set).
+
+#175 FIXED -- file_eof() used C's feof() on both hosts (firmware
+    wasm_imports_file.cpp, simulator sim_wasm_imports_file.cpp). feof() only
+    becomes true after a read has failed, so the documented loop
+        WHILE NOT EOF(1) : INPUT #1, L$ : WEND
+    ran one extra time and read an empty line. It now peeks, returning true
+    when nothing is left to read. Found by giving the test harness a real
+    (in-memory) filesystem and a deterministic RANDOM, so OPEN / PRINT # /
+    INPUT # / EOF / KILL / NAME / MKDIR / RMDIR and RANDOM are runtime-tested
+    (test/fileio.bas now has expected output). Established by reading both
+    hosts' code; not run on a device.
+
+Verification for #164-#175: all bas2wasm suites pass (164 structural, 102
+runtime; 14 runtime and 14 reject tests added); ASan/UBSan builds in host and
+firmware (PSRAM stub) configurations over 1733 programs (tests, the review's
+cases, 1500 mutants) with no reports or hangs; firmware and simulator rebuild.
+
+#176 CHANGED -- print_f32 printed "%f" on the device and "%g" in the simulator
+    (firmware wasm_imports_io.cpp). `> 1.5` in BASIC, or print_f32(1.5f) in C,
+    printed "1.500000" on a cone and "1.5" in the simulator. The firmware now
+    uses "%g" too, matching the simulator, the firmware's own print_f64 and
+    STR$. Visible change on the device: no trailing zeros, and only six
+    significant digits -- `> LAT#` prints "40.7622" where it printed
+    "40.762173". FORMAT "&" (and printf "%f") still print six decimals.
+    The Node harness's float formatter now implements "%g" exactly instead of
+    "six decimals, zeros stripped" (test/print_float_g.bas). Not run on a
+    device.
+
+#177 FIXED -- `NOT PIN_READ(n)` was always true (expr.c). PIN_READ returns the
+    pin level, 1 or 0, and NOT is bitwise, so the result was -2 or -1. Two
+    changes, neither of which alters a working script:
+    - New predicates PIN_HIGH(pin) and PIN_LOW(pin) return -1 / 0, so
+      `IF NOT PIN_HIGH(5)` works. PIN_READ still returns 1 / 0.
+    - NOT applied directly to a PIN_READ() call (with or without parentheses)
+      is a compile error that names PIN_LOW.
+    Not caught: the level stored in a variable first (X = PIN_READ(5), then
+    IF NOT X). Tests: pin_predicates, reject_not_pin_read,
+    reject_not_pin_read_paren; the harness's pin_read now returns the pin
+    number's low bit instead of always 0.
+
+#178 FIXED -- The runtime tests never ran the real host code (tools/fwhost,
+    simulator conez-wasm-run, tools/bas2wasm/test/run_runtime.js). `make
+    test-runtime` executes compiled programs under Node with host imports
+    re-implemented in JavaScript, so a bug in the firmware's or simulator's
+    imports could not fail it (this is how #147 got through). Now:
+    - tools/fwhost compiles the firmware's own files unchanged for the host --
+      the wasm3 fork, wasm_wrapper.cpp, wasm_psram_glue.cpp and the string,
+      FORMAT, print, file, math and system imports -- with ASan/UBSan, in both
+      memory configurations (fwhost-dram, fwhost-psram). Hardware is stubbed
+      (tools/fwhost/README.txt). `make test-host` runs every runtime test on
+      both.
+    - The simulator builds a headless runner, conez-wasm-run, over its own
+      runtime and imports; `make test-sim` runs the tests on it.
+    - run_runtime.js gained --host <binary>, per-test "' HOSTS:" tags and
+      --update.
+    Checked by breaking the firmware code on purpose: reverting print_f32 to
+    "%f", an off-by-one in INSTR, dropping a record in pool_free and three
+    off-by-ones in the RAM/PSRAM split helpers each fail test-host and pass
+    test-runtime. Two of those first went unnoticed and needed new tests
+    (instr_positions, psram_straddle_strings, psram_straddle_arrays: nothing
+    had read across the 4 KB RAM/PSRAM line). Limits: fwhost is a 64-bit
+    build with stubbed hardware -- it does not cover LED/sensor/time/GPIO
+    imports, the real PSRAM driver, task stack sizes or timing. Host writes
+    across the 4 KB line (malloc'd buffers; not reachable from BASIC) are
+    still untested. c2wasm's harness has no --host mode yet.
+
+#179 FIXED -- What the first real-host runs found in the Node harness
+    (run_runtime.js). All were the harness being wrong, not the hosts:
+    - FORMAT "&" printed "1.5"; every host prints "1.500000". 27 EXPECTED
+      blocks corrected.
+    - A FORMAT / `>` line is cut off after 255 characters on the hosts
+      (256-byte buffer), newline included. Now modelled and documented.
+    - LUTSIZE() of a missing LUT is -1, not 0.
+    - WAITFOR on PPS returns -1 with no GPS, and WAITFOR on a param really
+      compares the param (the harness returned 0 for both); get_param /
+      set_param are now a real 16-entry table.
+    - INSTR searches only the first 255 characters, needle up to 127.
+    - print_str does not add a newline (unused by bas2wasm).
+
+#180 FIXED -- Simulator host import bugs found by `make test-sim`
+    (sim_wasm_imports_string.cpp, sim_wasm_imports_format.cpp). None of these
+    affect the firmware.
+    - String pool / low heap free: freeing the top block did `count--`,
+      assuming it was the last record. That stopped being true in 222d50c,
+      which mirrored the firmware's alloc_take()/alloc_spare_slot() into the
+      simulator WITHOUT its free routine: an unrelated record was dropped and
+      a stale free one left overlapping the bump area, so two live strings
+      could share memory ("item1" read back as "itemi"; REDIM PRESERVE lost
+      elements). The firmware's pool_free()/low_heap_free() are now used
+      verbatim. A regression from 222d50c.
+    - INSTR read its arguments as (start, haystack, needle); the compiler
+      passes (haystack, needle, start). INSTR("ConeZ", "one") gave 4.
+    - STRING$(n, code) treated its arguments as (string pointer, count) and
+      repeated whatever sat at address n.
+    - printf / FORMAT output longer than the buffer hung and then crashed the
+      simulator: EMIT(*fmt++) did not advance once the buffer was full.
+    - The printf buffer was 512 bytes against the device's 256; now 256, so a
+      long line is cut at the same place.
+
+#181 DOCUMENTED -- Recursion depth is about 125 calls, not 500 (wasm3's 8 KB
+    value stack, firmware and simulator). test/deep_recursion.bas claimed 500
+    levels and passed only because Node's stack is far larger. The test now
+    goes to 100, and recursion_limit.bas (real hosts only) checks that deeper
+    recursion stops cleanly with "[trap] stack overflow". Not changed:
+    WASM3_STACK_SIZE in wasm_wrapper.cpp / sim_wasm_runtime.cpp. Whether the
+    native WasmTask stack (10 KB) holds at the deepest wasm3 recursion cannot
+    be checked off the device.
+
+STILL OPEN / by design:
+    - READ into a variable with no type suffix makes it an integer (the docs
+      example now uses F#). Consistent with the typing rule, not changed.
+    - NOT on a variable holding a PIN_READ() level is bitwise (#177 catches
+      only the direct call); documented.
+    - Builtin names count toward the name limit (now 128 on the device).
+    - A `>` or FORMAT line is cut at 255 characters and loses its newline;
+      INSTR searches only the first 255 characters (#179). Documented limits
+      of the host imports, not changed.
+    - The simulator's host imports remain a hand-kept copy of the firmware's
+      (#180 shows the cost); test-sim now catches drift in tested behaviour.

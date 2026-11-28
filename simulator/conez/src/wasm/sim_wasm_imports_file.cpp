@@ -214,7 +214,21 @@ m3ApiRawFunction(m3_file_eof)
     m3ApiReturnType(int32_t);
     m3ApiGetArg(int32_t, handle);
     if (!file_handle_ok(handle)) m3ApiReturn(1);
-    m3ApiReturn(feof(wasm_files[handle]) ? 1 : 0);
+    /* "No more data", not C's feof(): feof() only turns true AFTER a read has
+     * hit the end, so `WHILE NOT EOF(1) : INPUT #1, L$ : WEND` ran one extra
+     * time and read an empty line (documented behaviour is "true when the
+     * channel has no more data"). Peek one byte instead. On a stream that
+     * cannot be read (opened for writing) the peek fails without being at EOF;
+     * clear the error it sets and report "nothing to read". */
+    FILE *f = wasm_files[handle];
+    if (feof(f)) m3ApiReturn(1);
+    int c = fgetc(f);
+    if (c == EOF) {
+        if (!feof(f)) clearerr(f);
+        m3ApiReturn(1);
+    }
+    ungetc(c, f);
+    m3ApiReturn(0);
 }
 
 m3ApiRawFunction(m3_file_truncate)

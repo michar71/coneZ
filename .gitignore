@@ -37,6 +37,8 @@ tools/wasm/examples/rust_rainbow/target/
 tools/wasm/examples/rust_rgb_cycle/target/
 tools/__pycache__/
 tools/bas2wasm/bas2wasm
+tools/fwhost/fwhost-dram
+tools/fwhost/fwhost-psram
 tools/c2wasm/c2wasm
 tools/sewerpipe/sewerpipe
 tools/sewerpipe/test/__pycache__/

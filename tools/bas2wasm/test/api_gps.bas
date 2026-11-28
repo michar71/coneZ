@@ -1,5 +1,6 @@
+' HOSTS: node fwhost   (the simulator's mock GPS has a fix and a position)
 ' EXPECTED:
-' 0 0 0 0 0 0 0
+' 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000
 ' 0 0 0 0
 
 ' GPS API smoke test

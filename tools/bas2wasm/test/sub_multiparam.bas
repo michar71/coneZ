@@ -1,6 +1,6 @@
 ' EXPECTED:
-' Alice 30 1.65
-' Bob 25 1.8
+' Alice 30 1.650000
+' Bob 25 1.800000
 ' clamp=10
 
 ' SUB and FUNCTION with mixed param types

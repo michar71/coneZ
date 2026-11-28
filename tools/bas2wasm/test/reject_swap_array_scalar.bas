@@ -1,0 +1,3 @@
+DIM A(3)
+B = 1
+SWAP A, B

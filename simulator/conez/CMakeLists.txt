@@ -101,6 +101,35 @@ target_compile_definitions(conez-simulator PRIVATE
 
 target_link_libraries(conez-simulator PRIVATE Qt6::Widgets Qt6::Network m3 bas2wasm-embed c2wasm-embed ZLIB::ZLIB m)
 
+# ---- headless runner: the same WASM runtime and host imports, no GUI ----
+# Used by the compilers' runtime tests (tools/bas2wasm: make test-sim).
+add_executable(conez-wasm-run
+    src/wasm_run_main.cpp
+    src/state/led_state.cpp
+    src/state/sensor_state.cpp
+    src/state/sim_config.cpp
+    src/state/cue_engine.cpp
+    src/wasm/sim_wasm_runtime.cpp
+    src/wasm/sim_wasm_imports_led.cpp
+    src/wasm/sim_wasm_imports_sensors.cpp
+    src/wasm/sim_wasm_imports_datetime.cpp
+    src/wasm/sim_wasm_imports_system.cpp
+    src/wasm/sim_wasm_imports_io.cpp
+    src/wasm/sim_wasm_imports_file.cpp
+    src/wasm/sim_wasm_imports_math.cpp
+    src/wasm/sim_wasm_imports_string.cpp
+    src/wasm/sim_wasm_imports_format.cpp
+    src/wasm/sim_wasm_imports_gpio.cpp
+    src/wasm/sim_wasm_imports_compression.cpp
+    src/wasm/sim_wasm_imports_deflate.cpp
+    src/state/inflate_util.cpp
+    src/state/deflate_util.cpp
+)
+target_include_directories(conez-wasm-run PRIVATE
+    src src/state src/wasm thirdparty/wasm3/source
+)
+target_link_libraries(conez-wasm-run PRIVATE Qt6::Core m3 ZLIB::ZLIB m)
+
 # Increment build number after successful build
 add_custom_command(TARGET conez-simulator POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "${BUILD_NUMBER}" > "${BUILDNUM_FILE}"

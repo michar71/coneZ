@@ -71,6 +71,10 @@ static constexpr size_t MAX_OUTPUT_BATCH = 4096;
 void SimWasmRuntime::emitOutput(const std::string &text)
 {
     std::lock_guard<std::mutex> lock(m_outputMutex);
+    if (!m_batchOutput) {
+        if (m_outputCb) m_outputCb(text);
+        return;
+    }
     m_outputBuf += text;
 
     // Trim to tail if buffer grew too large

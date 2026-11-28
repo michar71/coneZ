@@ -1,3 +1,4 @@
+' HOSTS: node fwhost   (the simulator reads the real clock)
 ' EXPECTED:
 ' 0 0 0 0 0 0 0 0 0 0 0
 

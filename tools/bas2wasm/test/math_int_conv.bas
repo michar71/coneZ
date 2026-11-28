@@ -1,6 +1,6 @@
 ' EXPECTED:
-' 5 3.5 -1 0 1 -1
-' 3 -3 42
+' 5 3.500000 -1 0 1 -1
+' 3 -3 42.000000
 
 ' Integer/float conversion + ABS + SGN
 A = ABS(-5)

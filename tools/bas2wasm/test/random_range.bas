@@ -1,0 +1,9 @@
+' EXPECTED:
+' 1
+
+OK = 1
+FOR I = 1 TO 50
+  R = RANDOM(5, 10)
+  IF R < 5 OR R >= 10 THEN OK = 0
+NEXT
+> OK

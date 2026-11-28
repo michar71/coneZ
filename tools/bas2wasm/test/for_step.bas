@@ -3,7 +3,7 @@
 ' EXPECTED:
 ' sum=30
 ' 5! = 120
-' ft=2.5
+' ft=2.500000
 SUM = 0
 FOR I = 0 TO 10 STEP 2
   SUM = SUM + I

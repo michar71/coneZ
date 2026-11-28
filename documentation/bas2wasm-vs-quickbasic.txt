@@ -35,7 +35,7 @@ Control Flow
 
   Construct             QuickBASIC 4.5                bas2wasm
   ---------             --------------                --------
-  IF single-line        IF...THEN                     IF...THEN
+  IF single-line        IF...THEN[...ELSE]            IF...THEN[...ELSE]
   IF multi-line         IF/ELSEIF/ELSE/END IF         IF/ELSEIF/ELSE IF/ELSE/END IF
   FOR loop              FOR...NEXT, STEP, EXIT FOR    FOR...NEXT, STEP, EXIT FOR
   WHILE                 WHILE...WEND                  WHILE...WEND, EXIT WHILE
@@ -181,7 +181,7 @@ bas2wasm includes extensive hardware builtins not found in QuickBASIC:
   - Date/Time: HASDATE, HASTIME, HOUR, MINUTE, SECOND, DAY, MONTH, YEAR,
     DAYOFWEEK, DAYOFYEAR, ISLEAPYEAR
   - LUT: LOADLUT, SAVELUT, LUTSIZE, LUT
-  - GPIO: PIN_READ, ANALOG_READ
+  - GPIO: PIN_READ, PIN_HIGH, PIN_LOW, ANALOG_READ
 
 
 Summary

@@ -4,7 +4,7 @@
 ' Result: Wow!
 ' Inside: data processed
 ' After: original
-' N=42 S=hello V=3.14
+' N=42 S=hello V=3.140000
 
 ' Test string params in SUB
 SUB GREET NAME$

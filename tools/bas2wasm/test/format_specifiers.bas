@@ -1,7 +1,7 @@
 ' EXPECTED:
-' i=42 L=9999999999 f=3.14159 s=ConeZ
+' i=42 L=9999999999 f=3.141590 s=ConeZ
 ' 1 2 3 4
-' 1.5 2.5 3.5
+' 1.500000 2.500000 3.500000
 ' alpha beta
 ' path: \foo\bar = 42
 ' hello, world

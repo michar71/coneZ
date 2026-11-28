@@ -1,3 +1,10 @@
+' EXPECTED:
+' Read: Hello World
+' Read: 42
+' Read: 3.14
+' Total lines: 4
+' Done
+
 ' File I/O test program
 ' Write data to a file, then read it back
 

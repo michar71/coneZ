@@ -1,5 +1,5 @@
 ' EXPECTED:
-' 0 0 0 0 0 0 0 0 0
+' 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000
 ' 0 0 0 0
 
 ' Sensor API smoke test (IMU + env, float-returning forms)

@@ -5,8 +5,13 @@
 
 static int prints_fmt_off = -1;
 
+/* > 0 while compiling the statement(s) of a single-line IF: lets stmt() stop
+ * at an ELSE instead of reporting it as trailing junk. */
+static int single_line_if;
+
 void stmt_reset(void) {
     prints_fmt_off = -1;
+    single_line_if = 0;
 }
 
 static void compile_format(void) {
@@ -27,10 +32,17 @@ static void compile_format(void) {
      * conversion, but the FINAL conversion char is decided per-argument
      * (once we know its actual type) — see the patching below. We emit a
      * placeholder 'd' here and remember each spec's local offset + which
-     * BASIC spec char it was. The format buffer holds one 4-byte cell per
-     * arg; an i64 doesn't fit, so i64 args (and the silent-garbage
-     * type/spec mismatches like i32→&, f32→%) are coerced to the right
-     * representation rather than reinterpreting raw bits. */
+     * BASIC spec char it was.
+     *
+     * The format buffer is laid out exactly as host_printf reads it -- the
+     * wasm32 C varargs layout that c2wasm also emits: an int or string
+     * pointer is a 4-byte cell; a float is passed as a DOUBLE, 8 bytes at an
+     * 8-byte-aligned offset (%f always takes a double). It used to store the
+     * raw f32 in a 4-byte cell, which the host then read as half of a double:
+     * FORMAT "&" printed a wrong value and shifted every later argument on
+     * real hosts, while the Node test harness (which read a Float32) passed.
+     * An i64 is rendered to a string and printed with %s, and type/spec
+     * mismatches (i32→&, f32→%) are coerced rather than reinterpreted. */
     char cfmt[512];
     int ci = 0;
     int spec_local[FMT_BUF_SIZE / 4];   /* cfmt index of each conversion char */
@@ -53,51 +65,117 @@ static void compile_format(void) {
     data_len = raw_off;
     int fmt_off = add_string(cfmt, ci);
 
+    /* Arguments are evaluated left to right onto the WASM operand stack and
+     * only THEN moved into the 0xF000 buffer, last first. Storing each one as
+     * it was evaluated let a later argument's code overwrite the earlier cells
+     * -- a function call that itself prints (FORMAT, `>`, PRINTS all use the
+     * same buffer) made `FORMAT "% $", 42, SHOUT$(1)` print 0 for the 42. */
     int nargs = 0;
+    int arg_off = 0;            /* byte offset of the next argument in the buffer */
+    uint8_t arg_cell[FMT_BUF_SIZE / 4];     /* each argument's offset / 4 */
+    uint8_t arg_kind[FMT_BUF_SIZE / 4];     /* 0 = i32 cell, 1 = f64, 2 = i32 cell holding a temporary string */
     while (want(TOK_COMMA)) {
         if (nargs >= FMT_BUF_SIZE / 4) { error_at("too many FORMAT arguments"); return; }
         char spec = (nargs < nspec) ? spec_raw[nargs] : '%';
         char conv;
-        emit_i32_const(0xF000);
+        int kind;
         expr();
+        int arg_is_temp = (vsp > 0 && vstack[vsp-1] == T_STR && vown[vsp-1] == STR_TEMP);
         VType t = vpop();
+        /* A number prints as a float under `&`, and also when a float is given
+         * to `$` (which used to truncate it to an integer: 1.5 printed as 1). */
+        int is_float = (t != T_I64 && t != T_STR && (spec == '&' || (spec == '$' && t == T_F32)));
+        /* Capacity is checked once the argument's size is known: a float needs
+         * padding to 8 plus 8 bytes, everything else a 4-byte cell. */
+        {
+            int end = is_float ? ((arg_off + 7) & ~7) + 8 : arg_off + 4;
+            if (end > FMT_BUF_SIZE) { error_at("too many FORMAT arguments"); return; }
+        }
         if (t == T_I64) {
-            /* i64 can't fit a 4-byte cell — render to a pool string and
-             * print it with %s (exact, same as `>`/STR$). */
+            /* i64 — render to a pool string and print it with %s (exact,
+             * same as `>`/STR$). */
             emit_call(IMP_STR_FROM_I64);
-            emit_i32_store(nargs * 4);
+            kind = 2;
             conv = 's';
         } else if (t == T_STR) {
-            emit_i32_store(nargs * 4);
+            kind = arg_is_temp ? 2 : 0;
             conv = 's';
-        } else if (spec == '&') {
-            /* float intent: ensure the cell really holds an f32 */
-            if (t != T_F32) emit_op(OP_F32_CONVERT_I32_S);
-            buf_byte(CODE, OP_F32_STORE); buf_uleb(CODE, 2); buf_uleb(CODE, nargs * 4);
+        } else if (is_float) {
+            /* %f takes a double at an 8-byte-aligned offset. An integer is
+             * converted straight to f64 -- going through f32 first lost
+             * precision above 2^24 (16777217 printed as 16777216). */
+            if (t == T_F32) emit_op(OP_F64_PROMOTE_F32);
+            else emit_op(OP_F64_CONVERT_I32_S);
+            arg_off = (arg_off + 7) & ~7;
+            kind = 1;
             conv = 'f';
         } else {
-            /* int intent (`%`, or `$` given a number): truncate f32 → i32 */
-            if (t == T_F32) emit_op(OP_I32_TRUNC_F32_S);
-            emit_i32_store(nargs * 4);
+            /* int intent (`%`, or `$` given an integer). A float is truncated
+             * with the SATURATING conversion: the plain one traps on NaN,
+             * infinity or anything outside the i32 range, so printing such a
+             * value (a bad sensor reading) aborted the whole script. */
+            if (t == T_F32) { buf_byte(CODE, 0xFC); buf_byte(CODE, 0x00); }   /* i32.trunc_sat_f32_s */
+            kind = 0;
             conv = 'd';
         }
+        arg_cell[nargs] = (uint8_t)(arg_off / 4);
+        arg_kind[nargs] = (uint8_t)kind;
+        arg_off += (kind == 1) ? 8 : 4;
         if (nargs < nspec)
             dbuf_set(fmt_off + spec_local[nargs], conv);
         nargs++;
+    }
+
+    /* One argument per placeholder. With too few, the leftover placeholders
+     * printed whatever an earlier FORMAT had left in the buffer; with too many,
+     * the extras were evaluated and silently dropped. */
+    if (nargs != nspec) {
+        char msg[72];
+        snprintf(msg, sizeof(msg), "FORMAT has %d placeholder%s but %d argument%s",
+                 nspec, nspec == 1 ? "" : "s", nargs, nargs == 1 ? "" : "s");
+        error_at(msg);
+        return;
+    }
+
+    /* Move the values from the operand stack into the buffer, last first. */
+    {
+        int ti = -1, tf = -1;
+        for (int i = nargs - 1; i >= 0; i--) {
+            if (arg_kind[i] == 1) {
+                if (tf < 0) tf = bw_alloc_local(WASM_F64, 0);
+                emit_local_set(tf);
+                emit_i32_const(0xF000);
+                emit_local_get(tf);
+                buf_byte(CODE, OP_F64_STORE); buf_uleb(CODE, 3); buf_uleb(CODE, arg_cell[i] * 4);
+            } else {
+                if (ti < 0) ti = alloc_local();
+                emit_local_set(ti);
+                emit_i32_const(0xF000);
+                emit_local_get(ti);
+                emit_i32_store(arg_cell[i] * 4);
+            }
+        }
     }
 
     emit_i32_const(fmt_off);
     emit_i32_const(0xF000);
     emit_call(IMP_HOST_PRINTF);
     emit_drop();
+    /* Free temporary strings (a string expression's result, or the text an
+     * i64 was rendered to) now that they have been printed. */
+    for (int i = 0; i < nargs; i++) {
+        if (arg_kind[i] != 2) continue;
+        emit_i32_const(0xF000);
+        emit_i32_load(arg_cell[i] * 4);
+        emit_call(IMP_STR_FREE);
+    }
 }
 
 static void compile_prints(void) {
-    int before_vsp = vsp;
     expr();
+    int is_temp = (vsp > 0 && vstack[vsp-1] == T_STR && vown[vsp-1] == STR_TEMP);
     VType t = vpop();
-    (void)t;
-    (void)before_vsp;
+    if (t != T_STR) { error_at("PRINTS requires a string"); return; }
     int fmt_buf = 0xF000;
     emit_i32_const(fmt_buf);
     int tmp = alloc_local();
@@ -113,6 +191,7 @@ static void compile_prints(void) {
     emit_i32_const(fmt_buf);
     emit_call(IMP_HOST_PRINTF);
     emit_drop();
+    if (is_temp) bw_str_release(tmp2);      /* tmp2 holds the string pointer */
 }
 
 /* DECLARE FUNCTION name [params...]  /  DECLARE SUB name [params...]
@@ -160,7 +239,8 @@ static void compile_declare(void) {
     for (int i = 0; i < np; i++) vars[var].param_vars[i] = params[i];
     f->nparams = np;
     for (int i = 0; i < np; i++) {
-        VType pt = vars[params[i]].type_set ? vars[params[i]].type : T_I32;
+        bw_var_lock_type(params[i]);    /* an untyped parameter is an integer */
+        VType pt = vars[params[i]].type;
         f->param_types[i] = wasm_type_for_vtype(pt);
     }
 }
@@ -210,13 +290,27 @@ static void compile_sub(void) {
             error_at("definition parameter count differs from DECLARE");
             return;
         }
+        /* The body uses the DEFINITION's parameter names, so those are the
+         * ones to save/restore; keeping the DECLARE's names made the exit code
+         * restore the wrong globals. The types must agree, because calls were
+         * already compiled against the DECLARE (a mismatch gave an invalid
+         * module). */
+        for (int i = 0; i < np; i++) {
+            bw_var_lock_type(params[i]);
+            if (vars[params[i]].type != vars[vars[var].param_vars[i]].type) {
+                error_at("definition parameter type differs from DECLARE");
+                return;
+            }
+            vars[var].param_vars[i] = params[i];
+        }
     } else {
         vars[var].param_count = np;
         for (int i = 0; i < np; i++) vars[var].param_vars[i] = params[i];
     }
     f->nparams = np;
     for (int i = 0; i < np; i++) {
-        VType pt = vars[params[i]].type_set ? vars[params[i]].type : T_I32;
+        bw_var_lock_type(params[i]);    /* an untyped parameter is an integer */
+        VType pt = vars[params[i]].type;
         f->param_types[i] = wasm_type_for_vtype(pt);
     }
 
@@ -228,7 +322,9 @@ static void compile_sub(void) {
     int saved[8];
     for (int i = 0; i < np; i++) {
         VType pt = vars[params[i]].type_set ? vars[params[i]].type : T_I32;
-        saved[i] = alloc_local_for_vtype(pt);
+        /* Permanent for the function, and necessarily the first np locals
+         * (indices np..2np-1): the epilogue restores from np + i. */
+        saved[i] = alloc_local_keep(pt);
     }
 
     for (int i = 0; i < np; i++) {
@@ -251,7 +347,23 @@ static void compile_sub(void) {
     ctrl_sp++;
 }
 
+/* Block closers must look before they pop. Popping first read ctrl_stk[-1] for
+ * a stray WEND / NEXT / END (on the host that slot happened to look like a
+ * WHILE, so a stray WEND produced an invalid module with no error), and
+ * END SUB never checked that the top entry was the SUB at all -- with a NEXT
+ * missing it took the FOR entry for the SUB frame and set cur_func from the
+ * FOR's limit local, after which code was emitted through func_bufs[<garbage>]
+ * (heap corruption in the firmware build, from a common typo). */
+static int ctrl_top_is(int kind) {
+    return ctrl_sp > 0 && ctrl_stk[ctrl_sp-1].kind == kind;
+}
+
 static void close_sub(void) {
+    if (!ctrl_top_is(-1)) {
+        error_at(ctrl_sp > 0 ? "unterminated block before END SUB/FUNCTION"
+                             : "END SUB/FUNCTION without SUB/FUNCTION");
+        return;
+    }
     ctrl_sp--;
     int var = ctrl_stk[ctrl_sp].for_var;
     int prev_func = ctrl_stk[ctrl_sp].for_limit_local;
@@ -274,7 +386,7 @@ static void close_sub(void) {
             emit_global_get(vars[lvar].global_idx);
             emit_call(IMP_STR_FREE);
         }
-        emit_local_get(np + np + i);
+        emit_local_get(vars[var].local_save_idx[i]);
         emit_global_set(vars[lvar].global_idx);
     }
 
@@ -291,17 +403,19 @@ static void close_sub(void) {
 }
 
 static void close_while(void) {
+    if (!ctrl_top_is(CTRL_WHILE)) { error_at("WEND without WHILE"); return; }
     ctrl_sp--;
-    if (ctrl_stk[ctrl_sp].kind != CTRL_WHILE) { error_at("WEND without WHILE"); return; }
     emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
     emit_end();
     emit_end();
 }
 
 static void close_for(void) {
+    if (!ctrl_top_is(CTRL_FOR)) { error_at("NEXT without FOR"); return; }
     ctrl_sp--;
-    if (ctrl_stk[ctrl_sp].kind != CTRL_FOR) { error_at("NEXT without FOR"); return; }
     int var = ctrl_stk[ctrl_sp].for_var;
+    /* Optional loop variable: NEXT I */
+    if (want(TOK_NAME) && tokv != var) { error_at("NEXT variable does not match its FOR"); return; }
     int is_float = (vars[var].type_set && vars[var].type == T_F32);
     int is_i64 = (vars[var].type_set && vars[var].type == T_I64);
     emit_global_get(vars[var].global_idx);
@@ -317,6 +431,8 @@ static void close_for(void) {
     emit_br(block_depth - ctrl_stk[ctrl_sp].cont_depth);
     emit_end();
     emit_end();
+    free_local(ctrl_stk[ctrl_sp].for_limit_local);
+    if (ctrl_stk[ctrl_sp].for_has_step) free_local(ctrl_stk[ctrl_sp].for_step_local);
 }
 
 static void compile_end(void) {
@@ -324,17 +440,20 @@ static void compile_end(void) {
     if (kw == TOK_KW_SUB || kw == TOK_FUNCTION) {
         close_sub();
     } else if (kw == TOK_IF) {
+        if (!ctrl_top_is(CTRL_IF)) { error_at("END IF without IF"); return; }
         ctrl_sp--;
-        if (ctrl_stk[ctrl_sp].kind != CTRL_IF) { error_at("END IF without IF"); return; }
         int extras = ctrl_stk[ctrl_sp].if_extra_ends;
         emit_end();
         for (int i = 0; i < extras; i++) emit_end();
     } else if (kw == TOK_SELECT) {
+        if (!ctrl_top_is(CTRL_SELECT)) { error_at("END SELECT without SELECT"); return; }
         ctrl_sp--;
-        if (ctrl_stk[ctrl_sp].kind != CTRL_SELECT) { error_at("END SELECT without SELECT"); return; }
         int extras = ctrl_stk[ctrl_sp].if_extra_ends;
         for (int i = 0; i < extras; i++) emit_end();
         emit_end();
+        if (ctrl_stk[ctrl_sp].for_has_step)         /* temporary string selector */
+            bw_str_release(ctrl_stk[ctrl_sp].for_var);
+        free_local(ctrl_stk[ctrl_sp].for_var);     /* the SELECT test value */
     } else {
         error_at("unexpected END");
     }
@@ -359,6 +478,7 @@ static void compile_for(void) {
     need(TOK_NAME);
     int var = tokv;
     if (vars[var].type == T_STR) { error_at("FOR loop variable cannot be a string"); return; }
+    bw_var_lock_type(var);      /* an untyped loop variable is an integer from here on */
     int is_float = (vars[var].type_set && vars[var].type == T_F32);
     int is_i64 = (vars[var].type_set && vars[var].type == T_I64);
     need(TOK_EQ);
@@ -370,7 +490,8 @@ static void compile_for(void) {
     expr();
     if (is_float) coerce_f32(); else if (is_i64) coerce_i64(); else coerce_i32();
     vpop();
-    int limit_local = is_float ? alloc_local_f32() : (is_i64 ? alloc_local_i64() : alloc_local());
+    VType loop_t = is_float ? T_F32 : (is_i64 ? T_I64 : T_I32);
+    int limit_local = alloc_local_keep(loop_t);    /* live until NEXT */
     emit_local_set(limit_local);
 
     int step_local = -1;
@@ -379,7 +500,7 @@ static void compile_for(void) {
         expr();
         if (is_float) coerce_f32(); else if (is_i64) coerce_i64(); else coerce_i32();
         vpop();
-        step_local = is_float ? alloc_local_f32() : (is_i64 ? alloc_local_i64() : alloc_local());
+        step_local = alloc_local_keep(loop_t);     /* live until NEXT */
         emit_local_set(step_local);
         has_step = 1;
     }
@@ -422,46 +543,80 @@ static void compile_for(void) {
 
 static void compile_if(void) {
     expr(); coerce_i32(); vpop();
-    if (want(TOK_THEN)) {
+    int has_then = want(TOK_THEN);
+    if (has_then && !want(TOK_EOF)) {
+        /* Single-line:  IF cond THEN statement [ELSE statement] */
         emit_if_void();
+        int sp0 = ctrl_sp;
+        single_line_if++;
         stmt();
+        if (!had_error && want(TOK_ELSE)) {
+            emit_else();
+            stmt();
+        }
+        single_line_if--;
+        /* The statement must be self-contained. `IF X THEN FOR I = 1 TO 3`
+         * left a block open inside this `if`, and the module that came out was
+         * invalid with no error reported. */
+        if (!had_error && ctrl_sp != sp0) {
+            error_at("a block cannot be opened or closed by a single-line IF");
+            return;
+        }
         emit_end();
     } else {
+        /* Block IF: "IF cond" or "IF cond THEN" alone on the line. */
         emit_if_void();
         if (ctrl_sp >= MAX_CTRL) { error_at("too many nested blocks"); return; }
         ctrl_stk[ctrl_sp].kind = CTRL_IF;
         ctrl_stk[ctrl_sp].if_extra_ends = 0;
+        ctrl_stk[ctrl_sp].for_has_step = 0;     /* reused: 1 once a plain ELSE has been seen */
         ctrl_sp++;
     }
 }
 
-static void compile_else(void) {
-    if (ctrl_sp == 0 || ctrl_stk[ctrl_sp-1].kind != CTRL_IF) {
-        error_at("ELSE without IF"); return;
+/* ELSE / ELSE IF cond [THEN] / ELSEIF cond [THEN] */
+static void compile_else_branch(int is_elseif) {
+    if (!ctrl_top_is(CTRL_IF)) {
+        error_at(is_elseif ? "ELSEIF without IF" : "ELSE without IF"); return;
+    }
+    /* Only one plain ELSE, and it comes last. A second one produced an invalid
+     * module ("else without matching if") with no compile error. */
+    if (ctrl_stk[ctrl_sp-1].for_has_step) {
+        error_at(is_elseif ? "ELSEIF after ELSE" : "ELSE after ELSE"); return;
     }
     emit_else();
-    if (want(TOK_IF)) {
+    if (is_elseif || want(TOK_IF)) {
         expr(); coerce_i32(); vpop();
+        want(TOK_THEN);                 /* optional */
         emit_if_void();
         ctrl_stk[ctrl_sp-1].if_extra_ends++;
+    } else {
+        ctrl_stk[ctrl_sp-1].for_has_step = 1;
     }
 }
+
+static void compile_else(void) { compile_else_branch(0); }
 
 static void compile_const(void) {
     need(TOK_NAME);
     int var = tokv;
     need(TOK_EQ);
     expr();
-    VType et = vpop();
+    VType et = (vsp > 0) ? vstack[vsp-1] : T_I32;
     if (vars[var].type == T_STR) {
+        if (et != T_STR) { error_at("cannot assign a number to a string CONST"); return; }
+        bw_str_own();
+        vpop();
         emit_global_set(vars[var].global_idx);
     } else {
+        if (et == T_STR) { error_at("cannot assign a string to a numeric CONST"); return; }
         if (!vars[var].type_set) {
             vars[var].type = et;
             vars[var].type_set = 1;
         } else {
-            coerce_to(vars[var].type);
+            coerce_to(vars[var].type);      /* before the vpop -- see assignment */
         }
+        vpop();
         emit_global_set(vars[var].global_idx);
     }
     vars[var].is_const = 1;
@@ -475,6 +630,7 @@ static int parse_dim_indices_to_addr(int var, int *out_addr_local, int *out_dims
 
     emit_i32_const(0);
     emit_local_set(flat_local);
+    bw_emit_array_null_check(var);      /* see bw_emit_index_check */
 
     do {
         if (ndims >= 8) {
@@ -494,6 +650,7 @@ static int parse_dim_indices_to_addr(int var, int *out_addr_local, int *out_dims
         emit_i32_const(1);
         emit_op(OP_I32_ADD); /* extent = upper - lower + 1 */
         emit_local_set(dim_local);
+        bw_emit_index_check(idx_locals[ndims], dim_local);
 
         emit_local_get(flat_local);
         emit_local_get(dim_local);
@@ -614,14 +771,23 @@ static void compile_dim_core(int preserve) {
         emit_call(IMP_CALLOC);
         emit_local_set(new_ptr_local);
     } else {
-        if (vars[var].mode == VAR_DIM) {
+        /* Free whatever array the variable holds NOW, decided at run time. The
+         * test used to be "was this name already DIMmed when this statement
+         * was compiled", so a DIM that runs more than once -- in a SUB, or in a
+         * loop -- never freed the previous array and leaked it every time. The
+         * run-time null test also covers DIM after ERASE, which used to read
+         * the element count through the null pointer ERASE left. */
+        emit_local_get(old_ptr_local);
+        emit_if_void();
+        {
             /* String array: free every element's pool string before
              * freeing the array memory itself. */
             if (vars[var].type_set && vars[var].type == T_STR) {
                 int idx_local = alloc_local();
                 int data_base_local = alloc_local();
                 int old_n_local = alloc_local();
-                int old_ndims = vars[var].dim_count;
+                int old_ndims = (vars[var].mode == VAR_DIM && vars[var].dim_count > 0)
+                                ? vars[var].dim_count : ndims;
 
                 /* Recompute old element count from the header in old_ptr. */
                 emit_i32_const(1);
@@ -671,11 +837,21 @@ static void compile_dim_core(int preserve) {
             emit_local_get(old_ptr_local);
             emit_call(IMP_FREE);
         }
+        emit_end();     /* end "old array present" */
         emit_i32_const(1);
         emit_local_get(total_bytes_local);
         emit_call(IMP_CALLOC);
         emit_local_set(new_ptr_local);
     }
+
+    /* Out of memory: stop the script with a trap. The result used to go
+     * unchecked, so the header and every element were then written through
+     * address 0 -- over the program's string constants. */
+    emit_local_get(new_ptr_local);
+    emit_op(OP_I32_EQZ);
+    emit_if_void();
+    emit_op(OP_UNREACHABLE);
+    emit_end();
 
     emit_local_get(new_ptr_local);
     emit_global_set(vars[var].global_idx);
@@ -881,11 +1057,14 @@ static void compile_option(void) {
     option_base = tokv;
 }
 
-static void compile_dim(void) { compile_dim_core(0); }
+/* DIM A(3), B(5, 5): a comma-separated list. */
+static void compile_dim(void) {
+    do { compile_dim_core(0); } while (!had_error && want(TOK_COMMA));
+}
 
 static void compile_redim(void) {
     int preserve = want(TOK_PRESERVE) ? 1 : 0;
-    compile_dim_core(preserve);
+    do { compile_dim_core(preserve); } while (!had_error && want(TOK_COMMA));
 }
 
 static void compile_erase(void) {
@@ -965,14 +1144,27 @@ static void compile_erase(void) {
 
 static void compile_local(void) {
     if (cur_func == 0) { error_at("LOCAL outside SUB"); return; }
+    /* The SUB's exit code restores every LOCAL unconditionally, so the save
+     * must run unconditionally too. Inside an IF or a loop that was not
+     * entered, the global was "restored" from a save that never happened
+     * (i.e. zeroed). */
+    if (!ctrl_top_is(-1)) { error_at("LOCAL must be at the top level of a SUB, not inside a block"); return; }
     int sub_var = func_bufs[cur_func].sub_var;
     do {
         need(TOK_NAME);
         int var = tokv;
         if (vars[sub_var].local_count >= 8) { error_at("too many LOCAL variables (max 8)"); return; }
+        bw_var_lock_type(var);          /* an untyped LOCAL is an integer */
+        VType vt = vars[var].type;
+        /* The saved outer value lives in whatever local we get here, and the
+         * epilogue must restore from THAT one. It used to restore from the
+         * fixed index np + np + i, which is only right when every LOCAL comes
+         * before anything else in the SUB that allocates a local (a FOR, an
+         * array access, a string assignment...) -- otherwise the global was
+         * "restored" from an unrelated local. */
+        int saved = alloc_local_keep(vt);
+        vars[sub_var].local_save_idx[vars[sub_var].local_count] = saved;
         vars[sub_var].local_vars[vars[sub_var].local_count++] = var;
-        VType vt = vars[var].type_set ? vars[var].type : T_I32;
-        int saved = alloc_local_for_vtype(vt);
         emit_global_get(vars[var].global_idx);
         emit_local_set(saved);
         if (vars[var].type == T_STR) {
@@ -997,7 +1189,13 @@ static void compile_return(void) {
     if (!want(TOK_EOF)) {
         ungot = 1;
         expr();
-        if (sub_is_str) { /* no coercion — string is already i32 pointer */ }
+        if (sub_is_str) {
+            /* The caller receives an OWNED string. A value borrowed from a
+             * variable is copied first: returning a LOCAL's or parameter's
+             * pointer handed back memory the epilogue below frees. */
+            if (vsp > 0 && vstack[vsp-1] != T_STR) { error_at("string FUNCTION must return a string"); return; }
+            bw_str_own();
+        }
         else if (sub_is_float) coerce_f32();
         else if (sub_is_i64) coerce_i64();
         else coerce_i32();
@@ -1020,7 +1218,7 @@ static void compile_return(void) {
                 emit_global_get(vars[lvar].global_idx);
                 emit_call(IMP_STR_FREE);
             }
-            emit_local_get(np + np + i);
+            emit_local_get(vars[sub_var].local_save_idx[i]);
             emit_global_set(vars[lvar].global_idx);
         }
 
@@ -1042,7 +1240,7 @@ static void compile_return(void) {
                 emit_global_get(vars[lvar].global_idx);
                 emit_call(IMP_STR_FREE);
             }
-            emit_local_get(np + np + i);
+            emit_local_get(vars[sub_var].local_save_idx[i]);
             emit_global_set(vars[lvar].global_idx);
         }
         if (sub_is_float) emit_f32_const(0.0f);
@@ -1055,15 +1253,11 @@ static void compile_return(void) {
 static void compile_select(void) {
     need(TOK_CASE);
     expr();
+    /* A string selector the expression created is kept until END SELECT and
+     * freed there; one borrowed from a variable is left alone. */
+    int test_is_temp = (vsp > 0 && vstack[vsp-1] == T_STR && vown[vsp-1] == STR_TEMP);
     VType test_type = vpop();
-    int test_local;
-    if (test_type == T_F32) {
-        test_local = alloc_local_f32();
-    } else if (test_type == T_I64) {
-        test_local = alloc_local_i64();
-    } else {
-        test_local = alloc_local();
-    }
+    int test_local = alloc_local_keep(test_type == T_STR ? T_I32 : test_type);  /* live until END SELECT */
     emit_local_set(test_local);
 
     emit_block();
@@ -1074,6 +1268,8 @@ static void compile_select(void) {
     ctrl_stk[ctrl_sp].for_limit_local = (int)test_type;
     ctrl_stk[ctrl_sp].break_depth = block_depth;
     ctrl_stk[ctrl_sp].if_extra_ends = 0;
+    ctrl_stk[ctrl_sp].for_has_step = test_is_temp;  /* reused: free selector at END SELECT */
+    ctrl_stk[ctrl_sp].for_step_local = 0;           /* reused: 1 once CASE ELSE has been seen */
     ctrl_sp++;
 }
 
@@ -1083,6 +1279,9 @@ static void compile_case(void) {
         if (ctrl_stk[i].kind == CTRL_SELECT) { si = i; break; }
     }
     if (si < 0) { error_at("CASE without SELECT"); return; }
+    /* CASE ELSE must be the last branch: a CASE after it used to fall through,
+     * running both bodies. */
+    if (ctrl_stk[si].for_step_local == 1) { error_at("CASE after CASE ELSE"); return; }
 
     int test_local = ctrl_stk[si].for_var;
     VType test_type = (VType)ctrl_stk[si].for_limit_local;
@@ -1094,6 +1293,7 @@ static void compile_case(void) {
     }
 
     if (want(TOK_ELSE)) {
+        ctrl_stk[si].for_step_local = 1;
         return;
     }
 
@@ -1121,8 +1321,11 @@ static void compile_case(void) {
                 }
             } else if (test_type == T_STR) {
                 emit_local_get(test_local);
-                expr(); vpop();
+                expr();
+                int ch = bw_str_hold();
+                vpop();
                 emit_call(IMP_STR_CMP);
+                bw_str_release(ch);
                 switch (op) {
                 case TOK_EQ: emit_op(OP_I32_EQZ); break;
                 case TOK_NE: emit_i32_const(0); emit_op(OP_I32_NE); break;
@@ -1166,8 +1369,11 @@ static void compile_case(void) {
                 emit_op(OP_I64_EQ);
             } else if (test_type == T_STR) {
                 emit_local_get(test_local);
-                expr(); vpop();
+                expr();
+                int ch = bw_str_hold();
+                vpop();
                 emit_call(IMP_STR_CMP);
+                bw_str_release(ch);
                 emit_op(OP_I32_EQZ);
             } else {
                 emit_local_get(test_local);
@@ -1278,8 +1484,29 @@ static void compile_swap(void) {
     need(TOK_NAME);
     int var_b = tokv;
 
-    VType ta = vars[var_a].type_set ? vars[var_a].type : T_I32;
-    VType tb = vars[var_b].type_set ? vars[var_b].type : T_I32;
+    /* Two arrays swap their pointers. An array's global is an i32 pointer
+     * whatever its element type; using the element type for the temporary gave
+     * an invalid module for `SWAP A#, B#`. */
+    if (vars[var_a].mode == VAR_DIM || vars[var_b].mode == VAR_DIM) {
+        if (vars[var_a].mode != VAR_DIM || vars[var_b].mode != VAR_DIM ||
+            vars[var_a].type != vars[var_b].type ||
+            vars[var_a].dim_count != vars[var_b].dim_count) {
+            error_at("SWAP of arrays needs two arrays of the same type and number of dimensions");
+            return;
+        }
+        int tmp = alloc_local();
+        emit_global_get(vars[var_a].global_idx);
+        emit_local_set(tmp);
+        emit_global_get(vars[var_b].global_idx);
+        emit_global_set(vars[var_a].global_idx);
+        emit_local_get(tmp);
+        emit_global_set(vars[var_b].global_idx);
+        return;
+    }
+    bw_var_lock_type(var_a);
+    bw_var_lock_type(var_b);
+    VType ta = vars[var_a].type;
+    VType tb = vars[var_b].type;
     if (ta != tb) { error_at("SWAP requires both variables to be the same type"); return; }
 
     if (ta == T_F32) {
@@ -1349,6 +1576,16 @@ static void compile_read(void) {
         need(TOK_NAME);
         int var = tokv;
 
+        /* Out of DATA: stop the script with a trap. Unchecked, READ went on
+         * reading whatever followed the table in memory. */
+        emit_global_get(GLOBAL_DATA_IDX);
+        emit_global_get(GLOBAL_DATA_BASE);
+        emit_i32_load(0);                   /* item count */
+        emit_op(OP_I32_GE_U);
+        emit_if_void();
+        emit_op(OP_UNREACHABLE);
+        emit_end();
+
         emit_global_get(GLOBAL_DATA_BASE);
         emit_i32_const(4);
         emit_op(OP_I32_ADD);
@@ -1358,6 +1595,17 @@ static void compile_read(void) {
         emit_op(OP_I32_ADD);
         int addr = alloc_local();
         emit_local_set(addr);
+
+        /* Type tag 2 = string item. A string variable must get a string item
+         * and a numeric variable a numeric one; the mismatch used to treat a
+         * number as a string pointer (or a pointer as a number). */
+        emit_local_get(addr);
+        emit_i32_load(0);
+        emit_i32_const(2);
+        emit_op(vars[var].type == T_STR ? OP_I32_NE : OP_I32_EQ);
+        emit_if_void();
+        emit_op(OP_UNREACHABLE);
+        emit_end();
 
         if (vars[var].type == T_STR) {
             emit_local_get(addr);
@@ -1457,7 +1705,10 @@ static void compile_mid_assign(void) {
     emit_local_set(len_local);
     need(TOK_RP);
     need(TOK_EQ);
-    expr(); vpop();
+    expr();
+    if (vsp > 0 && vstack[vsp-1] != T_STR) { error_at("MID$ replacement must be a string"); return; }
+    int repl_is_temp = (vsp > 0 && vown[vsp-1] == STR_TEMP);
+    vpop();
     int repl_local = alloc_local();
     emit_local_set(repl_local);
 
@@ -1466,6 +1717,7 @@ static void compile_mid_assign(void) {
     emit_local_get(len_local);
     emit_local_get(repl_local);
     emit_call(IMP_STR_MID_ASSIGN);
+    if (repl_is_temp) bw_str_release(repl_local);
 
     int result = alloc_local();
     emit_local_set(result);
@@ -1481,6 +1733,7 @@ static void compile_mid_assign(void) {
 
 static void compile_open(void) {
     expr();
+    int fname_hold = bw_str_hold();
     VType ft = vpop();
     if (ft != T_STR) { error_at("OPEN filename must be a string"); return; }
 
@@ -1504,6 +1757,7 @@ static void compile_open(void) {
 
     emit_i32_const(mode);
     emit_call(IMP_FILE_OPEN);
+    bw_str_release(fname_hold);
 
     int tmp = alloc_local();
     emit_local_set(tmp);
@@ -1529,14 +1783,17 @@ static void compile_close_file(void) {
 
 static void compile_kill(void) {
     expr();
+    int h = bw_str_hold();
     VType t = vpop();
     if (t != T_STR) { error_at("KILL requires a string path"); return; }
     emit_call(IMP_FILE_DELETE);
     emit_drop();
+    bw_str_release(h);
 }
 
 static void compile_name_stmt(void) {
     expr();
+    int old_temp = (vsp > 0 && vstack[vsp-1] == T_STR && vown[vsp-1] == STR_TEMP);
     VType t1 = vpop();
     if (t1 != T_STR) { error_at("NAME requires a string path"); return; }
     int old_ptr = alloc_local();
@@ -1545,6 +1802,7 @@ static void compile_name_stmt(void) {
     need(TOK_AS);
 
     expr();
+    int new_temp = (vsp > 0 && vstack[vsp-1] == T_STR && vown[vsp-1] == STR_TEMP);
     VType t2 = vpop();
     if (t2 != T_STR) { error_at("NAME requires a string path"); return; }
     int new_ptr = alloc_local();
@@ -1554,22 +1812,28 @@ static void compile_name_stmt(void) {
     emit_local_get(new_ptr);
     emit_call(IMP_FILE_RENAME);
     emit_drop();
+    if (old_temp) bw_str_release(old_ptr);
+    if (new_temp) bw_str_release(new_ptr);
 }
 
 static void compile_mkdir(void) {
     expr();
+    int h = bw_str_hold();
     VType t = vpop();
     if (t != T_STR) { error_at("MKDIR requires a string path"); return; }
     emit_call(IMP_FILE_MKDIR);
     emit_drop();
+    bw_str_release(h);
 }
 
 static void compile_rmdir(void) {
     expr();
+    int h = bw_str_hold();
     VType t = vpop();
     if (t != T_STR) { error_at("RMDIR requires a string path"); return; }
     emit_call(IMP_FILE_RMDIR);
     emit_drop();
+    bw_str_release(h);
 }
 
 static void compile_print_file(void) {
@@ -1584,6 +1848,9 @@ static void compile_print_file(void) {
     emit_local_set(handle);
 
     expr();
+    /* The text is a temporary if the expression made it, or if a number was
+     * rendered to a string here; free it once written. */
+    int str_is_temp = (vsp > 0 && (vstack[vsp-1] != T_STR || vown[vsp-1] == STR_TEMP));
     VType t = vpop();
 
     if (t == T_I32) {
@@ -1601,6 +1868,7 @@ static void compile_print_file(void) {
     emit_local_get(str);
     emit_call(IMP_FILE_PRINT);
     emit_drop();
+    if (str_is_temp) bw_str_release(str);
 }
 
 static void compile_input_file(void) {
@@ -1623,21 +1891,100 @@ static void compile_input_file(void) {
         emit_call(IMP_STR_FREE);
         emit_local_get(new_val);
         emit_global_set(vars[var].global_idx);
-    } else if (vars[var].type == T_F32) {
-        emit_call(IMP_STR_TO_FLOAT);
-        if (!vars[var].type_set) { vars[var].type = T_F32; vars[var].type_set = 1; }
-        emit_global_set(vars[var].global_idx);
-    } else if (vars[var].type == T_I64) {
-        emit_call(IMP_STR_TO_I64);
-        emit_global_set(vars[var].global_idx);
     } else {
-        emit_call(IMP_STR_TO_INT);
-        if (!vars[var].type_set) { vars[var].type = T_I32; vars[var].type_set = 1; }
+        /* The line read from the file is a pool string: convert it, then free
+         * it (it used to be dropped on the floor). */
+        int line = alloc_local();
+        buf_byte(CODE, OP_LOCAL_TEE); buf_uleb(CODE, line);
+        if (vars[var].type == T_F32) {
+            emit_call(IMP_STR_TO_FLOAT);
+        } else if (vars[var].type == T_I64) {
+            emit_call(IMP_STR_TO_I64);
+        } else {
+            emit_call(IMP_STR_TO_INT);
+            bw_var_lock_type(var);
+        }
         emit_global_set(vars[var].global_idx);
+        bw_str_release(line);
     }
 }
 
+/* A call used as a statement: `NAME(args)` (paren = 1) or `NAME args` /
+ * bare `NAME` (paren = 0). NAME must be a SUB or FUNCTION that is already
+ * defined or DECLAREd.
+ *
+ * Both forms used to have holes. The bare form emitted the call only inside
+ * "if there are arguments", so a zero-argument SUB called as plain `SHOUT` did
+ * nothing at all, and ANY unknown identifier on a line by itself (a typo)
+ * compiled silently to nothing. The parenthesised form never checked that NAME
+ * was a function, and since func_local_idx is 0 for anything else it emitted a
+ * call to function 0 -- the program's own setup -- which recursed until the
+ * stack overflowed. */
+static void compile_call_stmt(int var, int paren) {
+    int base_vsp = vsp;
+    int nargs = 0;
+    int holds[8];
+    int have_args = paren ? !want(TOK_RP) : !want(TOK_EOF);
+    if (!paren && have_args && tok == TOK_ELSE && single_line_if > 0) {
+        ungot = 1;          /* `IF c THEN SHOUT ELSE ...`: no arguments */
+        have_args = 0;
+    }
+    if (have_args) {
+        ungot = 1;
+        do {
+            expr();
+            if (nargs < vars[var].param_count &&
+                vars[vars[var].param_vars[nargs]].type_set &&
+                vars[vars[var].param_vars[nargs]].type == T_F32)
+                coerce_f32();
+            else if (nargs < vars[var].param_count &&
+                     vars[vars[var].param_vars[nargs]].type_set &&
+                     vars[vars[var].param_vars[nargs]].type == T_I64)
+                coerce_i64();
+            else if (nargs >= vars[var].param_count ||
+                     !vars[vars[var].param_vars[nargs]].type_set ||
+                     vars[vars[var].param_vars[nargs]].type != T_STR)
+                coerce_i32();
+            else if (vsp > 0 && vstack[vsp-1] != T_STR)
+                error_at("string parameter needs a string argument");
+            if (nargs < 8) holds[nargs] = bw_str_hold();
+            nargs++;
+        } while (want(TOK_COMMA));
+        if (paren) need(TOK_RP);
+    }
+    vsp = base_vsp;
+    if (had_error) return;
+
+    if (vars[var].mode != VAR_SUB) {
+        char msg[80];
+        snprintf(msg, sizeof(msg), "unknown statement or undefined SUB '%s'", vars[var].name);
+        error_at(msg);
+        return;
+    }
+    if (nargs != vars[var].param_count) {
+        error_at("wrong number of arguments");
+        return;
+    }
+    emit_call(IMP_COUNT + vars[var].func_local_idx);
+    for (int i = 0; i < nargs && i < 8; i++) bw_str_release(holds[i]);
+    /* Every SUB/FUNCTION returns a value; discard it (a string FUNCTION's
+     * result is an owned string, so free it). */
+    if (vars[var].type_set && vars[var].type == T_STR) emit_call(IMP_STR_FREE);
+    else emit_drop();
+}
+
+static void stmt_body(void);
+
+/* One statement. Scratch locals allocated while compiling it are recycled when
+ * it ends (see alloc_local in bas2wasm.h); nested statements (single-line IF)
+ * release only their own. */
 void stmt(void) {
+    int tmp_mark = bw_ntmp;
+    stmt_body();
+    bw_tmp_release(tmp_mark);
+}
+
+static void stmt_body(void) {
     int t = read_tok();
     if (had_error) return;
 
@@ -1660,16 +2007,7 @@ void stmt(void) {
     case TOK_FOR:     compile_for(); break;
     case TOK_IF:      compile_if(); break;
     case TOK_ELSE:    compile_else(); break;
-    case TOK_ELSEIF:
-        if (ctrl_sp == 0 || ctrl_stk[ctrl_sp-1].kind != CTRL_IF) {
-            error_at("ELSEIF without IF"); break;
-        }
-        emit_else();
-        expr(); coerce_i32(); vpop();
-        want(TOK_THEN);
-        emit_if_void();
-        ctrl_stk[ctrl_sp-1].if_extra_ends++;
-        break;
+    case TOK_ELSEIF:  compile_else_branch(1); break;
     case TOK_DIM:     compile_dim(); break;
     case TOK_REDIM:   compile_redim(); break;
     case TOK_ERASE:   compile_erase(); break;
@@ -1686,8 +2024,15 @@ void stmt(void) {
     case TOK_RESTORE: compile_restore(); break;
     case TOK_NEXT:    close_for(); break;
     case TOK_WEND:    close_while(); break;
-    case TOK_BYE:     emit_return(); break;
-    case TOK_BREAK:   emit_return(); break;
+    case TOK_BYE:
+    case TOK_BREAK:
+        /* These end the program by returning from the main code. Inside a SUB
+         * a bare `return` does not match the function's result type (an
+         * invalid module, with no compile error), and it could only leave the
+         * SUB anyway. */
+        if (cur_func != 0) { error_at("BYE/BREAK cannot be used inside a SUB or FUNCTION; use RETURN"); break; }
+        emit_return();
+        break;
     case TOK_RESUME:  error_at("RESUME not supported in compiled code"); break;
     case TOK_OPEN:       compile_open(); break;
     case TOK_CLOSE_FILE: compile_close_file(); break;
@@ -1696,6 +2041,7 @@ void stmt(void) {
     case TOK_RMDIR:      compile_rmdir(); break;
     case TOK_GT: {
         expr();
+        int is_temp = (vsp > 0 && vstack[vsp-1] == T_STR && vown[vsp-1] == STR_TEMP);
         VType t2 = vpop();
         if (t2 == T_STR) {
             int tmp = alloc_local();
@@ -1708,6 +2054,7 @@ void stmt(void) {
             emit_i32_const(0xF000);
             emit_call(IMP_HOST_PRINTF);
             emit_drop();
+            if (is_temp) bw_str_release(tmp);   /* printed: free the temporary */
         } else if (t2 == T_F32) {
             emit_call(IMP_PRINT_F32);
         } else if (t2 == T_I64) {
@@ -1738,8 +2085,16 @@ void stmt(void) {
         if (want(TOK_EQ)) {
             if (vars[var].is_const) { error_at("cannot assign to CONST"); break; }
             expr();
-            VType et = vpop();
+            VType et = (vsp > 0) ? vstack[vsp-1] : T_I32;
             if (vars[var].type == T_STR) {
+                if (et != T_STR) { error_at("cannot assign a number to a string variable"); break; }
+                /* The variable must own what it holds: a value borrowed from
+                 * another variable (`B$ = A$`, even `A$ = A$`) is copied
+                 * BEFORE the old value is freed. Storing the bare pointer made
+                 * two variables own one pool block, and the next assignment to
+                 * either freed it under the other. */
+                bw_str_own();
+                vpop();
                 int new_val = alloc_local();
                 emit_local_set(new_val);
                 emit_global_get(vars[var].global_idx);
@@ -1747,12 +2102,18 @@ void stmt(void) {
                 emit_local_get(new_val);
                 emit_global_set(vars[var].global_idx);
             } else {
+                if (et == T_STR) { error_at("cannot assign a string to a numeric variable"); break; }
                 if (!vars[var].type_set) {
                     vars[var].type = et;
                     vars[var].type_set = 1;
                 } else {
+                    /* Coerce while the value's type is still on the type stack.
+                     * This used to vpop() first, and the coerce_* helpers do
+                     * nothing on an empty stack -- so `X = 42 : X = 3.14`
+                     * stored an f32 into an i32 global (an invalid module). */
                     coerce_to(vars[var].type);
                 }
+                vpop();
                 emit_global_set(vars[var].global_idx);
             }
         } else if (want(TOK_LP)) {
@@ -1765,7 +2126,10 @@ void stmt(void) {
                     /* String array element: free old, copy new. RHS expression
                      * already returns a fresh pool allocation, but we run it
                      * through str_copy anyway to match scalar semantics. */
-                    expr(); coerce_to(T_STR); vpop();
+                    expr();
+                    if (vsp > 0 && vstack[vsp-1] != T_STR) { error_at("cannot assign a number to a string array element"); return; }
+                    bw_str_own();       /* copy if borrowed from a variable / element */
+                    vpop();
                     int new_val = alloc_local();
                     emit_local_set(new_val);
                     emit_local_get(addr_local);
@@ -1786,64 +2150,20 @@ void stmt(void) {
                 }
                 (void)ndims;
             } else {
-                if (!compile_builtin_expr(vars[var].name)) {
-                    int nargs = 0;
-                    if (!want(TOK_RP)) {
-                        do {
-                            expr();
-                            if (nargs < vars[var].param_count &&
-                                vars[vars[var].param_vars[nargs]].type_set &&
-                                vars[vars[var].param_vars[nargs]].type == T_F32)
-                                coerce_f32();
-                            else if (nargs < vars[var].param_count &&
-                                     vars[vars[var].param_vars[nargs]].type_set &&
-                                     vars[vars[var].param_vars[nargs]].type == T_I64)
-                                coerce_i64();
-                            else if (nargs >= vars[var].param_count ||
-                                     !vars[vars[var].param_vars[nargs]].type_set ||
-                                     vars[vars[var].param_vars[nargs]].type != T_STR)
-                                coerce_i32();
-                            nargs++;
-                        } while (want(TOK_COMMA));
-                        need(TOK_RP);
+                if (compile_builtin_expr(vars[var].name)) {
+                    /* Builtin called for its side effect: discard the result
+                     * (free it if it is a temporary string). */
+                    if (vsp > 0) {
+                        int is_temp = (vstack[vsp-1] == T_STR && vown[vsp-1] == STR_TEMP);
+                        vpop();
+                        if (is_temp) emit_call(IMP_STR_FREE); else emit_drop();
                     }
-                    if (vars[var].mode == VAR_SUB && nargs != vars[var].param_count)
-                        error_at("wrong number of arguments");
-                    emit_call(IMP_COUNT + vars[var].func_local_idx);
-                    vpush(vars[var].type_set ? vars[var].type : T_I32);
+                } else {
+                    compile_call_stmt(var, 1);
                 }
-                if (vsp > 0) { vpop(); emit_drop(); }
             }
         } else {
-            if (!want(TOK_EOF)) {
-                ungot = 1;
-                int nargs = 0;
-                do {
-                    expr();
-                    if (nargs < vars[var].param_count &&
-                        vars[vars[var].param_vars[nargs]].type_set &&
-                        vars[vars[var].param_vars[nargs]].type == T_F32)
-                        coerce_f32();
-                    else if (nargs < vars[var].param_count &&
-                             vars[vars[var].param_vars[nargs]].type_set &&
-                             vars[vars[var].param_vars[nargs]].type == T_I64)
-                        coerce_i64();
-                    else if (nargs >= vars[var].param_count ||
-                             !vars[vars[var].param_vars[nargs]].type_set ||
-                             vars[vars[var].param_vars[nargs]].type != T_STR)
-                        coerce_i32();
-                    nargs++;
-                } while (want(TOK_COMMA));
-                if (vars[var].mode == VAR_SUB) {
-                    if (nargs != vars[var].param_count)
-                        error_at("wrong number of arguments");
-                    emit_call(IMP_COUNT + vars[var].func_local_idx);
-                    emit_drop();
-                } else {
-                    error_at("unknown statement function");
-                    for (int i = 0; i < nargs; i++) emit_drop();
-                }
-            }
+            compile_call_stmt(var, 0);
         }
         break;
     }
@@ -1854,6 +2174,9 @@ void stmt(void) {
 
     if (tok != TOK_EOF && !had_error) {
         read_tok();
-        if (tok != TOK_EOF) error_at("extra tokens after statement");
+        if (tok == TOK_ELSE && single_line_if > 0)
+            ungot = 1;      /* the ELSE of the enclosing single-line IF */
+        else if (tok != TOK_EOF)
+            error_at("extra tokens after statement");
     }
 }

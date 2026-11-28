@@ -1,5 +1,5 @@
 ' EXPECTED:
-' 1000 1500 0.015 24999999488 50 1000 -0.0015
+' 1000.000000 1500.000000 0.015000 24999999488.000000 50.000000 1000.000000 -0.001500
 ' 42 7
 
 ' Float literals with exponent: [eE][+-]?digits, with or without a decimal point

@@ -1,5 +1,6 @@
+' HOSTS: node fwhost   (the simulator applies its real gamma table (GAMMA256(128) is 37 there))
 ' EXPECTED:
-' loaded=0 size=0 v0=0 gamma128=128
+' loaded=0 size=-1 v0=0 gamma128=128
 
 ' LUT API smoke test (LOADLUT/LUT/LUTSIZE/GAMMA256)
 LOADED = LOADLUT(0)

@@ -138,10 +138,19 @@ int next_line(void) {
     while (src_pos < src_len && source[src_pos] != '\n' && i < (int)sizeof(line_buf)-1)
         line_buf[i++] = source[src_pos++];
     line_buf[i] = 0;
+    /* The buffer filled before the line ended. The rest used to be compiled as
+     * a line of its own -- so the tail of a long comment ran as code. Skip it
+     * and report the line. */
+    int line_too_long = (src_pos < src_len && source[src_pos] != '\n');
+    while (src_pos < src_len && source[src_pos] != '\n') src_pos++;
     if (src_pos < src_len && source[src_pos] == '\n') src_pos++;
     lp = line_buf;
     line_num++;
     ungot = 0;
+    if (line_too_long) {
+        error_at("line too long (max 511 characters)");
+        return 0;
+    }
     if (bw_try_include(line_buf)) {
         if (had_error) return 0;
         /* Directive consumed; fetch the first real line (now from the
@@ -228,16 +237,22 @@ int read_tok(void) {
     /* Identifier / keyword */
     if (isalpha((unsigned char)*lp) || *lp == '_') {
         char *tp = tokn;
+        int too_long = 0;
         while (isalnum((unsigned char)*lp) || *lp == '_') {
-            if (tp - tokn < 14) *tp++ = toupper((unsigned char)*lp);
+            if (tp - tokn < BW_NAME_MAX) *tp++ = toupper((unsigned char)*lp);
+            else too_long = 1;
             lp++;
         }
+        /* An over-long name is an error. Names used to be cut silently at 14
+         * characters, so two different long names (brightness_level_a /
+         * brightness_level_b) were quietly the same variable. */
+        if (too_long) error_at("identifier too long (max 30 characters)");
         /* Allow # suffix for float function names */
-        if (*lp == '#') { if (tp - tokn < 15) *tp++ = '#'; lp++; }
+        if (*lp == '#') { if (tp - tokn < BW_NAME_MAX + 1) *tp++ = '#'; lp++; }
         /* Allow $ suffix for string variable/function names */
-        if (*lp == '$') { if (tp - tokn < 15) *tp++ = '$'; lp++; }
+        if (*lp == '$') { if (tp - tokn < BW_NAME_MAX + 1) *tp++ = '$'; lp++; }
         /* Allow & suffix for 64-bit integer variable/function names */
-        if (*lp == '&') { if (tp - tokn < 15) *tp++ = '&'; lp++; }
+        if (*lp == '&') { if (tp - tokn < BW_NAME_MAX + 1) *tp++ = '&'; lp++; }
         *tp = 0;
         for (k = kwd; *k; k++)
             if (strcmp(tokn, *k) == 0) return tok = (k - kwd) + TOK_AND;
@@ -252,11 +267,13 @@ int read_tok(void) {
     if (*lp == '"') {
         lp++;
         int off = data_len;
+        int str_overflow = 0;
+#define STR_PUT(c) do { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, (c)); else str_overflow = 1; } while (0)
         while (*lp) {
             if (*lp == '"') {
                 if (lp[1] == '"') {
                     /* Doubled quote = embedded quote (BASIC standard) */
-                    if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '"');
+                    STR_PUT('"');
                     lp += 2;
                     continue;
                 }
@@ -264,17 +281,21 @@ int read_tok(void) {
             }
             if (*lp == '\\' && lp[1]) {
                 char esc = lp[1];
-                if (esc == 'n') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '\n'); lp += 2; }
-                else if (esc == 't') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '\t'); lp += 2; }
-                else if (esc == '\\') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '\\'); lp += 2; }
-                else if (esc == '"') { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, '"'); lp += 2; }
-                else { if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, *lp); lp++; }
+                if (esc == 'n') { STR_PUT('\n'); lp += 2; }
+                else if (esc == 't') { STR_PUT('\t'); lp += 2; }
+                else if (esc == '\\') { STR_PUT('\\'); lp += 2; }
+                else if (esc == '"') { STR_PUT('"'); lp += 2; }
+                else { STR_PUT(*lp); lp++; }
                 continue;
             }
-            if (data_len < MAX_STRINGS - 1) dbuf_put(data_len++, *lp);
+            STR_PUT(*lp);
             lp++;
         }
+#undef STR_PUT
         if (data_len < MAX_STRINGS) dbuf_put(data_len++, 0);
+        /* Characters that did not fit used to be dropped silently: this
+         * literal, and every one after it, then read as empty. */
+        if (str_overflow) error_at("string table full (too much string literal text)");
         if (*lp == '"') {
             lp++;
         } else {
@@ -289,4 +310,18 @@ int read_tok(void) {
 }
 
 int want(int t) { return !(ungot = (read_tok() != t)); }
-void need(int t) { if (!want(t)) error_at("syntax error"); }
+/* On a mismatch the token VALUES belong to whatever was actually read (e.g. a
+ * number where a name was required), and callers go on to use tokv as a
+ * variable index or data offset before the error is acted on:
+ * `FOR 100000 = 1 TO 2`, `CONST 70 = 1`, `UBOUND(2000000000)` indexed vars[]
+ * with the literal (a crash on the host, a wild read/write on the device), and
+ * `FORMAT &HFFFFFFFF` used -1 as a data offset. Reset them to 0, which is a
+ * valid index into every table; the compile has already failed. */
+void need(int t) {
+    if (!want(t)) {
+        error_at("syntax error");
+        tokv = 0;
+        tokq = 0;
+        tokf = 0.0f;
+    }
+}

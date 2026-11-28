@@ -18,7 +18,7 @@ main.o: main.c bas2wasm.h .buildnum
 	$(CC) $(CFLAGS) -DBUILD_NUMBER=$(NEXT_BUILDNUM) -c -o $@ $<
 
 .buildnum:
-.PHONY: all clean test test-runtime verify .buildnum
+.PHONY: all clean test test-runtime test-host test-sim verify .buildnum
 
 test: $(TARGET)
 	@test/run_tests.sh
@@ -30,6 +30,26 @@ test: $(TARGET)
 test-runtime: $(TARGET)
 	@command -v node >/dev/null 2>&1 || { echo "node required for test-runtime"; exit 1; }
 	@node test/run_runtime.js
+
+# The same tests on REAL host code instead of run_runtime.js's JavaScript
+# imports: tools/fwhost is the firmware's own wasm3 fork, run sequence and
+# string / FORMAT / print / file / math imports, compiled for this machine
+# with sanitizers, in both memory configurations (plain RAM = Heltec board,
+# PSRAM split = ConeZ board). A bug in the firmware's imports fails here; it
+# cannot fail test-runtime. Needs node and a C++ compiler.
+test-host: $(TARGET)
+	@command -v node >/dev/null 2>&1 || { echo "node required for test-host"; exit 1; }
+	@$(MAKE) --no-print-directory -C ../fwhost
+	@node test/run_runtime.js --host ../fwhost/fwhost-dram
+	@node test/run_runtime.js --host ../fwhost/fwhost-psram
+
+# ...and on the simulator's host code (its headless runner, built with the
+# simulator: make -C ../../simulator/conez/build conez-wasm-run).
+SIM_RUN ?= ../../simulator/conez/build/conez-wasm-run
+test-sim: $(TARGET)
+	@command -v node >/dev/null 2>&1 || { echo "node required for test-sim"; exit 1; }
+	@test -x $(SIM_RUN) || { echo "$(SIM_RUN) not built -- build the simulator first (see documentation/simulator.txt)"; exit 1; }
+	@node test/run_runtime.js --host $(SIM_RUN)
 
 %.o: %.c bas2wasm.h
 	$(CC) $(CFLAGS) -c -o $@ $<

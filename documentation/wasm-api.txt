@@ -377,6 +377,11 @@ Output
   void print_f32(float val)       Print a 32-bit float followed by newline.
   void print_i64(int64_t val)     Print a 64-bit integer followed by newline.
   void print_f64(double val)      Print a 64-bit double followed by newline.
+
+  print_f32 and print_f64 format with C "%g": six significant digits, no
+  trailing zeros, exponent form for very large or very small values (1.5,
+  40.7622, 1.23457e+06). Use host_printf with "%f" or "%.Nf" for fixed
+  decimals.
   void print_str(char *ptr, int len)   Print a string (pointer + length).
 
   Convenience macros (defined in conez_api.h, route to print_i32 or printf):
@@ -583,7 +588,11 @@ File I/O
       Returns -1 if the target position would fall outside [0, file_size];
       the file pointer is left unchanged in that case.
   int  file_tell(int handle)                            current position or -1
-  int  file_eof(int handle)                             1 at EOF, 0 otherwise
+  int  file_eof(int handle)                             1 when there is nothing
+                                                        left to read (checked by
+                                                        peeking, so it is true
+                                                        BEFORE a read fails --
+                                                        unlike C's feof), else 0
   int  file_truncate(int handle, int length)            0 on success, -1 on error
   int  file_flush(int handle)                           0 on success, -1 on error
 
@@ -826,7 +835,9 @@ use a basic_ prefix to distinguish them from general-purpose imports.
 
 All string functions operate on null-terminated strings in WASM linear
 memory. A string pointer of 0 means "no string" and is treated as an
-empty string (an unassigned BASIC string variable holds 0). String pointers refer to either static data (compiled string
+empty string (an unassigned BASIC string variable holds 0). bas2wasm
+reserves the first 4 bytes of memory as zeros so that no string literal
+can have address 0. String pointers refer to either static data (compiled string
 literals at low addresses), low-heap allocations (DIM arrays, user
 malloc — below 0x8000), or pool-allocated strings in the 0x8000-0xEFFF
 region.
@@ -885,6 +896,8 @@ String queries (no allocation):
   int basic_str_asc(int ptr)                ASCII code of first character.
   int basic_str_instr(int hay, int needle, int start)
                                             Find substring (1-based, 0=not found).
+                                            Searches only the first 255 characters
+                                            of hay, with at most 127 of needle.
 
 Conversions:
 

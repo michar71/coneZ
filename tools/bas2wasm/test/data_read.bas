@@ -2,9 +2,9 @@
 
 ' EXPECTED:
 ' 10 20 30
-' 42 3.14 hello
+' 42 3.140000 hello
 ' 10
-' 20 30
+' 20 30.000000
 DATA 10, 20, 30
 READ A, B, C
 FORMAT "% % %", A, B, C
